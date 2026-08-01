@@ -2,4 +2,4 @@
 
 Cada arquivo descreve uma unidade de trabalho. Antes de executar uma tarefa, leia os documentos obrigatórios definidos em `AGENTS.md`.
 
-As TASKs 000 a 008 estão concluídas; as TASKs 009 a 055 permanecem pendentes.
+As TASKs 000 a 009 estão concluídas. As demais permanecem pendentes; conforme o roadmap, a próxima é a TASK-018 antes das TASKs 010 a 017.

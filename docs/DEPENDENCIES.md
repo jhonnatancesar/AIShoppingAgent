@@ -48,6 +48,8 @@ python -m ruff format --check .
 python -m pytest
 ```
 
+Após preparar as dependências, o comando recomendado para executar todas as verificações é `scripts\check.cmd`, conforme `docs/LOCAL_PIPELINE.md`.
+
 ## Configuração local
 
 - Copiar `.env.example` para `.env`, definir uma senha local para o PostgreSQL e nunca versionar esse arquivo.

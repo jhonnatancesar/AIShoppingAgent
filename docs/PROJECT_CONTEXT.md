@@ -2,7 +2,7 @@
 
 ## Estado
 
-Fase: base técnica inicial. TASK-008 concluída em 2026-08-01.
+Fase: base técnica concluída. TASK-009 concluída em 2026-08-01.
 
 ## O que existe
 
@@ -17,6 +17,7 @@ Fase: base técnica inicial. TASK-008 concluída em 2026-08-01.
 - Módulo de saúde com endpoint de vivacidade `GET /health`, integrado ao healthcheck do contêiner da API.
 - Convenções HTTP e OpenAPI definidas em `docs/API_CONVENTIONS.md`, com endpoints de negócio versionados sob `/api/v1`.
 - Logging JSON em `stdout`, com nível configurável e eventos HTTP sem captura de dados sensíveis.
+- Pipeline local único para dependências, lint, formatação, testes, cobertura e validação do Docker Compose.
 - Documentos de visão, arquitetura, dados, módulos-alvo, escopo do MVP, backlog, itens fora de escopo, governança de decisões e workflow permanente de execução.
 - ADRs, RFCs e 56 tarefas planejadas.
 

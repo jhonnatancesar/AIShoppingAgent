@@ -1,6 +1,6 @@
 # TASK-009 — Preparar pipeline local
 
-Status: Pendente
+Status: Concluída
 
 ## Objetivo
 
@@ -12,5 +12,5 @@ Executar somente o objetivo desta tarefa, conforme AGENTS.md, CLAUDE.md e a docu
 
 ## Critério de aceite
 
-Escopo concluído, documentado e verificado conforme os critérios da tarefa.
+Pipeline local executável por um único comando, independente do diretório atual, com falha imediata para dependências, lint, formatação, testes, cobertura e Docker Compose. Execução documentada e validada sem alterar dados ou repositórios.
 

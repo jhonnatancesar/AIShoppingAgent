@@ -46,3 +46,13 @@ Os testes geram relatório de cobertura no terminal e exigem cobertura mínima d
 As regras para novos endpoints estão em `docs/API_CONVENTIONS.md`. O contrato executável da aplicação pode ser consultado em `http://localhost:8000/openapi.json` quando a API estiver ativa.
 
 Os logs da aplicação são emitidos como JSON em `stdout`. Use `docker compose logs --follow api` para acompanhá-los e consulte `docs/LOGGING.md` para o contrato dos eventos.
+
+## Pipeline local
+
+Execute todas as verificações obrigatórias com:
+
+```powershell
+.\scripts\check.cmd
+```
+
+O detalhamento e os pré-requisitos estão em `docs/LOCAL_PIPELINE.md`.

@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-08-01 — TASK-009
+
+- Criado pipeline local executável por `scripts\check.cmd`, compatível com a política de execução atual do Windows.
+- Reunidas verificações de dependências, lint, formatação, testes, cobertura e Docker Compose com falha imediata.
+- Garantida execução independente do diretório atual e restauração da senha temporária usada apenas para validar o Compose.
+- Validado o pipeline completo com 9 testes aprovados e 98,65% de cobertura.
+
 ## 2026-08-01 — TASK-008
 
 - Configurado logging JSON em `stdout` para a aplicação e os loggers do Uvicorn.
