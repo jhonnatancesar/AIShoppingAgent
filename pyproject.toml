@@ -10,3 +10,14 @@ select = ["E4", "E7", "E9", "F", "I", "UP"]
 indent-style = "space"
 line-ending = "auto"
 quote-style = "double"
+
+[tool.pytest.ini_options]
+addopts = [
+    "--strict-config",
+    "--strict-markers",
+    "--cov=app",
+    "--cov-report=term-missing",
+    "--cov-fail-under=90",
+]
+pythonpath = ["backend"]
+testpaths = ["tests"]

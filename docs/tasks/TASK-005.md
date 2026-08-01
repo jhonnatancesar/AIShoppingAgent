@@ -1,6 +1,6 @@
 # TASK-005 — Configurar testes base
 
-Status: Pendente
+Status: Concluída
 
 ## Objetivo
 
@@ -12,5 +12,5 @@ Executar somente o objetivo desta tarefa, conforme AGENTS.md, CLAUDE.md e a docu
 
 ## Critério de aceite
 
-Escopo concluído, documentado e verificado conforme os critérios da tarefa.
+Pytest configurado com descoberta previsível, validação estrita e cobertura mínima de 90%. Testes base cobrem o ponto de entrada FastAPI e a configuração tipada, com execução documentada e aprovada.
 

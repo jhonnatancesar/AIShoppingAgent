@@ -36,6 +36,8 @@ python -m pip check
 A fonte de verdade para ferramentas usadas somente no desenvolvimento é `backend/requirements-dev.txt`. Esse arquivo inclui as dependências da aplicação e acrescenta:
 
 - `ruff>=0.16,<0.17`
+- `pytest>=9.1,<10.0`
+- `pytest-cov>=7.1,<8.0`
 
 Após autorização para instalação, validar lint e formatação a partir da raiz:
 
@@ -43,6 +45,7 @@ Após autorização para instalação, validar lint e formatação a partir da r
 python -m pip install -r backend/requirements-dev.txt
 python -m ruff check .
 python -m ruff format --check .
+python -m pytest
 ```
 
 ## Configuração local

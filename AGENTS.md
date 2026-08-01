@@ -84,4 +84,4 @@ Nunca iniciar automaticamente a próxima TASK. Encerrar apresentando resumo da i
 
 ## Estado atual
 
-TASKs 000 a 004 concluídas: estrutura e memória documental, esqueleto FastAPI, gestão tipada de configuração, ambiente Docker Compose e qualidade de código implementados. A próxima tarefa planejada é a TASK-005.
+TASKs 000 a 005 concluídas: estrutura e memória documental, esqueleto FastAPI, gestão tipada de configuração, ambiente Docker Compose, qualidade de código e testes base implementados. A próxima tarefa planejada é a TASK-006.

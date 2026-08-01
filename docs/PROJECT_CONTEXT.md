@@ -2,7 +2,7 @@
 
 ## Estado
 
-Fase: base técnica inicial. TASK-004 concluída em 2026-08-01.
+Fase: base técnica inicial. TASK-005 concluída em 2026-08-01.
 
 ## O que existe
 
@@ -13,12 +13,13 @@ Fase: base técnica inicial. TASK-004 concluída em 2026-08-01.
 - Política de uso da versão estável mais recente do Python; Python 3.14.3 é a versão atualmente validada.
 - Ambiente Docker Compose com contêineres FastAPI e PostgreSQL 18, volume persistente e configuração local protegida.
 - Qualidade de código configurada com Ruff para lint, imports, modernização Python 3.14 e formatação.
+- Testes base configurados com Pytest e cobertura mínima de 90% para o pacote da aplicação.
 - Documentos de visão, arquitetura, dados, módulos-alvo, escopo do MVP, backlog, itens fora de escopo, governança de decisões e workflow permanente de execução.
 - ADRs, RFCs e 56 tarefas planejadas.
 
 ## O que não existe
 
-Não há modelo ou integração de banco de dados, automações, integrações externas, testes funcionais nem credenciais reais configuradas.
+Não há modelo ou integração de banco de dados, automações, integrações externas, testes de integração ou ponta a ponta nem credenciais reais configuradas.
 
 ## Invariantes
 

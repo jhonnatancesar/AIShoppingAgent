@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-08-01 — TASK-005
+
+- Configurado Pytest com descoberta explícita, validação estrita e cobertura mínima de 90%.
+- Adicionados testes para os metadados FastAPI e para padrões, variáveis de ambiente e rejeição de configuração inválida.
+- Separadas e documentadas as dependências de teste no conjunto de desenvolvimento.
+- Validada a suíte com 4 testes aprovados e 100% de cobertura da base atual.
+
 ## 2026-08-01 — TASK-004
 
 - Configurado Ruff para lint, ordenação de imports, modernização compatível com Python 3.14 e formatação.

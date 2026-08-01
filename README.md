@@ -25,6 +25,7 @@ Instale as dependências de desenvolvimento e execute as verificações a partir
 python -m pip install -r backend/requirements-dev.txt
 python -m ruff check .
 python -m ruff format --check .
+python -m pytest
 ```
 
 Para aplicar automaticamente correções seguras e formatação:
@@ -33,3 +34,5 @@ Para aplicar automaticamente correções seguras e formatação:
 python -m ruff check . --fix
 python -m ruff format .
 ```
+
+Os testes geram relatório de cobertura no terminal e exigem cobertura mínima de 90% do pacote `app`.
