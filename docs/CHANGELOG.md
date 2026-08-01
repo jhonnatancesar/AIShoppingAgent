@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-08-01 — Ambiente de desenvolvimento
+
+- Criado `docs/DEPENDENCIES.md` como inventário de ferramentas e dependências da aplicação.
+- Incluída no workflow a comparação de dependências em novas máquinas, com instalação somente após autorização.
+
 ## 2026-08-01 — TASK-002
 
 - Adicionada gestão tipada de configuração por variáveis de ambiente.

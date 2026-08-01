@@ -45,7 +45,10 @@ Antes de qualquer alteração, ler integralmente:
 - `docs/BACKLOG.md`
 - `docs/OUT_OF_SCOPE.md`
 - `docs/DECISION_LOG.md`
+- `docs/DEPENDENCIES.md`
 - o arquivo da TASK solicitada em `docs/tasks/`
+
+Em uma nova máquina, comparar também as dependências descritas em `docs/DEPENDENCIES.md` com o ambiente disponível. Instalar somente dependências ausentes ou incompatíveis, sempre após autorização explícita para downloads ou instalações.
 
 ### 2. Validação
 

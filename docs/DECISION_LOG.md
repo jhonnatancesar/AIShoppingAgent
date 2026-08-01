@@ -42,3 +42,11 @@ Após a classificação, registrar a decisão neste arquivo e atualizar a docume
 - **Classificação:** Implementar agora
 - **Justificativa:** o workflow preserva o escopo do MVP, aumenta a rastreabilidade das entregas e garante que código, documentação e repositório permaneçam sincronizados.
 - **Próxima ação:** aplicar automaticamente o workflow definido em `AGENTS.md` a toda TASK futura; solicitar autorização explícita antes de cada push.
+
+### DEC-003 — Inventariar dependências para novas máquinas
+
+- **Data:** 2026-08-01
+- **Ideia:** registrar dependências e verificar a compatibilidade do ambiente antes de iniciar TASKs em outra máquina.
+- **Classificação:** Implementar agora
+- **Justificativa:** evita instalações desnecessárias, mantém o ambiente reproduzível e preserva a autorização do usuário para qualquer download ou instalação.
+- **Próxima ação:** manter `docs/DEPENDENCIES.md` e `backend/requirements.txt` atualizados; comparar o ambiente antes de cada nova TASK.
