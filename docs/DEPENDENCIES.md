@@ -7,9 +7,13 @@ Este documento é a referência de ambiente para qualquer nova máquina. Antes d
 | Ferramenta | Requisito atual | Verificação |
 | --- | --- | --- |
 | Git | Git for Windows 2.55.0 ou compatível | `git --version` |
-| Python | Python 3.13.x com `pip` | `python --version` e `python -m pip --version` |
+| Python | Versão estável mais recente, atualmente Python 3.14.3, com `pip` | `python --version` e `python -m pip --version` |
 
 Docker e PostgreSQL ainda não são requisitos locais. Eles só serão preparados na TASK-003 e não devem ser instalados ou baixados sem autorização explícita.
+
+## Política de versão do Python
+
+O projeto acompanha a versão estável mais recente do Python, sem permanecer fixado em uma série menor antiga. Em cada nova máquina ou nova versão estável, a compatibilidade das dependências deve ser validada com `python -m pip check` e com os testes aplicáveis antes do uso. A versão informada na tabela é a mais recente efetivamente validada pelo projeto e deve ser atualizada após cada validação.
 
 ## Dependências da aplicação
 

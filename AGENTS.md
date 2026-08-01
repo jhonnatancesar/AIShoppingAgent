@@ -84,4 +84,4 @@ Nunca iniciar automaticamente a próxima TASK. Encerrar apresentando resumo da i
 
 ## Estado atual
 
-TASK-000 concluída: estrutura e memória documental criadas. A aplicação ainda não possui código funcional.
+TASKs 000, 001 e 002 concluídas: estrutura e memória documental, esqueleto FastAPI e gestão tipada de configuração implementados. A próxima tarefa planejada é a TASK-003.

@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-08-01 — Consistência documental e versão do Python
+
+- Confirmada pelo histórico e pelos critérios de aceite a conclusão das TASKs 000, 001 e 002.
+- Sincronizados README, instruções, roadmap e índice de tarefas com o estado real do projeto.
+- Adotada a política de uso da versão estável mais recente do Python, com Python 3.14.3 como versão atualmente validada.
+
 ## 2026-08-01 — Ambiente de desenvolvimento
 
 - Criado `docs/DEPENDENCIES.md` como inventário de ferramentas e dependências da aplicação.
