@@ -1,6 +1,6 @@
 # TASK-003 — Preparar Docker Compose
 
-Status: Pendente
+Status: Concluída
 
 ## Objetivo
 
@@ -12,5 +12,5 @@ Executar somente o objetivo desta tarefa, conforme AGENTS.md, CLAUDE.md e a docu
 
 ## Critério de aceite
 
-Escopo concluído, documentado e verificado conforme os critérios da tarefa.
+Docker Compose configura a aplicação FastAPI e o PostgreSQL para desenvolvimento local, preserva os dados em volume nomeado, exige senha local não versionada e possui comandos de inicialização documentados. A configuração deve ser validada e os serviços devem iniciar corretamente.
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-08-01 — TASK-003
+
+- Criados Dockerfile da aplicação e Docker Compose para FastAPI e PostgreSQL 18.
+- Adicionados volume persistente, healthchecks da API e do PostgreSQL e configuração local por `.env` não versionado.
+- Documentados os comandos para iniciar e encerrar o ambiente local.
+- Validado o ciclo completo com build sem cache, inicialização dos serviços, resposta HTTP da API, conexão do PostgreSQL e encerramento sem remoção do volume.
+
 ## 2026-08-01 — Consistência documental e versão do Python
 
 - Confirmada pelo histórico e pelos critérios de aceite a conclusão das TASKs 000, 001 e 002.

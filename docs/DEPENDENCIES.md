@@ -8,8 +8,9 @@ Este documento é a referência de ambiente para qualquer nova máquina. Antes d
 | --- | --- | --- |
 | Git | Git for Windows 2.55.0 ou compatível | `git --version` |
 | Python | Versão estável mais recente, atualmente Python 3.14.3, com `pip` | `python --version` e `python -m pip --version` |
+| Docker Desktop | Versão estável mais recente; Docker Engine 29.6.2 e Docker Compose 5.3.1 validados atualmente | `docker --version` e `docker compose version` |
 
-Docker e PostgreSQL ainda não são requisitos locais. Eles só serão preparados na TASK-003 e não devem ser instalados ou baixados sem autorização explícita.
+PostgreSQL não exige instalação direta na máquina: o ambiente local usa a imagem oficial `postgres:18-alpine` por meio do Docker Compose.
 
 ## Política de versão do Python
 
@@ -32,6 +33,7 @@ python -m pip check
 
 ## Configuração local
 
+- Copiar `.env.example` para `.env`, definir uma senha local para o PostgreSQL e nunca versionar esse arquivo.
 - Copiar `backend/.env.example` para `backend/.env` quando for necessário configurar valores locais.
-- Nunca versionar `backend/.env`, credenciais, ambientes virtuais, cache ou imagens Docker.
+- Nunca versionar `.env`, `backend/.env`, credenciais, ambientes virtuais, cache ou imagens Docker.
 - Atualizar este documento e `backend/requirements.txt` quando uma TASK introduzir uma dependência nova ou alterar uma versão suportada.

@@ -2,7 +2,7 @@
 
 ## Estado
 
-Fase: base técnica inicial. TASK-002 concluída em 2026-08-01.
+Fase: base técnica inicial. TASK-003 concluída em 2026-08-01.
 
 ## O que existe
 
@@ -11,12 +11,13 @@ Fase: base técnica inicial. TASK-002 concluída em 2026-08-01.
 - Gestão de configuração tipada em `backend/app/core/config.py`, com variáveis de ambiente, exemplo local e arquivo `.env` ignorado pelo Git.
 - Inventário de dependências e procedimento de preparação de novas máquinas em `docs/DEPENDENCIES.md`.
 - Política de uso da versão estável mais recente do Python; Python 3.14.3 é a versão atualmente validada.
+- Ambiente Docker Compose com contêineres FastAPI e PostgreSQL 18, volume persistente e configuração local protegida.
 - Documentos de visão, arquitetura, dados, módulos-alvo, escopo do MVP, backlog, itens fora de escopo, governança de decisões e workflow permanente de execução.
 - ADRs, RFCs e 56 tarefas planejadas.
 
 ## O que não existe
 
-Não há banco de dados, contêineres, integrações, automações, testes funcionais nem credenciais configuradas.
+Não há modelo ou integração de banco de dados, automações, integrações externas, testes funcionais nem credenciais reais configuradas.
 
 ## Invariantes
 
