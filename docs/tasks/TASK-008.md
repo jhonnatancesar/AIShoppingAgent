@@ -1,6 +1,6 @@
 # TASK-008 — Criar logging estruturado
 
-Status: Pendente
+Status: Concluída
 
 ## Objetivo
 
@@ -12,5 +12,5 @@ Executar somente o objetivo desta tarefa, conforme AGENTS.md, CLAUDE.md e a docu
 
 ## Critério de aceite
 
-Escopo concluído, documentado e verificado conforme os critérios da tarefa.
+Logging JSON configurável em `stdout` para aplicação e Uvicorn, com eventos HTTP contendo método, caminho, status e duração sem dados sensíveis. Contrato documentado, coberto por testes e validado no Docker Compose.
 

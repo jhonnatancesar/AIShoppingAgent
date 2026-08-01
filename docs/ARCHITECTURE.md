@@ -7,3 +7,5 @@ PostgreSQL será a fonte transacional. Serviços externos serão acessados por a
 A implementação atual contém o esqueleto FastAPI, configuração tipada e um módulo isolado de saúde. Os módulos de domínio permanecem pendentes e serão introduzidos somente pelas tarefas correspondentes.
 
 As interfaces HTTP seguem `docs/API_CONVENTIONS.md`. Endpoints de negócio serão versionados sob `/api/v1`; endpoints operacionais permanecem fora desse prefixo.
+
+Aplicação e servidor emitem logs JSON em `stdout` conforme `docs/LOGGING.md`, sem acoplamento a uma plataforma externa de observabilidade.

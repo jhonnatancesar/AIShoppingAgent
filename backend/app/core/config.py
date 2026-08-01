@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     app_name: str = "AIShoppingAgent"
     environment: Literal["development", "test", "production"] = "development"
     debug: bool = False
+    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
 
 
 @lru_cache

@@ -10,12 +10,14 @@ def test_settings_use_safe_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("AISHOPPING_APP_NAME", raising=False)
     monkeypatch.delenv("AISHOPPING_ENVIRONMENT", raising=False)
     monkeypatch.delenv("AISHOPPING_DEBUG", raising=False)
+    monkeypatch.delenv("AISHOPPING_LOG_LEVEL", raising=False)
 
     settings = Settings(_env_file=None)
 
     assert settings.app_name == "AIShoppingAgent"
     assert settings.environment == "development"
     assert settings.debug is False
+    assert settings.log_level == "INFO"
 
 
 def test_settings_read_prefixed_environment(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -23,12 +25,14 @@ def test_settings_read_prefixed_environment(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setenv("AISHOPPING_APP_NAME", "TestShoppingAgent")
     monkeypatch.setenv("AISHOPPING_ENVIRONMENT", "test")
     monkeypatch.setenv("AISHOPPING_DEBUG", "true")
+    monkeypatch.setenv("AISHOPPING_LOG_LEVEL", "DEBUG")
 
     settings = Settings(_env_file=None)
 
     assert settings.app_name == "TestShoppingAgent"
     assert settings.environment == "test"
     assert settings.debug is True
+    assert settings.log_level == "DEBUG"
 
 
 def test_settings_reject_invalid_environment(monkeypatch: pytest.MonkeyPatch) -> None:

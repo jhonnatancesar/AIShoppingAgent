@@ -9,6 +9,7 @@ services:
       AISHOPPING_APP_NAME: ${AISHOPPING_APP_NAME:-AIShoppingAgent}
       AISHOPPING_DEBUG: ${AISHOPPING_DEBUG:-false}
       AISHOPPING_ENVIRONMENT: ${AISHOPPING_ENVIRONMENT:-development}
+      AISHOPPING_LOG_LEVEL: ${AISHOPPING_LOG_LEVEL:-INFO}
     ports:
       - "${API_PORT:-8000}:8000"
     depends_on:

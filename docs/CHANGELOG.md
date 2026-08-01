@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-08-01 — TASK-008
+
+- Configurado logging JSON em `stdout` para a aplicação e os loggers do Uvicorn.
+- Adicionado nível configurável por `AISHOPPING_LOG_LEVEL`.
+- Criados eventos HTTP com método, caminho, status e duração, sem query string, corpo, cabeçalhos ou credenciais.
+- Adicionados testes do formatador e dos fluxos HTTP de sucesso e falha.
+- Validado o evento JSON real no ambiente Docker Compose.
+
 ## 2026-08-01 — TASK-007
 
 - Definidas convenções para versionamento, rotas, métodos, códigos HTTP, JSON, erros, coleções e OpenAPI.
