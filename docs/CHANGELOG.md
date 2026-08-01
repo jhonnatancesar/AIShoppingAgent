@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-08-01 — TASK-006
+
+- Criado módulo de saúde com `GET /health` e resposta estável `{"status":"ok"}`.
+- Alterado o healthcheck do contêiner da API para usar o endpoint de vivacidade.
+- Adicionados testes do contrato e do registro da rota no OpenAPI.
+- Validado o endpoint por HTTP no ambiente Docker Compose, com API e PostgreSQL saudáveis.
+
 ## 2026-08-01 — TASK-005
 
 - Configurado Pytest com descoberta explícita, validação estrita e cobertura mínima de 90%.

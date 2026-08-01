@@ -17,6 +17,12 @@ docker compose up --build
 
 A API ficará disponível em `http://localhost:8000` e o PostgreSQL em `localhost:5432`, salvo alteração das portas no `.env`. Para encerrar os contêineres sem apagar o volume do banco, execute `docker compose down`.
 
+Com a API em execução, verifique sua vivacidade em `http://localhost:8000/health`. A resposta esperada é:
+
+```json
+{"status":"ok"}
+```
+
 ## Qualidade de código
 
 Instale as dependências de desenvolvimento e execute as verificações a partir da raiz do projeto:

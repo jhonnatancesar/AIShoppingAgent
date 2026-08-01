@@ -1,6 +1,6 @@
 # TASK-006 — Criar módulo de saúde
 
-Status: Pendente
+Status: Concluída
 
 ## Objetivo
 
@@ -12,5 +12,5 @@ Executar somente o objetivo desta tarefa, conforme AGENTS.md, CLAUDE.md e a docu
 
 ## Critério de aceite
 
-Escopo concluído, documentado e verificado conforme os critérios da tarefa.
+Módulo de saúde expõe `GET /health` com resposta estável `{"status":"ok"}`, possui testes automatizados e é usado pelo healthcheck do contêiner da API. Endpoint validado localmente e por HTTP no Docker Compose.
 
