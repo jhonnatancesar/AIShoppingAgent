@@ -1,6 +1,6 @@
 # TASK-002 — Definir gestão de configuração
 
-Status: Pendente
+Status: Concluída
 
 ## Objetivo
 
@@ -12,5 +12,4 @@ Executar somente o objetivo desta tarefa, conforme AGENTS.md, CLAUDE.md e a docu
 
 ## Critério de aceite
 
-Escopo concluído, documentado e verificado conforme os critérios da tarefa.
-
+Configuração tipada e validada por variáveis de ambiente, com exemplo seguro e proteção para o arquivo local `.env`.

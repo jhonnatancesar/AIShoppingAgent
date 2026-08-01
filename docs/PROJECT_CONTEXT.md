@@ -2,12 +2,13 @@
 
 ## Estado
 
-Fase: base técnica inicial. TASK-001 concluída em 2026-08-01.
+Fase: base técnica inicial. TASK-002 concluída em 2026-08-01.
 
 ## O que existe
 
 - Estrutura de diretórios do projeto.
 - Esqueleto mínimo da aplicação FastAPI em `backend/app/`, com dependências declaradas em `backend/requirements.txt`.
+- Gestão de configuração tipada em `backend/app/core/config.py`, com variáveis de ambiente, exemplo local e arquivo `.env` ignorado pelo Git.
 - Documentos de visão, arquitetura, dados, módulos-alvo, escopo do MVP, backlog, itens fora de escopo, governança de decisões e workflow permanente de execução.
 - ADRs, RFCs e 56 tarefas planejadas.
 

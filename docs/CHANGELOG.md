@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-08-01 — TASK-002
+
+- Adicionada gestão tipada de configuração por variáveis de ambiente.
+- Criado exemplo seguro de configuração local e proteção para `backend/.env`.
+- Validada a configuração padrão, a leitura de ambiente e a rejeição de valores inválidos.
+
 ## 2026-08-01 — TASK-001
 
 - Criado o esqueleto mínimo da aplicação FastAPI.
