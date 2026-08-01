@@ -42,3 +42,5 @@ python -m ruff format .
 ```
 
 Os testes geram relatório de cobertura no terminal e exigem cobertura mínima de 90% do pacote `app`.
+
+As regras para novos endpoints estão em `docs/API_CONVENTIONS.md`. O contrato executável da aplicação pode ser consultado em `http://localhost:8000/openapi.json` quando a API estiver ativa.

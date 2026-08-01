@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-08-01 — TASK-007
+
+- Definidas convenções para versionamento, rotas, métodos, códigos HTTP, JSON, erros, coleções e OpenAPI.
+- Reservado `/api/v1` para endpoints de negócio e mantidos endpoints operacionais fora do prefixo.
+- Alinhado `GET /health` com `operation_id`, código, descrição e resposta explícitos no OpenAPI.
+- Validada a aderência do endpoint existente por testes automatizados.
+
 ## 2026-08-01 — TASK-006
 
 - Criado módulo de saúde com `GET /health` e resposta estável `{"status":"ok"}`.

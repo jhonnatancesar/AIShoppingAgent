@@ -14,4 +14,6 @@ def test_health_route_is_exposed_in_openapi() -> None:
     operation = app.openapi()["paths"]["/health"]["get"]
 
     assert operation["tags"] == ["health"]
-    assert operation["responses"]["200"]["description"] == "Successful Response"
+    assert operation["operationId"] == "get_health"
+    assert operation["summary"] == "Verificar saúde"
+    assert operation["responses"]["200"]["description"] == "Aplicação disponível."
