@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-08-01 — TASK-001
+
+- Criado o esqueleto mínimo da aplicação FastAPI.
+- Declaradas as dependências FastAPI e Uvicorn.
+- Validada a compilação, a integridade das dependências e a inicialização da aplicação.
+
 ## 2026-08-01 — Documentação
 
 - Registrada a fase futura Marketplace Module para suporte a marketplaces.

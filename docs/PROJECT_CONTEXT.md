@@ -2,17 +2,18 @@
 
 ## Estado
 
-Fase: fundação documental. TASK-000 concluída em 2026-08-01.
+Fase: base técnica inicial. TASK-001 concluída em 2026-08-01.
 
 ## O que existe
 
 - Estrutura de diretórios do projeto.
+- Esqueleto mínimo da aplicação FastAPI em `backend/app/`, com dependências declaradas em `backend/requirements.txt`.
 - Documentos de visão, arquitetura, dados, módulos-alvo, escopo do MVP, backlog, itens fora de escopo, governança de decisões e workflow permanente de execução.
 - ADRs, RFCs e 56 tarefas planejadas.
 
 ## O que não existe
 
-Não há aplicação FastAPI, banco de dados, contêineres, integrações, automações, testes funcionais nem credenciais configuradas.
+Não há banco de dados, contêineres, integrações, automações, testes funcionais nem credenciais configuradas.
 
 ## Invariantes
 

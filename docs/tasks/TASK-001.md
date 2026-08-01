@@ -1,6 +1,6 @@
 # TASK-001 — Inicializar projeto FastAPI
 
-Status: Pendente
+Status: Concluída
 
 ## Objetivo
 
@@ -12,5 +12,4 @@ Executar somente o objetivo desta tarefa, conforme AGENTS.md, CLAUDE.md e a docu
 
 ## Critério de aceite
 
-Escopo concluído, documentado e verificado conforme os critérios da tarefa.
-
+Esqueleto mínimo da aplicação FastAPI criado, com dependências declaradas e inicialização validada.
