@@ -7,7 +7,7 @@ Fase: fundação documental. TASK-000 concluída em 2026-08-01.
 ## O que existe
 
 - Estrutura de diretórios do projeto.
-- Documentos de visão, arquitetura, dados, módulos-alvo, escopo do MVP, backlog, itens fora de escopo e governança de decisões.
+- Documentos de visão, arquitetura, dados, módulos-alvo, escopo do MVP, backlog, itens fora de escopo, governança de decisões e workflow permanente de execução.
 - ADRs, RFCs e 56 tarefas planejadas.
 
 ## O que não existe
@@ -25,3 +25,4 @@ Não há aplicação FastAPI, banco de dados, contêineres, integrações, autom
 - `docs/MVP.md` é a definição completa do escopo da V1; `docs/OUT_OF_SCOPE.md` previne aumento de escopo e `docs/BACKLOG.md` registra evoluções futuras.
 - `docs/DECISION_LOG.md` registra decisões arquiteturais e funcionais; toda nova funcionalidade deve ser analisada e classificada antes de qualquer implementação.
 - A TASK-055 planeja o primeiro Store Provider nacional, usando a Kabum como prova de conceito da arquitetura de coleta.
+- O workflow oficial de execução de TASKs está definido em `AGENTS.md` e deve ser seguido automaticamente em todas as conversas futuras.

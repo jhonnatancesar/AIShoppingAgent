@@ -34,3 +34,11 @@ Após a classificação, registrar a decisão neste arquivo e atualizar a docume
 - **Classificação:** Implementar agora
 - **Justificativa:** a política protege o escopo definido em `docs/MVP.md`, evita aumento de complexidade não planejado e cria rastreabilidade para decisões futuras.
 - **Próxima ação:** aplicar a política no `AGENTS.md`; registrar ideias futuras em `docs/BACKLOG.md`, `docs/OUT_OF_SCOPE.md` ou no roadmap conforme sua classificação.
+
+### DEC-002 — Instituir workflow permanente de execução de TASKs
+
+- **Data:** 2026-08-01
+- **Ideia:** padronizar preparação, validação, implementação, testes, revisão, documentação, commit e push para toda TASK.
+- **Classificação:** Implementar agora
+- **Justificativa:** o workflow preserva o escopo do MVP, aumenta a rastreabilidade das entregas e garante que código, documentação e repositório permaneçam sincronizados.
+- **Próxima ação:** aplicar automaticamente o workflow definido em `AGENTS.md` a toda TASK futura; solicitar autorização explícita antes de cada push.
