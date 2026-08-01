@@ -6,7 +6,6 @@ from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-
 BACKEND_DIRECTORY = Path(__file__).resolve().parents[2]
 
 

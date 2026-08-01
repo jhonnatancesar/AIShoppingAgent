@@ -2,7 +2,7 @@
 
 ## Estado
 
-Fase: base técnica inicial. TASK-003 concluída em 2026-08-01.
+Fase: base técnica inicial. TASK-004 concluída em 2026-08-01.
 
 ## O que existe
 
@@ -12,6 +12,7 @@ Fase: base técnica inicial. TASK-003 concluída em 2026-08-01.
 - Inventário de dependências e procedimento de preparação de novas máquinas em `docs/DEPENDENCIES.md`.
 - Política de uso da versão estável mais recente do Python; Python 3.14.3 é a versão atualmente validada.
 - Ambiente Docker Compose com contêineres FastAPI e PostgreSQL 18, volume persistente e configuração local protegida.
+- Qualidade de código configurada com Ruff para lint, imports, modernização Python 3.14 e formatação.
 - Documentos de visão, arquitetura, dados, módulos-alvo, escopo do MVP, backlog, itens fora de escopo, governança de decisões e workflow permanente de execução.
 - ADRs, RFCs e 56 tarefas planejadas.
 

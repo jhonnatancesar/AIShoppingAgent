@@ -31,9 +31,23 @@ python -m pip install -r backend/requirements.txt
 python -m pip check
 ```
 
+## Dependências de desenvolvimento
+
+A fonte de verdade para ferramentas usadas somente no desenvolvimento é `backend/requirements-dev.txt`. Esse arquivo inclui as dependências da aplicação e acrescenta:
+
+- `ruff>=0.16,<0.17`
+
+Após autorização para instalação, validar lint e formatação a partir da raiz:
+
+```powershell
+python -m pip install -r backend/requirements-dev.txt
+python -m ruff check .
+python -m ruff format --check .
+```
+
 ## Configuração local
 
 - Copiar `.env.example` para `.env`, definir uma senha local para o PostgreSQL e nunca versionar esse arquivo.
 - Copiar `backend/.env.example` para `backend/.env` quando for necessário configurar valores locais.
 - Nunca versionar `.env`, `backend/.env`, credenciais, ambientes virtuais, cache ou imagens Docker.
-- Atualizar este documento e `backend/requirements.txt` quando uma TASK introduzir uma dependência nova ou alterar uma versão suportada.
+- Atualizar este documento e o arquivo de requisitos correspondente quando uma TASK introduzir uma dependência nova ou alterar uma versão suportada.

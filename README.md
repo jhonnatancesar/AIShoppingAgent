@@ -16,3 +16,20 @@ docker compose up --build
 ```
 
 A API ficará disponível em `http://localhost:8000` e o PostgreSQL em `localhost:5432`, salvo alteração das portas no `.env`. Para encerrar os contêineres sem apagar o volume do banco, execute `docker compose down`.
+
+## Qualidade de código
+
+Instale as dependências de desenvolvimento e execute as verificações a partir da raiz do projeto:
+
+```powershell
+python -m pip install -r backend/requirements-dev.txt
+python -m ruff check .
+python -m ruff format --check .
+```
+
+Para aplicar automaticamente correções seguras e formatação:
+
+```powershell
+python -m ruff check . --fix
+python -m ruff format .
+```

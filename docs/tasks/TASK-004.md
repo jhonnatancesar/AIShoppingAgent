@@ -1,6 +1,6 @@
 # TASK-004 — Configurar qualidade de código
 
-Status: Pendente
+Status: Concluída
 
 ## Objetivo
 
@@ -12,5 +12,5 @@ Executar somente o objetivo desta tarefa, conforme AGENTS.md, CLAUDE.md e a docu
 
 ## Critério de aceite
 
-Escopo concluído, documentado e verificado conforme os critérios da tarefa.
+Ruff configurado para lint, ordenação de imports, modernização compatível com Python 3.14 e formatação. Dependência de desenvolvimento e comandos de verificação documentados; código existente aprovado em todas as verificações.
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-08-01 — TASK-004
+
+- Configurado Ruff para lint, ordenação de imports, modernização compatível com Python 3.14 e formatação.
+- Separadas as dependências de desenvolvimento das dependências de runtime.
+- Documentados comandos de verificação e correção automática.
+- Corrigido o espaçamento dos blocos de importação existentes e validada toda a base atual.
+
 ## 2026-08-01 — TASK-003
 
 - Criados Dockerfile da aplicação e Docker Compose para FastAPI e PostgreSQL 18.
