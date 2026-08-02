@@ -2,7 +2,7 @@
 
 ## Estado
 
-Fase: ciclo de vida de missões definido. TASK-018 concluída em 2026-08-02.
+Fase: modelo de dados definido. TASK-010 concluída em 2026-08-02.
 
 ## O que existe
 
@@ -19,12 +19,13 @@ Fase: ciclo de vida de missões definido. TASK-018 concluída em 2026-08-02.
 - Logging JSON em `stdout`, com nível configurável e eventos HTTP sem captura de dados sensíveis.
 - Pipeline local único para dependências, lint, formatação, testes, cobertura e validação do Docker Compose.
 - Contrato de ciclo de vida de missões com estados, comandos, transições, invariantes e auditoria mínima definidos antes do modelo persistente.
+- Modelo relacional PostgreSQL do MVP definido com entidades, tipos, relações, restrições, índices e regras de preservação histórica.
 - Documentos de visão, arquitetura, dados, módulos-alvo, escopo do MVP, backlog, itens fora de escopo, governança de decisões e workflow permanente de execução.
 - ADRs, RFCs e 56 tarefas planejadas.
 
 ## O que não existe
 
-Não há modelo ou integração de banco de dados, automações, integrações externas, testes de integração ou ponta a ponta nem credenciais reais configuradas.
+Não há tabelas, migrações, ORM ou integração de banco de dados implementados, automações, integrações externas, testes de integração ou ponta a ponta nem credenciais reais configuradas.
 
 ## Invariantes
 
@@ -41,3 +42,4 @@ Não há modelo ou integração de banco de dados, automações, integrações e
 - Antes de iniciar uma TASK em uma máquina nova, as dependências devem ser comparadas com `docs/DEPENDENCIES.md`; instalações exigem autorização explícita.
 - O projeto acompanha a versão estável mais recente do Python e exige nova validação de compatibilidade a cada atualização.
 - O ciclo de vida definido em `docs/MISSION_SYSTEM.md` é entrada obrigatória para o modelo de dados da TASK-010; sua execução será implementada apenas na TASK-021.
+- `docs/DATABASE.md` é o contrato do modelo relacional; a TASK-011 deve preparar sua evolução por migrações antes da implementação das entidades.

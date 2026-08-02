@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-08-02 — TASK-010
+
+- Definido o esquema relacional PostgreSQL para usuários, missões, critérios, transições, produtos, lojas, ofertas, coletas, preços, eventos e auditoria.
+- Especificados tipos, chaves, relações, nulabilidade, unicidade, índices mínimos e regras monetárias e temporais.
+- Incorporado o ciclo de vida da TASK-018 com estado atual, versão concorrente e histórico imutável de transições.
+- Preservado o histórico de preços por observações anexadas, sem atualização destrutiva ou deduplicação de coletas repetidas.
+- Delimitadas migrações, ORM e implementação persistente para as TASKs 011 a 017.
+
 ## 2026-08-02 — TASK-018
 
 - Definidos os estados `draft`, `active`, `paused`, `completed`, `cancelled` e `expired` para missões.

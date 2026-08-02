@@ -1,6 +1,6 @@
 # TASK-010 — Definir modelo de dados
 
-Status: Pendente
+Status: Concluída
 
 ## Objetivo
 
@@ -16,4 +16,4 @@ Executar após a TASK-018, para que o modelo persistente de missões incorpore o
 
 ## Critério de aceite
 
-Escopo concluído, documentado e verificado conforme os critérios da tarefa.
+Esquema relacional do MVP definido com entidades, tipos PostgreSQL, relações, chaves, restrições, índices mínimos e regras de consistência e histórico, incorporando o ciclo de vida de missões sem antecipar migrações ou persistência.
