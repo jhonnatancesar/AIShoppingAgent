@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-08-02 — Processo de validação
+
+- Registrada autorização permanente para baixar e instalar dependências necessárias à execução e à validação real do projeto.
+- Tornados obrigatórios testes reais e isolados de integração quando a mudança envolver banco de dados, contêiner, API ou outra infraestrutura; validação estática, mocks e testes unitários permanecem complementares.
+
 ## 2026-08-02 — TASK-020
 
 - Criado o modelo SQLAlchemy `MissionCriteria`, limitado a um registro editável por missão.

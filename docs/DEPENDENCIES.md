@@ -1,6 +1,6 @@
 # Dependências de Desenvolvimento
 
-Este documento é a referência de ambiente para qualquer nova máquina. Antes de iniciar uma TASK, o agente deve lê-lo, comparar os requisitos com a máquina atual e instalar somente o que estiver ausente ou incompatível, sempre solicitando autorização antes de baixar ou instalar algo.
+Este documento é a referência de ambiente para qualquer nova máquina. Antes de iniciar uma TASK, o agente deve lê-lo, comparar os requisitos com a máquina atual e instalar somente o que estiver ausente ou incompatível. O usuário já concedeu autorização permanente para os downloads e instalações necessários à execução e à validação real do projeto, sem dispensar confirmações obrigatórias do sistema operacional nem os cuidados de segurança e isolamento definidos em `AGENTS.md`.
 
 ## Ferramentas locais
 

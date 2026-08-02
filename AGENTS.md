@@ -48,7 +48,7 @@ Antes de qualquer alteração, ler integralmente:
 - `docs/DEPENDENCIES.md`
 - o arquivo da TASK solicitada em `docs/tasks/`
 
-Em uma nova máquina, comparar também as dependências descritas em `docs/DEPENDENCIES.md` com o ambiente disponível. Instalar somente dependências ausentes ou incompatíveis, sempre após autorização explícita para downloads ou instalações.
+Em uma nova máquina, comparar também as dependências descritas em `docs/DEPENDENCIES.md` com o ambiente disponível. Instalar somente dependências ausentes ou incompatíveis. O usuário concede autorização permanente para baixar e instalar o que for necessário para executar e validar o projeto; ainda devem ser respeitadas confirmações obrigatórias do sistema operacional, segurança, licenças e o princípio do menor impacto.
 
 ### 2. Validação
 
@@ -61,6 +61,10 @@ Quando a validação estiver aprovada, implementar somente a TASK solicitada. N�
 ### 4. Testes
 
 Após a implementação, executar todos os testes aplicáveis. Corrigir automaticamente as falhas encontradas dentro do escopo da TASK e repetir os testes até que sejam aprovados.
+
+Testes unitários, mocks, análise estática, SQL offline e validadores de código não substituem testes reais de integração. Quando a TASK envolver banco de dados, contêiner, API, fila, serviço externo ou outra infraestrutura, preparar um ambiente real e isolado, baixar ou instalar as ferramentas necessárias e validar nele o fluxo implementado, incluindo os principais casos de sucesso, falha e reversão aplicáveis. Se uma validação real for tecnicamente impossível mesmo após esgotar as alternativas seguras, registrar exatamente o impedimento e nunca apresentar a TASK como plenamente validada.
+
+Ambientes temporários de teste devem usar nomes, portas, credenciais e volumes isolados, sem alterar ou apagar dados reais do usuário, e devem ser encerrados e limpos após a validação. A validação real complementa, e não elimina, a execução da suíte automatizada.
 
 ### 5. Revisão técnica
 
