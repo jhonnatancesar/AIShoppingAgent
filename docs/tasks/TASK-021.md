@@ -1,16 +1,20 @@
 # TASK-021 — Criar transições de missão
 
-Status: Pendente
+Status: Concluída em 2026-08-02
 
 ## Objetivo
 
-Planejar e executar, quando solicitada, a etapa “Criar transições de missão”.
+Implementar a execução persistente e atômica das transições de missão definidas na TASK-018.
 
 ## Escopo
 
-Executar somente o objetivo desta tarefa, conforme AGENTS.md, CLAUDE.md e a documentação em docs/.
+- Histórico append-only com estado anterior, novo estado, comando, ator, motivo e instante.
+- Serviço transacional com validação do estado atual, critérios, prazo e versão concorrente.
+- Atualização atômica de `status`, `state_version`, `updated_at` e histórico.
+- Migration reversível, testes e documentação, sem API, agenda, coleta ou eventos.
 
 ## Critério de aceite
 
-Escopo concluído, documentado e verificado conforme os critérios da tarefa.
+Ciclo de vida executável conforme `docs/MISSION_SYSTEM.md`, histórico imutável,
+concorrência protegida e migration validada em PostgreSQL real.
 

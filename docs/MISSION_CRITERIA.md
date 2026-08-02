@@ -19,10 +19,10 @@ como `BRL`.
 
 ## Ativação e edição
 
-Uma missão em `draft` pode existir sem critérios. A futura ativação deve exigir
-um registro válido, mas essa validação e a mudança atômica de estado pertencem à
-TASK-021. Critérios continuam editáveis e `updated_at` não substitui a futura
-auditoria das ações relevantes.
+Uma missão em `draft` pode existir sem critérios. A ativação e a retomada exigem
+um registro válido; essa validação e a mudança atômica de estado foram
+implementadas na TASK-021. Critérios continuam editáveis e `updated_at` não
+substitui a auditoria das ações relevantes.
 
 ## Limites
 

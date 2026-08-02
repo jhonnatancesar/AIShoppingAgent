@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-08-02 — TASK-021
+
+- Criados `MissionTransition`, o vocabulário tipado `MissionCommand` e a revisão reversível `20260802_0008` com histórico append-only.
+- Implementados todos os comandos e estados definidos na TASK-018, com validação de critérios, prazo e estados terminais.
+- Tornadas atômicas a alteração de estado, a progressão de `state_version` e a inclusão do histórico, usando bloqueio da linha e versão esperada para concorrência.
+- Validada em PostgreSQL 18 a cadeia de migration, o ciclo real completo, constraints, imutabilidade, conflito de versão, concorrência com uma única vencedora, downgrade e novo upgrade.
+- Ampliada a suíte para 69 testes aprovados e 99,67% de cobertura.
+
 ## 2026-08-02 — Processo de validação
 
 - Registrada autorização permanente para baixar e instalar dependências necessárias à execução e à validação real do projeto.

@@ -37,6 +37,17 @@ class MissionStatus(StrEnum):
     EXPIRED = "expired"
 
 
+class MissionCommand(StrEnum):
+    """Comandos aceitos pelo ciclo de vida da missão."""
+
+    ACTIVATE = "activate"
+    PAUSE = "pause"
+    RESUME = "resume"
+    COMPLETE = "complete"
+    CANCEL = "cancel"
+    EXPIRE = "expire"
+
+
 class Mission(Base):
     """Intenção de compra e fonte de verdade para seu estado atual."""
 
@@ -167,5 +178,85 @@ class MissionCriteria(Base):
         nullable=False,
         default=utc_now,
         onupdate=utc_now,
+        server_default=func.now(),
+    )
+
+
+class MissionTransition(Base):
+    """Fato imutável que registra uma mudança aceita de estado."""
+
+    __tablename__ = "mission_transitions"
+    __table_args__ = (
+        CheckConstraint(
+            "from_status <> to_status",
+            name="ck_mission_transitions_status_changed",
+        ),
+        CheckConstraint(
+            "btrim(actor_type) <> ''",
+            name="ck_mission_transitions_actor_type_not_blank",
+        ),
+        CheckConstraint(
+            "reason IS NULL OR btrim(reason) <> ''",
+            name="ck_mission_transitions_reason_not_blank",
+        ),
+        Index(
+            "ix_mission_transitions_history",
+            "mission_id",
+            "transitioned_at",
+            "id",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4
+    )
+    mission_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("missions.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    from_status: Mapped[MissionStatus] = mapped_column(
+        Enum(
+            MissionStatus,
+            name="mission_status",
+            values_callable=lambda statuses: [status.value for status in statuses],
+            validate_strings=True,
+            create_constraint=False,
+        ),
+        nullable=False,
+    )
+    to_status: Mapped[MissionStatus] = mapped_column(
+        Enum(
+            MissionStatus,
+            name="mission_status",
+            values_callable=lambda statuses: [status.value for status in statuses],
+            validate_strings=True,
+            create_constraint=False,
+        ),
+        nullable=False,
+    )
+    command: Mapped[MissionCommand] = mapped_column(
+        Enum(
+            MissionCommand,
+            name="mission_command_values",
+            values_callable=lambda commands: [command.value for command in commands],
+            validate_strings=True,
+            native_enum=False,
+            create_constraint=True,
+            length=32,
+        ),
+        nullable=False,
+    )
+    actor_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    actor_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    transitioned_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
         server_default=func.now(),
     )

@@ -26,7 +26,6 @@ com prazo e estado não terminal, apoiando a futura verificação de expiração
 
 ## Limites
 
-A TASK-019 não implementa comandos ou mudanças de estado. A validação atômica,
-o incremento de `state_version` e o histórico imutável pertencem à TASK-021.
-Critérios pertencem à TASK-020; agenda, coleta, API, eventos e alertas permanecem
-nas respectivas tarefas.
+Comandos e mudanças de estado foram implementados na TASK-021, conforme
+`docs/MISSION_TRANSITIONS.md`. Critérios pertencem à TASK-020; agenda, coleta,
+API, eventos e alertas permanecem nas respectivas tarefas.

@@ -2,7 +2,7 @@
 
 ## Estado
 
-Fase: missões e coleta em implementação. TASK-020 concluída em 2026-08-02.
+Fase: missões e coleta em implementação. TASK-021 concluída em 2026-08-02.
 
 ## O que existe
 
@@ -27,12 +27,13 @@ Fase: missões e coleta em implementação. TASK-020 concluída em 2026-08-02.
 - Entidade `AuditEntry` persistente e append-only, com JSONB sanitizado, referência opcional de ator e índices históricos.
 - Entidade `Mission` persistente com proprietário, seis estados, prazo opcional, versão concorrente e índices operacionais.
 - Entidade `MissionCriteria` persistente com busca obrigatória e preço-alvo monetário opcional, única por missão.
+- Entidade `MissionTransition` append-only e serviço atômico para executar o ciclo de vida com critérios, prazo e concorrência protegidos.
 - Documentos de visão, arquitetura, dados, módulos-alvo, escopo do MVP, backlog, itens fora de escopo, governança de decisões e workflow permanente de execução.
 - ADRs, RFCs e 56 tarefas planejadas.
 
 ## O que não existe
 
-Além de `users`, `products`, `stores`, `offers`, `audit_entries`, `missions` e `mission_criteria`, não há outras tabelas de domínio nem repositórios implementados. Também não existem transições persistentes, autenticação, autorização, APIs de negócio, instrumentação automática de auditoria, automações, Store Providers, integrações externas, testes de integração ou ponta a ponta nem credenciais reais configuradas.
+Além de `users`, `products`, `stores`, `offers`, `audit_entries`, `missions`, `mission_criteria` e `mission_transitions`, não há outras tabelas de domínio nem repositórios implementados. Também não existem autenticação, autorização, APIs de negócio, instrumentação automática de auditoria, automações, Store Providers, integrações externas, suíte permanente de testes de integração ou ponta a ponta nem credenciais reais configuradas.
 
 ## Invariantes
 
@@ -46,14 +47,14 @@ Além de `users`, `products`, `stores`, `offers`, `audit_entries`, `missions` e 
 - `docs/DECISION_LOG.md` registra decisões arquiteturais e funcionais; toda nova funcionalidade deve ser analisada e classificada antes de qualquer implementação.
 - A TASK-055 planeja o primeiro Store Provider nacional, usando a Kabum como prova de conceito da arquitetura de coleta.
 - O workflow oficial de execução de TASKs está definido em `AGENTS.md` e deve ser seguido automaticamente em todas as conversas futuras.
-- Antes de iniciar uma TASK em uma máquina nova, as dependências devem ser comparadas com `docs/DEPENDENCIES.md`; instalações exigem autorização explícita.
+- Antes de iniciar uma TASK em uma máquina nova, as dependências devem ser comparadas com `docs/DEPENDENCIES.md`; existe autorização permanente para instalar o necessário à execução e à validação real, respeitando as confirmações e proteções do sistema.
 - O projeto acompanha a versão estável mais recente do Python e exige nova validação de compatibilidade a cada atualização.
-- O ciclo de vida definido em `docs/MISSION_SYSTEM.md` é entrada obrigatória para o modelo de dados da TASK-010; sua execução será implementada apenas na TASK-021.
+- O ciclo de vida definido em `docs/MISSION_SYSTEM.md` orienta o modelo de dados da TASK-010 e sua execução atômica implementada na TASK-021.
 - `docs/DATABASE.md` é o contrato do modelo relacional; a TASK-011 deve preparar sua evolução por migrações antes da implementação das entidades.
 - Toda alteração persistente deve usar a metadata compartilhada e receber uma revisão Alembic revisada; credenciais de banco não possuem padrão inseguro.
 - Usuários aceitam somente os papéis `USER`, `ADMIN` e `DEV`; `PLUS` permanece fora do MVP, e `is_active` não substitui as regras futuras de autenticação e autorização.
 - Produtos são identidades canônicas independentes de loja; nomes não são únicos e nenhuma deduplicação automática ocorre sem evidência suficiente.
 - Ofertas identificam anúncios estáveis por loja e nunca armazenam preço ou disponibilidade corrente; lojas persistentes não implementam providers de coleta.
 - Auditoria é append-only; correções geram novas entradas, e metadata nunca contém segredos ou dados pessoais desnecessários.
-- Missões nascem em `draft`; alterações de estado e de `state_version` só serão implementadas atomicamente na TASK-021.
+- Missões nascem em `draft`; alterações de estado e de `state_version` são executadas atomicamente com histórico append-only e versão concorrente.
 - Critérios usam busca textual e preço-alvo opcional pareado com moeda; recorrência permanece separada na TASK-022.

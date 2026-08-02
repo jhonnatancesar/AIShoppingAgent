@@ -72,7 +72,7 @@ Quando presente, `expires_at` deve ser posterior a `created_at`. Uma missão em 
 
 Esta entidade foi implementada na TASK-019 pela revisão `20260802_0006`. O
 contrato persistente e seus limites estão em `docs/MISSIONS.md`; comandos e
-transições permanecem na TASK-021.
+transições foram implementadas na TASK-021.
 
 ### `mission_criteria`
 
@@ -110,6 +110,10 @@ Histórico imutável do ciclo de vida.
 | `transitioned_at` | `timestamptz` | Obrigatório. |
 
 A atualização de `missions.status` e `state_version` e a inserção da transição deverão ocorrer na mesma transação. Registros desta tabela não são atualizados nem removidos.
+
+Esta entidade e a execução atômica do ciclo de vida foram implementadas na
+TASK-021 pela revisão `20260802_0008`. O contrato operacional está em
+`docs/MISSION_TRANSITIONS.md`.
 
 ### `products`
 
@@ -254,4 +258,4 @@ em `docs/AUDIT.md`.
 - Resultados históricos usam ordenação composta por horário e `id`, evitando ambiguidade quando dois registros tiverem o mesmo instante.
 - `updated_at` não é evidência de domínio; transições, preços, eventos e auditoria possuem seus próprios horários imutáveis.
 - O modelo não armazena credenciais, tokens, conteúdo integral de páginas ou dados pessoais desnecessários.
-- Migrações, metadata ORM, sessões e conexão foram configuradas na TASK-011. `users`, `products`, `stores`, `offers`, `audit_entries`, `missions` e `mission_criteria` já foram implementados. Observações de preço ocorrem na TASK-015 após a persistência de coletas da TASK-026; consultas históricas permanecem na TASK-017.
+- Migrações, metadata ORM, sessões e conexão foram configuradas na TASK-011. `users`, `products`, `stores`, `offers`, `audit_entries`, `missions`, `mission_criteria` e `mission_transitions` já foram implementados. Observações de preço ocorrem na TASK-015 após a persistência de coletas da TASK-026; consultas históricas permanecem na TASK-017.

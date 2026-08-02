@@ -56,7 +56,7 @@ O modelo de dados da TASK-010 deve permitir que cada mudança registre, no míni
 - origem ou ator responsável;
 - motivo opcional, sem dados sensíveis.
 
-O estado atual pertence à missão, enquanto o histórico de transições é anexado e imutável. Os nomes físicos, tipos, chaves e índices serão definidos na TASK-010; a auditoria geral será aprofundada na TASK-016, e a execução dos comandos e transições pertence à TASK-021.
+O estado atual pertence à missão, enquanto o histórico de transições é anexado e imutável. Os nomes físicos, tipos, chaves e índices foram definidos na TASK-010; a auditoria geral foi aprofundada na TASK-016, e a execução dos comandos e transições foi implementada na TASK-021.
 
 ## Limites desta definição
 
