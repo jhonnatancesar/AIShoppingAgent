@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-08-02 — Segurança do ambiente Python
+
+- Restringido o ambiente do projeto à instalação oficial do Python da máquina, com assinatura digital válida.
+- Proibidos instalação de dependências e testes em runtimes internos do Codex, plugins, caches ou ferramentas hospedeiras.
+- Definido que alertas do antivírus interrompem a execução e não autorizam restauração ou exceções automáticas.
+
 ## 2026-08-02 — TASK-023
 
 - Criada a fronteira assíncrona entre orquestração e Store Providers, sem antecipar navegador ou providers concretos.

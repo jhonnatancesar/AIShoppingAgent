@@ -16,6 +16,8 @@ PostgreSQL não exige instalação direta na máquina: o ambiente local usa a im
 
 O projeto acompanha a versão estável mais recente do Python, sem permanecer fixado em uma série menor antiga. Em cada nova máquina ou nova versão estável, a compatibilidade das dependências deve ser validada com `python -m pip check` e com os testes aplicáveis antes do uso. A versão informada na tabela é a mais recente efetivamente validada pelo projeto e deve ser atualizada após cada validação.
 
+O Python usado deve ser a instalação oficial da máquina, identificada pelo caminho do executável e por assinatura digital válida da Python Software Foundation. Runtimes internos do Codex, plugins, caches ou outras ferramentas hospedeiras não pertencem ao ambiente do projeto e não podem receber dependências nem executar suas validações. Alertas do antivírus devem interromper a execução; objetos detectados não são restaurados nem adicionados a exceções sem investigação e autorização explícita.
+
 ## Dependências da aplicação
 
 A fonte de verdade para dependências Python é `backend/requirements.txt`:

@@ -50,6 +50,8 @@ Antes de qualquer alteração, ler integralmente:
 
 Em uma nova máquina, comparar também as dependências descritas em `docs/DEPENDENCIES.md` com o ambiente disponível. Instalar somente dependências ausentes ou incompatíveis. O usuário concede autorização permanente para baixar e instalar o que for necessário para executar e validar o projeto; ainda devem ser respeitadas confirmações obrigatórias do sistema operacional, segurança, licenças e o princípio do menor impacto.
 
+Use exclusivamente a instalação oficial do Python da máquina para instalar dependências e executar o projeto. Nunca instale pacotes nem execute validações com runtimes Python internos do Codex, de plugins, caches ou de outras ferramentas hospedeiras. Qualquer alerta do antivírus interrompe imediatamente a execução; o objeto não deve ser restaurado nem incluído em exceções sem investigação e autorização explícita.
+
 ### 2. Validação
 
 Antes de escrever código, verificar se a TASK é consistente com a arquitetura, pertence ao MVP, possui dependências satisfeitas e não conflita com outras TASKs. Havendo qualquer inconsistência, interromper a implementação, explicar o problema e propor a correção.
