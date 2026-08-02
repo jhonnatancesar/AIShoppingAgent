@@ -1,6 +1,6 @@
 # TASK-012 — Criar usuários
 
-Status: Pendente
+Status: Concluída
 
 ## Objetivo
 
@@ -12,5 +12,5 @@ Executar somente o objetivo desta tarefa, conforme AGENTS.md, CLAUDE.md e a docu
 
 ## Critério de aceite
 
-Escopo concluído, documentado e verificado conforme os critérios da tarefa.
+Modelo SQLAlchemy de usuário e papéis `USER`, `ADMIN` e `DEV` registrado na metadata compartilhada, com restrições e migração reversível validadas em PostgreSQL 18, sem antecipar autenticação, autorização, canais ou API.
 

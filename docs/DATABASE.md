@@ -49,6 +49,8 @@ Identidade interna usada como proprietária de missões e como ator auditável.
 
 Credenciais e identificadores do Telegram não pertencem a esta tabela nesta fase; autenticação e adaptação de canal serão definidas em tarefas próprias.
 
+Esta entidade foi implementada na TASK-012 pela revisão `20260802_0002`. Seu contrato funcional e limites estão em `docs/USERS.md`.
+
 ### `missions`
 
 Intenção persistente de compra e fonte de verdade para seu estado atual.

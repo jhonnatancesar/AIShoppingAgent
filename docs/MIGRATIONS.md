@@ -58,6 +58,9 @@ Regras permanentes:
 - nenhuma revisão remove histórico de preços, transições, eventos ou auditoria sem política explícita aprovada;
 - deve existir uma única cabeça linear, salvo decisão arquitetural registrada.
 
-## Baseline atual
+## Revisões atuais
 
-`20260802_0001` é uma baseline vazia. Ela valida a infraestrutura e cria apenas o controle interno `alembic_version`; as tabelas do modelo serão introduzidas pelas TASKs 012 a 016.
+- `20260802_0001`: baseline vazia que valida a infraestrutura e cria apenas o controle interno `alembic_version`;
+- `20260802_0002`: cria a tabela `users` e suas restrições.
+
+As demais tabelas do modelo serão introduzidas pelas TASKs 013 a 016.

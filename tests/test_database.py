@@ -54,6 +54,6 @@ def test_engine_and_session_factory_are_built_without_connecting() -> None:
     engine.dispose()
 
 
-def test_metadata_starts_empty() -> None:
-    """A TASK-011 não deve antecipar tabelas das próximas tarefas."""
-    assert not Base.metadata.tables
+def test_metadata_contains_only_implemented_tables() -> None:
+    """A metadata não deve antecipar tabelas de tarefas futuras."""
+    assert set(Base.metadata.tables) == {"users"}

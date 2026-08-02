@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-08-02 — TASK-012
+
+- Criados o modelo SQLAlchemy `User` e o vocabulário tipado `UserRole` com `USER`, `ADMIN` e `DEV`.
+- Adicionadas restrições para nome não vazio e papel válido, UUID gerado pela aplicação, ativação lógica e timestamps UTC.
+- Criado registro central de modelos para manter a metadata do Alembic sincronizada.
+- Adicionada a revisão reversível `20260802_0002` para a tabela `users`, sem credenciais, canais, API ou autorização.
+- Validada em PostgreSQL 18 a inserção válida, a rejeição de `PLUS` e nome em branco, o downgrade e o novo upgrade.
+- Ampliada a suíte para 20 testes aprovados e 99,17% de cobertura.
+
 ## 2026-08-02 — TASK-011
 
 - Instalados e declarados SQLAlchemy 2.0.51, Alembic 1.18.5 e Psycopg 3.3.4 com suporte a Python 3.14 e PostgreSQL 18.

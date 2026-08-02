@@ -4,6 +4,7 @@ from logging.config import fileConfig
 
 from alembic import context
 from app.database.base import Base
+from app.database.model_registry import REGISTERED_MODELS
 from app.database.session import build_database_url
 from sqlalchemy import engine_from_config, pool
 
@@ -14,6 +15,11 @@ if config.config_file_name is not None:
 
 database_url = build_database_url().render_as_string(hide_password=False)
 config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
+if not REGISTERED_MODELS or any(
+    model.metadata is not Base.metadata for model in REGISTERED_MODELS
+):
+    raise RuntimeError("Todos os modelos devem compartilhar a metadata declarativa.")
+
 target_metadata = Base.metadata
 
 
