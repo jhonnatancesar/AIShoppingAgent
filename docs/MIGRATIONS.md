@@ -65,7 +65,8 @@ Regras permanentes:
 - `20260802_0003`: cria a tabela `products` e suas restrições, sem unicidade artificial por nome;
 - `20260802_0004`: cria `stores` e `offers`, suas relações, restrições e índices de identidade;
 - `20260802_0005`: cria `audit_entries`, seus índices e a proteção append-only contra alteração e exclusão;
-- `20260802_0006`: cria o enum `mission_status`, a tabela `missions`, suas restrições e índices.
+- `20260802_0006`: cria o enum `mission_status`, a tabela `missions`, suas restrições e índices;
+- `20260802_0007`: cria `mission_criteria`, sua relação única com missões e as restrições monetárias.
 
 As demais tabelas do modelo serão introduzidas pelas TASKs de missões e coleta e,
 depois, pela TASK-015 conforme suas dependências explícitas.

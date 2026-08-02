@@ -63,4 +63,5 @@ def test_metadata_contains_only_implemented_tables() -> None:
         "offers",
         "audit_entries",
         "missions",
+        "mission_criteria",
     }

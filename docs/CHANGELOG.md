@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-08-02 — TASK-020
+
+- Criado o modelo SQLAlchemy `MissionCriteria`, limitado a um registro editável por missão.
+- Adicionados busca obrigatória e preço-alvo opcional em `numeric(19,4)` pareado com moeda ISO 4217.
+- Protegidos busca não vazia, valor não negativo, presença conjunta de valor e moeda e formato monetário por constraints.
+- Mantidas recorrência e frequência fora dos critérios e reservadas à agenda da TASK-022, sem JSONB especulativo.
+- Adicionada a revisão reversível `20260802_0007` e atualizado o registro central de modelos.
+- Validada em PostgreSQL 18 a cadeia completa até a revisão `20260802_0007`, incluindo inserção válida, constraints, unicidade, chave estrangeira, downgrade, novo upgrade e sincronização da metadata pelo Alembic.
+- Ampliada a suíte para 52 testes aprovados e 99,57% de cobertura.
+
 ## 2026-08-02 — TASK-019
 
 - Criados o modelo SQLAlchemy `Mission` e o enum PostgreSQL `mission_status` com os seis estados da TASK-018.

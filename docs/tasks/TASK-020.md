@@ -1,16 +1,21 @@
 # TASK-020 — Criar critérios de missão
 
-Status: Pendente
+Status: Concluída em 2026-08-02
 
 ## Objetivo
 
-Planejar e executar, quando solicitada, a etapa “Criar critérios de missão”.
+Criar os critérios persistentes e editáveis usados por uma missão de compra.
 
 ## Escopo
 
-Executar somente o objetivo desta tarefa, conforme AGENTS.md, CLAUDE.md e a documentação em docs/.
+- Modelo `MissionCriteria`, único por missão e protegido por `RESTRICT`.
+- Busca obrigatória e preço-alvo monetário opcional com moeda ISO 4217.
+- Restrições de coerência, migration reversível, testes e documentação.
+- Sem filtros especulativos, JSONB, recorrência, transições, agenda ou API.
 
 ## Critério de aceite
 
-Escopo concluído, documentado e verificado conforme os critérios da tarefa.
+Contrato persistente consistente, relação um-para-zero-ou-um protegida, valor e
+moeda coerentes, migration linear e reversível e testes aprovados sem antecipar
+responsabilidades das próximas tarefas.
 

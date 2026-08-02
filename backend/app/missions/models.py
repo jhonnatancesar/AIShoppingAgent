@@ -1,17 +1,21 @@
 """Modelo persistente de missões e seu vocabulário de estados."""
 
 from datetime import datetime
+from decimal import Decimal
 from enum import StrEnum
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
+    CHAR,
     BigInteger,
     CheckConstraint,
     DateTime,
     Enum,
     ForeignKey,
     Index,
+    Numeric,
     String,
+    Text,
     desc,
     func,
 )
@@ -96,6 +100,62 @@ class Mission(Base):
         default=0,
         server_default="0",
     )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+        onupdate=utc_now,
+        server_default=func.now(),
+    )
+
+
+class MissionCriteria(Base):
+    """Critérios editáveis de busca e preço-alvo de uma missão."""
+
+    __tablename__ = "mission_criteria"
+    __table_args__ = (
+        CheckConstraint(
+            "btrim(search_query) <> ''",
+            name="ck_mission_criteria_search_query_not_blank",
+        ),
+        CheckConstraint(
+            "target_amount IS NULL OR target_amount >= 0",
+            name="ck_mission_criteria_target_amount_non_negative",
+        ),
+        CheckConstraint(
+            "(target_amount IS NULL AND target_currency IS NULL) OR "
+            "(target_amount IS NOT NULL AND target_currency IS NOT NULL)",
+            name="ck_mission_criteria_target_pair",
+        ),
+        CheckConstraint(
+            "target_currency IS NULL OR target_currency ~ '^[A-Z]{3}$'",
+            name="ck_mission_criteria_currency_iso4217",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        primary_key=True,
+        default=uuid4,
+    )
+    mission_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("missions.id", ondelete="RESTRICT"),
+        nullable=False,
+        unique=True,
+    )
+    search_query: Mapped[str] = mapped_column(Text, nullable=False)
+    target_amount: Mapped[Decimal | None] = mapped_column(
+        Numeric(19, 4),
+        nullable=True,
+    )
+    target_currency: Mapped[str | None] = mapped_column(CHAR(3), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
