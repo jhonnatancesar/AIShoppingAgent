@@ -9,6 +9,7 @@ from app.collection import (
     PichauProvider,
     TerabyteProvider,
 )
+from scripts.validate_store_providers import should_use_headed
 
 NOW = datetime(2026, 8, 2, 12, tzinfo=UTC)
 
@@ -63,3 +64,14 @@ def test_builds_encoded_source_urls() -> None:
 def test_rejects_non_positive_limit() -> None:
     with pytest.raises(ValueError):
         KabumProvider(max_offers=0)
+
+
+def test_uses_headed_only_for_protected_sources_by_default() -> None:
+    assert should_use_headed("pichau") is True
+    assert should_use_headed("terabyte") is True
+    assert should_use_headed("amazon") is False
+    assert should_use_headed("kabum") is False
+    assert should_use_headed("pichau", force_headless=True) is False
+    assert should_use_headed("amazon", force_headed=True) is True
+    with pytest.raises(ValueError):
+        should_use_headed("amazon", force_headed=True, force_headless=True)

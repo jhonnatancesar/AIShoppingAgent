@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-08-02 — Complemento Linux da TASK-055
+
+- Reaberta e concluída novamente a TASK-055 após validação Linux real.
+- Adicionado entrypoint com Xvfb à imagem da API para Chromium headed sem
+  interface gráfica no host.
+- Incluído o validador real na imagem; Pichau e Terabyte usam headed por padrão,
+  enquanto Amazon e Kabum permanecem headless.
+- Localizado o Docker Desktop instalado fora do `PATH`; construída a imagem
+  Linux com Python 3.14, Chromium 151 e Xvfb.
+- Validadas três ofertas reais por origem: Amazon e Kabum em headless, Pichau e
+  Terabyte em headed pelo display virtual, sem interface gráfica.
+- Corrigida após falha real a invocação do validador para execução como módulo
+  Python dentro do container.
+
 ## 2026-08-02 — TASK-055
 
 - Implementados providers Playwright independentes para Pichau, Terabyte,

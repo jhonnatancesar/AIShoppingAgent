@@ -1,8 +1,8 @@
 # Playwright base
 
-A TASK-024 adiciona a infraestrutura de navegador usada futuramente pelos Store
-Providers. A implementação fica em `app.collection.browser` e não contém seletores,
-URLs ou regras específicas de marketplace.
+A TASK-024 adicionou a infraestrutura de navegador usada pelos Store Providers
+implementados na TASK-055. A base fica em `app.collection.browser`; seletores,
+URLs e regras específicas permanecem isolados em `app.collection.providers`.
 
 ## Componentes
 
@@ -32,7 +32,25 @@ fontes externas.
 
 ## Limites
 
-A base não acessa fontes reais, não contorna proteções, não normaliza resultados e
-não persiste coletas. Pichau, Terabyte, Amazon e Kabum serão implementados e validados
-individualmente na TASK-055. Normalização e persistência permanecem nas TASKs 025 e
-026.
+A base não contorna proteções, não normaliza resultados e não persiste coletas.
+Pichau, Terabyte, Amazon e Kabum foram implementados na TASK-055. Normalização e
+persistência permanecem nas TASKs 025 e 026.
+
+## Ubuntu Server sem interface gráfica
+
+A imagem inicia `Xvfb` no display virtual `:99` antes da API. Isso permite abrir
+Chromium headed sem desktop ou monitor no host. O display pode ser alterado com
+`AISHOPPING_XVFB_DISPLAY`.
+
+Depois de construir a imagem, valide cada origem dentro do Linux real:
+
+```bash
+docker compose run --rm api python -m scripts.validate_store_providers amazon
+docker compose run --rm api python -m scripts.validate_store_providers kabum
+docker compose run --rm api python -m scripts.validate_store_providers pichau
+docker compose run --rm api python -m scripts.validate_store_providers terabyte
+```
+
+Pichau e Terabyte usam headed por padrão no validador; Amazon e Kabum usam
+headless. `--headed` e `--headless` permitem diagnóstico explícito. Bloqueio ou
+mudança de markup produz erro e não autoriza stealth, CAPTCHA solver ou evasão.

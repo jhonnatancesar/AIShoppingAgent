@@ -28,3 +28,6 @@ preço, não na identidade estável da oferta.
 Os quatro providers foram implementados na TASK-055. Pichau e Terabyte podem
 exigir Chromium headed (com Xvfb no Ubuntu Server) por bloquearem execução
 headless. O projeto não tenta ocultar automação nem contornar CAPTCHA/proteções.
+A imagem da API inicia Xvfb e define `DISPLAY`, sem exigir desktop instalado no
+host. A validação real usa `python -m scripts.validate_store_providers <fonte>`
+dentro do container; Pichau e Terabyte usam headed por padrão.

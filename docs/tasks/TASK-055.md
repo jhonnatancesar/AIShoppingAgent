@@ -49,10 +49,13 @@ como futuras e não executam coleta.
 - Coleta paralela restrita às fontes explicitamente selecionadas por
   `CollectionAdapter.collect_selected`.
 - Testes sanitizados estáveis e script de validação real
-  `scripts/validate_store_providers.py`.
+  `backend/scripts/validate_store_providers.py`, incluído na imagem Docker.
 - Amazon e Kabum validadas em Chromium headless; Pichau validada em Chromium
   headed. Terabyte foi validada na origem por navegador interativo, mas pode
   encerrar ou bloquear automação headless/automatizada conforme a proteção da
   origem.
 - Não foram usados stealth, resolução de CAPTCHA ou contorno de proteção. Em
   Ubuntu Server, execuções headed exigem display virtual (por exemplo, Xvfb).
+- A imagem inicia um Xvfb interno e expõe `DISPLAY` para Chromium headed mesmo
+  sem desktop. A imagem Linux foi construída e as quatro fontes foram validadas
+  nela: Amazon e Kabum headless; Pichau e Terabyte headed via Xvfb.

@@ -21,6 +21,16 @@ PROVIDERS = {
     "terabyte": TerabyteProvider,
 }
 
+HEADED_SOURCES = {"pichau", "terabyte"}
+
+
+def should_use_headed(
+    source: str, *, force_headed: bool = False, force_headless: bool = False
+) -> bool:
+    if force_headed and force_headless:
+        raise ValueError("headed and headless modes are mutually exclusive")
+    return force_headed or (source in HEADED_SOURCES and not force_headless)
+
 
 async def validate(source: str, query: str, headed: bool) -> None:
     provider = PROVIDERS[source](
@@ -38,9 +48,14 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("source", choices=tuple(PROVIDERS))
     parser.add_argument("--query", default="RTX 4060")
-    parser.add_argument("--headed", action="store_true")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--headed", action="store_true")
+    mode.add_argument("--headless", action="store_true")
     args = parser.parse_args()
-    asyncio.run(validate(args.source, args.query, args.headed))
+    headed = should_use_headed(
+        args.source, force_headed=args.headed, force_headless=args.headless
+    )
+    asyncio.run(validate(args.source, args.query, headed))
 
 
 if __name__ == "__main__":
