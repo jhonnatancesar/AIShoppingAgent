@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-08-02 — TASK-014
+
+- Criados os modelos SQLAlchemy `Store` e `Offer`, separando a origem nacional normalizada do anúncio estável de um produto.
+- Adicionadas relações obrigatórias para produto e loja com `RESTRICT`, sem exclusão em cascata.
+- Protegida a identidade por `(store_id, external_id)` quando informado e por `(store_id, url)`, com índices relacionais adicionais.
+- Mantidos preço e disponibilidade fora da oferta para preservar o futuro histórico de observações.
+- Adicionada a revisão reversível `20260802_0004` e atualizado o registro central de modelos.
+- Detectada e corrigida durante a revisão uma expressão regex que o SQLAlchemy compilava incorretamente no DDL.
+- Validada a cadeia linear e a geração SQL offline do Alembic; a execução em PostgreSQL não pôde ocorrer porque Docker não está disponível nesta máquina.
+- Ampliada a suíte para 33 testes aprovados e 99,43% de cobertura.
+
 ## 2026-08-02 — TASK-013
 
 - Criado o modelo SQLAlchemy `Product` para a identidade canônica independente de loja, oferta e preço.

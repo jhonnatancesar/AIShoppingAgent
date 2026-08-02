@@ -135,6 +135,9 @@ Origem nacional normalizada de ofertas.
 | `created_at` | `timestamptz` | Obrigatório. |
 | `updated_at` | `timestamptz` | Obrigatório. |
 
+Esta entidade de apoio foi implementada na TASK-014 pela revisão
+`20260802_0004`, sem antecipar Store Providers ou coleta.
+
 ### `offers`
 
 Anúncio estável de um produto em uma loja. Preço e disponibilidade não ficam nesta tabela porque variam no tempo.
@@ -150,6 +153,9 @@ Anúncio estável de um produto em uma loja. Preço e disponibilidade não ficam
 | `updated_at` | `timestamptz` | Obrigatório. |
 
 Deve existir unicidade de `(store_id, external_id)` quando `external_id` não for nulo e, como proteção adicional, de `(store_id, url)`.
+
+Esta entidade foi implementada na TASK-014 pela revisão `20260802_0004`. Seu
+contrato, identidade e limites estão em `docs/OFFERS.md`.
 
 ### `collection_runs`
 
@@ -237,4 +243,4 @@ Trilha imutável para ações relevantes que não são substituídas por logs op
 - Resultados históricos usam ordenação composta por horário e `id`, evitando ambiguidade quando dois registros tiverem o mesmo instante.
 - `updated_at` não é evidência de domínio; transições, preços, eventos e auditoria possuem seus próprios horários imutáveis.
 - O modelo não armazena credenciais, tokens, conteúdo integral de páginas ou dados pessoais desnecessários.
-- Migrações, metadata ORM, sessões e conexão foram configuradas na TASK-011. `users` e `products` foram implementados nas TASKs 012 e 013; os demais conjuntos de modelos ocorrem nas TASKs 014 a 016, e consultas históricas na TASK-017.
+- Migrações, metadata ORM, sessões e conexão foram configuradas na TASK-011. `users`, `products`, `stores` e `offers` foram implementados nas TASKs 012 a 014; os demais conjuntos de modelos ocorrem nas TASKs 015 e 016, e consultas históricas na TASK-017.

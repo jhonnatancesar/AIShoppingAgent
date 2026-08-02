@@ -2,7 +2,7 @@
 
 ## Estado
 
-Fase: entidades persistentes em implementação. TASK-013 concluída em 2026-08-02.
+Fase: entidades persistentes em implementação. TASK-014 concluída em 2026-08-02.
 
 ## O que existe
 
@@ -23,12 +23,13 @@ Fase: entidades persistentes em implementação. TASK-013 concluída em 2026-08-
 - SQLAlchemy, Psycopg e Alembic configurados com conexão tipada, metadata compartilhada, sessões explícitas e baseline reversível.
 - Entidade `User` persistente com UUID, nome, papel tipado, ativação lógica, timestamps e restrições de integridade.
 - Entidade `Product` persistente com identidade canônica, nome, marca e modelo opcionais, timestamps e restrições de integridade.
+- Entidades `Store` e `Offer` persistentes com origem nacional normalizada, relações restritivas e identidade estável por loja.
 - Documentos de visão, arquitetura, dados, módulos-alvo, escopo do MVP, backlog, itens fora de escopo, governança de decisões e workflow permanente de execução.
 - ADRs, RFCs e 56 tarefas planejadas.
 
 ## O que não existe
 
-Além de `users` e `products`, não há outras tabelas de domínio nem repositórios implementados. Também não existem autenticação, autorização, APIs de usuários ou produtos, automações, integrações externas, testes de integração ou ponta a ponta nem credenciais reais configuradas.
+Além de `users`, `products`, `stores` e `offers`, não há outras tabelas de domínio nem repositórios implementados. Também não existem autenticação, autorização, APIs de negócio, automações, Store Providers, integrações externas, testes de integração ou ponta a ponta nem credenciais reais configuradas.
 
 ## Invariantes
 
@@ -49,3 +50,4 @@ Além de `users` e `products`, não há outras tabelas de domínio nem repositó
 - Toda alteração persistente deve usar a metadata compartilhada e receber uma revisão Alembic revisada; credenciais de banco não possuem padrão inseguro.
 - Usuários aceitam somente os papéis `USER`, `ADMIN` e `DEV`; `PLUS` permanece fora do MVP, e `is_active` não substitui as regras futuras de autenticação e autorização.
 - Produtos são identidades canônicas independentes de loja; nomes não são únicos e nenhuma deduplicação automática ocorre sem evidência suficiente.
+- Ofertas identificam anúncios estáveis por loja e nunca armazenam preço ou disponibilidade corrente; lojas persistentes não implementam providers de coleta.
