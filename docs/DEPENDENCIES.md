@@ -21,8 +21,13 @@ O projeto acompanha a versão estável mais recente do Python, sem permanecer fi
 A fonte de verdade para dependências Python é `backend/requirements.txt`:
 
 - `fastapi>=0.115,<1.0`
+- `SQLAlchemy>=2.0,<2.1`
+- `alembic>=1.18,<2.0`
+- `psycopg[binary]>=3.3,<4.0`
 - `pydantic-settings>=2.0,<3.0`
 - `uvicorn[standard]>=0.30,<1.0`
+
+As versões validadas na TASK-011 foram SQLAlchemy 2.0.51, Alembic 1.18.5 e Psycopg 3.3.4. O extra binário do Psycopg evita exigir uma instalação separada de `libpq` e possui suporte validado a Python 3.14 e PostgreSQL 18.
 
 Para comparar e instalar em uma nova máquina, após autorização:
 

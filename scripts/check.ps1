@@ -53,6 +53,9 @@ try {
     Invoke-Check "Testes e cobertura" {
         python -m pytest -p no:cacheprovider
     }
+    Invoke-Check "Grafo de migrações" {
+        python -m alembic -c backend/alembic.ini heads
+    }
     Invoke-Check "Configuração do Docker Compose" {
         docker compose -f compose.yaml config --quiet
     }

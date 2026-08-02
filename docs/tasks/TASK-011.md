@@ -1,6 +1,6 @@
 # TASK-011 — Configurar migrações
 
-Status: Pendente
+Status: Concluída
 
 ## Objetivo
 
@@ -12,5 +12,5 @@ Executar somente o objetivo desta tarefa, conforme AGENTS.md, CLAUDE.md e a docu
 
 ## Critério de aceite
 
-Escopo concluído, documentado e verificado conforme os critérios da tarefa.
+SQLAlchemy, Psycopg e Alembic configurados com credenciais tipadas, metadata compartilhada, fábrica de sessões, baseline vazia e fluxo documentado. Upgrade, downgrade e novo upgrade validados em PostgreSQL 18 sem antecipar tabelas de domínio.
 

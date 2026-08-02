@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-08-02 — TASK-011
+
+- Instalados e declarados SQLAlchemy 2.0.51, Alembic 1.18.5 e Psycopg 3.3.4 com suporte a Python 3.14 e PostgreSQL 18.
+- Criadas configuração tipada da conexão, metadata declarativa única, construção de engine e fábrica de sessões sem conexão global antecipada.
+- Configurado o ambiente Alembic e adicionada a baseline vazia `20260802_0001`, sem tabelas de domínio.
+- Integradas as migrações à imagem da API e ao pipeline local, com comandos operacionais documentados.
+- Validado em PostgreSQL 18 o ciclo upgrade, downgrade e novo upgrade em volume isolado; o volume existente do projeto foi preservado.
+- Ampliada a suíte para 14 testes aprovados e 98,96% de cobertura.
+
 ## 2026-08-02 — TASK-010
 
 - Definido o esquema relacional PostgreSQL para usuários, missões, critérios, transições, produtos, lojas, ofertas, coletas, preços, eventos e auditoria.

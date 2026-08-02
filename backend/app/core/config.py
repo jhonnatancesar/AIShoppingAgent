@@ -4,6 +4,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BACKEND_DIRECTORY = Path(__file__).resolve().parents[2]
@@ -23,6 +24,11 @@ class Settings(BaseSettings):
     environment: Literal["development", "test", "production"] = "development"
     debug: bool = False
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
+    database_host: str = Field(default="localhost", min_length=1)
+    database_port: int = Field(default=5432, ge=1, le=65535)
+    database_name: str = Field(default="aishoppingagent", min_length=1)
+    database_user: str = Field(default="aishoppingagent", min_length=1)
+    database_password: SecretStr | None = None
 
 
 @lru_cache

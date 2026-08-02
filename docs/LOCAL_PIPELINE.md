@@ -34,6 +34,7 @@ O script interrompe na primeira falha e executa, nesta ordem:
 2. lint com Ruff;
 3. verificação de formatação com Ruff;
 4. testes e cobertura com Pytest, sem gravar cache local;
-5. validação estrutural do Docker Compose.
+5. validação do grafo de migrações Alembic;
+6. validação estrutural do Docker Compose.
 
 Quando `POSTGRES_PASSWORD` não está definido, o script usa um valor temporário somente no processo para permitir a validação do Compose e o remove ao terminar. O pipeline não inicia contêineres, não altera dados, não faz commits e não acessa o repositório remoto.

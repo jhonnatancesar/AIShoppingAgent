@@ -1,6 +1,6 @@
 # AIShoppingAgent
 
-Agente inteligente de compras construído incrementalmente. O projeto está na fase de base técnica inicial, com o esqueleto FastAPI e a gestão tipada de configuração implementados.
+Agente inteligente de compras construído incrementalmente. O projeto possui a base FastAPI e a infraestrutura de persistência PostgreSQL preparadas para a implementação dos módulos de domínio.
 
 O desenvolvimento usa a versão estável mais recente do Python disponível. A versão validada atualmente está registrada em `docs/DEPENDENCIES.md`.
 
@@ -56,3 +56,13 @@ Execute todas as verificações obrigatórias com:
 ```
 
 O detalhamento e os pré-requisitos estão em `docs/LOCAL_PIPELINE.md`.
+
+## Migrações
+
+Após configurar o `.env` e iniciar o PostgreSQL, aplique as migrações pelo ambiente reproduzível do Compose:
+
+```powershell
+docker compose run --rm api python -m alembic -c alembic.ini upgrade head
+```
+
+O ciclo completo, os comandos de inspeção e os cuidados com downgrade estão em `docs/MIGRATIONS.md`.

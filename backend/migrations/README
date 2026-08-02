@@ -1,0 +1,4 @@
+Ambiente Alembic do AIShoppingAgent.
+
+As revisões devem ser pequenas, reversíveis quando possível e nunca editar uma
+revisão já aplicada fora do ambiente local.
