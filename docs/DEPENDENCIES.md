@@ -7,7 +7,7 @@ Este documento é a referência de ambiente para qualquer nova máquina. Antes d
 | Ferramenta | Requisito atual | Verificação |
 | --- | --- | --- |
 | Git | Git for Windows 2.55.0 ou compatível | `git --version` |
-| Python | Versão estável mais recente, atualmente Python 3.14.3, com `pip` | `python --version` e `python -m pip --version` |
+| Python | Versão estável mais recente, atualmente Python 3.14.6, com `pip` | `python --version` e `python -m pip --version` |
 | Docker Desktop | Versão estável mais recente; Docker Engine 29.6.2 e Docker Compose 5.3.1 validados atualmente | `docker --version` e `docker compose version` |
 
 PostgreSQL não exige instalação direta na máquina: o ambiente local usa a imagem oficial `postgres:18-alpine` por meio do Docker Compose.

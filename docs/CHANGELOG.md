@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-08-02 — TASK-023
+
+- Criada a fronteira assíncrona entre orquestração e Store Providers, sem antecipar navegador ou providers concretos.
+- Definidos contratos imutáveis para solicitação, oferta bruta e resultado de coleta, com validação de fonte e linha do tempo.
+- Preservados nos resultados brutos vendedor, frete, disponibilidade e fulfillment necessários a varejistas e marketplaces.
+- Implementado registro e despacho por fonte, com erros explícitos para duplicidade, ausência e violação contratual.
+- Documentado o limite com as TASKs 024, 055, 025 e 026 e atualizada a referência de ambiente para Python 3.14.6.
+- Validada a suíte no Python 3.14.6 com 97 testes aprovados, 99,78% de cobertura, Ruff, dependências, grafo Alembic e Docker Compose.
+
 ## 2026-08-02 — TASK-022
 
 - Criados `MissionSchedule` e a revisão reversível `20260802_0010`, com uma agenda editável por missão.

@@ -2,7 +2,7 @@
 
 ## Estado
 
-Fase: missões e coleta em implementação. TASK-022 concluída em 2026-08-02.
+Fase: missões e coleta em implementação. TASK-023 concluída em 2026-08-02.
 
 ## O que existe
 
@@ -10,7 +10,7 @@ Fase: missões e coleta em implementação. TASK-022 concluída em 2026-08-02.
 - Esqueleto mínimo da aplicação FastAPI em `backend/app/`, com dependências declaradas em `backend/requirements.txt`.
 - Gestão de configuração tipada em `backend/app/core/config.py`, com variáveis de ambiente, exemplo local e arquivo `.env` ignorado pelo Git.
 - Inventário de dependências e procedimento de preparação de novas máquinas em `docs/DEPENDENCIES.md`.
-- Política de uso da versão estável mais recente do Python; Python 3.14.3 é a versão atualmente validada.
+- Política de uso da versão estável mais recente do Python; Python 3.14.6 é a versão atualmente validada.
 - Ambiente Docker Compose com contêineres FastAPI e PostgreSQL 18, volume persistente e configuração local protegida.
 - Qualidade de código configurada com Ruff para lint, imports, modernização Python 3.14 e formatação.
 - Testes base configurados com Pytest e cobertura mínima de 90% para o pacote da aplicação.
@@ -31,6 +31,7 @@ Fase: missões e coleta em implementação. TASK-022 concluída em 2026-08-02.
 - Seleção persistente de múltiplas fontes por missão, exigida na ativação e retomada.
 - Fontes tipadas como varejista ou marketplace, vendedores persistentes e ofertas identificadas por vendedor.
 - Agenda recorrente persistente por missão, com seleção concorrente de execuções vencidas e progressão sem backlog retroativo.
+- Adaptador assíncrono de coleta com contratos de entrada e saída bruta, registro por fonte e preservação de vendedor, frete e fulfillment.
 - Documentos de visão, arquitetura, dados, módulos-alvo, escopo do MVP, backlog, itens fora de escopo, governança de decisões e workflow permanente de execução.
 - ADRs, RFCs e 56 tarefas planejadas.
 
