@@ -2,7 +2,7 @@
 
 ## Estado
 
-Fase: entidades persistentes em implementação. TASK-012 concluída em 2026-08-02.
+Fase: entidades persistentes em implementação. TASK-013 concluída em 2026-08-02.
 
 ## O que existe
 
@@ -22,12 +22,13 @@ Fase: entidades persistentes em implementação. TASK-012 concluída em 2026-08-
 - Modelo relacional PostgreSQL do MVP definido com entidades, tipos, relações, restrições, índices e regras de preservação histórica.
 - SQLAlchemy, Psycopg e Alembic configurados com conexão tipada, metadata compartilhada, sessões explícitas e baseline reversível.
 - Entidade `User` persistente com UUID, nome, papel tipado, ativação lógica, timestamps e restrições de integridade.
+- Entidade `Product` persistente com identidade canônica, nome, marca e modelo opcionais, timestamps e restrições de integridade.
 - Documentos de visão, arquitetura, dados, módulos-alvo, escopo do MVP, backlog, itens fora de escopo, governança de decisões e workflow permanente de execução.
 - ADRs, RFCs e 56 tarefas planejadas.
 
 ## O que não existe
 
-Além de `users`, não há outras tabelas de domínio nem repositórios implementados. Também não existem autenticação, autorização, API de usuários, automações, integrações externas, testes de integração ou ponta a ponta nem credenciais reais configuradas.
+Além de `users` e `products`, não há outras tabelas de domínio nem repositórios implementados. Também não existem autenticação, autorização, APIs de usuários ou produtos, automações, integrações externas, testes de integração ou ponta a ponta nem credenciais reais configuradas.
 
 ## Invariantes
 
@@ -47,3 +48,4 @@ Além de `users`, não há outras tabelas de domínio nem repositórios implemen
 - `docs/DATABASE.md` é o contrato do modelo relacional; a TASK-011 deve preparar sua evolução por migrações antes da implementação das entidades.
 - Toda alteração persistente deve usar a metadata compartilhada e receber uma revisão Alembic revisada; credenciais de banco não possuem padrão inseguro.
 - Usuários aceitam somente os papéis `USER`, `ADMIN` e `DEV`; `PLUS` permanece fora do MVP, e `is_active` não substitui as regras futuras de autenticação e autorização.
+- Produtos são identidades canônicas independentes de loja; nomes não são únicos e nenhuma deduplicação automática ocorre sem evidência suficiente.

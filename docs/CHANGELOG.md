@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-08-02 — TASK-013
+
+- Criado o modelo SQLAlchemy `Product` para a identidade canônica independente de loja, oferta e preço.
+- Adicionados UUID gerado pela aplicação, nome, marca e modelo opcionais, timestamps UTC e restrições contra textos em branco.
+- Centralizado o relógio UTC compartilhado pelos modelos de usuário e produto.
+- Adicionada a revisão reversível `20260802_0003` e atualizado o registro central de modelos.
+- Definida deduplicação conservadora, sem unicidade por nome nem mesclagem automática sem evidência suficiente.
+- Validada a cadeia linear e a geração SQL offline do Alembic; a execução em PostgreSQL não pôde ocorrer porque Docker não está disponível nesta máquina.
+- Ampliada a suíte para 25 testes aprovados e 99,28% de cobertura.
+
 ## 2026-08-02 — TASK-012
 
 - Criados o modelo SQLAlchemy `User` e o vocabulário tipado `UserRole` com `USER`, `ADMIN` e `DEV`.

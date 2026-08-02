@@ -1,6 +1,6 @@
 """Modelo persistente de usuários."""
 
-from datetime import UTC, datetime
+from datetime import datetime
 from enum import StrEnum
 from uuid import UUID, uuid4
 
@@ -9,6 +9,7 @@ from sqlalchemy.dialects.postgresql import UUID as PostgreSQLUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database.base import Base
+from app.database.time import utc_now
 
 
 class UserRole(StrEnum):
@@ -17,11 +18,6 @@ class UserRole(StrEnum):
     USER = "USER"
     ADMIN = "ADMIN"
     DEV = "DEV"
-
-
-def utc_now() -> datetime:
-    """Retorna o instante atual consciente de fuso em UTC."""
-    return datetime.now(UTC)
 
 
 class User(Base):

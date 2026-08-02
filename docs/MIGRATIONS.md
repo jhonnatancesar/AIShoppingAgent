@@ -61,6 +61,7 @@ Regras permanentes:
 ## Revisões atuais
 
 - `20260802_0001`: baseline vazia que valida a infraestrutura e cria apenas o controle interno `alembic_version`;
-- `20260802_0002`: cria a tabela `users` e suas restrições.
+- `20260802_0002`: cria a tabela `users` e suas restrições;
+- `20260802_0003`: cria a tabela `products` e suas restrições, sem unicidade artificial por nome.
 
-As demais tabelas do modelo serão introduzidas pelas TASKs 013 a 016.
+As demais tabelas do modelo serão introduzidas pelas TASKs 014 a 016.

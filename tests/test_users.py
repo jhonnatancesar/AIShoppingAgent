@@ -4,7 +4,8 @@ from datetime import UTC
 
 from app.database.base import Base
 from app.database.model_registry import REGISTERED_MODELS
-from app.users.models import User, UserRole, utc_now
+from app.database.time import utc_now
+from app.users.models import User, UserRole
 from sqlalchemy import CheckConstraint, Enum
 
 
@@ -52,7 +53,7 @@ def test_user_table_rejects_blank_display_name_by_constraint() -> None:
 
 def test_user_model_is_registered_in_shared_metadata() -> None:
     """O Alembic deve enxergar o modelo sem importar módulos ad hoc."""
-    assert REGISTERED_MODELS == (User,)
+    assert User in REGISTERED_MODELS
     assert Base.metadata.tables["users"] is User.__table__
 
 

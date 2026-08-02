@@ -117,7 +117,9 @@ Identidade canônica de um produto, independente da loja.
 | `created_at` | `timestamptz` | Obrigatório. |
 | `updated_at` | `timestamptz` | Obrigatório. |
 
-Deduplicação e atributos adicionais serão definidos na TASK-013; não há unicidade artificial apenas por nome.
+Esta entidade foi implementada na TASK-013 pela revisão `20260802_0003`.
+Não há unicidade artificial apenas por nome nem mesclagem automática; a política
+conservadora de identidade e os limites funcionais estão em `docs/PRODUCTS.md`.
 
 ### `stores`
 
@@ -235,4 +237,4 @@ Trilha imutável para ações relevantes que não são substituídas por logs op
 - Resultados históricos usam ordenação composta por horário e `id`, evitando ambiguidade quando dois registros tiverem o mesmo instante.
 - `updated_at` não é evidência de domínio; transições, preços, eventos e auditoria possuem seus próprios horários imutáveis.
 - O modelo não armazena credenciais, tokens, conteúdo integral de páginas ou dados pessoais desnecessários.
-- Migrações, metadata ORM, sessões e conexão foram configuradas na TASK-011. A criação de cada conjunto de modelos ocorre nas TASKs 012 a 016, e consultas históricas na TASK-017.
+- Migrações, metadata ORM, sessões e conexão foram configuradas na TASK-011. `users` e `products` foram implementados nas TASKs 012 e 013; os demais conjuntos de modelos ocorrem nas TASKs 014 a 016, e consultas históricas na TASK-017.

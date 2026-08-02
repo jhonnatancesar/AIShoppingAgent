@@ -84,4 +84,4 @@ Nunca iniciar automaticamente a próxima TASK. Encerrar apresentando resumo da i
 
 ## Estado atual
 
-TASKs 000 a 012 e TASK-018 concluídas: fundação, base técnica, ciclo de vida, modelo de dados, migrações e usuários preparados. A próxima tarefa planejada é a TASK-013.
+TASKs 000 a 013 e TASK-018 concluídas: fundação, base técnica, ciclo de vida, modelo de dados, migrações, usuários e produtos preparados. A próxima tarefa planejada é a TASK-014.
