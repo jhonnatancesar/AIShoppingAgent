@@ -70,6 +70,10 @@ Intenção persistente de compra e fonte de verdade para seu estado atual.
 
 Quando presente, `expires_at` deve ser posterior a `created_at`. Uma missão em `draft` pode ainda não possuir critérios; a ativação exige o registro válido descrito abaixo.
 
+Esta entidade foi implementada na TASK-019 pela revisão `20260802_0006`. O
+contrato persistente e seus limites estão em `docs/MISSIONS.md`; comandos e
+transições permanecem na TASK-021.
+
 ### `mission_criteria`
 
 Critérios editáveis da missão, separados do ciclo de vida para evolução na TASK-020.
@@ -247,4 +251,4 @@ em `docs/AUDIT.md`.
 - Resultados históricos usam ordenação composta por horário e `id`, evitando ambiguidade quando dois registros tiverem o mesmo instante.
 - `updated_at` não é evidência de domínio; transições, preços, eventos e auditoria possuem seus próprios horários imutáveis.
 - O modelo não armazena credenciais, tokens, conteúdo integral de páginas ou dados pessoais desnecessários.
-- Migrações, metadata ORM, sessões e conexão foram configuradas na TASK-011. `users`, `products`, `stores`, `offers` e `audit_entries` foram implementados nas TASKs 012 a 014 e 016. Observações de preço ocorrem na TASK-015 após a persistência de coletas da TASK-026; consultas históricas permanecem na TASK-017.
+- Migrações, metadata ORM, sessões e conexão foram configuradas na TASK-011. `users`, `products`, `stores`, `offers`, `audit_entries` e `missions` já foram implementados. Observações de preço ocorrem na TASK-015 após a persistência de coletas da TASK-026; consultas históricas permanecem na TASK-017.

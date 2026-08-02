@@ -15,7 +15,7 @@
 | Segurança e entrega | TASK-046 a TASK-054 | Observabilidade, segurança e lançamento |
 | Marketplace Module (futuro) | Tarefas a definir | Suporte a marketplaces, incluindo AliExpress, Shopee e Amazon Marketplace |
 
-As TASKs 000 a 014, a TASK-016 e a TASK-018 estão concluídas. A próxima tarefa executável é a TASK-019. A TASK-015 será executada após a TASK-026, pois depende de `collection_runs`; a TASK-017 permanece logo depois dela. As demais continuam pendentes e só podem ser iniciadas por solicitação explícita. A V1 permanece focada em lojas nacionais; Marketplace Module não pertence ao escopo da V1.
+As TASKs 000 a 014, a TASK-016 e as TASKs 018 e 019 estão concluídas. A próxima tarefa executável é a TASK-020. A TASK-015 será executada após a TASK-026, pois depende de `collection_runs`; a TASK-017 permanece logo depois dela. As demais continuam pendentes e só podem ser iniciadas por solicitação explícita. A V1 permanece focada em lojas nacionais; Marketplace Module não pertence ao escopo da V1.
 
 A ordem de execução é a ordem apresentada nesta tabela; a numeração da TASK é um identificador estável e não substitui dependências explícitas.
 

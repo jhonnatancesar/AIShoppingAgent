@@ -84,4 +84,4 @@ Nunca iniciar automaticamente a próxima TASK. Encerrar apresentando resumo da i
 
 ## Estado atual
 
-TASKs 000 a 014, TASK-016 e TASK-018 concluídas: fundação, base técnica, ciclo de vida, modelo de dados, migrações, usuários, produtos, ofertas e auditoria preparados. A próxima tarefa executável é a TASK-019; a TASK-015 depende da TASK-026.
+TASKs 000 a 014, TASK-016, TASK-018 e TASK-019 concluídas: fundação, base técnica, ciclo de vida, modelo de dados, migrações, usuários, produtos, ofertas, auditoria e missões preparados. A próxima tarefa executável é a TASK-020; a TASK-015 depende da TASK-026.

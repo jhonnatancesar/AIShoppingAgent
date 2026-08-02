@@ -2,7 +2,7 @@
 
 ## Estado
 
-Fase: entidades persistentes em implementação. TASK-016 concluída em 2026-08-02.
+Fase: missões e coleta em implementação. TASK-019 concluída em 2026-08-02.
 
 ## O que existe
 
@@ -25,12 +25,13 @@ Fase: entidades persistentes em implementação. TASK-016 concluída em 2026-08-
 - Entidade `Product` persistente com identidade canônica, nome, marca e modelo opcionais, timestamps e restrições de integridade.
 - Entidades `Store` e `Offer` persistentes com origem nacional normalizada, relações restritivas e identidade estável por loja.
 - Entidade `AuditEntry` persistente e append-only, com JSONB sanitizado, referência opcional de ator e índices históricos.
+- Entidade `Mission` persistente com proprietário, seis estados, prazo opcional, versão concorrente e índices operacionais.
 - Documentos de visão, arquitetura, dados, módulos-alvo, escopo do MVP, backlog, itens fora de escopo, governança de decisões e workflow permanente de execução.
 - ADRs, RFCs e 56 tarefas planejadas.
 
 ## O que não existe
 
-Além de `users`, `products`, `stores`, `offers` e `audit_entries`, não há outras tabelas de domínio nem repositórios implementados. Também não existem autenticação, autorização, APIs de negócio, instrumentação automática de auditoria, automações, Store Providers, integrações externas, testes de integração ou ponta a ponta nem credenciais reais configuradas.
+Além de `users`, `products`, `stores`, `offers`, `audit_entries` e `missions`, não há outras tabelas de domínio nem repositórios implementados. Também não existem critérios ou transições persistentes, autenticação, autorização, APIs de negócio, instrumentação automática de auditoria, automações, Store Providers, integrações externas, testes de integração ou ponta a ponta nem credenciais reais configuradas.
 
 ## Invariantes
 
@@ -53,3 +54,4 @@ Além de `users`, `products`, `stores`, `offers` e `audit_entries`, não há out
 - Produtos são identidades canônicas independentes de loja; nomes não são únicos e nenhuma deduplicação automática ocorre sem evidência suficiente.
 - Ofertas identificam anúncios estáveis por loja e nunca armazenam preço ou disponibilidade corrente; lojas persistentes não implementam providers de coleta.
 - Auditoria é append-only; correções geram novas entradas, e metadata nunca contém segredos ou dados pessoais desnecessários.
+- Missões nascem em `draft`; alterações de estado e de `state_version` só serão implementadas atomicamente na TASK-021.

@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-08-02 — TASK-019
+
+- Criados o modelo SQLAlchemy `Mission` e o enum PostgreSQL `mission_status` com os seis estados da TASK-018.
+- Adicionados proprietário obrigatório com `RESTRICT`, estado inicial `draft`, prazo opcional, versão concorrente e timestamps UTC.
+- Protegidos título não vazio, prazo posterior à criação e versão não negativa por restrições no banco.
+- Criados índices para listagem recente por proprietário e para expirações pendentes de estados não terminais.
+- Adicionada a revisão reversível `20260802_0006` e atualizado o registro central de modelos.
+- Detectadas e corrigidas durante a revisão a criação duplicada do enum e a divergência de ordenação do índice ORM.
+- Validada a cadeia linear e a geração SQL offline de upgrade e downgrade; PostgreSQL real não pôde ser usado porque Docker não está disponível nesta máquina.
+- Ampliada a suíte para 46 testes aprovados e 99,55% de cobertura.
+
 ## 2026-08-02 — TASK-016
 
 - Criado o modelo SQLAlchemy `AuditEntry` para fatos auditáveis separados de logs operacionais.

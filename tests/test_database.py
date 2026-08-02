@@ -62,4 +62,5 @@ def test_metadata_contains_only_implemented_tables() -> None:
         "stores",
         "offers",
         "audit_entries",
+        "missions",
     }
