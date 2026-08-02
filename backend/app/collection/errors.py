@@ -15,3 +15,15 @@ class DuplicateProviderError(CollectionError):
 
 class UnsupportedSourceError(CollectionError):
     """A fonte pedida não possui provider registrado."""
+
+
+class ProviderNavigationError(CollectionError):
+    def __init__(self, source_code: str, status: int | None) -> None:
+        super().__init__(f"{source_code} navigation failed with status {status}")
+
+
+class ProviderBlockedError(CollectionError):
+    def __init__(self, source_code: str, status: int | None) -> None:
+        super().__init__(
+            f"{source_code} blocked collection or changed markup (status {status})"
+        )

@@ -24,3 +24,7 @@ Provider nem podem ser persistidas como seleção na V1.
 
 Frete e fulfillment variam no tempo e serão registrados com cada observação de
 preço, não na identidade estável da oferta.
+
+Os quatro providers foram implementados na TASK-055. Pichau e Terabyte podem
+exigir Chromium headed (com Xvfb no Ubuntu Server) por bloquearem execução
+headless. O projeto não tenta ocultar automação nem contornar CAPTCHA/proteções.

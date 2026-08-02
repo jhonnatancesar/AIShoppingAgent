@@ -1,0 +1,80 @@
+"""Providers independentes das quatro lojas selecionáveis na V1."""
+
+from datetime import datetime
+from urllib.parse import quote, quote_plus
+
+from playwright.async_api import Page
+
+from app.collection.contracts import RawCollectedOffer
+from app.collection.providers.base import PlaywrightStoreProvider
+
+
+class PichauProvider(PlaywrightStoreProvider):
+    source_code, result_selector = "pichau", 'a[data-cy="list-product"]'
+
+    def build_url(self, query: str) -> str:
+        return f"https://www.pichau.com.br/search?q={quote_plus(query)}"
+
+    async def extract(
+        self, page: Page, collected_at: datetime
+    ) -> tuple[RawCollectedOffer, ...]:
+        rows = await page.locator(self.result_selector).evaluate_all(
+            """cards => cards.map(card => ({url: card.href, title: card.querySelector('h2')?.textContent, price: card.querySelector('[class*="price_vista"]')?.textContent, external_id: new URL(card.href).pathname.split('/').filter(Boolean).pop(), availability: /indisponível/i.test(card.innerText) ? 'Indisponível' : null, evidence: card.innerText}))"""
+        )
+        return self.offers_from_rows(rows, collected_at)
+
+
+class TerabyteProvider(PlaywrightStoreProvider):
+    source_code, result_selector = "terabyte", 'a.product-item__name[href*="/produto/"]'
+
+    def build_url(self, query: str) -> str:
+        return f"https://www.terabyteshop.com.br/busca?str={quote_plus(query)}"
+
+    async def extract(
+        self, page: Page, collected_at: datetime
+    ) -> tuple[RawCollectedOffer, ...]:
+        rows = await page.locator(self.result_selector).evaluate_all(
+            """links => links.map(link => { const card = link.closest('.product-item') || link.parentElement?.parentElement; const match = new URL(link.href).pathname.match(/\\/produto\\/(\\d+)/); return {url: link.href, title: link.textContent || link.title, price: card?.querySelector('.product-item__new-price span')?.textContent, external_id: match?.[1], availability: /indisponível/i.test(card?.innerText || '') ? 'Indisponível' : null, evidence: card?.innerText}; })"""
+        )
+        return self.offers_from_rows(rows, collected_at)
+
+
+class AmazonProvider(PlaywrightStoreProvider):
+    source_code, result_selector = (
+        "amazon",
+        '[data-component-type="s-search-result"][data-asin]',
+    )
+
+    def build_url(self, query: str) -> str:
+        return f"https://www.amazon.com.br/s?k={quote_plus(query)}"
+
+    async def extract(
+        self, page: Page, collected_at: datetime
+    ) -> tuple[RawCollectedOffer, ...]:
+        rows = await page.locator(self.result_selector).evaluate_all(
+            """cards => cards.map(card => { const link = card.querySelector('h2 a, a.a-link-normal.s-no-outline'); const text = card.innerText || ''; return {url: link?.href, title: card.querySelector('h2')?.textContent, price: card.querySelector('.a-price .a-offscreen')?.textContent, external_id: card.dataset.asin, seller: card.querySelector('[aria-label^="Vendido por"]')?.textContent, shipping: /frete grátis/i.test(text) ? 'Frete grátis' : null, availability: /temporariamente fora de estoque/i.test(text) ? 'Temporariamente fora de estoque' : null, fulfillment: /prime/i.test(text) ? 'Prime' : null, evidence: text}; })"""
+        )
+        return self.offers_from_rows(rows, collected_at)
+
+
+class KabumProvider(PlaywrightStoreProvider):
+    source_code, result_selector = "kabum", 'main a[href*="/produto/"]'
+
+    def build_url(self, query: str) -> str:
+        return (
+            f"https://www.kabum.com.br/busca/{quote(query.strip().replace(' ', '-'))}"
+        )
+
+    async def extract(
+        self, page: Page, collected_at: datetime
+    ) -> tuple[RawCollectedOffer, ...]:
+        rows = await page.locator(self.result_selector).evaluate_all(
+            """links => links.map(link => { const text = link.innerText || ''; const match = new URL(link.href).pathname.match(/\\/produto\\/(\\d+)/); const title = link.querySelector('span.line-clamp-2')?.textContent; const current = [...link.querySelectorAll('span.text-base.font-semibold')].map(x => x.textContent.trim()).join(' '); return {url: link.href, title, price: current || text.match(/R\\$\\s?[\\d.]+,\\d{2}/)?.[0], external_id: match?.[1], seller: text.match(/Vendido por\\s+([^\\n]+)/i)?.[1], shipping: /frete grátis/i.test(text) ? 'Frete grátis' : null, availability: /indisponível/i.test(text) ? 'Indisponível' : null, evidence: text}; })"""
+        )
+        unique, seen = [], set()
+        for row in rows:
+            external_id = row.get("external_id")
+            if external_id and external_id not in seen:
+                seen.add(external_id)
+                unique.append(row)
+        return self.offers_from_rows(unique, collected_at)

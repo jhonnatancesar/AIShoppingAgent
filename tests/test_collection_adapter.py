@@ -103,6 +103,21 @@ def test_rejects_result_started_before_request() -> None:
         asyncio.run(CollectionAdapter([FakeProvider(early_result)]).collect(request()))
 
 
+def test_collects_only_selected_sources_and_rejects_duplicates() -> None:
+    kabum = FakeProvider(result())
+    amazon = FakeProvider(result("amazon"))
+    amazon.source_code = "amazon"
+    adapter = CollectionAdapter([kabum, amazon])
+
+    results = asyncio.run(
+        adapter.collect_selected((request("amazon"), request("kabum")))
+    )
+
+    assert tuple(item.source_code for item in results) == ("amazon", "kabum")
+    with pytest.raises(CollectionContractError):
+        asyncio.run(adapter.collect_selected((request(), request())))
+
+
 def test_contract_rejects_blank_and_naive_values() -> None:
     with pytest.raises(CollectionContractError):
         request("")

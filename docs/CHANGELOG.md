@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-08-02 — TASK-055
+
+- Implementados providers Playwright independentes para Pichau, Terabyte,
+  Amazon e Kabum, preservando os campos brutos disponíveis em cada card.
+- Adicionada coleta paralela de exatamente uma ou mais fontes selecionadas, com
+  rejeição de duplicidade e sem providers para ML, Shopee ou AliExpress.
+- Validadas Amazon, Kabum e Pichau por automação real e Terabyte por navegador
+  real; documentada a proteção que pode exigir modo headed/display virtual.
+- Mantida a política de não usar stealth, CAPTCHA solver ou evasão de proteção.
+- Ampliada a suíte para 108 testes aprovados e 96,36% de cobertura.
+
 ## 2026-08-02 — TASK-024
 
 - Adicionados Playwright 1.62.0 e Chromium à aplicação e à imagem Docker.

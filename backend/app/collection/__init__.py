@@ -12,7 +12,15 @@ from app.collection.errors import (
     CollectionContractError,
     CollectionError,
     DuplicateProviderError,
+    ProviderBlockedError,
+    ProviderNavigationError,
     UnsupportedSourceError,
+)
+from app.collection.providers import (
+    AmazonProvider,
+    KabumProvider,
+    PichauProvider,
+    TerabyteProvider,
 )
 
 __all__ = [
@@ -25,6 +33,12 @@ __all__ = [
     "CollectionRequest",
     "CollectionResult",
     "DuplicateProviderError",
+    "ProviderBlockedError",
+    "ProviderNavigationError",
     "RawCollectedOffer",
+    "AmazonProvider",
+    "KabumProvider",
+    "PichauProvider",
+    "TerabyteProvider",
     "UnsupportedSourceError",
 ]

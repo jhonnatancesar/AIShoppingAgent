@@ -1,6 +1,6 @@
 # TASK-055 — Implementar Store Providers selecionados
 
-Status: Pendente
+Status: Concluída em 2026-08-02
 
 ## Objetivo
 
@@ -42,3 +42,17 @@ Pichau, Terabyte, Amazon e Kabum possuem Store Providers funcionais, isolados e
 validados nas origens reais. Uma busca usa todos os providers escolhidos pelo
 usuário entre essas quatro fontes. Mercado Livre, Shopee e AliExpress aparecem
 como futuras e não executam coleta.
+
+## Entrega e validação
+
+- Providers Playwright independentes em `backend/app/collection/providers`.
+- Coleta paralela restrita às fontes explicitamente selecionadas por
+  `CollectionAdapter.collect_selected`.
+- Testes sanitizados estáveis e script de validação real
+  `scripts/validate_store_providers.py`.
+- Amazon e Kabum validadas em Chromium headless; Pichau validada em Chromium
+  headed. Terabyte foi validada na origem por navegador interativo, mas pode
+  encerrar ou bloquear automação headless/automatizada conforme a proteção da
+  origem.
+- Não foram usados stealth, resolução de CAPTCHA ou contorno de proteção. Em
+  Ubuntu Server, execuções headed exigem display virtual (por exemplo, Xvfb).

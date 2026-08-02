@@ -1,5 +1,6 @@
 """Despacho de coletas sem conhecimento de navegador ou marketplace."""
 
+import asyncio
 from collections.abc import Iterable
 
 from app.collection.contracts import (
@@ -55,3 +56,12 @@ class CollectionAdapter:
                 "provider result started before the collection request"
             )
         return result
+
+    async def collect_selected(
+        self, requests: Iterable[CollectionRequest]
+    ) -> tuple[CollectionResult, ...]:
+        """Executa exatamente as fontes escolhidas, em paralelo e na mesma ordem."""
+        selected = tuple(requests)
+        if len({request.source_code for request in selected}) != len(selected):
+            raise CollectionContractError("selected sources must not be duplicated")
+        return tuple(await asyncio.gather(*(self.collect(item) for item in selected)))
