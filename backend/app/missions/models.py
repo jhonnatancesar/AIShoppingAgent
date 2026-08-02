@@ -8,11 +8,13 @@ from uuid import UUID, uuid4
 from sqlalchemy import (
     CHAR,
     BigInteger,
+    Boolean,
     CheckConstraint,
     DateTime,
     Enum,
     ForeignKey,
     Index,
+    Integer,
     Numeric,
     String,
     Text,
@@ -282,5 +284,60 @@ class MissionSource(Base):
         DateTime(timezone=True),
         nullable=False,
         default=utc_now,
+        server_default=func.now(),
+    )
+
+
+class MissionSchedule(Base):
+    """Agenda recorrente e editável de uma missão."""
+
+    __tablename__ = "mission_schedules"
+    __table_args__ = (
+        CheckConstraint(
+            "interval_minutes > 0",
+            name="ck_mission_schedules_interval_positive",
+        ),
+        CheckConstraint(
+            "last_run_at IS NULL OR last_run_at <= next_run_at",
+            name="ck_mission_schedules_run_order",
+        ),
+        Index(
+            "ix_mission_schedules_due",
+            "next_run_at",
+            "mission_id",
+            postgresql_where="is_enabled",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4
+    )
+    mission_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("missions.id", ondelete="RESTRICT"),
+        nullable=False,
+        unique=True,
+    )
+    interval_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
+    next_run_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    last_run_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    is_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default="true"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+        onupdate=utc_now,
         server_default=func.now(),
     )

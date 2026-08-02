@@ -22,6 +22,7 @@ erDiagram
     missions ||--o{ mission_sources : selects
     stores ||--o{ mission_sources : selected_for
     missions ||--o{ mission_transitions : records
+    missions ||--o| mission_schedules : schedules
     missions ||--o{ collection_runs : triggers
     stores ||--o{ offers : publishes
     stores ||--o{ sellers : hosts
@@ -132,6 +133,24 @@ A atualização de `missions.status` e `state_version` e a inserção da transi�
 Esta entidade e a execução atômica do ciclo de vida foram implementadas na
 TASK-021 pela revisão `20260802_0008`. O contrato operacional está em
 `docs/MISSION_TRANSITIONS.md`.
+
+### `mission_schedules`
+
+Agenda recorrente e editável de uma missão.
+
+| Coluna | Tipo | Regra |
+| --- | --- | --- |
+| `id` | `uuid` | Chave primária. |
+| `mission_id` | `uuid` | FK obrigatória e única para `missions.id`, com `RESTRICT`. |
+| `interval_minutes` | `integer` | Obrigatório e maior que zero. |
+| `next_run_at` | `timestamptz` | Próxima execução elegível, obrigatória. |
+| `last_run_at` | `timestamptz` | Última execução iniciada, opcional e não posterior à próxima. |
+| `is_enabled` | `boolean` | Obrigatório, padrão `true`. |
+| `created_at` | `timestamptz` | Obrigatório. |
+| `updated_at` | `timestamptz` | Obrigatório. |
+
+Implementada na TASK-022 pela revisão `20260802_0010`. O contrato operacional
+está em `docs/MISSION_SCHEDULES.md`.
 
 ### `products`
 
@@ -287,6 +306,7 @@ em `docs/AUDIT.md`.
 - `offers (product_id)`, `offers (store_id)` e `offers (seller_id)` além das unicidades definidas.
 - `sellers (store_id)` e unicidade parcial de `(store_id, external_id)`.
 - `mission_sources (store_id)` para localizar missões por fonte.
+- `mission_schedules (next_run_at, mission_id)` parcial para agendas habilitadas vencidas.
 - `collection_runs (mission_id, started_at desc)` e `collection_runs (store_id, started_at desc)`.
 - `price_observations (offer_id, observed_at desc, id)` para histórico de uma oferta.
 - `price_observations (collection_run_id)` para rastrear os resultados de uma coleta.
@@ -302,4 +322,4 @@ em `docs/AUDIT.md`.
 - Resultados históricos usam ordenação composta por horário e `id`, evitando ambiguidade quando dois registros tiverem o mesmo instante.
 - `updated_at` não é evidência de domínio; transições, preços, eventos e auditoria possuem seus próprios horários imutáveis.
 - O modelo não armazena credenciais, tokens, conteúdo integral de páginas ou dados pessoais desnecessários.
-- Migrações, metadata ORM, sessões e conexão foram configuradas na TASK-011. `users`, `products`, `stores`, `sellers`, `offers`, `audit_entries`, `missions`, `mission_criteria`, `mission_sources` e `mission_transitions` já foram implementados. Observações de preço ocorrem na TASK-015 após a persistência de coletas da TASK-026; consultas históricas permanecem na TASK-017.
+- Migrações, metadata ORM, sessões e conexão foram configuradas na TASK-011. `users`, `products`, `stores`, `sellers`, `offers`, `audit_entries`, `missions`, `mission_criteria`, `mission_sources`, `mission_transitions` e `mission_schedules` já foram implementados. Observações de preço ocorrem na TASK-015 após a persistência de coletas da TASK-026; consultas históricas permanecem na TASK-017.

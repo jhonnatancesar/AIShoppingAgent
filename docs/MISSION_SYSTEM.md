@@ -60,4 +60,4 @@ O estado atual pertence à missão, enquanto o histórico de transições é ane
 
 ## Limites desta definição
 
-Esta etapa não define critérios de busca, recorrência ou agenda, não implementa persistência, API, eventos, coleta nem regras de alerta. Esses comportamentos permanecem nas TASKs específicas do roadmap.
+Esta definição original não antecipou critérios, recorrência ou agenda. Critérios foram implementados na TASK-020 e a agenda recorrente na TASK-022; API, eventos, coleta e alertas permanecem nas tarefas específicas do roadmap.

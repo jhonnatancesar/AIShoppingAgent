@@ -31,5 +31,6 @@ retomada exigem pelo menos uma fonte persistida.
 ## Limites
 
 Filtros adicionais não foram antecipados porque não há requisitos concretos no
-MVP atual. Recorrência e frequência pertencem à agenda da TASK-022 e não ficam em
-JSONB. A TASK-020 não cria API, comandos, transições, coleta ou alertas.
+MVP atual. Recorrência e frequência foram implementadas como agenda tipada na
+TASK-022 e não ficam em JSONB. A TASK-020 não cria API, comandos, transições,
+coleta ou alertas.

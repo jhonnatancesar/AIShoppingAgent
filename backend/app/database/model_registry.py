@@ -4,6 +4,7 @@ from app.audit.models import AuditEntry
 from app.missions.models import (
     Mission,
     MissionCriteria,
+    MissionSchedule,
     MissionSource,
     MissionTransition,
 )
@@ -23,4 +24,5 @@ REGISTERED_MODELS = (
     MissionCriteria,
     MissionTransition,
     MissionSource,
+    MissionSchedule,
 )

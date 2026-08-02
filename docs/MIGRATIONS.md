@@ -69,6 +69,7 @@ Regras permanentes:
 - `20260802_0007`: cria `mission_criteria`, sua relação única com missões e as restrições monetárias.
 - `20260802_0008`: cria `mission_transitions`, a constraint de comandos, seus índices e a proteção append-only.
 - `20260802_0009`: adiciona seleção de fontes por missão, tipo de fonte, vendedores de marketplace e identidade de oferta por vendedor.
+- `20260802_0010`: cria uma agenda recorrente por missão, suas constraints e o índice parcial de execuções vencidas.
 
 O downgrade de `20260802_0009` não apaga ofertas para forçar compatibilidade. Se
 existirem ofertas de vendedores diferentes com a mesma identidade antiga, elas

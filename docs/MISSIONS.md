@@ -27,5 +27,6 @@ com prazo e estado não terminal, apoiando a futura verificação de expiração
 ## Limites
 
 Comandos e mudanças de estado foram implementados na TASK-021, conforme
-`docs/MISSION_TRANSITIONS.md`. Critérios pertencem à TASK-020; agenda, coleta,
-API, eventos e alertas permanecem nas respectivas tarefas.
+`docs/MISSION_TRANSITIONS.md`, e a agenda na TASK-022, conforme
+`docs/MISSION_SCHEDULES.md`. Critérios pertencem à TASK-020; coleta, API, eventos
+e alertas permanecem nas respectivas tarefas.

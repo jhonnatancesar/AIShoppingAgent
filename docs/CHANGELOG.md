@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-08-02 — TASK-022
+
+- Criados `MissionSchedule` e a revisão reversível `20260802_0010`, com uma agenda editável por missão.
+- Implementados intervalo fixo positivo, próxima execução, última execução, ativação lógica e índice parcial de agendas habilitadas.
+- Adicionada consulta determinística de missões ativas e não expiradas com `FOR UPDATE SKIP LOCKED`.
+- Implementado avanço para o primeiro intervalo futuro, sem acumular backlog retroativo.
+- Validada em PostgreSQL 18 a filtragem real, concorrência entre workers, constraints, downgrade e novo upgrade.
+- Ampliada a suíte para 89 testes aprovados e 99,73% de cobertura.
+
 ## 2026-08-02 — Correção retroativa para marketplaces
 
 - Corrigidas as TASKs 010, 014, 020 e 021 para suportar seleção de múltiplas fontes e vendedores terceiros da Amazon.

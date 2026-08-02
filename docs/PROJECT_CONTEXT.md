@@ -2,7 +2,7 @@
 
 ## Estado
 
-Fase: missões e coleta em implementação. TASK-021 concluída em 2026-08-02.
+Fase: missões e coleta em implementação. TASK-022 concluída em 2026-08-02.
 
 ## O que existe
 
@@ -30,12 +30,13 @@ Fase: missões e coleta em implementação. TASK-021 concluída em 2026-08-02.
 - Entidade `MissionTransition` append-only e serviço atômico para executar o ciclo de vida com critérios, prazo e concorrência protegidos.
 - Seleção persistente de múltiplas fontes por missão, exigida na ativação e retomada.
 - Fontes tipadas como varejista ou marketplace, vendedores persistentes e ofertas identificadas por vendedor.
+- Agenda recorrente persistente por missão, com seleção concorrente de execuções vencidas e progressão sem backlog retroativo.
 - Documentos de visão, arquitetura, dados, módulos-alvo, escopo do MVP, backlog, itens fora de escopo, governança de decisões e workflow permanente de execução.
 - ADRs, RFCs e 56 tarefas planejadas.
 
 ## O que não existe
 
-Além de `users`, `products`, `stores`, `sellers`, `offers`, `audit_entries`, `missions`, `mission_criteria`, `mission_sources` e `mission_transitions`, não há outras tabelas de domínio nem repositórios implementados. Também não existem autenticação, autorização, APIs de negócio, instrumentação automática de auditoria, automações, Store Providers, integrações externas, suíte permanente de testes de integração ou ponta a ponta nem credenciais reais configuradas.
+Além de `users`, `products`, `stores`, `sellers`, `offers`, `audit_entries`, `missions`, `mission_criteria`, `mission_sources`, `mission_transitions` e `mission_schedules`, não há outras tabelas de domínio nem repositórios implementados. Também não existem autenticação, autorização, APIs de negócio, worker, Store Providers, integrações externas, suíte permanente de testes de integração ou ponta a ponta nem credenciais reais configuradas.
 
 ## Invariantes
 
@@ -60,4 +61,4 @@ Além de `users`, `products`, `stores`, `sellers`, `offers`, `audit_entries`, `m
 - Marketplaces possuem vendedores próprios; a identidade da oferta inclui vendedor, enquanto frete e fulfillment pertencem à observação histórica.
 - Auditoria é append-only; correções geram novas entradas, e metadata nunca contém segredos ou dados pessoais desnecessários.
 - Missões nascem em `draft`; alterações de estado e de `state_version` são executadas atomicamente com histórico append-only e versão concorrente.
-- Critérios usam busca textual e preço-alvo opcional pareado com moeda; recorrência permanece separada na TASK-022.
+- Critérios usam busca textual e preço-alvo opcional pareado com moeda; recorrência usa agenda separada com intervalo fixo positivo.
