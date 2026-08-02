@@ -19,7 +19,8 @@ Este documento define integralmente a V1. Qualquer item que não esteja listado 
 
 ## Limites explícitos
 
-- A V1 atende somente as fontes explicitamente selecionadas pelo usuário e registradas na TASK-055.
+- A V1 permite selecionar Pichau, Terabyte, Amazon e Kabum, individualmente ou em conjunto.
+- Mercado Livre, Shopee e AliExpress aparecem no bot sob o rótulo ***Futuro*** e não podem ser selecionados na V1.
 - Marketplaces podem fazer parte da V1 quando selecionados; cada integração exige provider e validação próprios.
 - A V1 não inclui descoberta automática de fontes nem suporte genérico a marketplaces não selecionados.
 - A V1 não inclui ações financeiras automáticas; qualquer fluxo assistido de compra requer confirmação explícita.

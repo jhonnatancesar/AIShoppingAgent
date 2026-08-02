@@ -6,6 +6,7 @@ Para cada item novo, registrar uma descrição curta, a motivação e eventuais 
 
 ## Novas fontes de oferta
 
+- Store Providers para Mercado Livre, Shopee e AliExpress, apresentados como ***Futuro*** no bot da V1.
 - Inclusão após a V1 de lojas ou marketplaces que não forem selecionados para a TASK-055.
 - Critérios de qualificação, confiabilidade e manutenção de Store Providers.
 - Evolução da normalização de vendedores, frete, impostos, prazo e políticas específicas além do necessário às fontes selecionadas.

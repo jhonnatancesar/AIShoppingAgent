@@ -4,17 +4,33 @@ Status: Pendente
 
 ## Objetivo
 
-Implementar Store Providers para todas as lojas e marketplaces explicitamente selecionados pelo usuário para a V1.
+Implementar Store Providers para as quatro fontes selecionáveis da V1.
+
+## Fontes definidas
+
+Disponíveis para seleção:
+
+- Pichau;
+- Terabyte;
+- Amazon;
+- Kabum.
+
+***Futuro — não selecionáveis na V1:***
+
+- Mercado Livre (ML);
+- Shopee;
+- AliExpress.
 
 ## Escopo
 
-- Registrar no próprio arquivo, antes da implementação, a lista fechada de fontes selecionadas pelo usuário.
 - Implementar um provider independente por fonte usando o adaptador de coleta e a base Playwright já definidos.
 - Integrar somente as fontes explicitamente selecionadas; não descobrir, habilitar ou adicionar marketplaces automaticamente.
 - Tratar diferenças de vendedor, frete, disponibilidade, moeda e evidência bruta quando a fonte exigir, sem antecipar comparação ou compra.
 - Validar cada provider contra a fonte real e manter testes automatizados com dados sanitizados e estáveis.
 
-Kabum não é obrigatória nem exclusiva. Ela só será incluída se estiver na lista selecionada pelo usuário.
+O usuário poderá escolher uma ou mais das quatro fontes disponíveis. Mercado
+Livre, Shopee e AliExpress devem aparecer no bot somente sob o rótulo
+***Futuro***, sem permitir seleção ou iniciar coleta.
 
 ## Ordem e dependências
 
@@ -22,4 +38,7 @@ Executar após as TASK-023 e TASK-024, e antes da TASK-025, para validar a arqui
 
 ## Critério de aceite
 
-Cada fonte registrada na lista fechada possui um Store Provider funcional, isolado e validado na origem real. Uma busca usa todos os providers selecionados e retorna os dados brutos necessários à normalização posterior, sem integrar fontes não aprovadas.
+Pichau, Terabyte, Amazon e Kabum possuem Store Providers funcionais, isolados e
+validados nas origens reais. Uma busca usa todos os providers escolhidos pelo
+usuário entre essas quatro fontes. Mercado Livre, Shopee e AliExpress aparecem
+como futuras e não executam coleta.

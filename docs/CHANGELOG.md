@@ -3,8 +3,9 @@
 ## 2026-08-02 — Correção de escopo da TASK-055
 
 - Corrigido o requisito que restringia a TASK-055 exclusivamente à Kabum.
-- A V1 passa a pesquisar todas as lojas e marketplaces explicitamente selecionados pelo usuário, cada um com Store Provider próprio e validação real.
-- Fontes não selecionadas e descoberta automática permanecem fora do escopo.
+- Definidas Pichau, Terabyte, Amazon e Kabum como fontes selecionáveis da V1, cada uma com Store Provider próprio e validação real.
+- Mercado Livre, Shopee e AliExpress serão apresentados pelo bot sob ***Futuro***, sem seleção ou coleta na V1.
+- Outras fontes e descoberta automática permanecem fora do escopo.
 - Registrada a decisão `DEC-006` e sincronizados contexto, MVP, roadmap, backlog e limites de escopo.
 
 ## 2026-08-02 — TASK-021

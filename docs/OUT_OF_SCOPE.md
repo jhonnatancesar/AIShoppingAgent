@@ -5,6 +5,7 @@ Este documento impede aumento de escopo durante o desenvolvimento da primeira ve
 ## Fontes de oferta e expansão comercial
 
 - Lojas e marketplaces que não estejam na lista fechada da TASK-055.
+- Store Providers e coleta para Mercado Livre, Shopee e AliExpress na V1; essas fontes aparecem somente como futuras no bot.
 - Descoberta, ativação ou integração automática de novas fontes.
 - Um conector genérico que prometa compatibilidade sem provider e validação específicos para cada fonte.
 

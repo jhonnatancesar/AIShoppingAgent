@@ -33,7 +33,7 @@ Após a classificação, registrar a decisão neste arquivo e atualizar a docume
 - **Ideia:** substituir o escopo exclusivo da Kabum por coleta em todas as lojas e marketplaces explicitamente selecionados pelo usuário para a V1.
 - **Classificação:** Implementar agora
 - **Justificativa:** a TASK-055 registrada anteriormente não representa o requisito informado pelo usuário. A correção amplia arquitetura, testes e manutenção, pois cada fonte exige um Store Provider próprio, mas continua limitada à seleção explícita e não autoriza descoberta ou integração automática de qualquer marketplace.
-- **Próxima ação:** corrigir o escopo da V1, o roadmap e a TASK-055; registrar a lista concreta de fontes antes de executar a tarefa e implementar somente os providers selecionados.
+- **Próxima ação:** implementar na TASK-055 providers para Pichau, Terabyte, Amazon e Kabum; na TASK-035, exibir essas opções como selecionáveis e apresentar abaixo, sob ***Futuro***, Mercado Livre, Shopee e AliExpress desabilitados.
 
 ### DEC-005 — Ordenar observações de preço após coletas persistidas
 
