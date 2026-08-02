@@ -1,3 +1,7 @@
 # RFC-001 — Missões
 
-Proposta: definir modelo, estados, critérios, recorrência, transições e auditoria de missões antes da implementação.
+Status: aceito parcialmente pela TASK-018.
+
+Os estados, comandos, transições, invariantes e requisitos mínimos de auditoria do ciclo de vida estão definidos em `docs/MISSION_SYSTEM.md`.
+
+Modelo persistente, critérios, recorrência e implementação permanecem nas TASKs específicas do roadmap.

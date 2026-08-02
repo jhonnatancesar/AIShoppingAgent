@@ -2,7 +2,7 @@
 
 ## Estado
 
-Fase: base técnica concluída. TASK-009 concluída em 2026-08-01.
+Fase: ciclo de vida de missões definido. TASK-018 concluída em 2026-08-02.
 
 ## O que existe
 
@@ -18,6 +18,7 @@ Fase: base técnica concluída. TASK-009 concluída em 2026-08-01.
 - Convenções HTTP e OpenAPI definidas em `docs/API_CONVENTIONS.md`, com endpoints de negócio versionados sob `/api/v1`.
 - Logging JSON em `stdout`, com nível configurável e eventos HTTP sem captura de dados sensíveis.
 - Pipeline local único para dependências, lint, formatação, testes, cobertura e validação do Docker Compose.
+- Contrato de ciclo de vida de missões com estados, comandos, transições, invariantes e auditoria mínima definidos antes do modelo persistente.
 - Documentos de visão, arquitetura, dados, módulos-alvo, escopo do MVP, backlog, itens fora de escopo, governança de decisões e workflow permanente de execução.
 - ADRs, RFCs e 56 tarefas planejadas.
 
@@ -39,3 +40,4 @@ Não há modelo ou integração de banco de dados, automações, integrações e
 - O workflow oficial de execução de TASKs está definido em `AGENTS.md` e deve ser seguido automaticamente em todas as conversas futuras.
 - Antes de iniciar uma TASK em uma máquina nova, as dependências devem ser comparadas com `docs/DEPENDENCIES.md`; instalações exigem autorização explícita.
 - O projeto acompanha a versão estável mais recente do Python e exige nova validação de compatibilidade a cada atualização.
+- O ciclo de vida definido em `docs/MISSION_SYSTEM.md` é entrada obrigatória para o modelo de dados da TASK-010; sua execução será implementada apenas na TASK-021.

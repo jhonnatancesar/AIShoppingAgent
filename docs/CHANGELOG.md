@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-08-02 — TASK-018
+
+- Definidos os estados `draft`, `active`, `paused`, `completed`, `cancelled` e `expired` para missões.
+- Documentados comandos, transições permitidas, condições e comportamento terminal.
+- Estabelecidas invariantes para coleta, missões permanentes, concorrência, preservação de histórico e horários em UTC.
+- Definido o registro mínimo e imutável de transições como entrada para a TASK-010, sem antecipar persistência ou implementação.
+- Delimitadas as responsabilidades futuras das TASKs 010, 016 e 021.
+
 ## 2026-08-01 — TASK-009
 
 - Criado pipeline local executável por `scripts\check.cmd`, compatível com a política de execução atual do Windows.

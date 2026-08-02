@@ -1,6 +1,6 @@
 # TASK-018 — Definir ciclo de vida de missão
 
-Status: Pendente
+Status: Concluída
 
 ## Objetivo
 
@@ -16,4 +16,4 @@ Executar antes da TASK-010. A definição de estados e transições é uma entra
 
 ## Critério de aceite
 
-Escopo concluído, documentado e verificado conforme os critérios da tarefa.
+Estados, comandos, transições, condições, invariantes e requisitos mínimos de auditoria definidos como entrada para o modelo persistente, sem antecipar sua implementação.
