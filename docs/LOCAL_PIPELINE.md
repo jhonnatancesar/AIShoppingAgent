@@ -8,6 +8,7 @@ Instale as dependências de desenvolvimento após autorização:
 
 ```powershell
 python -m pip install -r backend/requirements-dev.txt
+python -m playwright install chromium
 ```
 
 Python, Docker Desktop e Docker Compose devem estar disponíveis no `PATH`, conforme `docs/DEPENDENCIES.md`. O Docker Engine não precisa estar ativo para validar o arquivo Compose.

@@ -21,6 +21,6 @@ normalizados na TASK-025; execução e persistência do lote pertencem à TASK-0
 
 ## Evolução prevista
 
-A TASK-024 criará a infraestrutura base de navegador. A TASK-055 implementará, sobre
-esta porta, providers próprios para Pichau, Terabyte, Amazon e Kabum. Mercado Livre,
-Shopee e AliExpress permanecem indisponíveis na V1.
+A TASK-024 criou a infraestrutura base descrita em `docs/PLAYWRIGHT.md`. A TASK-055
+implementará, sobre esta porta, providers próprios para Pichau, Terabyte, Amazon e
+Kabum. Mercado Livre, Shopee e AliExpress permanecem indisponíveis na V1.

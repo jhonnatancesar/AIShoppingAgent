@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-08-02 — TASK-024
+
+- Adicionados Playwright 1.62.0 e Chromium à aplicação e à imagem Docker.
+- Criada sessão assíncrona de navegador com contexto isolado, execução headless, timeouts configuráveis e downloads desabilitados.
+- Implementado encerramento determinístico de página, contexto, navegador e processo Playwright, inclusive após inicialização parcial.
+- Validado Chromium real com renderização e consulta de conteúdo local, sem antecipar Store Providers ou acessar marketplaces.
+- Construída a imagem Docker e executado nela o mesmo smoke test com Chromium e dependências Linux reais.
+- Ampliada a suíte para 101 testes aprovados e 99,80% de cobertura.
+- Documentados instalação, operação, limites e sequência correta: TASK-055 antes da TASK-025.
+
 ## 2026-08-02 — Segurança do ambiente Python
 
 - Restringido o ambiente do projeto à instalação oficial do Python da máquina, com assinatura digital válida.

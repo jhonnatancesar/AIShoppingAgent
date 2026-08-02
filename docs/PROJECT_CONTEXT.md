@@ -2,7 +2,7 @@
 
 ## Estado
 
-Fase: missões e coleta em implementação. TASK-023 concluída em 2026-08-02.
+Fase: missões e coleta em implementação. TASK-024 concluída em 2026-08-02.
 
 ## O que existe
 
@@ -32,6 +32,7 @@ Fase: missões e coleta em implementação. TASK-023 concluída em 2026-08-02.
 - Fontes tipadas como varejista ou marketplace, vendedores persistentes e ofertas identificadas por vendedor.
 - Agenda recorrente persistente por missão, com seleção concorrente de execuções vencidas e progressão sem backlog retroativo.
 - Adaptador assíncrono de coleta com contratos de entrada e saída bruta, registro por fonte e preservação de vendedor, frete e fulfillment.
+- Base Playwright 1.62.0 com Chromium isolado, ciclo de vida assíncrono, timeouts e downloads desabilitados por padrão.
 - Documentos de visão, arquitetura, dados, módulos-alvo, escopo do MVP, backlog, itens fora de escopo, governança de decisões e workflow permanente de execução.
 - ADRs, RFCs e 56 tarefas planejadas.
 

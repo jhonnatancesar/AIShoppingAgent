@@ -23,6 +23,7 @@ O Python usado deve ser a instalação oficial da máquina, identificada pelo ca
 A fonte de verdade para dependências Python é `backend/requirements.txt`:
 
 - `fastapi>=0.115,<1.0`
+- `playwright>=1.62,<2.0`
 - `SQLAlchemy>=2.0,<2.1`
 - `alembic>=1.18,<2.0`
 - `psycopg[binary]>=3.3,<4.0`
@@ -30,6 +31,11 @@ A fonte de verdade para dependências Python é `backend/requirements.txt`:
 - `uvicorn[standard]>=0.30,<1.0`
 
 As versões validadas na TASK-011 foram SQLAlchemy 2.0.51, Alembic 1.18.5 e Psycopg 3.3.4. O extra binário do Psycopg evita exigir uma instalação separada de `libpq` e possui suporte validado a Python 3.14 e PostgreSQL 18.
+
+Playwright 1.62.0 e Chromium 151.0.7922.34 foram validados na TASK-024. O pacote
+Python e o navegador são instalações distintas; após instalar os requisitos, execute
+`python -m playwright install chromium`. No Docker, o build instala Chromium e suas
+dependências Linux automaticamente.
 
 Para comparar e instalar em uma nova máquina, após autorização:
 
@@ -50,6 +56,7 @@ Após autorização para instalação, validar lint e formatação a partir da r
 
 ```powershell
 python -m pip install -r backend/requirements-dev.txt
+python -m playwright install chromium
 python -m ruff check .
 python -m ruff format --check .
 python -m pytest
