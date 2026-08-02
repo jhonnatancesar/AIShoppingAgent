@@ -67,7 +67,7 @@ def test_transition_contract_contains_exact_lifecycle() -> None:
 
 def test_transition_updates_state_version_and_appends_history() -> None:
     mission = _mission(MissionStatus.DRAFT)
-    session = _session(mission, uuid4())
+    session = _session(mission, uuid4(), uuid4())
 
     transition = transition_mission(
         session,
@@ -172,12 +172,26 @@ def test_activation_requires_criteria() -> None:
         )
 
 
+def test_activation_requires_selected_source() -> None:
+    mission = _mission()
+
+    with pytest.raises(MissionTransitionConditionError):
+        transition_mission(
+            _session(mission, uuid4(), None),
+            mission_id=mission.id,
+            command=MissionCommand.ACTIVATE,
+            expected_state_version=0,
+            actor_type="user",
+            transitioned_at=NOW,
+        )
+
+
 def test_resume_rejects_reached_deadline() -> None:
     mission = _mission(MissionStatus.PAUSED, expires_at=NOW)
 
     with pytest.raises(MissionTransitionConditionError):
         transition_mission(
-            _session(mission, uuid4()),
+            _session(mission, uuid4(), uuid4()),
             mission_id=mission.id,
             command=MissionCommand.RESUME,
             expected_state_version=0,

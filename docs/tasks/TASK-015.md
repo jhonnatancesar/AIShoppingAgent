@@ -10,6 +10,9 @@ Planejar e executar, quando solicitada, a etapa “Criar observações de preço
 
 Executar somente o objetivo desta tarefa, conforme AGENTS.md, CLAUDE.md e a documentação em docs/.
 
+Cada observação deve registrar preço do item, moeda, frete opcional, total exato
+e fulfillment opcional, preservando a oferta — e portanto o vendedor — observada.
+
 ## Ordem e dependências
 
 Executar após a TASK-026, pois cada observação exige uma coleta persistida por

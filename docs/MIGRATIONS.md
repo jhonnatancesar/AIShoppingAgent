@@ -68,6 +68,12 @@ Regras permanentes:
 - `20260802_0006`: cria o enum `mission_status`, a tabela `missions`, suas restrições e índices;
 - `20260802_0007`: cria `mission_criteria`, sua relação única com missões e as restrições monetárias.
 - `20260802_0008`: cria `mission_transitions`, a constraint de comandos, seus índices e a proteção append-only.
+- `20260802_0009`: adiciona seleção de fontes por missão, tipo de fonte, vendedores de marketplace e identidade de oferta por vendedor.
+
+O downgrade de `20260802_0009` não apaga ofertas para forçar compatibilidade. Se
+existirem ofertas de vendedores diferentes com a mesma identidade antiga, elas
+devem ser migradas de forma explícita antes da reversão; a recriação dos índices
+anteriores falhará em vez de descartar histórico silenciosamente.
 
 As demais tabelas do modelo serão introduzidas pelas TASKs de missões e coleta e,
 depois, pela TASK-015 conforme suas dependências explícitas.

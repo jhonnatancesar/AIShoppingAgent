@@ -23,10 +23,10 @@ estado atual. Na mesma transação do chamador, o serviço:
 4. inclui o registro histórico;
 5. executa `flush`, sem decidir o `commit` do chamador.
 
-Ativação e retomada exigem critérios persistidos. Retomada rejeita prazo já
-alcançado; expiração exige um prazo alcançado. Estados terminais não possuem
-saída. Comandos concorrentes com a mesma versão são serializados pelo banco e
-somente um pode ser aceito.
+Ativação e retomada exigem critérios persistidos e ao menos uma fonte selecionada.
+Retomada rejeita prazo já alcançado; expiração exige um prazo alcançado. Estados
+terminais não possuem saída. Comandos concorrentes com a mesma versão são
+serializados pelo banco e somente um pode ser aceito.
 
 ## Limites
 

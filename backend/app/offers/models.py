@@ -3,7 +3,16 @@
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, String, Text, func
+from sqlalchemy import (
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    ForeignKeyConstraint,
+    Index,
+    String,
+    Text,
+    func,
+)
 from sqlalchemy.dialects.postgresql import UUID as PostgreSQLUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -23,14 +32,43 @@ class Offer(Base):
         CheckConstraint("btrim(url) <> ''", name="ck_offers_url_not_blank"),
         Index("ix_offers_product_id", "product_id"),
         Index("ix_offers_store_id", "store_id"),
+        Index("ix_offers_seller_id", "seller_id"),
         Index(
-            "uq_offers_store_external_id",
+            "uq_offers_retailer_external_id",
             "store_id",
             "external_id",
             unique=True,
-            postgresql_where="external_id IS NOT NULL",
+            postgresql_where="seller_id IS NULL AND external_id IS NOT NULL",
         ),
-        Index("uq_offers_store_url", "store_id", "url", unique=True),
+        Index(
+            "uq_offers_marketplace_external_id",
+            "store_id",
+            "seller_id",
+            "external_id",
+            unique=True,
+            postgresql_where="seller_id IS NOT NULL AND external_id IS NOT NULL",
+        ),
+        Index(
+            "uq_offers_retailer_url",
+            "store_id",
+            "url",
+            unique=True,
+            postgresql_where="seller_id IS NULL",
+        ),
+        Index(
+            "uq_offers_marketplace_url",
+            "store_id",
+            "seller_id",
+            "url",
+            unique=True,
+            postgresql_where="seller_id IS NOT NULL",
+        ),
+        ForeignKeyConstraint(
+            ["seller_id", "store_id"],
+            ["sellers.id", "sellers.store_id"],
+            name="fk_offers_seller_store_sellers",
+            ondelete="RESTRICT",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(
@@ -47,6 +85,9 @@ class Offer(Base):
         PostgreSQLUUID(as_uuid=True),
         ForeignKey("stores.id", ondelete="RESTRICT"),
         nullable=False,
+    )
+    seller_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), nullable=True
     )
     external_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     url: Mapped[str] = mapped_column(Text, nullable=False)

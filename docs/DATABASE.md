@@ -19,9 +19,13 @@ PostgreSQL é a fonte transacional do MVP. Este documento define o esquema relac
 erDiagram
     users ||--o{ missions : owns
     missions ||--o| mission_criteria : defines
+    missions ||--o{ mission_sources : selects
+    stores ||--o{ mission_sources : selected_for
     missions ||--o{ mission_transitions : records
     missions ||--o{ collection_runs : triggers
     stores ||--o{ offers : publishes
+    stores ||--o{ sellers : hosts
+    sellers o|--o{ offers : sells
     products ||--o{ offers : identifies
     collection_runs ||--o{ price_observations : produces
     offers ||--o{ price_observations : receives
@@ -30,7 +34,7 @@ erDiagram
     users o|--o{ audit_entries : acts
 ```
 
-`stores` é uma entidade de apoio necessária para normalizar a origem de cada oferta. Ela não habilita fontes automaticamente nem antecipa qualquer Store Provider.
+`stores` normaliza a origem de cada oferta e diferencia varejistas de marketplaces. Ela não habilita fontes automaticamente nem antecipa qualquer Store Provider.
 
 ## Entidades
 
@@ -93,6 +97,20 @@ foram antecipados filtros adicionais sem requisito concreto; recorrência perten
 à agenda da TASK-022. O contrato e os limites estão em
 `docs/MISSION_CRITERIA.md`.
 
+### `mission_sources`
+
+Seleção explícita das fontes pesquisadas por uma missão.
+
+| Coluna | Tipo | Regra |
+| --- | --- | --- |
+| `mission_id` | `uuid` | FK para `missions.id`, parte da PK, com `RESTRICT`. |
+| `store_id` | `uuid` | FK para `stores.id`, parte da PK, com `RESTRICT`. |
+| `created_at` | `timestamptz` | Obrigatório. |
+
+Uma missão pode selecionar várias fontes, sem duplicá-las. Ativação e retomada
+exigem ao menos uma seleção. A estrutura foi adicionada pela revisão
+`20260802_0009` para corrigir o escopo da TASK-020.
+
 ### `mission_transitions`
 
 Histórico imutável do ciclo de vida.
@@ -134,7 +152,7 @@ conservadora de identidade e os limites funcionais estão em `docs/PRODUCTS.md`.
 
 ### `stores`
 
-Origem nacional normalizada de ofertas.
+Origem normalizada de ofertas de varejista ou marketplace.
 
 | Coluna | Tipo | Regra |
 | --- | --- | --- |
@@ -142,12 +160,30 @@ Origem nacional normalizada de ofertas.
 | `code` | `varchar(64)` | Obrigatório, único, estável e em `snake_case`. |
 | `name` | `varchar(160)` | Obrigatório. |
 | `base_url` | `text` | Obrigatório. |
+| `source_type` | `varchar(16)` | `retailer` ou `marketplace`; padrão `retailer`. |
 | `is_active` | `boolean` | Obrigatório, padrão `true`. |
 | `created_at` | `timestamptz` | Obrigatório. |
 | `updated_at` | `timestamptz` | Obrigatório. |
 
 Esta entidade de apoio foi implementada na TASK-014 pela revisão
-`20260802_0004`, sem antecipar Store Providers ou coleta.
+`20260802_0004` e ampliada pela revisão `20260802_0009`, sem antecipar Store
+Providers ou coleta.
+
+### `sellers`
+
+Vendedor estável dentro de um marketplace.
+
+| Coluna | Tipo | Regra |
+| --- | --- | --- |
+| `id` | `uuid` | Chave primária. |
+| `store_id` | `uuid` | FK para `stores.id`, com `RESTRICT`; a fonte precisa ser marketplace. |
+| `external_id` | `varchar(255)` | Opcional e único por marketplace quando informado. |
+| `name` | `varchar(200)` | Obrigatório e não vazio. |
+| `created_at` | `timestamptz` | Obrigatório. |
+| `updated_at` | `timestamptz` | Obrigatório. |
+
+Triggers impedem vendedor em varejista e impedem reclassificar como varejista um
+marketplace que já possua vendedores.
 
 ### `offers`
 
@@ -158,15 +194,18 @@ Anúncio estável de um produto em uma loja. Preço e disponibilidade não ficam
 | `id` | `uuid` | Chave primária. |
 | `product_id` | `uuid` | FK obrigatória para `products.id`, com `RESTRICT`. |
 | `store_id` | `uuid` | FK obrigatória para `stores.id`, com `RESTRICT`. |
+| `seller_id` | `uuid` | FK composta opcional com `store_id` para `sellers`; nula no varejo. |
 | `external_id` | `varchar(255)` | Identificador da loja, opcional quando indisponível. |
 | `url` | `text` | URL canônica obrigatória. |
 | `created_at` | `timestamptz` | Obrigatório. |
 | `updated_at` | `timestamptz` | Obrigatório. |
 
-Deve existir unicidade de `(store_id, external_id)` quando `external_id` não for nulo e, como proteção adicional, de `(store_id, url)`.
+No varejo, a identidade é única por fonte. Em marketplace, é única por fonte e
+vendedor, permitindo o mesmo anúncio para vendedores diferentes.
 
-Esta entidade foi implementada na TASK-014 pela revisão `20260802_0004`. Seu
-contrato, identidade e limites estão em `docs/OFFERS.md`.
+Esta entidade foi implementada na TASK-014 pela revisão `20260802_0004` e
+corrigida para marketplaces pela revisão `20260802_0009`. Seu contrato está em
+`docs/OFFERS.md`.
 
 ### `collection_runs`
 
@@ -192,8 +231,11 @@ Evidência imutável de preço e disponibilidade obtida em uma coleta.
 | `id` | `uuid` | Chave primária. |
 | `offer_id` | `uuid` | FK obrigatória para `offers.id`, com `RESTRICT`. |
 | `collection_run_id` | `uuid` | FK obrigatória para `collection_runs.id`, com `RESTRICT`. |
-| `amount` | `numeric(19,4)` | Obrigatório e maior ou igual a zero. |
+| `amount` | `numeric(19,4)` | Preço do item, obrigatório e maior ou igual a zero. |
 | `currency` | `char(3)` | Obrigatório. |
+| `shipping_amount` | `numeric(19,4)` | Frete opcional, não negativo e na mesma moeda. |
+| `total_amount` | `numeric(19,4)` | Total obrigatório do item e do frete conhecido. |
+| `fulfillment` | `varchar(120)` | Responsável pelo envio, opcional. |
 | `availability` | `varchar(32)` | Obrigatório; vocabulário será definido na TASK-025. |
 | `observed_at` | `timestamptz` | Obrigatório; instante informado pela coleta. |
 | `recorded_at` | `timestamptz` | Obrigatório; instante de persistência. |
@@ -242,7 +284,9 @@ em `docs/AUDIT.md`.
 - `missions (user_id, status, created_at desc)` para listagens do proprietário.
 - `missions (status, expires_at)` parcial para prazos não nulos de estados não terminais.
 - `mission_transitions (mission_id, transitioned_at, id)` para histórico determinístico.
-- `offers (product_id)` e `offers (store_id)` além das unicidades definidas.
+- `offers (product_id)`, `offers (store_id)` e `offers (seller_id)` além das unicidades definidas.
+- `sellers (store_id)` e unicidade parcial de `(store_id, external_id)`.
+- `mission_sources (store_id)` para localizar missões por fonte.
 - `collection_runs (mission_id, started_at desc)` e `collection_runs (store_id, started_at desc)`.
 - `price_observations (offer_id, observed_at desc, id)` para histórico de uma oferta.
 - `price_observations (collection_run_id)` para rastrear os resultados de uma coleta.
@@ -258,4 +302,4 @@ em `docs/AUDIT.md`.
 - Resultados históricos usam ordenação composta por horário e `id`, evitando ambiguidade quando dois registros tiverem o mesmo instante.
 - `updated_at` não é evidência de domínio; transições, preços, eventos e auditoria possuem seus próprios horários imutáveis.
 - O modelo não armazena credenciais, tokens, conteúdo integral de páginas ou dados pessoais desnecessários.
-- Migrações, metadata ORM, sessões e conexão foram configuradas na TASK-011. `users`, `products`, `stores`, `offers`, `audit_entries`, `missions`, `mission_criteria` e `mission_transitions` já foram implementados. Observações de preço ocorrem na TASK-015 após a persistência de coletas da TASK-026; consultas históricas permanecem na TASK-017.
+- Migrações, metadata ORM, sessões e conexão foram configuradas na TASK-011. `users`, `products`, `stores`, `sellers`, `offers`, `audit_entries`, `missions`, `mission_criteria`, `mission_sources` e `mission_transitions` já foram implementados. Observações de preço ocorrem na TASK-015 após a persistência de coletas da TASK-026; consultas históricas permanecem na TASK-017.

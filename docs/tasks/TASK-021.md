@@ -9,7 +9,7 @@ Implementar a execução persistente e atômica das transições de missão defi
 ## Escopo
 
 - Histórico append-only com estado anterior, novo estado, comando, ator, motivo e instante.
-- Serviço transacional com validação do estado atual, critérios, prazo e versão concorrente.
+- Serviço transacional com validação do estado atual, critérios, ao menos uma fonte, prazo e versão concorrente.
 - Atualização atômica de `status`, `state_version`, `updated_at` e histórico.
 - Migration reversível, testes e documentação, sem API, agenda, coleta ou eventos.
 

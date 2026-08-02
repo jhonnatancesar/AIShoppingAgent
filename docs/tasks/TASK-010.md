@@ -17,3 +17,10 @@ Executar após a TASK-018, para que o modelo persistente de missões incorpore o
 ## Critério de aceite
 
 Esquema relacional do MVP definido com entidades, tipos PostgreSQL, relações, chaves, restrições, índices mínimos e regras de consistência e histórico, incorporando o ciclo de vida de missões sem antecipar migrações ou persistência.
+
+## Correção de escopo — fontes selecionadas
+
+O contrato foi ampliado em 2026-08-02 para representar `mission_sources`, tipo
+de fonte, vendedores de marketplace, ofertas por vendedor, frete, total e
+fulfillment históricos. A correção preserva o histórico e está detalhada em
+`docs/DATABASE.md` e `docs/MARKETPLACE_SOURCES.md`.

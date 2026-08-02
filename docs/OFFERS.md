@@ -1,8 +1,8 @@
 # Ofertas
 
-`Offer` representa o anúncio estável de um produto canônico em uma loja
-nacional. A TASK-014 também introduz `Store`, entidade mínima necessária para
-normalizar a origem e preservar a integridade referencial das ofertas.
+`Offer` representa o anúncio estável de um produto canônico em um varejista ou
+marketplace. A TASK-014 introduziu `Store`; a revisão corretiva `20260802_0009`
+adicionou tipo de fonte e vendedores.
 
 ## Loja
 
@@ -10,24 +10,32 @@ normalizar a origem e preservar a integridade referencial das ofertas.
 - `code`: identificador estável e único em `snake_case`, com até 64 caracteres;
 - `name`: nome obrigatório, com até 160 caracteres;
 - `base_url`: URL base obrigatória;
+- `source_type`: `retailer` ou `marketplace`;
 - `is_active`: ativação lógica, com padrão `true`;
 - `created_at` e `updated_at`: timestamps obrigatórios em UTC.
 
-Uma loja não é um Store Provider. Este registro não contém seletores,
-credenciais, regras de coleta nem suporte a marketplaces.
+Uma fonte não é um Store Provider. Este registro não contém seletores,
+credenciais nem regras de coleta.
+
+## Vendedor
+
+`Seller` identifica um vendedor dentro de um marketplace por nome e ID externo
+opcional. O banco rejeita vendedores em varejistas e garante que uma oferta não
+possa referenciar um vendedor de outro marketplace.
 
 ## Oferta
 
 - `id`: UUID gerado pela aplicação;
 - `product_id`: produto obrigatório, protegido por `RESTRICT`;
 - `store_id`: loja obrigatória, protegida por `RESTRICT`;
+- `seller_id`: vendedor opcional e restrito à mesma fonte;
 - `external_id`: identificador opcional fornecido pela loja;
 - `url`: URL canônica obrigatória;
 - `created_at` e `updated_at`: timestamps obrigatórios em UTC.
 
-Dentro de uma loja, o `external_id` é único quando informado e a URL é sempre
-única. URLs iguais em lojas diferentes são permitidas. Índices próprios em
-`product_id` e `store_id` suportam as relações previstas no modelo de dados.
+No varejo, identidade externa e URL são únicas por fonte. Em marketplace, são
+únicas por fonte e vendedor, permitindo o mesmo anúncio para vendedores
+diferentes. Índices em produto, fonte e vendedor suportam as relações previstas.
 
 ## Limites
 

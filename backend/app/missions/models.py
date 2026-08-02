@@ -260,3 +260,27 @@ class MissionTransition(Base):
         default=utc_now,
         server_default=func.now(),
     )
+
+
+class MissionSource(Base):
+    """Fonte explicitamente selecionada para a busca de uma missão."""
+
+    __tablename__ = "mission_sources"
+    __table_args__ = (Index("ix_mission_sources_store_id", "store_id"),)
+
+    mission_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("missions.id", ondelete="RESTRICT"),
+        primary_key=True,
+    )
+    store_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("stores.id", ondelete="RESTRICT"),
+        primary_key=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+        server_default=func.now(),
+    )

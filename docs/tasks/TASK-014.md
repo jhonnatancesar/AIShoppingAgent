@@ -9,15 +9,18 @@ integridade referencial.
 
 ## Escopo
 
-- Modelo `Store` para normalizar a loja nacional, sem implementar provider.
-- Modelo `Offer` associado obrigatoriamente a produto e loja com `RESTRICT`.
+- Modelo `Store` para normalizar varejista ou marketplace, sem implementar provider.
+- Modelo `Seller` para vendedores de marketplace, protegido por `RESTRICT` e coerência de fonte.
+- Modelo `Offer` associado a produto e fonte, com vendedor opcional da mesma fonte.
 - Identidade da oferta protegida por ID externo opcional e URL canônica.
 - Migration Alembic reversível, índices, restrições e metadata compartilhada.
 - Testes e documentação, sem preço, disponibilidade, API ou coleta.
 
 ## Critério de aceite
 
-Modelos e migration consistentes, relações e unicidades protegidas, revisão
-linear e reversível, testes aprovados e limites documentados sem antecipar
-observações de preço ou integrações.
+Modelos e migrations consistentes, relações e identidades de varejo e marketplace
+protegidas, testes aprovados e limites documentados sem antecipar coleta.
+
+Corrigida pela revisão `20260802_0009` após a inclusão da Amazon com vendedores
+terceiros no escopo da V1.
 

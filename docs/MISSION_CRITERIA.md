@@ -9,7 +9,7 @@ missão.
 - `id`: UUID gerado pela aplicação;
 - `mission_id`: missão obrigatória e única, protegida por `RESTRICT`;
 - `search_query`: texto de busca obrigatório e não vazio;
-- `target_amount`: preço-alvo opcional em `numeric(19,4)`, nunca negativo;
+- `target_amount`: total-alvo opcional em `numeric(19,4)`, nunca negativo e comparado ao preço com frete conhecido;
 - `target_currency`: código ISO 4217 opcional em `char(3)`;
 - `created_at` e `updated_at`: timestamps obrigatórios em UTC.
 
@@ -23,6 +23,10 @@ Uma missão em `draft` pode existir sem critérios. A ativação e a retomada ex
 um registro válido; essa validação e a mudança atômica de estado foram
 implementadas na TASK-021. Critérios continuam editáveis e `updated_at` não
 substitui a auditoria das ações relevantes.
+
+As fontes de busca são relações tipadas em `mission_sources`, não filtros JSONB.
+Uma missão pode selecionar Pichau, Terabyte, Amazon e/ou Kabum; ativação e
+retomada exigem pelo menos uma fonte persistida.
 
 ## Limites
 

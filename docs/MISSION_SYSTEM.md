@@ -21,14 +21,14 @@ Encontrar uma oferta ou atingir um preço-alvo não conclui automaticamente a mi
 
 | Estado atual | Comando | Próximo estado | Condição |
 | --- | --- | --- | --- |
-| `draft` | `activate` | `active` | Os critérios obrigatórios da missão são válidos. |
+| `draft` | `activate` | `active` | Os critérios são válidos e existe ao menos uma fonte selecionada. |
 | `draft` | `cancel` | `cancelled` | Nenhuma condição adicional. |
 | `draft` | `expire` | `expired` | Existe prazo e ele foi alcançado. |
 | `active` | `pause` | `paused` | Nenhuma condição adicional. |
 | `active` | `complete` | `completed` | Encerramento explícito do objetivo. |
 | `active` | `cancel` | `cancelled` | Encerramento explícito sem sucesso. |
 | `active` | `expire` | `expired` | Existe prazo e ele foi alcançado. |
-| `paused` | `resume` | `active` | Os critérios obrigatórios continuam válidos e o prazo não expirou. |
+| `paused` | `resume` | `active` | Critérios e fontes continuam válidos e o prazo não expirou. |
 | `paused` | `complete` | `completed` | Encerramento explícito do objetivo. |
 | `paused` | `cancel` | `cancelled` | Encerramento explícito sem sucesso. |
 | `paused` | `expire` | `expired` | Existe prazo e ele foi alcançado. |

@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-08-02 — Correção retroativa para marketplaces
+
+- Corrigidas as TASKs 010, 014, 020 e 021 para suportar seleção de múltiplas fontes e vendedores terceiros da Amazon.
+- Adicionados `Store.source_type`, `Seller`, `Offer.seller_id` e `MissionSource`, com integridade referencial e identidades separadas para varejo e marketplace.
+- Ativação e retomada agora exigem critérios e ao menos uma fonte selecionada.
+- Atualizado o contrato futuro de observações para preservar preço, frete, total, vendedor e fulfillment.
+- Adicionada a revisão reversível `20260802_0009` e validada em PostgreSQL 18 com cenários válidos, constraints, downgrade e novo upgrade.
+- Ampliada a suíte para 75 testes aprovados e 99,69% de cobertura.
+
 ## 2026-08-02 — Correção de escopo da TASK-055
 
 - Corrigido o requisito que restringia a TASK-055 exclusivamente à Kabum.

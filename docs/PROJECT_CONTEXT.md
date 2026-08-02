@@ -23,17 +23,19 @@ Fase: missões e coleta em implementação. TASK-021 concluída em 2026-08-02.
 - SQLAlchemy, Psycopg e Alembic configurados com conexão tipada, metadata compartilhada, sessões explícitas e baseline reversível.
 - Entidade `User` persistente com UUID, nome, papel tipado, ativação lógica, timestamps e restrições de integridade.
 - Entidade `Product` persistente com identidade canônica, nome, marca e modelo opcionais, timestamps e restrições de integridade.
-- Entidades `Store` e `Offer` persistentes com origem nacional normalizada, relações restritivas e identidade estável por loja.
+- Entidades `Store`, `Seller` e `Offer` persistentes com fonte tipada, relações restritivas e identidade estável por varejista ou vendedor de marketplace.
 - Entidade `AuditEntry` persistente e append-only, com JSONB sanitizado, referência opcional de ator e índices históricos.
 - Entidade `Mission` persistente com proprietário, seis estados, prazo opcional, versão concorrente e índices operacionais.
 - Entidade `MissionCriteria` persistente com busca obrigatória e preço-alvo monetário opcional, única por missão.
 - Entidade `MissionTransition` append-only e serviço atômico para executar o ciclo de vida com critérios, prazo e concorrência protegidos.
+- Seleção persistente de múltiplas fontes por missão, exigida na ativação e retomada.
+- Fontes tipadas como varejista ou marketplace, vendedores persistentes e ofertas identificadas por vendedor.
 - Documentos de visão, arquitetura, dados, módulos-alvo, escopo do MVP, backlog, itens fora de escopo, governança de decisões e workflow permanente de execução.
 - ADRs, RFCs e 56 tarefas planejadas.
 
 ## O que não existe
 
-Além de `users`, `products`, `stores`, `offers`, `audit_entries`, `missions`, `mission_criteria` e `mission_transitions`, não há outras tabelas de domínio nem repositórios implementados. Também não existem autenticação, autorização, APIs de negócio, instrumentação automática de auditoria, automações, Store Providers, integrações externas, suíte permanente de testes de integração ou ponta a ponta nem credenciais reais configuradas.
+Além de `users`, `products`, `stores`, `sellers`, `offers`, `audit_entries`, `missions`, `mission_criteria`, `mission_sources` e `mission_transitions`, não há outras tabelas de domínio nem repositórios implementados. Também não existem autenticação, autorização, APIs de negócio, instrumentação automática de auditoria, automações, Store Providers, integrações externas, suíte permanente de testes de integração ou ponta a ponta nem credenciais reais configuradas.
 
 ## Invariantes
 
@@ -55,6 +57,7 @@ Além de `users`, `products`, `stores`, `offers`, `audit_entries`, `missions`, `
 - Usuários aceitam somente os papéis `USER`, `ADMIN` e `DEV`; `PLUS` permanece fora do MVP, e `is_active` não substitui as regras futuras de autenticação e autorização.
 - Produtos são identidades canônicas independentes de loja; nomes não são únicos e nenhuma deduplicação automática ocorre sem evidência suficiente.
 - Ofertas identificam anúncios estáveis por loja e nunca armazenam preço ou disponibilidade corrente; lojas persistentes não implementam providers de coleta.
+- Marketplaces possuem vendedores próprios; a identidade da oferta inclui vendedor, enquanto frete e fulfillment pertencem à observação histórica.
 - Auditoria é append-only; correções geram novas entradas, e metadata nunca contém segredos ou dados pessoais desnecessários.
 - Missões nascem em `draft`; alterações de estado e de `state_version` são executadas atomicamente com histórico append-only e versão concorrente.
 - Critérios usam busca textual e preço-alvo opcional pareado com moeda; recorrência permanece separada na TASK-022.

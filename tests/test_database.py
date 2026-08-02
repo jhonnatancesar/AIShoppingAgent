@@ -65,4 +65,6 @@ def test_metadata_contains_only_implemented_tables() -> None:
         "missions",
         "mission_criteria",
         "mission_transitions",
+        "sellers",
+        "mission_sources",
     }

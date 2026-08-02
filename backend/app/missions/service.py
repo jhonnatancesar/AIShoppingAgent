@@ -11,6 +11,7 @@ from app.missions.models import (
     Mission,
     MissionCommand,
     MissionCriteria,
+    MissionSource,
     MissionStatus,
     MissionTransition,
 )
@@ -96,6 +97,13 @@ def transition_mission(
         if criteria_id is None:
             raise MissionTransitionConditionError(
                 "A missão precisa de critérios válidos para ser ativada."
+            )
+        source_id = session.scalar(
+            select(MissionSource.store_id).where(MissionSource.mission_id == mission.id)
+        )
+        if source_id is None:
+            raise MissionTransitionConditionError(
+                "A missão precisa de ao menos uma fonte selecionada."
             )
     if command is MissionCommand.RESUME and _deadline_reached(mission, accepted_at):
         raise MissionTransitionConditionError(
