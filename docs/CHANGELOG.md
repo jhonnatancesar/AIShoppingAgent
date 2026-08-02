@@ -5,6 +5,9 @@
 - Restringido o ambiente do projeto à instalação oficial do Python da máquina, com assinatura digital válida.
 - Proibidos instalação de dependências e testes em runtimes internos do Codex, plugins, caches ou ferramentas hospedeiras.
 - Definido que alertas do antivírus interrompem a execução e não autorizam restauração ou exceções automáticas.
+- Registrado em `docs/SECURITY_INCIDENT_LOG.md` o evento `INC-2026-08-02-001`, sua resposta, evidências sanitizadas e prevenção.
+- Adicionada ao README uma observação visível sobre o ambiente Python permitido e a conduta diante de alertas.
+- Corrigido o estado do `AGENTS.md`: TASK-023 concluída e TASK-024 como próxima tarefa executável.
 
 ## 2026-08-02 — TASK-023
 

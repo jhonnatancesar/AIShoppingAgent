@@ -4,6 +4,12 @@ Agente inteligente de compras construído incrementalmente. O projeto possui a b
 
 O desenvolvimento usa a versão estável mais recente do Python disponível. A versão validada atualmente está registrada em `docs/DEPENDENCIES.md`.
 
+> **Observação de segurança:** use somente a instalação oficial do Python da máquina.
+> Não instale dependências nem rode o projeto com runtimes internos do Codex, plugins
+> ou caches. Um alerta do antivírus deve interromper a execução; não restaure o objeto
+> nem crie exceções automaticamente. Consulte o histórico e as medidas adotadas no
+> [log de incidentes de segurança](docs/SECURITY_INCIDENT_LOG.md).
+
 Consulte `AGENTS.md` antes de executar tarefas e `docs/ROADMAP.md` para a sequência planejada.
 
 ## Ambiente local com Docker Compose
