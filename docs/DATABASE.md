@@ -30,7 +30,7 @@ erDiagram
     users o|--o{ audit_entries : acts
 ```
 
-`stores` é uma entidade de apoio necessária para normalizar a origem nacional de cada oferta. Ela não amplia o escopo para marketplaces nem antecipa qualquer Store Provider.
+`stores` é uma entidade de apoio necessária para normalizar a origem de cada oferta. Ela não habilita fontes automaticamente nem antecipa qualquer Store Provider.
 
 ## Entidades
 

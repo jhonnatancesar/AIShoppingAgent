@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-08-02 — Correção de escopo da TASK-055
+
+- Corrigido o requisito que restringia a TASK-055 exclusivamente à Kabum.
+- A V1 passa a pesquisar todas as lojas e marketplaces explicitamente selecionados pelo usuário, cada um com Store Provider próprio e validação real.
+- Fontes não selecionadas e descoberta automática permanecem fora do escopo.
+- Registrada a decisão `DEC-006` e sincronizados contexto, MVP, roadmap, backlog e limites de escopo.
+
 ## 2026-08-02 — TASK-021
 
 - Criados `MissionTransition`, o vocabulário tipado `MissionCommand` e a revisão reversível `20260802_0008` com histórico append-only.

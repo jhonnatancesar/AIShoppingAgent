@@ -2,13 +2,11 @@
 
 Este documento impede aumento de escopo durante o desenvolvimento da primeira versão. Os itens abaixo não devem ser implementados, integrados, configurados nem ter TASKs iniciadas como parte da V1.
 
-## Marketplaces e expansão comercial
+## Fontes de oferta e expansão comercial
 
-- AliExpress.
-- Shopee.
-- Amazon Marketplace.
-- Marketplace Module e conectores específicos de marketplaces.
-- Novas lojas que não sejam necessárias ao conjunto de lojas nacionais definido para a V1.
+- Lojas e marketplaces que não estejam na lista fechada da TASK-055.
+- Descoberta, ativação ou integração automática de novas fontes.
+- Um conector genérico que prometa compatibilidade sem provider e validação específicos para cada fonte.
 
 ## Produto e canais avançados
 

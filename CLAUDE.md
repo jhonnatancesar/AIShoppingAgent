@@ -15,7 +15,7 @@ Construir, de forma incremental, um agente de compras que pesquisa produtos, reg
 
 ## Escopo comercial da V1
 
-A V1 será focada exclusivamente em lojas nacionais. O suporte a marketplaces, como AliExpress, Shopee e Amazon Marketplace, é uma evolução futura e não faz parte do escopo atual.
+A V1 pesquisará somente as lojas e marketplaces explicitamente selecionados pelo usuário. Cada fonte exige um Store Provider próprio; nenhuma fonte será descoberta ou integrada automaticamente. A lista fechada será registrada na TASK-055 antes de sua implementação.
 
 ## Guardrails
 

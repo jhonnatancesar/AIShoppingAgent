@@ -7,15 +7,15 @@
 | Ciclo de vida de missões | TASK-018 | Estados e transições definidos antes do modelo persistente |
 | Dados | TASK-010 a TASK-017 | Modelo PostgreSQL e persistência, após a definição do ciclo de vida |
 | Missões e coleta | TASK-019 a TASK-026 | Missões, coleta e histórico |
-| Primeiro Store Provider | TASK-055 | Kabum como prova de conceito da arquitetura de coleta |
+| Store Providers selecionados | TASK-055 | Busca em todas as lojas e marketplaces explicitamente selecionados |
 | Catálogo de eventos | TASK-042 | Eventos definidos antes dos alertas de preço |
 | Alertas de preço | TASK-027 | Alertas baseados no catálogo de eventos |
 | IA e interação | TASK-028 a TASK-037 | Gerenciador de IA e Telegram |
 | Compra e eventos | TASK-038 a TASK-041 e TASK-043 a TASK-045 | Fluxos de compra, publicação, consumo e monitoramento |
 | Segurança e entrega | TASK-046 a TASK-054 | Observabilidade, segurança e lançamento |
-| Marketplace Module (futuro) | Tarefas a definir | Suporte a marketplaces, incluindo AliExpress, Shopee e Amazon Marketplace |
+| Expansão de fontes (futuro) | Tarefas a definir | Novas lojas e marketplaces além da lista fechada da TASK-055 |
 
-As TASKs 000 a 014, a TASK-016 e as TASKs 018 a 021 estão concluídas. A próxima tarefa executável é a TASK-022. A TASK-015 será executada após a TASK-026, pois depende de `collection_runs`; a TASK-017 permanece logo depois dela. As demais continuam pendentes e só podem ser iniciadas por solicitação explícita. A V1 permanece focada em lojas nacionais; Marketplace Module não pertence ao escopo da V1.
+As TASKs 000 a 014, a TASK-016 e as TASKs 018 a 021 estão concluídas. A próxima tarefa executável é a TASK-022. A TASK-015 será executada após a TASK-026, pois depende de `collection_runs`; a TASK-017 permanece logo depois dela. As demais continuam pendentes e só podem ser iniciadas por solicitação explícita. A V1 pesquisará somente as lojas e marketplaces que o usuário registrar para a TASK-055.
 
 A ordem de execução é a ordem apresentada nesta tabela; a numeração da TASK é um identificador estável e não substitui dependências explícitas.
 

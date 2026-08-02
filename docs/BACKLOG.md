@@ -4,17 +4,11 @@ Este documento é o repositório de ideias que surgirem durante o desenvolviment
 
 Para cada item novo, registrar uma descrição curta, a motivação e eventuais dependências. A priorização e a transformação em tarefa dependem de decisão explícita posterior.
 
-## Novas lojas
+## Novas fontes de oferta
 
-- Inclusão de novas lojas nacionais após a V1.
-- Critérios de qualificação, confiabilidade e manutenção de conectores de lojas.
-
-## Marketplace Module
-
-- Suporte a AliExpress.
-- Suporte a Shopee.
-- Suporte a Amazon Marketplace.
-- Normalização de vendedores, frete, impostos, prazo e políticas próprias de marketplaces.
+- Inclusão após a V1 de lojas ou marketplaces que não forem selecionados para a TASK-055.
+- Critérios de qualificação, confiabilidade e manutenção de Store Providers.
+- Evolução da normalização de vendedores, frete, impostos, prazo e políticas específicas além do necessário às fontes selecionadas.
 
 ## Canais e experiência do usuário
 

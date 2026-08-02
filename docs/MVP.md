@@ -9,7 +9,7 @@ Este documento define integralmente a V1. Qualquer item que não esteja listado 
 - Ambiente local reproduzível para o monólito modular FastAPI, PostgreSQL e Docker Compose.
 - Persistência de usuários, produtos, ofertas, missões, eventos e observações históricas de preço.
 - Criação, consulta e acompanhamento de missões de compra.
-- Coleta e normalização de preços de lojas nacionais, preservando cada observação no histórico.
+- Coleta e normalização de preços das lojas e marketplaces selecionados, preservando cada observação no histórico.
 - Alertas de preço e eventos relacionados às missões.
 - AI Provider Manager como única porta de acesso a IA, com os perfis USER, ADMIN e DEV definidos no projeto.
 - Interação e notificações essenciais via Telegram.
@@ -19,15 +19,16 @@ Este documento define integralmente a V1. Qualquer item que não esteja listado 
 
 ## Limites explícitos
 
-- A V1 atende somente lojas nacionais.
-- A V1 não inclui suporte a marketplaces.
+- A V1 atende somente as fontes explicitamente selecionadas pelo usuário e registradas na TASK-055.
+- Marketplaces podem fazer parte da V1 quando selecionados; cada integração exige provider e validação próprios.
+- A V1 não inclui descoberta automática de fontes nem suporte genérico a marketplaces não selecionados.
 - A V1 não inclui ações financeiras automáticas; qualquer fluxo assistido de compra requer confirmação explícita.
 
 ## Critérios objetivos de conclusão do MVP
 
 - O ambiente local sobe de forma documentada e reproduzível.
 - Um usuário autorizado consegue criar e consultar uma missão pelo canal Telegram.
-- O sistema coleta preços de lojas nacionais suportadas, normaliza os dados e preserva cada coleta no histórico.
+- O sistema pesquisa todas as fontes selecionadas, normaliza os dados e preserva cada coleta no histórico.
 - Uma condição de preço configurada para uma missão produz evento e notificação rastreáveis.
 - A recomendação ou comparação básica apresenta evidências históricas da oferta.
 - Todo uso de IA passa pelo AI Provider Manager; nenhum módulo chama provedores diretamente.

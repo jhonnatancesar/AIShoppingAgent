@@ -6,4 +6,4 @@ O MVP prioriza rastreabilidade, evolução incremental e limites claros de auton
 
 ## Escopo da V1 e evolução futura
 
-A V1 concentra-se em lojas nacionais. O Marketplace Module é uma fase futura para suporte a marketplaces — por exemplo, AliExpress, Shopee e Amazon Marketplace — e não terá funcionalidades implementadas antes de planejamento e tarefas próprios.
+A V1 concentra-se nas lojas e marketplaces explicitamente selecionados pelo usuário para a TASK-055. Cada fonte terá integração planejada, provider próprio e validação real. Fontes não selecionadas permanecem como expansão futura e não serão integradas automaticamente.
