@@ -222,6 +222,10 @@ Trilha imutável para ações relevantes que não são substituídas por logs op
 | `metadata` | `jsonb` | Obrigatório, padrão `{}`, sem segredos. |
 | `created_at` | `timestamptz` | Obrigatório. |
 
+Esta entidade foi implementada na TASK-016 pela revisão `20260802_0005`. O
+PostgreSQL rejeita atualizações e exclusões por trigger; contrato e limites estão
+em `docs/AUDIT.md`.
+
 ## Índices mínimos
 
 - `missions (user_id, status, created_at desc)` para listagens do proprietário.
@@ -243,4 +247,4 @@ Trilha imutável para ações relevantes que não são substituídas por logs op
 - Resultados históricos usam ordenação composta por horário e `id`, evitando ambiguidade quando dois registros tiverem o mesmo instante.
 - `updated_at` não é evidência de domínio; transições, preços, eventos e auditoria possuem seus próprios horários imutáveis.
 - O modelo não armazena credenciais, tokens, conteúdo integral de páginas ou dados pessoais desnecessários.
-- Migrações, metadata ORM, sessões e conexão foram configuradas na TASK-011. `users`, `products`, `stores` e `offers` foram implementados nas TASKs 012 a 014; os demais conjuntos de modelos ocorrem nas TASKs 015 e 016, e consultas históricas na TASK-017.
+- Migrações, metadata ORM, sessões e conexão foram configuradas na TASK-011. `users`, `products`, `stores`, `offers` e `audit_entries` foram implementados nas TASKs 012 a 014 e 016. Observações de preço ocorrem na TASK-015 após a persistência de coletas da TASK-026; consultas históricas permanecem na TASK-017.

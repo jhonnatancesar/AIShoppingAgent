@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-08-02 — TASK-016
+
+- Criado o modelo SQLAlchemy `AuditEntry` para fatos auditáveis separados de logs operacionais.
+- Adicionados ator opcional, ação e recurso tipados, metadata JSONB com padrão seguro e timestamp UTC.
+- Protegida a referência a usuários com `RESTRICT` e criados índices históricos por recurso e ator.
+- Adicionado trigger PostgreSQL que rejeita `UPDATE` e `DELETE`, tornando a tabela efetivamente append-only.
+- Adicionada a revisão reversível `20260802_0005` e atualizado o registro central de modelos.
+- Corrigida a ordem documental da TASK-015 para depois da TASK-026, preservando a FK obrigatória para coletas.
+- Validada a cadeia linear e a geração SQL offline do Alembic; a execução em PostgreSQL não pôde ocorrer porque Docker não está disponível nesta máquina.
+- Ampliada a suíte para 39 testes aprovados e 99,49% de cobertura.
+
 ## 2026-08-02 — TASK-014
 
 - Criados os modelos SQLAlchemy `Store` e `Offer`, separando a origem nacional normalizada do anúncio estável de um produto.

@@ -27,6 +27,14 @@ Após a classificação, registrar a decisão neste arquivo e atualizar a docume
 
 ## Registros
 
+### DEC-005 — Ordenar observações de preço após coletas persistidas
+
+- **Data:** 2026-08-02
+- **Ideia:** corrigir a ordem de execução da TASK-015 para respeitar sua FK obrigatória para `collection_runs`.
+- **Classificação:** Implementar agora
+- **Justificativa:** executar a TASK-015 antes da TASK-026 exigiria antecipar persistência de coletas ou violar o contrato relacional e a rastreabilidade histórica definidos na TASK-010.
+- **Próxima ação:** executar a TASK-016 antes do bloco de missões, seguir da TASK-019 à TASK-026, executar então a TASK-015 e, na sequência, a TASK-017.
+
 ### DEC-001 — Instituir governança de novas funcionalidades
 
 - **Data:** 2026-08-01

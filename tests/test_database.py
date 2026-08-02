@@ -56,4 +56,10 @@ def test_engine_and_session_factory_are_built_without_connecting() -> None:
 
 def test_metadata_contains_only_implemented_tables() -> None:
     """A metadata não deve antecipar tabelas de tarefas futuras."""
-    assert set(Base.metadata.tables) == {"users", "products", "stores", "offers"}
+    assert set(Base.metadata.tables) == {
+        "users",
+        "products",
+        "stores",
+        "offers",
+        "audit_entries",
+    }

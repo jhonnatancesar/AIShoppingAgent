@@ -63,6 +63,8 @@ Regras permanentes:
 - `20260802_0001`: baseline vazia que valida a infraestrutura e cria apenas o controle interno `alembic_version`;
 - `20260802_0002`: cria a tabela `users` e suas restrições;
 - `20260802_0003`: cria a tabela `products` e suas restrições, sem unicidade artificial por nome;
-- `20260802_0004`: cria `stores` e `offers`, suas relações, restrições e índices de identidade.
+- `20260802_0004`: cria `stores` e `offers`, suas relações, restrições e índices de identidade;
+- `20260802_0005`: cria `audit_entries`, seus índices e a proteção append-only contra alteração e exclusão.
 
-As demais tabelas do modelo serão introduzidas pelas TASKs 015 e 016.
+As demais tabelas do modelo serão introduzidas pelas TASKs de missões e coleta e,
+depois, pela TASK-015 conforme suas dependências explícitas.
