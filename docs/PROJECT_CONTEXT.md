@@ -2,7 +2,7 @@
 
 ## Estado
 
-Fase: missões e coleta em implementação. TASK-055 concluída e validada em container Linux em 2026-08-02.
+Fase: missões e coleta em implementação. TASK-025 concluída e validada em container Linux em 2026-08-02.
 
 ## O que existe
 
@@ -33,12 +33,16 @@ Fase: missões e coleta em implementação. TASK-055 concluída e validada em co
 - Agenda recorrente persistente por missão, com seleção concorrente de execuções vencidas e progressão sem backlog retroativo.
 - Adaptador assíncrono de coleta com contratos de entrada e saída bruta, registro por fonte e preservação de vendedor, frete e fulfillment.
 - Base Playwright 1.62.0 com Chromium isolado, ciclo de vida assíncrono, timeouts e downloads desabilitados por padrão.
+- Store Providers para Pichau, Terabyte, Amazon e Kabum, com execução Linux
+  headless ou headed via Xvfb conforme a origem.
+- Normalização monetária exata com `Decimal`, separação de item/frete/total,
+  validação de moeda e disponibilidade tipada.
 - Documentos de visão, arquitetura, dados, módulos-alvo, escopo do MVP, backlog, itens fora de escopo, governança de decisões e workflow permanente de execução.
 - ADRs, RFCs e 56 tarefas planejadas.
 
 ## O que não existe
 
-Além de `users`, `products`, `stores`, `sellers`, `offers`, `audit_entries`, `missions`, `mission_criteria`, `mission_sources`, `mission_transitions` e `mission_schedules`, não há outras tabelas de domínio nem repositórios implementados. Também não existem autenticação, autorização, APIs de negócio, worker, Store Providers, integrações externas, suíte permanente de testes de integração ou ponta a ponta nem credenciais reais configuradas.
+Além de `users`, `products`, `stores`, `sellers`, `offers`, `audit_entries`, `missions`, `mission_criteria`, `mission_sources`, `mission_transitions` e `mission_schedules`, não há outras tabelas de domínio nem repositórios implementados. Também não existem autenticação, autorização, APIs de negócio, worker, persistência das coletas, suíte permanente de testes ponta a ponta nem credenciais reais configuradas.
 
 ## Invariantes
 

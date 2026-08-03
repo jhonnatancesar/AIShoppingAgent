@@ -16,11 +16,12 @@ regras de normalização.
 - `CollectionAdapter` registra providers sem duplicidade e encaminha cada pedido
   somente ao provider da fonte solicitada.
 
-Campos brutos não devem ser interpretados nessa fronteira. Preço e moeda serão
-normalizados na TASK-025; execução e persistência do lote pertencem à TASK-026.
+Campos brutos não são interpretados pelo adaptador. A TASK-025 adicionou
+`PriceNormalizer` depois dessa fronteira, produzindo valores exatos sem alterar
+`RawCollectedOffer`; execução e persistência do lote pertencem à TASK-026.
 
 ## Evolução prevista
 
 A TASK-024 criou a infraestrutura base descrita em `docs/PLAYWRIGHT.md`. A TASK-055
-implementará, sobre esta porta, providers próprios para Pichau, Terabyte, Amazon e
+implementou, sobre esta porta, providers próprios para Pichau, Terabyte, Amazon e
 Kabum. Mercado Livre, Shopee e AliExpress permanecem indisponíveis na V1.

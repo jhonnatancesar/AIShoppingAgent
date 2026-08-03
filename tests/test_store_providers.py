@@ -1,14 +1,18 @@
 import asyncio
 from datetime import UTC, datetime
+from uuid import uuid4
 
 import pytest
 from app.collection import (
     AmazonProvider,
     BrowserSession,
+    CollectionRequest,
     KabumProvider,
     PichauProvider,
+    ProviderBlockedError,
     TerabyteProvider,
 )
+from app.collection.providers.base import PlaywrightStoreProvider
 from scripts.validate_store_providers import should_use_headed
 
 NOW = datetime(2026, 8, 2, 12, tzinfo=UTC)
@@ -75,3 +79,51 @@ def test_uses_headed_only_for_protected_sources_by_default() -> None:
     assert should_use_headed("amazon", force_headed=True) is True
     with pytest.raises(ValueError):
         should_use_headed("amazon", force_headed=True, force_headless=True)
+
+
+def test_provider_rejects_silent_empty_collection(monkeypatch) -> None:
+    class Response:
+        status = 200
+
+    class First:
+        async def wait_for(self, **kwargs):
+            return None
+
+    class Locator:
+        first = First()
+
+    class Page:
+        async def goto(self, *args, **kwargs):
+            return Response()
+
+        def locator(self, selector):
+            return Locator()
+
+    class Session:
+        def __init__(self, settings):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def new_page(self):
+            return Page()
+
+    class EmptyProvider(PlaywrightStoreProvider):
+        source_code = "empty"
+        result_selector = ".offer"
+
+        def build_url(self, query):
+            return "https://example.test/search"
+
+        async def extract(self, page, collected_at):
+            return ()
+
+    monkeypatch.setattr("app.collection.providers.base.BrowserSession", Session)
+    request = CollectionRequest(uuid4(), "empty", "GPU", NOW)
+
+    with pytest.raises(ProviderBlockedError):
+        asyncio.run(EmptyProvider(clock=lambda: NOW).collect(request))

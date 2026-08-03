@@ -11,6 +11,7 @@ from app.collection import (
     CollectionRequest,
     KabumProvider,
     PichauProvider,
+    PriceNormalizer,
     TerabyteProvider,
 )
 
@@ -39,9 +40,16 @@ async def validate(source: str, query: str, headed: bool) -> None:
     )
     request = CollectionRequest(uuid4(), source, query, datetime.now(UTC))
     result = await provider.collect(request)
-    print(f"{source}: {len(result.offers)} oferta(s)")
-    for offer in result.offers:
-        print(f"- {offer.external_id}: {offer.title[:80]} | {offer.raw_price}")
+    normalized = PriceNormalizer().normalize_result(result)
+    if not normalized.offers:
+        raise RuntimeError(f"{source} returned no offers")
+    print(f"{source}: {len(normalized.offers)} oferta(s)")
+    for offer in normalized.offers:
+        print(
+            f"- {offer.raw_offer.external_id}: {offer.raw_offer.title[:80]} | "
+            f"item={offer.amount} shipping={offer.shipping_amount} "
+            f"total={offer.total_amount} {offer.currency}"
+        )
 
 
 def main() -> None:

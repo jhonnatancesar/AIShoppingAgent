@@ -64,6 +64,8 @@ class PlaywrightStoreProvider:
             except Exception as error:
                 raise ProviderBlockedError(self.source_code, response.status) from error
             offers = await self.extract(page, self._clock())
+            if not offers:
+                raise ProviderBlockedError(self.source_code, response.status)
         return CollectionResult(self.source_code, started_at, self._clock(), offers)
 
     def offers_from_rows(

@@ -11,10 +11,17 @@ from app.collection.contracts import (
 from app.collection.errors import (
     CollectionContractError,
     CollectionError,
+    CollectionNormalizationError,
     DuplicateProviderError,
     ProviderBlockedError,
     ProviderNavigationError,
     UnsupportedSourceError,
+)
+from app.collection.normalization import (
+    Availability,
+    NormalizedCollectedOffer,
+    NormalizedCollectionResult,
+    PriceNormalizer,
 )
 from app.collection.providers import (
     AmazonProvider,
@@ -29,9 +36,14 @@ __all__ = [
     "BrowserSettings",
     "CollectionContractError",
     "CollectionError",
+    "CollectionNormalizationError",
     "CollectionProvider",
     "CollectionRequest",
     "CollectionResult",
+    "Availability",
+    "NormalizedCollectedOffer",
+    "NormalizedCollectionResult",
+    "PriceNormalizer",
     "DuplicateProviderError",
     "ProviderBlockedError",
     "ProviderNavigationError",

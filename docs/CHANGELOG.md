@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-08-02 — TASK-025
+
+- Implementada normalização monetária exata com `Decimal`, sem ponto flutuante.
+- Separados preço do item, frete conhecido e total; frete grátis é zero e frete
+  desconhecido permanece nulo.
+- Validados códigos ISO 4217, símbolos monetários, consistência do frete,
+  precisão e limite de `numeric(19,4)`.
+- Preservados oferta bruta, vendedor, fulfillment e evidência; disponibilidade
+  normalizada em três estados sem inferir estoque ausente.
+- Corrigido o entrypoint Linux para LF permanente após falha real causada por
+  CRLF no shebang.
+- Validadas três ofertas reais de Amazon, Kabum, Pichau e Terabyte em container
+  Linux; Pichau e Terabyte executaram headed via Xvfb.
+- Ampliada a suíte para 134 testes aprovados e 97,68% de cobertura.
+
 ## 2026-08-02 — Complemento Linux da TASK-055
 
 - Reaberta e concluída novamente a TASK-055 após validação Linux real.

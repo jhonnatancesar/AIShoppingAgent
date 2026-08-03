@@ -27,3 +27,7 @@ class ProviderBlockedError(CollectionError):
         super().__init__(
             f"{source_code} blocked collection or changed markup (status {status})"
         )
+
+
+class CollectionNormalizationError(CollectionError, ValueError):
+    """Uma oferta bruta não possui representação monetária determinística."""

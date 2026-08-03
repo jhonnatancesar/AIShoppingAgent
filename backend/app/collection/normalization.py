@@ -1,0 +1,181 @@
+"""Normalização monetária exata dos resultados brutos de coleta."""
+
+import re
+from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
+from enum import StrEnum
+
+from app.collection.contracts import CollectionResult, RawCollectedOffer
+from app.collection.errors import CollectionNormalizationError
+
+_CURRENCY_SYMBOLS = {"R$": "BRL", "$": "USD", "€": "EUR", "£": "GBP"}
+_FREE_SHIPPING = re.compile(r"\b(frete\s+gr[aá]tis|gr[aá]tis|free\s+shipping)\b", re.I)
+_UNAVAILABLE = re.compile(
+    r"\b(indispon[ií]vel|fora\s+de\s+estoque|esgotado|unavailable)\b", re.I
+)
+_AVAILABLE = re.compile(r"\b(em\s+estoque|dispon[ií]vel|restam\s+\d+)\b", re.I)
+
+
+class Availability(StrEnum):
+    AVAILABLE = "available"
+    UNAVAILABLE = "unavailable"
+    UNKNOWN = "unknown"
+
+
+@dataclass(frozen=True, slots=True)
+class NormalizedCollectedOffer:
+    """Oferta pronta para persistência posterior, sem perder sua evidência bruta."""
+
+    raw_offer: RawCollectedOffer
+    amount: Decimal
+    currency: str
+    shipping_amount: Decimal | None
+    total_amount: Decimal
+    availability: Availability
+
+    @property
+    def seller_external_id(self) -> str | None:
+        return self.raw_offer.seller_external_id
+
+    @property
+    def seller_name(self) -> str | None:
+        return self.raw_offer.seller_name
+
+    @property
+    def fulfillment(self) -> str | None:
+        return self.raw_offer.raw_fulfillment
+
+
+@dataclass(frozen=True, slots=True)
+class NormalizedCollectionResult:
+    raw_result: CollectionResult
+    offers: tuple[NormalizedCollectedOffer, ...]
+
+
+class PriceNormalizer:
+    """Converte apenas formatos monetários determinísticos, sem usar float."""
+
+    def normalize_result(self, result: CollectionResult) -> NormalizedCollectionResult:
+        return NormalizedCollectionResult(
+            raw_result=result,
+            offers=tuple(self.normalize_offer(offer) for offer in result.offers),
+        )
+
+    def normalize_offer(self, offer: RawCollectedOffer) -> NormalizedCollectedOffer:
+        currency = self._currency(offer.raw_currency, offer.raw_price)
+        amount = self._amount(offer.raw_price, currency, field="price")
+        shipping = self._shipping(offer.raw_shipping, currency)
+        availability = self._availability(offer.raw_availability)
+        total = amount + (shipping if shipping is not None else Decimal(0))
+        _require_numeric_19_4(total, "total")
+        return NormalizedCollectedOffer(
+            raw_offer=offer,
+            amount=amount,
+            currency=currency,
+            shipping_amount=shipping,
+            total_amount=total,
+            availability=availability,
+        )
+
+    def _currency(self, raw_currency: str | None, raw_amount: str | None) -> str:
+        declared = raw_currency.strip().upper() if raw_currency else None
+        if declared is not None and not re.fullmatch(r"[A-Z]{3}", declared):
+            raise CollectionNormalizationError("currency must be an ISO 4217 code")
+        detected = self._detected_currency(raw_amount)
+        if declared and detected and declared != detected:
+            raise CollectionNormalizationError(
+                "declared and detected currencies differ"
+            )
+        currency = declared or detected
+        if currency is None:
+            raise CollectionNormalizationError("currency is missing")
+        return currency
+
+    def _shipping(self, raw_shipping: str | None, currency: str) -> Decimal | None:
+        if raw_shipping is None or not raw_shipping.strip():
+            return None
+        if _FREE_SHIPPING.search(raw_shipping):
+            return Decimal(0)
+        if not re.search(r"\d", raw_shipping):
+            return None
+        detected = self._detected_currency(raw_shipping)
+        if detected and detected != currency:
+            raise CollectionNormalizationError("shipping currency differs from price")
+        return self._amount(raw_shipping, currency, field="shipping")
+
+    @staticmethod
+    def _availability(raw_availability: str | None) -> Availability:
+        if raw_availability:
+            if _UNAVAILABLE.search(raw_availability):
+                return Availability.UNAVAILABLE
+            if _AVAILABLE.search(raw_availability):
+                return Availability.AVAILABLE
+        return Availability.UNKNOWN
+
+    @staticmethod
+    def _detected_currency(raw: str | None) -> str | None:
+        if not raw:
+            return None
+        remaining = raw
+        detected = set()
+        for symbol in sorted(_CURRENCY_SYMBOLS, key=len, reverse=True):
+            if symbol in remaining:
+                detected.add(_CURRENCY_SYMBOLS[symbol])
+                remaining = remaining.replace(symbol, "")
+        if len(detected) > 1:
+            raise CollectionNormalizationError("multiple currencies detected")
+        return next(iter(detected), None)
+
+    @staticmethod
+    def _amount(raw: str | None, currency: str, *, field: str) -> Decimal:
+        if raw is None or not raw.strip():
+            raise CollectionNormalizationError(f"{field} is missing")
+        cleaned = raw.replace("\xa0", " ")
+        for symbol, code in _CURRENCY_SYMBOLS.items():
+            if code == currency:
+                cleaned = cleaned.replace(symbol, "")
+        cleaned = re.sub(r"\s+", "", cleaned)
+        if not re.fullmatch(r"\d[\d.,]*", cleaned):
+            raise CollectionNormalizationError(
+                f"{field} has an invalid monetary format"
+            )
+        canonical = _canonical_decimal(cleaned)
+        try:
+            amount = Decimal(canonical)
+        except InvalidOperation as error:
+            raise CollectionNormalizationError(f"{field} is not decimal") from error
+        _require_numeric_19_4(amount, field)
+        return amount
+
+
+def _require_numeric_19_4(amount: Decimal, field: str) -> None:
+    if amount < 0 or amount.as_tuple().exponent < -4:
+        raise CollectionNormalizationError(f"{field} is outside numeric(19,4)")
+    if len(amount.as_tuple().digits) + max(amount.as_tuple().exponent, 0) > 19:
+        raise CollectionNormalizationError(f"{field} is outside numeric(19,4)")
+
+
+def _canonical_decimal(value: str) -> str:
+    separators = [(index, char) for index, char in enumerate(value) if char in ".,"]
+    if not separators:
+        return value
+    last_index, decimal_mark = separators[-1]
+    fraction_size = len(value) - last_index - 1
+    marks = {char for _, char in separators}
+    if len(marks) == 1:
+        groups = value.split(decimal_mark)
+        if len(groups) == 2 and fraction_size in {1, 2, 4}:
+            return f"{groups[0]}.{groups[1]}"
+        if 1 <= len(groups[0]) <= 3 and all(len(group) == 3 for group in groups[1:]):
+            return "".join(groups)
+        raise CollectionNormalizationError("ambiguous monetary separators")
+    thousands_mark = next(mark for mark in marks if mark != decimal_mark)
+    integer_groups = value[:last_index].split(thousands_mark)
+    if (
+        value.count(decimal_mark) == 1
+        and 1 <= len(integer_groups[0]) <= 3
+        and all(len(group) == 3 for group in integer_groups[1:])
+        and fraction_size in {1, 2, 3, 4}
+    ):
+        return f"{''.join(integer_groups)}.{value[last_index + 1 :]}"
+    raise CollectionNormalizationError("ambiguous monetary separators")
