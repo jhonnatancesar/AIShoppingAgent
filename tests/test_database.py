@@ -69,4 +69,5 @@ def test_metadata_contains_only_implemented_tables() -> None:
         "mission_sources",
         "mission_schedules",
         "collection_runs",
+        "price_observations",
     }

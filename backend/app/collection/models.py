@@ -1,13 +1,27 @@
 """Persistência das execuções rastreáveis de coleta."""
 
 from datetime import datetime
+from decimal import Decimal
 from enum import StrEnum
 from uuid import UUID, uuid4
 
-from sqlalchemy import CheckConstraint, DateTime, Enum, ForeignKey, Index, desc, func
+from sqlalchemy import (
+    CHAR,
+    CheckConstraint,
+    DateTime,
+    Enum,
+    ForeignKey,
+    Index,
+    Numeric,
+    String,
+    desc,
+    func,
+)
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PostgreSQLUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
+from app.collection.normalization import Availability
 from app.database.base import Base
 from app.database.time import utc_now
 
@@ -76,3 +90,65 @@ class CollectionRun(Base):
         onupdate=utc_now,
         server_default=func.now(),
     )
+
+
+class PriceObservation(Base):
+    __tablename__ = "price_observations"
+    __table_args__ = (
+        CheckConstraint(
+            "amount >= 0 AND (shipping_amount IS NULL OR shipping_amount >= 0)",
+            name="ck_price_observations_amounts_non_negative",
+        ),
+        CheckConstraint(
+            "total_amount = amount + COALESCE(shipping_amount, 0)",
+            name="ck_price_observations_total_exact",
+        ),
+        CheckConstraint(
+            "currency ~ '^[A-Z]{3}$'", name="ck_price_observations_currency_iso4217"
+        ),
+        Index(
+            "ix_price_observations_offer_observed",
+            "offer_id",
+            desc("observed_at"),
+            "id",
+        ),
+        Index("ix_price_observations_collection_run_id", "collection_run_id"),
+    )
+    id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4
+    )
+    offer_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("offers.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    collection_run_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("collection_runs.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    amount: Mapped[Decimal] = mapped_column(Numeric(19, 4), nullable=False)
+    currency: Mapped[str] = mapped_column(CHAR(3), nullable=False)
+    shipping_amount: Mapped[Decimal | None] = mapped_column(
+        Numeric(19, 4), nullable=True
+    )
+    total_amount: Mapped[Decimal] = mapped_column(Numeric(19, 4), nullable=False)
+    fulfillment: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    availability: Mapped[Availability] = mapped_column(
+        Enum(
+            Availability,
+            name="offer_availability",
+            values_callable=lambda values: [v.value for v in values],
+        ),
+        nullable=False,
+    )
+    observed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    recorded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+        server_default=func.now(),
+    )
+    raw_evidence: Mapped[dict | None] = mapped_column(JSONB, nullable=True)

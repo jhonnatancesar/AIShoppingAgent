@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-08-02 — TASK-015
+
+- Criadas observações append-only com preço, moeda, frete, total, fulfillment,
+  disponibilidade, horários e evidência bruta.
+- Adicionada revisão reversível `20260802_0012` com constraints monetárias e
+  vínculos restritivos a oferta e coleta.
+
 ## 2026-08-02 — TASK-026
 
 - Criados `CollectionRun`, estados `running`, `succeeded` e `failed` e revisão

@@ -1,6 +1,6 @@
 # TASK-015 — Criar observações de preço
 
-Status: Pendente
+Status: Concluída em 2026-08-02
 
 ## Objetivo
 
