@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-08-02 — TASK-027
+
+- Criado avaliador determinístico de queda de preço e entrada no total-alvo para
+  missões ativas.
+- Adicionados candidatos tipados do catálogo, prevenção de repetição contínua e
+  proteção contra disponibilidade ou moeda não comparável.
+
 ## 2026-08-02 — TASK-042
 
 - Definido catálogo fechado e versionado com seis eventos de missão, coleta,

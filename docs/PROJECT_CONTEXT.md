@@ -2,7 +2,7 @@
 
 ## Estado
 
-Fase: catálogo de eventos concluído. TASK-042 concluída e validada em 2026-08-02.
+Fase: alertas de preço concluídos. TASK-027 concluída e validada em 2026-08-02.
 
 ## O que existe
 
@@ -41,6 +41,8 @@ Fase: catálogo de eventos concluído. TASK-042 concluída e validada em 2026-08
   com filtros por período e disponibilidade e acesso à observação mais recente.
 - Catálogo fechado e versionado de eventos de missão, coleta, preço e
   disponibilidade, com agregados e payloads tipados e validados.
+- Avaliador de alertas para queda de preço e entrada no total-alvo, restrito a
+  missões ativas, ofertas disponíveis e moedas comparáveis.
 - Documentos de visão, arquitetura, dados, módulos-alvo, escopo do MVP, backlog, itens fora de escopo, governança de decisões e workflow permanente de execução.
 - ADRs, RFCs e 56 tarefas planejadas.
 
@@ -81,3 +83,5 @@ reais configuradas.
 - Eventos usam nomes versionados e payloads mínimos do catálogo; tipos
   desconhecidos e payloads incompatíveis são rejeitados antes da futura
   persistência ou publicação.
+- Alertas são candidatos determinísticos derivados do histórico; persistência,
+  publicação, consumo e notificação permanecem desacoplados.

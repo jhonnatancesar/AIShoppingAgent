@@ -1,14 +1,17 @@
 # TASK-027 — Criar alertas de preço
 
-Status: Pendente
+Status: Concluída em 2026-08-02
 
 ## Objetivo
 
-Planejar e executar, quando solicitada, a etapa “Criar alertas de preço”.
+Avaliar observações históricas e produzir candidatos tipados de alerta de preço.
 
 ## Escopo
 
-Executar somente o objetivo desta tarefa, conforme AGENTS.md, CLAUDE.md e a documentação em docs/.
+- Detectar queda de preço na mesma oferta e moeda.
+- Detectar a entrada no total-alvo de uma missão ativa sem repetição contínua.
+- Ignorar disponibilidade não confirmada e comparações entre moedas distintas.
+- Não persistir, publicar, consumir ou notificar eventos.
 
 ## Ordem e dependências
 
@@ -16,4 +19,5 @@ Executar após a TASK-042, para que os alertas usem o catálogo de eventos defin
 
 ## Critério de aceite
 
-Escopo concluído, documentado e verificado conforme os critérios da tarefa.
+Avaliação determinística produz somente eventos válidos do catálogo da TASK-042,
+preserva `Decimal` e rejeita entidades ou sequências históricas inconsistentes.
