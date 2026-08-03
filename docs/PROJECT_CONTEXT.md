@@ -2,7 +2,8 @@
 
 ## Estado
 
-Fase: contrato de IA em implementação. TASK-028 concluída e validada em 2026-08-02.
+Fase: perfil USER de IA implementado; validação real da TASK-029 pendente por
+ausência de credencial Gemini em 2026-08-02.
 
 ## O que existe
 
@@ -45,6 +46,8 @@ Fase: contrato de IA em implementação. TASK-028 concluída e validada em 2026-
   missões ativas, ofertas disponíveis e moedas comparáveis.
 - Contratos imutáveis e agnósticos para mensagens, requisições, respostas,
   providers internos e a porta única `AIProviderManager`.
+- Adaptador Gemini do perfil USER com SDK oficial, cliente assíncrono,
+  configuração segura e tradução sanitizada de falhas.
 - Documentos de visão, arquitetura, dados, módulos-alvo, escopo do MVP, backlog, itens fora de escopo, governança de decisões e workflow permanente de execução.
 - ADRs, RFCs e 56 tarefas planejadas.
 
@@ -87,5 +90,6 @@ reais configuradas.
   persistência ou publicação.
 - Alertas são candidatos determinísticos derivados do histórico; persistência,
   publicação, consumo e notificação permanecem desacoplados.
-- Módulos da aplicação acessam IA somente por `AIProviderManager`; providers,
-  modelos, credenciais, fallback e telemetria ainda não estão implementados.
+- Módulos da aplicação acessam IA somente por `AIProviderManager`; o perfil USER
+  usa Gemini, enquanto ADMIN/DEV, fallback e telemetria ainda não estão
+  implementados. Credenciais nunca são versionadas.

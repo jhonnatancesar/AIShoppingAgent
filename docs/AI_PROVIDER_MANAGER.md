@@ -18,12 +18,20 @@ diretamente. `AIProvider` é uma porta interna usada apenas pelo manager.
 
 Perfis previstos:
 
-- `USER`: será implementado com Gemini na TASK-029.
+- `USER`: implementado com o SDK oficial `google-genai` e o modelo configurável
+  `gemini-3.6-flash`; exige `AISHOPPING_GEMINI_API_KEY`.
 - `ADMIN`: seleção da melhor IA disponível e fallback na TASK-030.
 - `DEV`: seleção da melhor IA disponível e fallback na TASK-030.
 - `PLUS`: futuro; não existe no contrato nem na V1.
 
-Caso USER atinja o limite gratuito, a implementação futura deve informar que
-tente novamente mais tarde. A TASK-028 define contratos; não instala SDKs, não
-configura chaves, não seleciona modelos, não chama provedores e não adiciona
-fallback ou telemetria.
+O perfil USER traduz mensagens para o contrato Gemini, fecha o cliente assíncrono
+após cada chamada e converte quota, indisponibilidade, autenticação e rejeição em
+erros sanitizados. Ao atingir o limite, `AIProviderQuotaExceeded` permite ao canal
+informar que o usuário tente novamente mais tarde. ADMIN/DEV, fallback e
+telemetria continuam nas tarefas seguintes.
+
+Em 2026-08-02, a implementação automatizada foi validada com o SDK 2.16.0. A
+chamada real permanece pendente porque não existe chave Gemini configurada no
+ambiente; nenhuma credencial deve ser versionada. O caminho real de falha foi
+validado contra o endpoint Gemini com uma chave descartável inválida, confirmando
+erro sanitizado sem exposição do valor ou da resposta bruta.

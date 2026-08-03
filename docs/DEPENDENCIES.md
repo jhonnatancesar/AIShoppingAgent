@@ -23,12 +23,17 @@ O Python usado deve ser a instalação oficial da máquina, identificada pelo ca
 A fonte de verdade para dependências Python é `backend/requirements.txt`:
 
 - `fastapi>=0.115,<1.0`
+- `google-genai>=2.16,<3.0`
 - `playwright>=1.62,<2.0`
 - `SQLAlchemy>=2.0,<2.1`
 - `alembic>=1.18,<2.0`
 - `psycopg[binary]>=3.3,<4.0`
 - `pydantic-settings>=2.0,<3.0`
 - `uvicorn[standard]>=0.30,<1.0`
+
+`google-genai` 2.16.0 é o SDK oficial validado para o perfil USER. A chamada ao
+Gemini exige `AISHOPPING_GEMINI_API_KEY`; o modelo padrão configurável é
+`gemini-3.6-flash`. A chave fica apenas no ambiente ou `.env` ignorado pelo Git.
 
 As versões validadas na TASK-011 foram SQLAlchemy 2.0.51, Alembic 1.18.5 e Psycopg 3.3.4. O extra binário do Psycopg evita exigir uma instalação separada de `libpq` e possui suporte validado a Python 3.14 e PostgreSQL 18.
 

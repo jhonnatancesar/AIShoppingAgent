@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-08-02 — TASK-029 (validação real pendente)
+
+- Implementado perfil USER com `google-genai` 2.16.0 e modelo padrão
+  `gemini-3.6-flash`.
+- Adicionadas configuração segura, tradução de mensagens e falhas sanitizadas.
+- A chamada real não foi executada porque nenhuma chave Gemini está configurada.
+- O endpoint real rejeitou uma chave descartável inválida e a falha foi
+  sanitizada corretamente, sem exposição da credencial ou resposta bruta.
+
 ## 2026-08-02 — TASK-028
 
 - Definidos contratos imutáveis de mensagens, requisição e resposta de IA.

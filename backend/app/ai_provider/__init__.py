@@ -14,6 +14,11 @@ from app.ai_provider.contracts import (
     AIResponse,
     validate_provider_response,
 )
+from app.ai_provider.gemini import GeminiProvider
+from app.ai_provider.manager import (
+    UserAIProviderManager,
+    build_user_ai_provider_manager,
+)
 
 __all__ = [
     "AIManagerError",
@@ -27,5 +32,8 @@ __all__ = [
     "AIRequest",
     "AIRequestError",
     "AIResponse",
+    "GeminiProvider",
+    "UserAIProviderManager",
+    "build_user_ai_provider_manager",
     "validate_provider_response",
 ]
