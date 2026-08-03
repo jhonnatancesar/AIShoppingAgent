@@ -17,6 +17,12 @@ from app.collection.errors import (
     ProviderNavigationError,
     UnsupportedSourceError,
 )
+from app.collection.history import (
+    PriceHistoryPage,
+    PriceHistoryQueryError,
+    get_latest_price_observation,
+    list_price_history,
+)
 from app.collection.normalization import (
     Availability,
     NormalizedCollectedOffer,
@@ -44,6 +50,8 @@ __all__ = [
     "NormalizedCollectedOffer",
     "NormalizedCollectionResult",
     "PriceNormalizer",
+    "PriceHistoryPage",
+    "PriceHistoryQueryError",
     "DuplicateProviderError",
     "ProviderBlockedError",
     "ProviderNavigationError",
@@ -53,4 +61,6 @@ __all__ = [
     "PichauProvider",
     "TerabyteProvider",
     "UnsupportedSourceError",
+    "get_latest_price_observation",
+    "list_price_history",
 ]

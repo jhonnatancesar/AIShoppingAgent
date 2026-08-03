@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-08-02 — TASK-017
+
+- Criadas consultas somente leitura para listar e obter a observação mais recente
+  do histórico de preços de uma oferta.
+- Adicionados filtros temporais e de disponibilidade, paginação validada, total
+  filtrado e ordenação determinística.
+
 ## 2026-08-02 — TASK-015
 
 - Criadas observações append-only com preço, moeda, frete, total, fulfillment,

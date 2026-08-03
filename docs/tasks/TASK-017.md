@@ -1,14 +1,18 @@
 # TASK-017 — Criar consultas de histórico
 
-Status: Pendente
+Status: Concluída em 2026-08-02
 
 ## Objetivo
 
-Planejar e executar, quando solicitada, a etapa “Criar consultas de histórico”.
+Criar consultas internas, paginadas, filtráveis e determinísticas sobre o
+histórico imutável de preços.
 
 ## Escopo
 
-Executar somente o objetivo desta tarefa, conforme AGENTS.md, CLAUDE.md e a documentação em docs/.
+- Listar observações por oferta, intervalo e disponibilidade.
+- Obter a observação mais recente de uma oferta.
+- Validar paginação e horários de filtro.
+- Não criar API HTTP, alertas, gráficos, análises ou comparações.
 
 ## Ordem e dependências
 
@@ -17,5 +21,6 @@ persistidas.
 
 ## Critério de aceite
 
-Escopo concluído, documentado e verificado conforme os critérios da tarefa.
+Consultas somente leitura preservam a precisão monetária e retornam resultados
+com paginação, total filtrado e ordenação estável por `observed_at` e `id`.
 

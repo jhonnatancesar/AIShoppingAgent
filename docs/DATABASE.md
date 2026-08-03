@@ -235,7 +235,7 @@ Execução rastreável de coleta, sem definir ainda o adaptador ou o agendador.
 | `id` | `uuid` | Chave primária. |
 | `mission_id` | `uuid` | FK opcional para `missions.id`, com `RESTRICT`. |
 | `store_id` | `uuid` | FK obrigatória para `stores.id`, com `RESTRICT`. |
-| `status` | `varchar(24)` | Obrigatório; vocabulário será fechado na TASK-026. |
+| `status` | `collection_run_status` | Obrigatório; `running`, `succeeded` ou `failed`. |
 | `started_at` | `timestamptz` | Obrigatório. |
 | `finished_at` | `timestamptz` | Opcional e não anterior a `started_at`. |
 | `created_at` | `timestamptz` | Obrigatório. |
@@ -255,7 +255,7 @@ Evidência imutável de preço e disponibilidade obtida em uma coleta.
 | `shipping_amount` | `numeric(19,4)` | Frete opcional, não negativo e na mesma moeda. |
 | `total_amount` | `numeric(19,4)` | Total obrigatório do item e do frete conhecido. |
 | `fulfillment` | `varchar(120)` | Responsável pelo envio, opcional. |
-| `availability` | `varchar(32)` | Obrigatório; vocabulário será definido na TASK-025. |
+| `availability` | `offer_availability` | Obrigatório; `available`, `unavailable` ou `unknown`. |
 | `observed_at` | `timestamptz` | Obrigatório; instante informado pela coleta. |
 | `recorded_at` | `timestamptz` | Obrigatório; instante de persistência. |
 | `raw_evidence` | `jsonb` | Opcional; evidência sanitizada necessária à rastreabilidade. |
@@ -322,4 +322,7 @@ em `docs/AUDIT.md`.
 - Resultados históricos usam ordenação composta por horário e `id`, evitando ambiguidade quando dois registros tiverem o mesmo instante.
 - `updated_at` não é evidência de domínio; transições, preços, eventos e auditoria possuem seus próprios horários imutáveis.
 - O modelo não armazena credenciais, tokens, conteúdo integral de páginas ou dados pessoais desnecessários.
-- Migrações, metadata ORM, sessões e conexão foram configuradas na TASK-011. `users`, `products`, `stores`, `sellers`, `offers`, `audit_entries`, `missions`, `mission_criteria`, `mission_sources`, `mission_transitions` e `mission_schedules` já foram implementados. Observações de preço ocorrem na TASK-015 após a persistência de coletas da TASK-026; consultas históricas permanecem na TASK-017.
+- Migrações, metadata ORM, sessões e conexão foram configuradas na TASK-011.
+  Todas as entidades previstas até `collection_runs` e `price_observations` já
+  foram implementadas. As consultas históricas da TASK-017 são somente leitura e
+  estão documentadas em `docs/PRICE_HISTORY.md`.

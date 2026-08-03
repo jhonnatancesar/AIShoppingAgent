@@ -2,7 +2,8 @@
 
 ## Estado
 
-Fase: histórico de preços em implementação. TASK-015 concluída e validada em PostgreSQL 18 em 2026-08-02.
+Fase: modelo de dados e histórico de preços concluídos. TASK-017 concluída e
+validada em PostgreSQL 18 em 2026-08-02.
 
 ## O que existe
 
@@ -37,12 +38,19 @@ Fase: histórico de preços em implementação. TASK-015 concluída e validada e
   headless ou headed via Xvfb conforme a origem.
 - Normalização monetária exata com `Decimal`, separação de item/frete/total,
   validação de moeda e disponibilidade tipada.
+- Consultas somente leitura, paginadas e determinísticas do histórico de preços,
+  com filtros por período e disponibilidade e acesso à observação mais recente.
 - Documentos de visão, arquitetura, dados, módulos-alvo, escopo do MVP, backlog, itens fora de escopo, governança de decisões e workflow permanente de execução.
 - ADRs, RFCs e 56 tarefas planejadas.
 
 ## O que não existe
 
-Além de `users`, `products`, `stores`, `sellers`, `offers`, `audit_entries`, `missions`, `mission_criteria`, `mission_sources`, `mission_transitions` e `mission_schedules`, não há outras tabelas de domínio nem repositórios implementados. Também não existem autenticação, autorização, APIs de negócio, worker, persistência das coletas, suíte permanente de testes ponta a ponta nem credenciais reais configuradas.
+Além de `users`, `products`, `stores`, `sellers`, `offers`, `audit_entries`,
+`missions`, `mission_criteria`, `mission_sources`, `mission_transitions`,
+`mission_schedules`, `collection_runs` e `price_observations`, não há outras
+tabelas de domínio implementadas. Também não existem autenticação, autorização,
+APIs de negócio, worker, suíte permanente de testes ponta a ponta nem credenciais
+reais configuradas.
 
 ## Invariantes
 
