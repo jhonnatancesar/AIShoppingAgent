@@ -72,6 +72,10 @@ reais configuradas.
 - `docs/DECISION_LOG.md` registra decisões arquiteturais e funcionais; toda nova funcionalidade deve ser analisada e classificada antes de qualquer implementação.
 - A TASK-055 implementou Store Providers para Pichau, Terabyte, Amazon e Kabum. O bot permitirá escolher uma ou mais dessas fontes e mostrará Mercado Livre, Shopee e AliExpress como ***Futuro***, sem seleção ou coleta na V1.
 - O workflow oficial de execução de TASKs está definido em `AGENTS.md` e deve ser seguido automaticamente em todas as conversas futuras.
+- Toda TASK começa com um preflight de credenciais, contas, permissões, serviços,
+  infraestrutura e ferramentas necessárias ao desenvolvimento e à validação real.
+  Pendências que dependam do usuário são solicitadas antes da implementação;
+  segredos ficam fora do Git e do chat.
 - Antes de iniciar uma TASK em uma máquina nova, as dependências devem ser comparadas com `docs/DEPENDENCIES.md`; existe autorização permanente para instalar o necessário à execução e à validação real, respeitando as confirmações e proteções do sistema.
 - O projeto acompanha a versão estável mais recente do Python e exige nova validação de compatibilidade a cada atualização.
 - O ambiente usa somente o Python oficial da máquina; incidentes e respostas de segurança do ambiente são registrados em `docs/SECURITY_INCIDENT_LOG.md`.

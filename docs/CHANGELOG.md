@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-08-02 — Preflight obrigatório de TASKs
+
+- Tornada obrigatória, antes de qualquer implementação, a identificação de
+  credenciais, contas, permissões, serviços, infraestrutura e ferramentas
+  necessárias ao desenvolvimento e à validação real.
+- Definido que recursos ausentes que dependam do usuário devem ser solicitados
+  antecipadamente, com orientação de configuração segura fora do Git e do chat.
+- Proibido substituir uma integração real previsível por implementação genérica
+  ou validação exclusivamente mockada por falta de preparação antecipada.
+
 ## 2026-08-02 — TASK-029
 
 - Implementado perfil USER com `google-genai` 2.16.0 e modelo padrão

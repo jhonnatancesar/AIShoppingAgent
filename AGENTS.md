@@ -56,6 +56,10 @@ Use exclusivamente a instalação oficial do Python da máquina para instalar de
 
 Antes de escrever código, verificar se a TASK é consistente com a arquitetura, pertence ao MVP, possui dependências satisfeitas e não conflita com outras TASKs. Havendo qualquer inconsistência, interromper a implementação, explicar o problema e propor a correção.
 
+Executar também um preflight completo dos recursos necessários para desenvolver e validar a TASK de forma real. Identificar antecipadamente credenciais, chaves de API, contas, permissões, serviços externos, banco de dados, contêineres, navegador, sistema operacional, hardware, ferramentas e dados de teste exigidos pelo fluxo. Verificar de modo seguro apenas a presença e a validade do que já estiver configurado, sem exibir segredos.
+
+Se faltar algo que dependa do usuário, informar antes da implementação exatamente o que é necessário, onde obter, como configurar localmente e qual teste será executado. Segredos devem ser inseridos pelo usuário em `.env`, secret store ou variável de ambiente ignorada pelo Git e nunca enviados pelo chat. Não iniciar uma implementação genérica, mockada ou incompleta quando a ausência de um pré-requisito previsível impedir o desenvolvimento correto ou o teste real da TASK. Mocks continuam permitidos como complemento, nunca como substitutos da integração real exigida.
+
 ### 3. Implementação
 
 Quando a validação estiver aprovada, implementar somente a TASK solicitada. Não implementar funcionalidades futuras, não alterar outras TASKs e manter os padrões arquiteturais definidos.
