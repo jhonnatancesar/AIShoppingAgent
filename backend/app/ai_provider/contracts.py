@@ -21,12 +21,21 @@ class AIRequestError(AIManagerError, ValueError):
 class AIProviderError(AIManagerError):
     """Falha sanitizada de provedor, sem resposta bruta ou credenciais."""
 
-    def __init__(self, code: str, *, retryable: bool) -> None:
+    def __init__(
+        self,
+        code: str,
+        *,
+        retryable: bool,
+        quota_reset_at: datetime | None = None,
+    ) -> None:
         if not _is_stable_code(code):
             raise ValueError("provider error code must use stable snake_case")
         super().__init__(code)
         self.code = code
         self.retryable = retryable
+        if quota_reset_at is not None:
+            _require_aware(quota_reset_at, "quota_reset_at")
+        self.quota_reset_at = quota_reset_at
 
 
 class AIProviderUnavailable(AIProviderError):
@@ -35,8 +44,13 @@ class AIProviderUnavailable(AIProviderError):
 
 
 class AIProviderQuotaExceeded(AIProviderError):
-    def __init__(self, code: str = "provider_quota_exceeded") -> None:
-        super().__init__(code, retryable=False)
+    def __init__(
+        self,
+        code: str = "provider_quota_exceeded",
+        *,
+        quota_reset_at: datetime | None = None,
+    ) -> None:
+        super().__init__(code, retryable=False, quota_reset_at=quota_reset_at)
 
 
 class AIMessageRole(StrEnum):
@@ -103,6 +117,7 @@ class AIProvider(Protocol):
     """Adaptador interno; somente o manager pode chamá-lo diretamente."""
 
     provider_id: str
+    model: str
 
     async def generate(self, request: AIRequest) -> AIResponse: ...
 

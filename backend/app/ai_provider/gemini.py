@@ -1,7 +1,9 @@
 """Adaptador Gemini usado exclusivamente pelo perfil USER."""
 
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from decimal import Decimal, InvalidOperation
+from typing import Any
 
 from google import genai
 from google.genai import errors, types
@@ -97,7 +99,11 @@ def _translate_messages(
 
 def _translate_api_error(error: errors.APIError) -> AIProviderError:
     if error.code == 429:
-        return AIProviderQuotaExceeded()
+        retry_delay = _extract_retry_delay(error.details)
+        quota_reset_at = (
+            datetime.now(UTC) + retry_delay if retry_delay is not None else None
+        )
+        return AIProviderQuotaExceeded(quota_reset_at=quota_reset_at)
     if error.code in {408, 500, 502, 503, 504}:
         return AIProviderUnavailable()
     if error.code in {401, 403}:
@@ -105,3 +111,32 @@ def _translate_api_error(error: errors.APIError) -> AIProviderError:
     if error.code == 400:
         return AIProviderError("provider_request_rejected", retryable=False)
     return AIProviderError("provider_error", retryable=False)
+
+
+def _extract_retry_delay(value: Any) -> timedelta | None:
+    """Extrai apenas google.rpc.RetryInfo, descartando todo o restante do erro."""
+    if isinstance(value, dict):
+        if value.get("@type") == "type.googleapis.com/google.rpc.RetryInfo":
+            return _parse_duration(value.get("retryDelay"))
+        for nested in value.values():
+            delay = _extract_retry_delay(nested)
+            if delay is not None:
+                return delay
+    elif isinstance(value, list):
+        for nested in value:
+            delay = _extract_retry_delay(nested)
+            if delay is not None:
+                return delay
+    return None
+
+
+def _parse_duration(value: Any) -> timedelta | None:
+    if not isinstance(value, str) or not value.endswith("s"):
+        return None
+    try:
+        seconds = Decimal(value[:-1])
+    except InvalidOperation:
+        return None
+    if not seconds.is_finite() or seconds < 0:
+        return None
+    return timedelta(seconds=float(seconds))

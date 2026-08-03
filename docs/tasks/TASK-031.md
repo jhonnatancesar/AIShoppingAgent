@@ -1,6 +1,6 @@
 # TASK-031 — Adicionar telemetria de IA
 
-Status: Pendente
+Status: Concluída
 
 ## Objetivo
 
@@ -22,4 +22,12 @@ Planejar e executar, quando solicitada, a etapa “Adicionar telemetria de IA”
 
 Telemetria diferencia uso premium e fallback, não expõe conteúdo sensível e
 representa retomada de quota sem inventar prazo ausente.
+
+## Resultado
+
+Telemetria estruturada implementada no AI Provider Manager, com extração segura
+de `google.rpc.RetryInfo` e aviso de cota independente de canal. Testes unitários
+confirmam sanitização e prazos conhecido/desconhecido. A validação autenticada
+real registrou `429` no modelo premium, reset informado pelo Gemini e sucesso no
+fallback `gemini-3.6-flash`, sem expor prompt, resposta ou chave.
 

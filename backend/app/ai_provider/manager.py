@@ -2,6 +2,7 @@
 
 from app.ai_provider.contracts import (
     AIProvider,
+    AIProviderError,
     AIProviderQuotaExceeded,
     AIProviderUnavailable,
     AIRequest,
@@ -10,6 +11,7 @@ from app.ai_provider.contracts import (
     validate_provider_response,
 )
 from app.ai_provider.gemini import GeminiProvider
+from app.ai_provider.telemetry import AIAttemptOutcome, record_ai_attempt
 from app.core.config import Settings, get_settings
 from app.users.models import UserRole
 
@@ -23,8 +25,19 @@ class UserAIProviderManager:
     async def generate(self, request: AIRequest) -> AIResponse:
         if request.profile is not UserRole.USER:
             raise AIRequestError("USER manager accepts only USER profile")
-        response = await self._provider.generate(request)
+        try:
+            response = await self._provider.generate(request)
+        except AIProviderError as error:
+            _record_provider_error(request, self._provider, error, fallback=False)
+            raise
         validate_provider_response(request, response)
+        record_ai_attempt(
+            request,
+            provider=response.provider,
+            model=response.model,
+            outcome=AIAttemptOutcome.SUCCEEDED,
+            fallback=False,
+        )
         return response
 
 
@@ -38,11 +51,30 @@ class AdminDevAIProviderManager:
     async def generate(self, request: AIRequest) -> AIResponse:
         if request.profile not in {UserRole.ADMIN, UserRole.DEV}:
             raise AIRequestError("ADMIN/DEV manager accepts only ADMIN or DEV profile")
+        fallback_used = False
         try:
             response = await self._premium.generate(request)
-        except AIProviderQuotaExceeded, AIProviderUnavailable:
-            response = await self._free.generate(request)
+        except (AIProviderQuotaExceeded, AIProviderUnavailable) as error:
+            _record_provider_error(request, self._premium, error, fallback=False)
+            fallback_used = True
+            try:
+                response = await self._free.generate(request)
+            except AIProviderError as fallback_error:
+                _record_provider_error(
+                    request, self._free, fallback_error, fallback=True
+                )
+                raise
+        except AIProviderError as error:
+            _record_provider_error(request, self._premium, error, fallback=False)
+            raise
         validate_provider_response(request, response)
+        record_ai_attempt(
+            request,
+            provider=response.provider,
+            model=response.model,
+            outcome=AIAttemptOutcome.SUCCEEDED,
+            fallback=fallback_used,
+        )
         return response
 
 
@@ -69,3 +101,26 @@ def build_admin_dev_ai_provider_manager(
     premium = GeminiProvider(current.gemini_api_key, current.gemini_premium_model)
     free = GeminiProvider(current.gemini_api_key, current.gemini_model)
     return AdminDevAIProviderManager(premium, free)
+
+
+def _record_provider_error(
+    request: AIRequest,
+    provider: AIProvider,
+    error: AIProviderError,
+    *,
+    fallback: bool,
+) -> None:
+    if isinstance(error, AIProviderQuotaExceeded):
+        outcome = AIAttemptOutcome.QUOTA_EXCEEDED
+    elif isinstance(error, AIProviderUnavailable):
+        outcome = AIAttemptOutcome.UNAVAILABLE
+    else:
+        outcome = AIAttemptOutcome.FAILED
+    record_ai_attempt(
+        request,
+        provider=provider.provider_id,
+        model=provider.model,
+        outcome=outcome,
+        fallback=fallback,
+        quota_reset_at=error.quota_reset_at,
+    )

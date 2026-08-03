@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-08-02 — TASK-031
+
+- Adicionada telemetria JSON sanitizada por tentativa de IA, com correlação,
+  perfil, finalidade, provedor, modelo, resultado e indicação de fallback.
+- Preservado de erros `429` somente o reset recomendado por
+  `google.rpc.RetryInfo`; detalhes brutos, prompts, respostas, tokens e chaves
+  continuam fora dos contratos e dos eventos.
+- Criado aviso seguro e agnóstico de canal para cota esgotada, informando o
+  horário UTC quando conhecido ou declarando o prazo desconhecido.
+- Validado o fluxo real ADMIN/DEV: o premium retornou `429` com reset informado,
+  a telemetria registrou a falha e o fallback gratuito respondeu com sucesso.
+
 ## 2026-08-02 — TASK-030
 
 - Implementada política única para ADMIN/DEV, sem perfis de IA duplicados.

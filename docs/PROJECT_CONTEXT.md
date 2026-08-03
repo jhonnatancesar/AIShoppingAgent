@@ -2,8 +2,8 @@
 
 ## Estado
 
-Fase: perfis de IA USER e ADMIN/DEV concluídos e validados contra o Gemini real
-nas TASKs 029 e 030. A próxima tarefa executável é a TASK-031.
+Fase: perfis e telemetria de IA concluídos e validados contra o Gemini real nas
+TASKs 029 a 031. A próxima tarefa executável é a TASK-032.
 
 ## O que existe
 
@@ -50,6 +50,10 @@ nas TASKs 029 e 030. A próxima tarefa executável é a TASK-031.
   configuração segura e tradução sanitizada de falhas.
 - Política compartilhada de ADMIN/DEV que tenta o Gemini premium e retorna ao
   Gemini gratuito em quota ou indisponibilidade.
+- Telemetria estruturada e sanitizada de tentativas de IA, diferenciando modelo
+  premium, fallback gratuito, resultado e reset de cota quando informado.
+- Aviso de cota agnóstico de canal, com prazo conhecido em UTC ou indicação
+  explícita de prazo desconhecido.
 - Documentos de visão, arquitetura, dados, módulos-alvo, escopo do MVP, backlog, itens fora de escopo, governança de decisões e workflow permanente de execução.
 - ADRs, RFCs e 56 tarefas planejadas.
 
