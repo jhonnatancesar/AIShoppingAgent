@@ -269,7 +269,7 @@ Registro durável de fatos de domínio para publicação e consumo futuros.
 | Coluna | Tipo | Regra |
 | --- | --- | --- |
 | `id` | `uuid` | Chave primária. |
-| `event_type` | `varchar(120)` | Obrigatório; catálogo será definido na TASK-042. |
+| `event_type` | `varchar(120)` | Obrigatório; nome versionado de `docs/EVENT_CATALOG.md`. |
 | `aggregate_type` | `varchar(64)` | Obrigatório. |
 | `aggregate_id` | `uuid` | Obrigatório. |
 | `mission_id` | `uuid` | FK opcional para `missions.id`, com `RESTRICT`. |
@@ -277,7 +277,8 @@ Registro durável de fatos de domínio para publicação e consumo futuros.
 | `occurred_at` | `timestamptz` | Obrigatório. |
 | `recorded_at` | `timestamptz` | Obrigatório. |
 
-Detalhes de publicação, tentativas e consumo pertencem às TASKs 043 e 044.
+O catálogo lógico foi definido na TASK-042 sem criar esta tabela. Persistência,
+publicação, tentativas e consumo pertencem às TASKs 043 e 044.
 
 ### `audit_entries`
 

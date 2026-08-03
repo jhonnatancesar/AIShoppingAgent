@@ -2,8 +2,7 @@
 
 ## Estado
 
-Fase: modelo de dados e histórico de preços concluídos. TASK-017 concluída e
-validada em PostgreSQL 18 em 2026-08-02.
+Fase: catálogo de eventos concluído. TASK-042 concluída e validada em 2026-08-02.
 
 ## O que existe
 
@@ -40,6 +39,8 @@ validada em PostgreSQL 18 em 2026-08-02.
   validação de moeda e disponibilidade tipada.
 - Consultas somente leitura, paginadas e determinísticas do histórico de preços,
   com filtros por período e disponibilidade e acesso à observação mais recente.
+- Catálogo fechado e versionado de eventos de missão, coleta, preço e
+  disponibilidade, com agregados e payloads tipados e validados.
 - Documentos de visão, arquitetura, dados, módulos-alvo, escopo do MVP, backlog, itens fora de escopo, governança de decisões e workflow permanente de execução.
 - ADRs, RFCs e 56 tarefas planejadas.
 
@@ -77,3 +78,6 @@ reais configuradas.
 - Auditoria é append-only; correções geram novas entradas, e metadata nunca contém segredos ou dados pessoais desnecessários.
 - Missões nascem em `draft`; alterações de estado e de `state_version` são executadas atomicamente com histórico append-only e versão concorrente.
 - Critérios usam busca textual e preço-alvo opcional pareado com moeda; recorrência usa agenda separada com intervalo fixo positivo.
+- Eventos usam nomes versionados e payloads mínimos do catálogo; tipos
+  desconhecidos e payloads incompatíveis são rejeitados antes da futura
+  persistência ou publicação.

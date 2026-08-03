@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-08-02 — TASK-042
+
+- Definido catálogo fechado e versionado com seis eventos de missão, coleta,
+  preço e disponibilidade.
+- Criados payloads tipados e validações executáveis sem antecipar persistência,
+  publicação, consumo, alertas ou notificações.
+
 ## 2026-08-02 — TASK-017
 
 - Criadas consultas somente leitura para listar e obter a observação mais recente
