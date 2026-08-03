@@ -16,11 +16,14 @@ from app.ai_provider.contracts import (
 )
 from app.ai_provider.gemini import GeminiProvider
 from app.ai_provider.manager import (
+    AdminDevAIProviderManager,
     UserAIProviderManager,
+    build_admin_dev_ai_provider_manager,
     build_user_ai_provider_manager,
 )
 
 __all__ = [
+    "AdminDevAIProviderManager",
     "AIManagerError",
     "AIMessage",
     "AIMessageRole",
@@ -34,6 +37,7 @@ __all__ = [
     "AIResponse",
     "GeminiProvider",
     "UserAIProviderManager",
+    "build_admin_dev_ai_provider_manager",
     "build_user_ai_provider_manager",
     "validate_provider_response",
 ]

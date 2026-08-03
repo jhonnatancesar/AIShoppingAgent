@@ -20,15 +20,15 @@ Perfis previstos:
 
 - `USER`: implementado com o SDK oficial `google-genai` e o modelo configurável
   `gemini-3.6-flash`; exige `AISHOPPING_GEMINI_API_KEY`.
-- `ADMIN`: seleção da melhor IA disponível e fallback na TASK-030.
-- `DEV`: seleção da melhor IA disponível e fallback na TASK-030.
+- `ADMIN/DEV`: política única que tenta `gemini-3.1-pro-preview` e retorna ao
+  `gemini-3.6-flash` em quota ou indisponibilidade do nível premium.
 - `PLUS`: futuro; não existe no contrato nem na V1.
 
 O perfil USER traduz mensagens para o contrato Gemini, fecha o cliente assíncrono
 após cada chamada e converte quota, indisponibilidade, autenticação e rejeição em
 erros sanitizados. Ao atingir o limite, `AIProviderQuotaExceeded` permite ao canal
-informar que o usuário tente novamente mais tarde. ADMIN/DEV, fallback e
-telemetria continuam nas tarefas seguintes.
+informar que o usuário tente novamente mais tarde. USER nunca tenta o modelo
+premium. OpenAI, Claude, usuário pago e comparação multi-IA ficam para a V2.
 
 Em 2026-08-02, a implementação foi validada com o SDK 2.16.0 e uma chamada
 autenticada real pelo `AIProviderManager`, usando `gemini-3.6-flash`, com resposta

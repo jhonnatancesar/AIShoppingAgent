@@ -4,6 +4,7 @@ from uuid import uuid4
 
 import pytest
 from app.ai_provider import (
+    AdminDevAIProviderManager,
     AIMessage,
     AIMessageRole,
     AIProviderError,
@@ -13,6 +14,7 @@ from app.ai_provider import (
     AIRequestError,
     GeminiProvider,
     UserAIProviderManager,
+    build_admin_dev_ai_provider_manager,
     build_user_ai_provider_manager,
 )
 from app.core.config import Settings
@@ -111,6 +113,43 @@ async def test_user_manager_rejects_admin_and_dev_profiles() -> None:
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("profile", [UserRole.ADMIN, UserRole.DEV])
+async def test_admin_dev_share_premium_policy(profile: UserRole) -> None:
+    premium, _ = _provider(_FakeModels(response_text="Resposta premium"))
+    free, _ = _provider(_FakeModels(response_text="Resposta gratuita"))
+    premium.model = "gemini-3.1-pro-preview"
+    manager = AdminDevAIProviderManager(premium, free)
+
+    response = await manager.generate(_request(profile))
+
+    assert response.model == "gemini-3.1-pro-preview"
+    assert response.content == "Resposta premium"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("error", [AIProviderQuotaExceeded(), AIProviderUnavailable()])
+async def test_admin_dev_fall_back_to_free_gemini(error: AIProviderError) -> None:
+    premium, _ = _provider(_FakeModels(error=error))
+    free, _ = _provider(_FakeModels(response_text="Resposta gratuita"))
+    manager = AdminDevAIProviderManager(premium, free)
+
+    response = await manager.generate(_request(UserRole.ADMIN))
+
+    assert response.model == "gemini-3.6-flash"
+    assert response.content == "Resposta gratuita"
+
+
+@pytest.mark.anyio
+async def test_admin_dev_manager_rejects_user() -> None:
+    premium, _ = _provider(_FakeModels())
+    free, _ = _provider(_FakeModels())
+    manager = AdminDevAIProviderManager(premium, free)
+
+    with pytest.raises(AIRequestError, match="ADMIN/DEV"):
+        await manager.generate(_request(UserRole.USER))
+
+
+@pytest.mark.anyio
 async def test_gemini_rejects_system_only_or_assistant_final_turn() -> None:
     provider, _ = _provider(_FakeModels())
     with pytest.raises(AIRequestError, match="non-system"):
@@ -169,3 +208,17 @@ def test_user_manager_factory_requires_key_and_uses_configured_model() -> None:
         Settings(gemini_api_key="configured-key", gemini_model="gemini-3.6-flash")
     )
     assert isinstance(manager, UserAIProviderManager)
+
+
+def test_admin_dev_factory_requires_key_and_configures_both_models() -> None:
+    with pytest.raises(AIRequestError, match="AISHOPPING_GEMINI_API_KEY"):
+        build_admin_dev_ai_provider_manager(Settings(_env_file=None))
+
+    manager = build_admin_dev_ai_provider_manager(
+        Settings(
+            gemini_api_key="configured-key",
+            gemini_model="gemini-3.6-flash",
+            gemini_premium_model="gemini-3.1-pro-preview",
+        )
+    )
+    assert isinstance(manager, AdminDevAIProviderManager)

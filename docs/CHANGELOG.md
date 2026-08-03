@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-08-02 — TASK-030
+
+- Implementada política única para ADMIN/DEV, sem perfis de IA duplicados.
+- Definida tentativa em `gemini-3.1-pro-preview` com fallback para o gratuito
+  `gemini-3.6-flash` em quota ou indisponibilidade.
+- Mantido USER exclusivamente no nível gratuito e movidos usuário pago,
+  OpenAI e Claude para a V2 pela ausência de API geral gratuita.
+- Validado o fallback real com chave Free Tier: recusa `429` no premium e
+  resposta não vazia com conteúdo esperado no Flash gratuito.
+
 ## 2026-08-02 — Preflight obrigatório de TASKs
 
 - Tornada obrigatória, antes de qualquer implementação, a identificação de

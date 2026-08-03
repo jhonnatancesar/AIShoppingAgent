@@ -1,7 +1,9 @@
-"""Implementação inicial do manager restrita ao perfil USER."""
+"""Managers dos perfis USER e ADMIN/DEV sobre provedores internos."""
 
 from app.ai_provider.contracts import (
     AIProvider,
+    AIProviderQuotaExceeded,
+    AIProviderUnavailable,
     AIRequest,
     AIRequestError,
     AIResponse,
@@ -26,6 +28,24 @@ class UserAIProviderManager:
         return response
 
 
+class AdminDevAIProviderManager:
+    """Política única de ADMIN/DEV com fallback seguro para o Gemini gratuito."""
+
+    def __init__(self, premium: AIProvider, free: AIProvider) -> None:
+        self._premium = premium
+        self._free = free
+
+    async def generate(self, request: AIRequest) -> AIResponse:
+        if request.profile not in {UserRole.ADMIN, UserRole.DEV}:
+            raise AIRequestError("ADMIN/DEV manager accepts only ADMIN or DEV profile")
+        try:
+            response = await self._premium.generate(request)
+        except AIProviderQuotaExceeded, AIProviderUnavailable:
+            response = await self._free.generate(request)
+        validate_provider_response(request, response)
+        return response
+
+
 def build_user_ai_provider_manager(
     settings: Settings | None = None,
 ) -> UserAIProviderManager:
@@ -35,3 +55,17 @@ def build_user_ai_provider_manager(
         raise AIRequestError("AISHOPPING_GEMINI_API_KEY is required for USER profile")
     provider = GeminiProvider(current.gemini_api_key, current.gemini_model)
     return UserAIProviderManager(provider)
+
+
+def build_admin_dev_ai_provider_manager(
+    settings: Settings | None = None,
+) -> AdminDevAIProviderManager:
+    """Monta a política compartilhada de ADMIN/DEV com dois níveis Gemini."""
+    current = settings or get_settings()
+    if current.gemini_api_key is None:
+        raise AIRequestError(
+            "AISHOPPING_GEMINI_API_KEY is required for ADMIN/DEV profile"
+        )
+    premium = GeminiProvider(current.gemini_api_key, current.gemini_premium_model)
+    free = GeminiProvider(current.gemini_api_key, current.gemini_model)
+    return AdminDevAIProviderManager(premium, free)

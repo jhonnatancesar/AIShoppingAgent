@@ -2,8 +2,8 @@
 
 ## Estado
 
-Fase: perfil USER de IA concluído e validado contra o Gemini real na TASK-029 em
-2026-08-02. A próxima tarefa executável é a TASK-030.
+Fase: perfis de IA USER e ADMIN/DEV concluídos e validados contra o Gemini real
+nas TASKs 029 e 030. A próxima tarefa executável é a TASK-031.
 
 ## O que existe
 
@@ -48,6 +48,8 @@ Fase: perfil USER de IA concluído e validado contra o Gemini real na TASK-029 e
   providers internos e a porta única `AIProviderManager`.
 - Adaptador Gemini do perfil USER com SDK oficial, cliente assíncrono,
   configuração segura e tradução sanitizada de falhas.
+- Política compartilhada de ADMIN/DEV que tenta o Gemini premium e retorna ao
+  Gemini gratuito em quota ou indisponibilidade.
 - Documentos de visão, arquitetura, dados, módulos-alvo, escopo do MVP, backlog, itens fora de escopo, governança de decisões e workflow permanente de execução.
 - ADRs, RFCs e 56 tarefas planejadas.
 
@@ -94,6 +96,7 @@ reais configuradas.
   persistência ou publicação.
 - Alertas são candidatos determinísticos derivados do histórico; persistência,
   publicação, consumo e notificação permanecem desacoplados.
-- Módulos da aplicação acessam IA somente por `AIProviderManager`; o perfil USER
-  usa Gemini, enquanto ADMIN/DEV, fallback e telemetria ainda não estão
-  implementados. Credenciais nunca são versionadas.
+- Módulos da aplicação acessam IA somente por `AIProviderManager`; USER usa apenas
+  Gemini gratuito e ADMIN/DEV compartilham tentativa premium com fallback
+  gratuito. OpenAI, Claude e usuário pago ficam para a V2. Credenciais nunca são
+  versionadas.

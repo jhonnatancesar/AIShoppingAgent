@@ -19,6 +19,7 @@ Este documento impede aumento de escopo durante o desenvolvimento da primeira ve
 ## IA e planos comerciais
 
 - Plano PLUS.
+- Usuário pago, compra de créditos e orquestração com OpenAI ou Claude na V1.
 - IA local.
 - Orquestração multi-IA além dos perfis previstos para a V1.
 

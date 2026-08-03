@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     database_password: SecretStr | None = None
     gemini_api_key: SecretStr | None = None
     gemini_model: str = Field(default="gemini-3.6-flash", min_length=1)
+    gemini_premium_model: str = Field(default="gemini-3.1-pro-preview", min_length=1)
 
 
 @lru_cache

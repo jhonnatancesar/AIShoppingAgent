@@ -20,6 +20,8 @@ Para cada item novo, registrar uma descrição curta, a motivação e eventuais 
 
 ## Inteligência e automação
 
+- Perfil pago na V2, com créditos configurados para comparar Gemini premium,
+  OpenAI e Claude e aplicar fallback conforme capacidade e disponibilidade.
 - OCR para extrair informações de imagens, comprovantes ou páginas.
 - IA local.
 - Plano PLUS com uso de múltiplos provedores de IA.

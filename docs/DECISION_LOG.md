@@ -27,6 +27,14 @@ Após a classificação, registrar a decisão neste arquivo e atualizar a docume
 
 ## Registros
 
+### DEC-007 — Limitar a V1 ao Gemini por nível de acesso
+
+- **Data:** 2026-08-02
+- **Ideia:** usar Gemini gratuito para USER e permitir que ADMIN/DEV tentem o melhor modelo Gemini, com retorno automático ao gratuito quando o nível pago não estiver disponível.
+- **Classificação:** Implementar agora
+- **Justificativa:** Gemini 3.6 Flash possui nível gratuito e já foi validado, enquanto OpenAI e Anthropic não oferecem API geral gratuita nas contas configuradas. A política mantém uma integração real na V1, evita dependência de créditos e preserva um único comportamento compartilhado para ADMIN/DEV.
+- **Próxima ação:** implementar na TASK-030 USER somente com `gemini-3.6-flash` e ADMIN/DEV tentando `gemini-3.1-pro-preview` antes do fallback gratuito; registrar usuário pago e OpenAI/Claude como evolução da V2.
+
 ### DEC-006 — Corrigir a TASK-055 para fontes selecionadas pelo usuário
 
 - **Data:** 2026-08-02
