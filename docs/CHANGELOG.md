@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-08-02 — TASK-028
+
+- Definidos contratos imutáveis de mensagens, requisição e resposta de IA.
+- Criadas portas assíncronas para manager e providers internos e taxonomia segura
+  de erros, sem integrar SDKs ou provedores reais.
+
 ## 2026-08-02 — TASK-027
 
 - Criado avaliador determinístico de queda de preço e entrada no total-alvo para

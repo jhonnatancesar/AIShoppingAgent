@@ -1,16 +1,20 @@
 # TASK-028 — Definir contrato AI Provider Manager
 
-Status: Pendente
+Status: Concluída em 2026-08-02
 
 ## Objetivo
 
-Planejar e executar, quando solicitada, a etapa “Definir contrato AI Provider Manager”.
+Definir a porta única e agnóstica para requisições e respostas de IA.
 
 ## Escopo
 
-Executar somente o objetivo desta tarefa, conforme AGENTS.md, CLAUDE.md e a documentação em docs/.
+- Definir mensagens, requisição e resposta imutáveis e validadas.
+- Definir protocolos assíncronos do manager e dos adaptadores internos.
+- Definir erros sanitizados com semântica de nova tentativa.
+- Não integrar provedores, escolher modelos, configurar chaves ou telemetria.
 
 ## Critério de aceite
 
-Escopo concluído, documentado e verificado conforme os critérios da tarefa.
+Contratos neutros cobrem `USER`, `ADMIN` e `DEV`, preservam correlação e impedem
+que detalhes ou falhas brutas de provedores atravessem a fronteira da aplicação.
 

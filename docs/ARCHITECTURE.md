@@ -2,7 +2,10 @@
 
 O alvo é um monólito modular em FastAPI. Os módulos de missões, catálogo/coleta, preços, compra, eventos, Telegram e IA devem possuir fronteiras explícitas, mas ser implantados juntos no MVP.
 
-PostgreSQL será a fonte transacional. Serviços externos serão acessados por adaptadores. O AI Provider Manager será um módulo transversal obrigatório para qualquer chamada de IA.
+PostgreSQL será a fonte transacional. Serviços externos serão acessados por
+adaptadores. O contrato assíncrono do AI Provider Manager é a fronteira
+transversal obrigatória para qualquer chamada de IA; adaptadores, seleção de
+modelos e fallback permanecem nas tarefas de implementação dos perfis.
 
 A implementação atual contém o monólito FastAPI, módulos persistentes de catálogo, auditoria e missões e uma fronteira assíncrona de coleta. `app.collection` despacha pedidos por fonte, transporta resultados brutos e oferece uma sessão Playwright/Chromium isolada; não contém providers concretos, normalização ou persistência, responsabilidades adicionadas somente pelas tarefas correspondentes.
 
