@@ -163,7 +163,7 @@ def test_gemini_requires_non_blank_secret_and_model() -> None:
 
 def test_user_manager_factory_requires_key_and_uses_configured_model() -> None:
     with pytest.raises(AIRequestError, match="AISHOPPING_GEMINI_API_KEY"):
-        build_user_ai_provider_manager(Settings())
+        build_user_ai_provider_manager(Settings(_env_file=None))
 
     manager = build_user_ai_provider_manager(
         Settings(gemini_api_key="configured-key", gemini_model="gemini-3.6-flash")

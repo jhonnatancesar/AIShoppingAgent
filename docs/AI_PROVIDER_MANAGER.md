@@ -30,8 +30,8 @@ erros sanitizados. Ao atingir o limite, `AIProviderQuotaExceeded` permite ao can
 informar que o usuário tente novamente mais tarde. ADMIN/DEV, fallback e
 telemetria continuam nas tarefas seguintes.
 
-Em 2026-08-02, a implementação automatizada foi validada com o SDK 2.16.0. A
-chamada real permanece pendente porque não existe chave Gemini configurada no
-ambiente; nenhuma credencial deve ser versionada. O caminho real de falha foi
-validado contra o endpoint Gemini com uma chave descartável inválida, confirmando
-erro sanitizado sem exposição do valor ou da resposta bruta.
+Em 2026-08-02, a implementação foi validada com o SDK 2.16.0 e uma chamada
+autenticada real pelo `AIProviderManager`, usando `gemini-3.6-flash`, com resposta
+não vazia e o conteúdo esperado. O caminho real de falha também foi validado com
+uma chave descartável inválida, confirmando erro sanitizado sem exposição do valor
+ou da resposta bruta. Nenhuma credencial é versionada.

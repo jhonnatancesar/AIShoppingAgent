@@ -1,6 +1,6 @@
 # TASK-029 — Implementar perfil USER
 
-Status: Implementada; validação real pendente por ausência de credencial
+Status: Concluída
 
 ## Objetivo
 
@@ -15,8 +15,9 @@ Implementar o perfil USER pelo AI Provider Manager usando Gemini.
 
 ## Critério de aceite
 
-Implementação e testes automatizados concluídos. Para concluir a TASK, falta uma
-chamada autenticada ao Gemini com `AISHOPPING_GEMINI_API_KEY` fornecida fora do
-repositório. O caminho real de credencial inválida já foi validado contra o
-serviço e retornou erro sanitizado.
+Implementação e testes automatizados concluídos. Uma chamada autenticada real foi
+executada pelo `AIProviderManager` contra `gemini-3.6-flash`, retornando resposta
+não vazia e o conteúdo esperado. O caminho real de credencial inválida também foi
+validado e retornou erro sanitizado. A credencial permaneceu somente no `.env`
+ignorado pelo Git.
 

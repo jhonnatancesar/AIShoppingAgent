@@ -2,8 +2,8 @@
 
 ## Estado
 
-Fase: perfil USER de IA implementado; validação real da TASK-029 pendente por
-ausência de credencial Gemini em 2026-08-02.
+Fase: perfil USER de IA concluído e validado contra o Gemini real na TASK-029 em
+2026-08-02. A próxima tarefa executável é a TASK-030.
 
 ## O que existe
 
