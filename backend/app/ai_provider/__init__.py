@@ -21,9 +21,12 @@ from app.ai_provider.manager import (
     build_admin_dev_ai_provider_manager,
     build_user_ai_provider_manager,
 )
+from app.ai_provider.telemetry import AIAttemptOutcome, AIQuotaNotice
 
 __all__ = [
     "AdminDevAIProviderManager",
+    "AIAttemptOutcome",
+    "AIQuotaNotice",
     "AIManagerError",
     "AIMessage",
     "AIMessageRole",

@@ -30,6 +30,7 @@ def _request() -> AIRequest:
 
 class _FakeProvider:
     provider_id = "fake_provider"
+    model = "fake-model"
 
     async def generate(self, request: AIRequest) -> AIResponse:
         return AIResponse(
@@ -150,5 +151,11 @@ def test_provider_errors_expose_only_stable_code_and_retryability() -> None:
     assert unavailable.retryable is True
     assert quota.retryable is False
     assert str(unavailable) == "provider_unavailable"
+    assert quota.quota_reset_at is None
     with pytest.raises(ValueError, match="snake_case"):
         AIProviderError("secret: token=abc", retryable=False)
+
+
+def test_quota_reset_must_include_timezone() -> None:
+    with pytest.raises(AIRequestError, match="timezone"):
+        AIProviderQuotaExceeded(quota_reset_at=datetime.now())
