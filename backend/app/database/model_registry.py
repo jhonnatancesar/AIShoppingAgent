@@ -1,6 +1,7 @@
 """Registro central dos modelos carregados pela metadata e pelo Alembic."""
 
 from app.audit.models import AuditEntry
+from app.collection.models import CollectionRun
 from app.missions.models import (
     Mission,
     MissionCriteria,
@@ -14,6 +15,7 @@ from app.stores.models import Seller, Store
 from app.users.models import User
 
 REGISTERED_MODELS = (
+    CollectionRun,
     User,
     Product,
     Store,

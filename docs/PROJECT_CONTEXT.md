@@ -2,7 +2,7 @@
 
 ## Estado
 
-Fase: missões e coleta em implementação. TASK-025 concluída e validada em container Linux em 2026-08-02.
+Fase: missões e coleta em implementação. TASK-026 concluída e validada em PostgreSQL 18 em 2026-08-02.
 
 ## O que existe
 

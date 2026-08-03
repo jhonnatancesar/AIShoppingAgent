@@ -1,6 +1,6 @@
 # TASK-026 — Persistir coletas
 
-Status: Pendente
+Status: Concluída em 2026-08-02
 
 ## Objetivo
 

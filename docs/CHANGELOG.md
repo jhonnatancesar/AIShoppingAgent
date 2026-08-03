@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-08-02 — TASK-026
+
+- Criados `CollectionRun`, estados `running`, `succeeded` e `failed` e revisão
+  reversível `20260802_0011`.
+- Implementados início e encerramento atômicos com bloqueio de linha.
+
 ## 2026-08-02 — TASK-025
 
 - Implementada normalização monetária exata com `Decimal`, sem ponto flutuante.

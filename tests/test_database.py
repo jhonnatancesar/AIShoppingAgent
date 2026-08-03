@@ -68,4 +68,5 @@ def test_metadata_contains_only_implemented_tables() -> None:
         "sellers",
         "mission_sources",
         "mission_schedules",
+        "collection_runs",
     }
