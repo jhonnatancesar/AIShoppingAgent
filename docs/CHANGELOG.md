@@ -1,5 +1,24 @@
 # Changelog
 
+## 2026-08-07 — TASK-033
+
+- Criado `app.telegram`, a fronteira de entrada do canal Telegram, sem
+  lógica de domínio e sem SDK ou webhook do Telegram.
+- Definido o contrato imutável `TelegramMessage` (`chat_id`, `user_id`,
+  `text`, `received_at`), sem resolução para o `User` interno.
+- Criado `TelegramIntentAdapter`, que encaminha `text` e `received_at` ao
+  `IntentInterpreter` já existente (TASK-032) e devolve o `Intent`
+  resultante sem inspecionar `kind` ou `command`.
+- Adicionados testes unitários cobrindo o contrato e a adaptação para os
+  quatro valores de `IntentKind`, aprovados junto com `scripts\check.cmd`
+  completo em Python 3.14.6 (248 testes, 94,89% de cobertura); `app.telegram`
+  ficou com 100% de cobertura.
+- Sem integração externa nova nesta tarefa: nenhuma chamada de rede própria
+  foi adicionada, então nenhum script de validação manual foi necessário.
+- Documentado em `docs/TELEGRAM_ADAPTER.md`, com referência cruzada em
+  `docs/TELEGRAM.md`, e registrada a decisão de escopo em
+  `docs/DECISION_LOG.md` (DEC-009).
+
 ## 2026-08-07 — Validação real da TASK-032
 
 - Executado `scripts\check.cmd` completo em Python 3.14.6 com Docker Desktop

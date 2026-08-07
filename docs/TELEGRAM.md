@@ -2,6 +2,8 @@
 
 Telegram é o canal conversacional previsto para o MVP. O adaptador deve traduzir mensagens em comandos ou intenções sem conter lógica de domínio.
 
+A fronteira de entrada que traduz uma mensagem bruta do Telegram em uma
+intenção estruturada está definida em `docs/TELEGRAM_ADAPTER.md`.
 Autenticação, webhooks, comandos e notificações serão especificados e implementados em tarefas posteriores.
 
 ## Seleção de fontes de busca

@@ -5,8 +5,9 @@
 Fase: perfis e telemetria de IA concluídos e validados contra o Gemini real nas
 TASKs 029 a 031; interpretação de intenção da TASK-032 concluída e validada em
 Python 3.14.6, com `scripts\check.cmd` completo aprovado e os quatro valores
-de `IntentKind` confirmados contra o Gemini real do perfil `USER`. A próxima
-tarefa executável é a TASK-033.
+de `IntentKind` confirmados contra o Gemini real do perfil `USER`. A TASK-033
+definiu a fronteira de entrada do canal Telegram sobre o `IntentInterpreter`
+existente. A próxima tarefa executável é a TASK-034.
 
 ## O que existe
 
@@ -61,6 +62,10 @@ tarefa executável é a TASK-033.
   traduz mensagens livres em `Intent` estruturado via `AIProviderManager`
   (perfil `USER`), reaproveitando `MissionCommand` e os campos existentes de
   `MissionCriteria`, com parsing estrito e fallback seguro para `unknown`.
+- Fronteira de entrada do canal Telegram (`TelegramMessage`,
+  `TelegramIntentAdapter`) que traduz uma mensagem bruta do Telegram em um
+  `Intent`, reaproveitando exclusivamente o `IntentInterpreter`, sem SDK do
+  Telegram, webhook, comandos, notificações ou preferências de usuário.
 - Documentos de visão, arquitetura, dados, módulos-alvo, escopo do MVP, backlog, itens fora de escopo, governança de decisões e workflow permanente de execução.
 - ADRs, RFCs e 56 tarefas planejadas.
 

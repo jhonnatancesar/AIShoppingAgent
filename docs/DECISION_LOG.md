@@ -27,6 +27,29 @@ Após a classificação, registrar a decisão neste arquivo e atualizar a docume
 
 ## Registros
 
+### DEC-009 — Restringir a TASK-033 à fronteira de entrada do Telegram
+
+- **Data:** 2026-08-07
+- **Ideia:** `docs/tasks/TASK-033.md` só continha o texto-modelo genérico
+  ("Definir adaptação Telegram"), sem escopo detalhado. Definir o que essa
+  tarefa cobre exclusivamente a partir do que já está documentado:
+  representar a mensagem bruta do Telegram como contrato imutável e
+  traduzi-la em um `Intent`, chamando somente o `IntentInterpreter` já
+  existente (TASK-032).
+- **Classificação:** Implementar agora
+- **Justificativa:** `docs/ARCHITECTURE.md` lista Telegram como módulo-alvo
+  com fronteira própria; `docs/TELEGRAM.md` já definia que "o adaptador deve
+  traduzir mensagens em comandos ou intenções sem conter lógica de
+  domínio" e que autenticação, webhooks, comandos e notificações ficam para
+  tarefas posteriores. `docs/ROADMAP.md` já reserva a TASK-034 para o
+  webhook real, a TASK-035 para comandos de missão, a TASK-036 para
+  notificações e a TASK-037 para preferências de usuário. Incluir qualquer
+  uma dessas responsabilidades na TASK-033 seria antecipar tarefas futuras,
+  proibido por `AGENTS.md`.
+- **Próxima ação:** nenhuma; documentado em `docs/TELEGRAM_ADAPTER.md` e
+  `docs/tasks/TASK-033.md`. Webhook, comandos, notificações e preferências
+  pertencem às TASKs 034 a 037.
+
 ### DEC-008 — Fechar o vocabulário de intenção da TASK-032 na documentação existente
 
 - **Data:** 2026-08-07
