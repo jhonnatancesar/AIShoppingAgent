@@ -27,6 +27,30 @@ Após a classificação, registrar a decisão neste arquivo e atualizar a docume
 
 ## Registros
 
+### DEC-011 — Criar a TASK-056 para vincular identidade do usuário ao Telegram antes da TASK-035
+
+- **Data:** 2026-08-07
+- **Ideia:** ao preparar a TASK-035 ("Criar comandos de missão"), identifiquei
+  que persistir uma missão via Telegram exige `Mission.user_id`, uma FK
+  obrigatória para `User`. `docs/USERS.md` hoje declara explicitamente que
+  nenhum identificador do Telegram é armazenado e que não existem serviços de
+  CRUD de usuário. Sem resolver qual `User` corresponde a um chat do
+  Telegram, a TASK-035 não tem como gravar o proprietário da missão.
+- **Classificação:** Nova TASK do MVP
+- **Justificativa:** `docs/MVP.md` exige, como critério objetivo de conclusão
+  do MVP, que "um usuário autorizado consegue criar e consultar uma missão
+  pelo canal Telegram" — isso pressupõe uma identidade resolvível, que ainda
+  não existe. Não é autenticação real (reservada à TASK-046) nem autorização
+  (TASK-047): é o vínculo mínimo necessário para o próximo passo do fluxo já
+  iniciado nas TASKs 032 a 034. O usuário, ao ser consultado, optou por pausar
+  a TASK-035 e criar esta tarefa prévia em vez de ampliar o escopo da 035 ou
+  implementar apenas a camada de apresentação sem persistência.
+- **Próxima ação:** criada `docs/tasks/TASK-056.md`, fora da faixa numérica
+  original (mesmo padrão da TASK-042 e da TASK-055), posicionada no roadmap
+  imediatamente antes da TASK-035, que permanece bloqueada até a TASK-056 ser
+  executada. `docs/ROADMAP.md`, `docs/tasks/README.md`, `AGENTS.md` e
+  `docs/USERS.md` atualizados para refletir a pendência.
+
 ### DEC-010 — Nunca converter falha de interpretação em falha de transporte no webhook
 
 - **Data:** 2026-08-07

@@ -23,8 +23,13 @@ O papel `PLUS` permanece fora do MVP. O campo `role` ainda não concede permiss�
 ## Limites
 
 - `is_active=false` representa desativação lógica, não exclusão nem regra de autenticação pronta.
-- Não são armazenadas senhas, tokens, e-mails ou identificadores do Telegram.
-- Não existem endpoints, repositórios, serviços de CRUD ou usuário inicial automático.
+- Não são armazenadas senhas, tokens, e-mails ou credenciais de autenticação real.
+- Não existem endpoints, repositórios genéricos de CRUD ou usuário inicial automático.
 - Exclusão e anonimização serão definidas pelas tarefas de segurança e privacidade, preservando referências históricas.
+- A TASK-056 vai adicionar um identificador único e opcional do Telegram
+  (`chat_id`) e a resolução get-or-create necessária para que missões criadas
+  pelo Telegram (TASK-034 em diante) tenham um proprietário válido, sem
+  implementar login, senha, OAuth ou qualquer autenticação real — isso
+  permanece reservado à TASK-046.
 
 O modelo está em `backend/app/users/models.py` e sua criação reversível está na revisão Alembic `20260802_0002`.

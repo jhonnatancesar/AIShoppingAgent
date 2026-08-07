@@ -8,8 +8,10 @@ Python 3.14.6, com `scripts\check.cmd` completo aprovado e os quatro valores
 de `IntentKind` confirmados contra o Gemini real do perfil `USER`. A TASK-033
 definiu a fronteira de entrada do canal Telegram sobre o `IntentInterpreter`
 existente. A TASK-034 integrou o webhook real do Telegram, autenticado e
-validado de ponta a ponta contra o Telegram e o Gemini reais. A próxima
-tarefa executável é a TASK-035.
+validado de ponta a ponta contra o Telegram e o Gemini reais. A TASK-035
+("Criar comandos de missão") está pausada: persistir uma missão exige um
+`User` resolvido a partir da identidade do Telegram, que ainda não existe
+(`DEC-011`). A próxima tarefa executável é a TASK-056.
 
 ## O que existe
 
@@ -81,8 +83,9 @@ Além de `users`, `products`, `stores`, `sellers`, `offers`, `audit_entries`,
 `missions`, `mission_criteria`, `mission_sources`, `mission_transitions`,
 `mission_schedules`, `collection_runs` e `price_observations`, não há outras
 tabelas de domínio implementadas. Também não existem autenticação, autorização,
-APIs de negócio, worker, suíte permanente de testes ponta a ponta nem credenciais
-reais configuradas.
+vínculo entre identidade do Telegram e `User` (TASK-056), APIs de negócio,
+worker, suíte permanente de testes ponta a ponta nem credenciais reais
+configuradas.
 
 ## Invariantes
 
