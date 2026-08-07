@@ -1,5 +1,26 @@
 # Changelog
 
+## 2026-08-07 — Correção: integrar a branch órfã da TASK-031
+
+- Descoberto, ao auditar o código antes de iniciar a TASK-034, que o código
+  real da TASK-031 (`backend/app/ai_provider/telemetry.py` e sua fiação em
+  `contracts.py`, `gemini.py` e `manager.py`) nunca tinha sido mesclado ao
+  `main`: existia só na branch `task-031-ai-telemetry` (commit `b8a6f3d`),
+  enviada ao GitHub mas nunca integrada, enquanto o `main` avançou por uma
+  linha irmã sem esse commit.
+- A documentação (`CHANGELOG.md`, `PROJECT_CONTEXT.md`, `ROADMAP.md`,
+  `AGENTS.md`, `docs/tasks/TASK-031.md`) já descrevia a TASK-031 como
+  concluída antes do código estar de fato no `main`, incluindo uma correção
+  anterior desta mesma sessão que confiou nessa documentação sem verificar o
+  código-fonte.
+- Corrigido com `git cherry-pick` do commit `b8a6f3d` sobre o `main` atual,
+  resolvido a favor da documentação já sincronizada com as TASKs 032 e 033
+  nos cinco arquivos de texto que conflitaram; o código de telemetria foi
+  aplicado sem conflito.
+- Revalidado `scripts\check.cmd` completo em Python 3.14.6: 256 testes
+  aprovados (incluindo `tests/test_ai_telemetry.py`, ausente até então),
+  94,33% de cobertura, `telemetry.py` com 100%.
+
 ## 2026-08-07 — TASK-033
 
 - Criado `app.telegram`, a fronteira de entrada do canal Telegram, sem
