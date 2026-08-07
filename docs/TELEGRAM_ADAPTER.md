@@ -19,10 +19,33 @@ Toda a interpretação de linguagem natural continua exclusivamente no
 `IntentInterpreter` (`docs/INTENT_INTERPRETATION.md`), agnóstico de canal;
 este módulo apenas adapta o formato de entrada do Telegram para ele.
 
+## Webhook real (TASK-034)
+
+`POST /telegram/webhook` (fora de `/api/v1`, como `/health`) recebe atualizações
+reais do Telegram. Cada requisição é autenticada comparando o cabeçalho
+`X-Telegram-Bot-Api-Secret-Token` com `AISHOPPING_TELEGRAM_WEBHOOK_SECRET` por
+comparação de tempo constante; sem correspondência, a resposta é `401` no
+envelope de erro padrão do `docs/API_CONVENTIONS.md`. Atualizações sem mensagem
+de texto (foto, callback, mensagem editada) são reconhecidas e ignoradas com
+`204`, sem erro.
+
+Uma vez autenticada, a entrega da atualização e o processamento por IA são
+tratados como falhas independentes: se a interpretação falhar (`AIProviderError`
+por cota ou indisponibilidade, ou `TelegramContractError` por conteúdo inválido),
+a falha é registrada — a telemetria sanitizada da TASK-031 já grava o resultado
+de cada tentativa de IA — e a rota ainda responde `204`, sem transformar uma
+falha de IA em falha de transporte que faria o Telegram reentregar a mesma
+atualização. `500` fica reservado a falhas internas verdadeiramente inesperadas.
+
+`backend/scripts/register_telegram_webhook.py` registra (`--action set --url`),
+consulta (`--action info`) e remove (`--action delete`) o webhook na Bot API real,
+usado durante a validação manual com um túnel HTTPS local (`cloudflared`).
+
 ## Limites
 
-Este módulo não abre webhook, não usa nenhum SDK do Telegram, não define
-comandos ou teclado, não envia notificações e não resolve preferências de
-usuário. Essas responsabilidades pertencem, respectivamente, à TASK-034
-(webhook), TASK-035 (comandos de missão), TASK-036 (notificações) e
-TASK-037 (preferências de usuário).
+Este módulo não usa nenhum SDK do Telegram, não define comandos ou teclado, não
+envia notificações e não resolve preferências de usuário — e o webhook não
+decide nem executa nenhuma ação de missão a partir do `Intent`, apenas o
+descarta após registrá-lo. Essas responsabilidades pertencem, respectivamente, à
+TASK-035 (comandos de missão), TASK-036 (notificações) e TASK-037 (preferências
+de usuário).

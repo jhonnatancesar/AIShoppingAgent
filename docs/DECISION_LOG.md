@@ -27,6 +27,25 @@ Após a classificação, registrar a decisão neste arquivo e atualizar a docume
 
 ## Registros
 
+### DEC-010 — Nunca converter falha de interpretação em falha de transporte no webhook
+
+- **Data:** 2026-08-07
+- **Ideia:** depois que o webhook do Telegram autentica e aceita uma
+  atualização, uma falha subsequente ao traduzi-la em `Intent` (cota de IA
+  excedida, indisponibilidade do provedor, conteúdo inválido) não deve virar
+  `500`. A entrega da atualização pelo Telegram e o processamento por IA são
+  tratados como falhas independentes.
+- **Classificação:** Implementar agora
+- **Justificativa:** decisão do usuário durante a aprovação do plano da
+  TASK-034: um `500` faria o Telegram reentregar a mesma atualização,
+  potencialmente repetindo a chamada de IA sem necessidade. A falha já é
+  registrada pela telemetria sanitizada da TASK-031; a rota apenas confirma o
+  recebimento com `204`, sem executar ação de domínio, sem responder ao
+  usuário e sem criar mecanismo de retry, fila ou execução de comando — isso
+  permanece reservado às TASK-035 e TASK-036.
+- **Próxima ação:** nenhuma; documentado em `docs/TELEGRAM_ADAPTER.md` e
+  `docs/tasks/TASK-034.md`.
+
 ### DEC-009 — Restringir a TASK-033 à fronteira de entrada do Telegram
 
 - **Data:** 2026-08-07

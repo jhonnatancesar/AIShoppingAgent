@@ -1,5 +1,33 @@
 # Changelog
 
+## 2026-08-07 — TASK-034
+
+- Criada a rota `POST /telegram/webhook` (fora de `/api/v1`), que autentica
+  cada atualização real do Telegram por segredo compartilhado
+  (`X-Telegram-Bot-Api-Secret-Token` contra
+  `AISHOPPING_TELEGRAM_WEBHOOK_SECRET`, comparação de tempo constante) e usa o
+  envelope de erro padrão no `401`.
+- Atualizações sem mensagem de texto (foto, callback, mensagem editada) são
+  reconhecidas e ignoradas com `204`.
+- Definido que, depois de uma entrega autenticada, falha de interpretação
+  (cota, indisponibilidade, conteúdo inválido) nunca vira `500`: é registrada
+  e a rota ainda responde `204`, para não transformar falha de IA em falha de
+  transporte e evitar reentrega pelo Telegram. Nenhum mecanismo de retry,
+  fila, resposta ao usuário ou execução de comando foi criado.
+- Adicionado `backend/scripts/register_telegram_webhook.py` (`set`/`delete`/
+  `info`), sem SDK, usando `urllib` da biblioteca padrão contra a Bot API real.
+- Adicionados `AISHOPPING_TELEGRAM_BOT_TOKEN` e
+  `AISHOPPING_TELEGRAM_WEBHOOK_SECRET` a `Settings`; instalado `cloudflared`
+  como ferramenta de desenvolvimento para expor o webhook local durante a
+  validação real.
+- Aprovado `scripts\check.cmd` completo em Python 3.14.6: 265 testes, 94,41%
+  de cobertura.
+- Validado de ponta a ponta contra o Telegram e o Gemini reais, usando um
+  túnel `cloudflared`: mensagem real recebida, autenticada, traduzida e
+  processada com sucesso (`ai_provider_attempt` com `outcome=succeeded`),
+  resposta `204`; requisições sem segredo válido rejeitadas com `401` sem
+  chamar a IA. Webhook removido e túnel encerrado ao final.
+
 ## 2026-08-07 — Correção: integrar a branch órfã da TASK-031
 
 - Descoberto, ao auditar o código antes de iniciar a TASK-034, que o código

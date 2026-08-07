@@ -7,7 +7,9 @@ TASKs 029 a 031; interpretação de intenção da TASK-032 concluída e validada
 Python 3.14.6, com `scripts\check.cmd` completo aprovado e os quatro valores
 de `IntentKind` confirmados contra o Gemini real do perfil `USER`. A TASK-033
 definiu a fronteira de entrada do canal Telegram sobre o `IntentInterpreter`
-existente. A próxima tarefa executável é a TASK-034.
+existente. A TASK-034 integrou o webhook real do Telegram, autenticado e
+validado de ponta a ponta contra o Telegram e o Gemini reais. A próxima
+tarefa executável é a TASK-035.
 
 ## O que existe
 
@@ -64,8 +66,12 @@ existente. A próxima tarefa executável é a TASK-034.
   `MissionCriteria`, com parsing estrito e fallback seguro para `unknown`.
 - Fronteira de entrada do canal Telegram (`TelegramMessage`,
   `TelegramIntentAdapter`) que traduz uma mensagem bruta do Telegram em um
-  `Intent`, reaproveitando exclusivamente o `IntentInterpreter`, sem SDK do
-  Telegram, webhook, comandos, notificações ou preferências de usuário.
+  `Intent`, reaproveitando exclusivamente o `IntentInterpreter`.
+- Webhook real `POST /telegram/webhook`, autenticado por segredo compartilhado,
+  que recebe atualizações do Telegram, traduz mensagens de texto em `Intent` e
+  responde `204` mesmo quando a interpretação por IA falha, sem executar ação
+  de missão nem responder ao usuário; script manual de registro contra a Bot
+  API real.
 - Documentos de visão, arquitetura, dados, módulos-alvo, escopo do MVP, backlog, itens fora de escopo, governança de decisões e workflow permanente de execução.
 - ADRs, RFCs e 56 tarefas planejadas.
 

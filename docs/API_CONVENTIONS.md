@@ -71,4 +71,6 @@ O schema em `/openapi.json` é a representação executável do contrato. Altera
 
 ## Limites atuais
 
-`GET /health` é o único endpoint existente. Ele é operacional, não versionado, não consulta dependências externas e responde `200 OK` com `{"status":"ok"}`. Autenticação, envelope comum de erros e paginação serão implementados somente nas tarefas que introduzirem essas necessidades.
+`GET /health` é operacional, não versionado, não consulta dependências externas e responde `200 OK` com `{"status":"ok"}`.
+
+`POST /telegram/webhook` (`docs/TELEGRAM_ADAPTER.md`) é o segundo endpoint existente e o primeiro autenticado: também operacional e fora de `/api/v1` (recebe um callback de integração externa, não um recurso de negócio). Autentica por segredo compartilhado no cabeçalho `X-Telegram-Bot-Api-Secret-Token`, usa o envelope de erro documentado acima somente para o `401` de autenticação, e responde `204 No Content` mesmo quando o processamento da mensagem falha internamente, para não transformar uma falha de IA em falha de transporte. Paginação, autenticação genérica de usuário final e um handler global de erros continuam pendentes das tarefas que introduzirem essas necessidades.

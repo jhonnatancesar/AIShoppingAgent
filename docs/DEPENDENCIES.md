@@ -9,6 +9,7 @@ Este documento é a referência de ambiente para qualquer nova máquina. Antes d
 | Git | Git for Windows 2.55.0 ou compatível | `git --version` |
 | Python | Versão estável mais recente, atualmente Python 3.14.6, com `pip` | `python --version` e `python -m pip --version` |
 | Docker Desktop | Versão estável mais recente; Docker Engine 29.6.2 e Docker Compose 5.3.1 validados atualmente | `docker --version` e `docker compose version` |
+| cloudflared | Somente para desenvolvimento: expõe o webhook local com HTTPS público durante a validação real do canal Telegram; 2026.7.3 validado atualmente | `cloudflared --version` |
 
 PostgreSQL não exige instalação direta na máquina: o ambiente local usa a imagem oficial `postgres:18-alpine` por meio do Docker Compose.
 
@@ -34,6 +35,14 @@ A fonte de verdade para dependências Python é `backend/requirements.txt`:
 `google-genai` 2.16.0 é o SDK oficial validado para o perfil USER. A chamada ao
 Gemini exige `AISHOPPING_GEMINI_API_KEY`; o modelo padrão configurável é
 `gemini-3.6-flash`. A chave fica apenas no ambiente ou `.env` ignorado pelo Git.
+
+O webhook do Telegram (TASK-034) não usa SDK — chama a Bot API diretamente com
+`urllib` da biblioteca padrão. Exige `AISHOPPING_TELEGRAM_BOT_TOKEN` (criado via
+`@BotFather` no Telegram, usado somente por
+`backend/scripts/register_telegram_webhook.py`) e
+`AISHOPPING_TELEGRAM_WEBHOOK_SECRET` (valor aleatório local, gerado com
+`secrets.token_urlsafe`, usado para autenticar as requisições recebidas). Ambos
+ficam apenas em `backend/.env`, nunca versionados.
 
 As versões validadas na TASK-011 foram SQLAlchemy 2.0.51, Alembic 1.18.5 e Psycopg 3.3.4. O extra binário do Psycopg evita exigir uma instalação separada de `libpq` e possui suporte validado a Python 3.14 e PostgreSQL 18.
 
