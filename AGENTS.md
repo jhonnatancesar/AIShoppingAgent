@@ -78,7 +78,17 @@ Revisar integralmente a implementação antes de encerrar, verificando bugs, ló
 
 ### 6. Revisão da documentação
 
-Confirmar que código e documentação permanecem sincronizados. Atualizar, quando aplicável, `docs/PROJECT_CONTEXT.md`, `docs/CHANGELOG.md`, `docs/DECISION_LOG.md`, `docs/ROADMAP.md` e o status da TASK.
+Confirmar que código e documentação permanecem sincronizados. Atualizar, sempre que aplicável, TODOS os documentos afetados pela conclusão da TASK, incluindo obrigatoriamente:
+
+- `docs/PROJECT_CONTEXT.md`
+- `docs/CHANGELOG.md`
+- `docs/DECISION_LOG.md`
+- `docs/ROADMAP.md`
+- o status da TASK em `docs/tasks/TASK-XXX.md`
+- `docs/tasks/README.md` (lista de TASKs concluídas e próxima TASK executável)
+- este arquivo (`AGENTS.md`, seção "Estado atual")
+
+Nenhuma TASK deve ser considerada encerrada enquanto houver documento desatualizado referenciando o status de TASKs. Isso é essencial para que qualquer agente de IA (Codex, Claude ou outro) retome o projeto de forma consistente em uma sessão futura, sem depender de memória de conversa anterior.
 
 ### 7. Controle de versão
 
@@ -94,4 +104,4 @@ Nunca iniciar automaticamente a próxima TASK. Encerrar apresentando resumo da i
 
 ## Estado atual
 
-TASKs 000 a 030, TASK-042 e TASK-055 concluídas. A próxima tarefa executável é a TASK-031.
+TASKs 000 a 031, TASK-042 e TASK-055 concluídas. A próxima tarefa executável é a TASK-032.
