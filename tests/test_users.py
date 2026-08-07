@@ -6,7 +6,7 @@ from app.database.base import Base
 from app.database.model_registry import REGISTERED_MODELS
 from app.database.time import utc_now
 from app.users.models import User, UserRole
-from sqlalchemy import CheckConstraint, Enum
+from sqlalchemy import BigInteger, CheckConstraint, Enum, UniqueConstraint
 
 
 def test_user_role_has_only_v1_profiles() -> None:
@@ -24,6 +24,7 @@ def test_user_table_matches_data_contract() -> None:
         table.c.display_name,
         table.c.role,
         table.c.is_active,
+        table.c.telegram_user_id,
         table.c.created_at,
         table.c.updated_at,
     ]
@@ -35,8 +36,25 @@ def test_user_table_matches_data_contract() -> None:
     assert table.c.role.type.enums == ["USER", "ADMIN", "DEV"]
     assert table.c.role.type.native_enum is False
     assert table.c.is_active.nullable is False
+    assert table.c.telegram_user_id.nullable is True
+    assert isinstance(table.c.telegram_user_id.type, BigInteger)
     assert table.c.created_at.type.timezone is True
     assert table.c.updated_at.type.timezone is True
+
+
+def test_user_telegram_user_id_is_unique() -> None:
+    """A coluna deve identificar exclusivamente a pessoa, nunca a conversa."""
+    table = User.__table__
+
+    unique_constraints = [
+        constraint
+        for constraint in table.constraints
+        if isinstance(constraint, UniqueConstraint)
+    ]
+    assert any(
+        {column.name for column in constraint.columns} == {"telegram_user_id"}
+        for constraint in unique_constraints
+    )
 
 
 def test_user_table_rejects_blank_display_name_by_constraint() -> None:
@@ -63,6 +81,19 @@ def test_user_accepts_typed_role() -> None:
 
     assert user.display_name == "Usuário de teste"
     assert user.role is UserRole.USER
+
+
+def test_user_accepts_optional_telegram_user_id() -> None:
+    """`telegram_user_id` identifica a pessoa, sem exigência de canal."""
+    without_telegram = User(display_name="Usuário de teste", role=UserRole.USER)
+    with_telegram = User(
+        display_name="Usuário do Telegram",
+        role=UserRole.USER,
+        telegram_user_id=123456789,
+    )
+
+    assert without_telegram.telegram_user_id is None
+    assert with_telegram.telegram_user_id == 123456789
 
 
 def test_utc_now_returns_timezone_aware_utc() -> None:

@@ -1,0 +1,47 @@
+"""Resolução determinística de identidade a partir do Telegram.
+
+`telegram_user_id` identifica a pessoa (`message.from.id` no `Update` do
+Telegram), nunca a conversa (`chat.id`); este módulo não conhece nem persiste
+`chat_id`. Nenhuma autenticação real, senha, OAuth ou lógica de missão
+pertence a este serviço.
+"""
+
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
+
+from app.users.models import User, UserRole
+
+
+def get_or_create_telegram_user(
+    session: Session,
+    *,
+    telegram_user_id: int,
+    display_name: str,
+) -> User:
+    """Resolve, de forma idempotente, o `User` de uma pessoa no Telegram."""
+    if not display_name.strip():
+        raise ValueError("display_name não pode ser vazio.")
+
+    user = _find_by_telegram_user_id(session, telegram_user_id)
+    if user is not None:
+        return user
+
+    try:
+        with session.begin_nested():
+            user = User(
+                display_name=display_name,
+                role=UserRole.USER,
+                telegram_user_id=telegram_user_id,
+            )
+            session.add(user)
+            session.flush()
+    except IntegrityError:
+        user = _find_by_telegram_user_id(session, telegram_user_id)
+        if user is None:
+            raise
+    return user
+
+
+def _find_by_telegram_user_id(session: Session, telegram_user_id: int) -> User | None:
+    return session.scalar(select(User).where(User.telegram_user_id == telegram_user_id))

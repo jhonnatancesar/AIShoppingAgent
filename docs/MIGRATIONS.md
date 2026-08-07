@@ -70,11 +70,14 @@ Regras permanentes:
 - `20260802_0008`: cria `mission_transitions`, a constraint de comandos, seus índices e a proteção append-only.
 - `20260802_0009`: adiciona seleção de fontes por missão, tipo de fonte, vendedores de marketplace e identidade de oferta por vendedor.
 - `20260802_0010`: cria uma agenda recorrente por missão, suas constraints e o índice parcial de execuções vencidas.
+- `20260802_0011`: cria execuções persistentes de coleta.
+- `20260802_0012`: cria observações imutáveis de preço.
+- `20260807_0001`: adiciona `telegram_user_id` (opcional, único) a `users` — identifica exclusivamente a pessoa no Telegram, nunca a conversa (`chat_id` não é persistido).
 
 O downgrade de `20260802_0009` não apaga ofertas para forçar compatibilidade. Se
 existirem ofertas de vendedores diferentes com a mesma identidade antiga, elas
 devem ser migradas de forma explícita antes da reversão; a recriação dos índices
 anteriores falhará em vez de descartar histórico silenciosamente.
 
-As demais tabelas do modelo serão introduzidas pelas TASKs de missões e coleta e,
-depois, pela TASK-015 conforme suas dependências explícitas.
+Novas tabelas ou colunas serão introduzidas pelas TASKs futuras conforme suas
+dependências explícitas.

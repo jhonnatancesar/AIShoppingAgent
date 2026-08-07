@@ -1,5 +1,31 @@
 # Changelog
 
+## 2026-08-07 — TASK-056
+
+- Descoberto, ao preparar a TASK-035, que persistir uma missão via Telegram
+  exigia `Mission.user_id` sem existir nenhuma forma de resolver qual `User`
+  corresponde a uma pessoa no Telegram; TASK-035 pausada e TASK-056 criada
+  como pré-requisito (`DEC-011`).
+- Adicionado `User.telegram_user_id` (opcional, único, `BigInteger`) —
+  exclusivamente o `user.id` do Telegram (a pessoa), nunca o `chat.id` (a
+  conversa); `chat_id` não é persistido nesta tarefa.
+- Adicionada a migração reversível `20260807_0001`.
+- Criado `get_or_create_telegram_user` em `backend/app/users/service.py`:
+  resolução determinística e idempotente, com `SAVEPOINT` protegendo contra
+  a corrida de duas mensagens simultâneas do mesmo usuário novo. Sessão
+  controlada pelo chamador (`session.flush()`, nunca `commit()`), mesmo
+  padrão de `transition_mission`. Não conectado ao webhook da TASK-034 —
+  essa decisão de sessão por requisição pertence à TASK-035.
+- Aprovado `scripts\check.cmd` completo em Python 3.14.6: 272 testes, 94,50%
+  de cobertura, `users/service.py` e `users/models.py` a 100%.
+- Validado em PostgreSQL 18 real via Docker Compose: `get_or_create_telegram_user`
+  chamado duas vezes devolveu o mesmo `User.id`; uma inserção direta
+  duplicada, contornando o serviço, foi rejeitada pela constraint `UNIQUE`
+  do banco; confirmada a cadeia `upgrade` → `downgrade -1` → `upgrade`
+  novamente até `20260807_0001`.
+- TASK-035 segue pausada e só será retomada por solicitação explícita; seu
+  bloqueio de pré-requisito foi removido.
+
 ## 2026-08-07 — TASK-034
 
 - Criada a rota `POST /telegram/webhook` (fora de `/api/v1`), que autentica

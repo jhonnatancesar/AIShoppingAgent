@@ -11,15 +11,16 @@
 | Catálogo de eventos | TASK-042 | Eventos definidos antes dos alertas de preço |
 | Alertas de preço | TASK-027 | Alertas baseados no catálogo de eventos |
 | IA e interação | TASK-028 a TASK-037 | Gerenciador de IA e Telegram |
-| Identidade do usuário no Telegram | TASK-056 | Vincula um `User` interno a um chat do Telegram, pré-requisito da TASK-035 |
+| Identidade do usuário no Telegram | TASK-056 | Vincula um `User` interno a uma pessoa do Telegram (`telegram_user_id`), pré-requisito da TASK-035 |
 | Compra e eventos | TASK-038 a TASK-041 e TASK-043 a TASK-045 | Fluxos de compra, publicação, consumo e monitoramento |
 | Segurança e entrega | TASK-046 a TASK-054 | Observabilidade, segurança e lançamento |
 | Expansão de fontes (futuro) | Tarefas a definir | Mercado Livre, Shopee, AliExpress e outras fontes futuras |
 
-As TASKs 000 a 034, a TASK-042 e a TASK-055 estão concluídas. A TASK-035
-está pausada até a TASK-056 ser executada, pois `Mission.user_id` exige um
-`User` resolvido a partir da identidade do Telegram, ainda inexistente
-(`DEC-011`). A próxima tarefa executável é a TASK-056. As demais continuam
+As TASKs 000 a 034, a TASK-042, a TASK-055 e a TASK-056 estão concluídas. A
+TASK-056 resolveu o pré-requisito de identidade que pausava a TASK-035
+(`DEC-011`) — `User.telegram_user_id`, exclusivamente a pessoa, nunca a
+conversa. A TASK-035 segue pendente e só será retomada por solicitação
+explícita; a próxima tarefa executável é a TASK-035. As demais continuam
 pendentes e só podem ser iniciadas por solicitação explícita. A V1 pesquisa
 Pichau, Terabyte, Amazon e Kabum; Mercado Livre, Shopee e AliExpress
 permanecem futuras.

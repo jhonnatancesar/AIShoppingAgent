@@ -8,10 +8,12 @@ Python 3.14.6, com `scripts\check.cmd` completo aprovado e os quatro valores
 de `IntentKind` confirmados contra o Gemini real do perfil `USER`. A TASK-033
 definiu a fronteira de entrada do canal Telegram sobre o `IntentInterpreter`
 existente. A TASK-034 integrou o webhook real do Telegram, autenticado e
-validado de ponta a ponta contra o Telegram e o Gemini reais. A TASK-035
-("Criar comandos de missão") está pausada: persistir uma missão exige um
-`User` resolvido a partir da identidade do Telegram, que ainda não existe
-(`DEC-011`). A próxima tarefa executável é a TASK-056.
+validado de ponta a ponta contra o Telegram e o Gemini reais. A TASK-056
+resolveu o pré-requisito de identidade que pausava a TASK-035 (`DEC-011`):
+`User.telegram_user_id`, exclusivamente a pessoa do Telegram, nunca a
+conversa, validado em PostgreSQL 18 real. A TASK-035 ("Criar comandos de
+missão") segue pendente e só será retomada por solicitação explícita; a
+próxima tarefa executável é a TASK-035.
 
 ## O que existe
 
@@ -74,8 +76,13 @@ validado de ponta a ponta contra o Telegram e o Gemini reais. A TASK-035
   responde `204` mesmo quando a interpretação por IA falha, sem executar ação
   de missão nem responder ao usuário; script manual de registro contra a Bot
   API real.
+- Resolução get-or-create de identidade (`get_or_create_telegram_user`) que
+  vincula `User.telegram_user_id` — exclusivamente a pessoa do Telegram,
+  nunca a conversa — de forma determinística e idempotente, protegida contra
+  corrida de criação concorrente por `SAVEPOINT`, sem autenticação real nem
+  lógica de missão.
 - Documentos de visão, arquitetura, dados, módulos-alvo, escopo do MVP, backlog, itens fora de escopo, governança de decisões e workflow permanente de execução.
-- ADRs, RFCs e 56 tarefas planejadas.
+- ADRs, RFCs e 57 tarefas planejadas.
 
 ## O que não existe
 
@@ -83,9 +90,8 @@ Além de `users`, `products`, `stores`, `sellers`, `offers`, `audit_entries`,
 `missions`, `mission_criteria`, `mission_sources`, `mission_transitions`,
 `mission_schedules`, `collection_runs` e `price_observations`, não há outras
 tabelas de domínio implementadas. Também não existem autenticação, autorização,
-vínculo entre identidade do Telegram e `User` (TASK-056), APIs de negócio,
-worker, suíte permanente de testes ponta a ponta nem credenciais reais
-configuradas.
+persistência de `chat_id` do Telegram, APIs de negócio, worker, suíte
+permanente de testes ponta a ponta nem credenciais reais configuradas.
 
 ## Invariantes
 
