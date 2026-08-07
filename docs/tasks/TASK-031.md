@@ -1,10 +1,11 @@
 # TASK-031 — Adicionar telemetria de IA
 
-Status: Pendente
+Status: Concluída em 2026-08-02
 
 ## Objetivo
 
-Planejar e executar, quando solicitada, a etapa “Adicionar telemetria de IA”.
+Registrar telemetria sanitizada de cada tentativa de IA pelo AI Provider
+Manager, sem persistir conteúdo sensível.
 
 ## Escopo
 
@@ -21,5 +22,7 @@ Planejar e executar, quando solicitada, a etapa “Adicionar telemetria de IA”
 ## Critério de aceite
 
 Telemetria diferencia uso premium e fallback, não expõe conteúdo sensível e
-representa retomada de quota sem inventar prazo ausente.
+representa retomada de quota sem inventar prazo ausente. Validado o fluxo
+real ADMIN/DEV: o premium retornou `429` com reset informado, a telemetria
+registrou a falha e o fallback gratuito respondeu com sucesso.
 
