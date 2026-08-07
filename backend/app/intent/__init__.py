@@ -1,0 +1,25 @@
+"""Interpretação de intenção do usuário, agnóstica de canal e de domínio."""
+
+from app.intent.contracts import (
+    MISSION_SOURCE_CODES,
+    Intent,
+    IntentError,
+    IntentKind,
+    IntentParameters,
+)
+from app.intent.interpreter import (
+    PURPOSE,
+    IntentInterpreter,
+    parse_intent_response,
+)
+
+__all__ = [
+    "MISSION_SOURCE_CODES",
+    "PURPOSE",
+    "Intent",
+    "IntentError",
+    "IntentInterpreter",
+    "IntentKind",
+    "IntentParameters",
+    "parse_intent_response",
+]

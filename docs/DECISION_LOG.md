@@ -27,6 +27,26 @@ Após a classificação, registrar a decisão neste arquivo e atualizar a docume
 
 ## Registros
 
+### DEC-008 — Fechar o vocabulário de intenção da TASK-032 na documentação existente
+
+- **Data:** 2026-08-07
+- **Ideia:** definir o conjunto de `IntentKind` e parâmetros da interpretação
+  de intenção estritamente a partir do que já estava documentado, sem
+  adicionar nem omitir nada.
+- **Classificação:** Implementar agora
+- **Justificativa:** `docs/MISSION_SYSTEM.md` já define os seis comandos
+  fechados de `MissionCommand` (`activate`, `pause`, `resume`, `complete`,
+  `cancel`, `expire`); `docs/MVP.md` exige explicitamente que o usuário
+  consiga "criar e consultar uma missão pelo canal Telegram"; e
+  `docs/TELEGRAM.md` fixa as quatro fontes selecionáveis da V1. `IntentKind`
+  reaproveita `MissionCommand` diretamente em vez de duplicar suas strings, e
+  `IntentParameters` reaproveita os campos já existentes de
+  `MissionCriteria` e `mission_sources`. Nenhum campo, comando ou fonte novos
+  de domínio foram introduzidos.
+- **Próxima ação:** nenhuma; documentado em `docs/INTENT_INTERPRETATION.md` e
+  `docs/tasks/TASK-032.md`. Decisões de execução de comando e de canal
+  pertencem às TASKs 033 em diante.
+
 ### DEC-007 — Limitar a V1 ao Gemini por nível de acesso
 
 - **Data:** 2026-08-02

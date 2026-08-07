@@ -1,5 +1,44 @@
 # Changelog
 
+## 2026-08-07 — TASK-032
+
+- Criado `IntentInterpreter`, agnóstico de canal, que traduz mensagens livres
+  em `Intent` estruturado usando exclusivamente `AIProviderManager` no perfil
+  `USER`.
+- Definido vocabulário fechado de intenção (`create_mission`, `query_mission`,
+  `mission_command`, `unknown`), reaproveitando diretamente `MissionCommand`
+  para os seis comandos já existentes do ciclo de vida da missão e os campos
+  já existentes de `MissionCriteria` para os parâmetros extraídos.
+- Implementado parsing estrito da resposta do provedor, com fallback seguro
+  para `unknown` em qualquer JSON inválido, campo desconhecido, valor fora do
+  vocabulário fechado ou combinação inconsistente entre `kind` e `command`;
+  falhas do provedor (cota, indisponibilidade) continuam propagadas, sem
+  virar `unknown`.
+- Adicionado script manual `backend/scripts/validate_intent_interpreter.py`
+  para validação real contra o Gemini, seguindo o padrão das TASKs 029 a 031.
+- Aprovados lint e formatação (`ruff check`, `ruff format --check`) e os
+  novos testes unitários por leitura e revisão de código. A execução real do
+  `pytest` e do script de validação com Gemini não foi possível neste
+  ambiente: o sandbox de execução só tem Python 3.10 disponível (o projeto
+  exige 3.14) e o download de uma versão compatível do Python via `uv` foi
+  bloqueado pela política de rede do ambiente; adicionalmente, um diretório
+  `.pytest_cache` órfão e sem permissão de leitura impede qualquer execução
+  do `pytest` neste sandbox, independentemente da versão do Python. A
+  validação real completa fica pendente da máquina do usuário, com Python
+  3.14.6 já validado conforme `docs/DEPENDENCIES.md`.
+
+## 2026-08-02 — TASK-031
+
+- Adicionada telemetria JSON sanitizada por tentativa de IA, com correlação,
+  perfil, finalidade, provedor, modelo, resultado e indicação de fallback.
+- Preservado de erros `429` somente o reset recomendado por
+  `google.rpc.RetryInfo`; detalhes brutos, prompts, respostas, tokens e chaves
+  continuam fora dos contratos e dos eventos.
+- Criado aviso seguro e agnóstico de canal para cota esgotada, informando o
+  horário UTC quando conhecido ou declarando o prazo desconhecido.
+- Validado o fluxo real ADMIN/DEV: o premium retornou `429` com reset informado,
+  a telemetria registrou a falha e o fallback gratuito respondeu com sucesso.
+
 ## 2026-08-02 — TASK-030
 
 - Implementada política única para ADMIN/DEV, sem perfis de IA duplicados.

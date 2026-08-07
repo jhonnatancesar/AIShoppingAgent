@@ -1,0 +1,196 @@
+"""Interpretador de intenção baseado exclusivamente no AIProviderManager.
+
+O interpretador traduz uma mensagem livre do usuário em um `Intent`
+estruturado. Ele não conhece Telegram nem qualquer outro canal, não decide
+nem executa comandos de missão e nunca inventa um comando ou parâmetro que
+não esteja claramente presente na mensagem: qualquer resposta fora do
+contrato esperado cai em `IntentKind.UNKNOWN`.
+"""
+
+import json
+from datetime import UTC, datetime
+from decimal import Decimal, InvalidOperation
+from typing import Any
+from uuid import uuid4
+
+from app.ai_provider import (
+    AIMessage,
+    AIMessageRole,
+    AIProviderManager,
+    AIRequest,
+)
+from app.intent.contracts import Intent, IntentError, IntentKind, IntentParameters
+from app.missions.models import MissionCommand
+from app.users.models import UserRole
+
+PURPOSE = "interpret_purchase_intent"
+
+_PARSING_ERRORS = (IntentError, ValueError, TypeError, KeyError, ArithmeticError)
+
+_ALLOWED_RESPONSE_KEYS = frozenset({"kind", "command", "parameters"})
+_ALLOWED_PARAMETER_KEYS = frozenset(
+    {"search_query", "target_amount", "target_currency", "sources", "mission_reference"}
+)
+
+_SYSTEM_PROMPT = (
+    "Você traduz uma única mensagem de um usuário do AIShoppingAgent em uma "
+    "intenção estruturada. Você nunca executa nem confirma nenhuma ação; "
+    "apenas classifica a mensagem.\n\n"
+    "Responda somente com um objeto JSON válido, sem texto adicional, "
+    "comentários ou blocos de código, exatamente neste formato:\n"
+    '{"kind": "create_mission" | "query_mission" | "mission_command" | "unknown", '
+    '"command": "activate" | "pause" | "resume" | "complete" | "cancel" | "expire" | null, '
+    '"parameters": {'
+    '"search_query": string ou null, '
+    '"target_amount": string decimal (ex.: "1500.00") ou null, '
+    '"target_currency": string ISO 4217 de 3 letras maiúsculas (ex.: "BRL") ou null, '
+    '"sources": lista com zero ou mais valores entre "pichau", "terabyte", "amazon", "kabum", '
+    '"mission_reference": string ou null}}\n\n'
+    'Use "kind": "mission_command" somente com um "command" entre os seis '
+    "listados, que representam comandos já existentes do ciclo de vida da "
+    'missão. Use "kind": "create_mission" para pedidos de criar ou iniciar '
+    'uma nova missão de compra. Use "kind": "query_mission" para pedidos de '
+    "consultar, listar ou acompanhar missões existentes. Use "
+    '"kind": "unknown" sempre que a mensagem não corresponder com segurança '
+    "a nenhuma dessas opções. Nunca invente um comando, fonte, valor ou "
+    "moeda que não esteja claramente presente na mensagem; nesse caso, "
+    "prefira null ou uma lista vazia."
+)
+
+
+class IntentInterpreter:
+    """Traduz mensagens livres em intenções estruturadas, sem lógica de domínio."""
+
+    def __init__(self, manager: AIProviderManager) -> None:
+        self._manager = manager
+
+    async def interpret(
+        self,
+        message: str,
+        *,
+        requested_at: datetime | None = None,
+    ) -> Intent:
+        if not isinstance(message, str) or not message.strip():
+            raise IntentError("message must not be blank")
+
+        moment = requested_at or datetime.now(UTC)
+        request = AIRequest(
+            request_id=uuid4(),
+            profile=UserRole.USER,
+            purpose=PURPOSE,
+            messages=(
+                AIMessage(AIMessageRole.SYSTEM, _SYSTEM_PROMPT),
+                AIMessage(AIMessageRole.USER, message),
+            ),
+            requested_at=moment,
+        )
+        response = await self._manager.generate(request)
+        return parse_intent_response(
+            response.content,
+            correlation_id=request.request_id,
+            raw_message=message,
+            interpreted_at=response.finished_at,
+        )
+
+
+def parse_intent_response(
+    content: str,
+    *,
+    correlation_id: Any,
+    raw_message: str,
+    interpreted_at: datetime,
+) -> Intent:
+    """Faz parsing estrito da resposta do provedor.
+
+    Qualquer resposta que não siga exatamente o contrato esperado — JSON
+    inválido, campos desconhecidos, valores fora do vocabulário fechado ou
+    combinação inconsistente entre `kind` e `command` — resulta em uma
+    intenção `UNKNOWN`, nunca em um comando inventado.
+    """
+    try:
+        return _parse_intent_response(
+            content,
+            correlation_id=correlation_id,
+            raw_message=raw_message,
+            interpreted_at=interpreted_at,
+        )
+    except _PARSING_ERRORS:
+        return Intent(
+            correlation_id=correlation_id,
+            kind=IntentKind.UNKNOWN,
+            raw_message=raw_message,
+            interpreted_at=interpreted_at,
+        )
+
+
+def _parse_intent_response(
+    content: str,
+    *,
+    correlation_id: Any,
+    raw_message: str,
+    interpreted_at: datetime,
+) -> Intent:
+    payload = json.loads(content)
+    if not isinstance(payload, dict) or set(payload) - _ALLOWED_RESPONSE_KEYS:
+        raise IntentError("unexpected response shape")
+
+    kind = IntentKind(payload.get("kind"))
+
+    command_value = payload.get("command")
+    command = MissionCommand(command_value) if command_value is not None else None
+
+    parameters = _parse_parameters(payload.get("parameters"))
+
+    return Intent(
+        correlation_id=correlation_id,
+        kind=kind,
+        raw_message=raw_message,
+        interpreted_at=interpreted_at,
+        command=command,
+        parameters=parameters,
+    )
+
+
+def _parse_parameters(raw: Any) -> IntentParameters:
+    if raw is None:
+        raw = {}
+    if not isinstance(raw, dict) or set(raw) - _ALLOWED_PARAMETER_KEYS:
+        raise IntentError("unexpected parameters shape")
+
+    search_query = _optional_str(raw.get("search_query"))
+    mission_reference = _optional_str(raw.get("mission_reference"))
+    target_currency = _optional_str(raw.get("target_currency"))
+
+    target_amount_raw = raw.get("target_amount")
+    target_amount: Decimal | None = None
+    if target_amount_raw is not None:
+        if not isinstance(target_amount_raw, str):
+            raise IntentError("target_amount must be a decimal string")
+        try:
+            target_amount = Decimal(target_amount_raw)
+        except InvalidOperation as error:
+            raise IntentError("target_amount must be a valid decimal") from error
+        if not target_amount.is_finite():
+            raise IntentError("target_amount must be a finite decimal")
+
+    sources_raw = raw.get("sources") if raw.get("sources") is not None else []
+    if not isinstance(sources_raw, list) or any(
+        not isinstance(source, str) for source in sources_raw
+    ):
+        raise IntentError("sources must be a list of strings")
+
+    return IntentParameters(
+        search_query=search_query,
+        target_amount=target_amount,
+        target_currency=target_currency,
+        sources=tuple(sources_raw),
+        mission_reference=mission_reference,
+    )
+
+
+def _optional_str(value: Any) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise IntentError("expected a string or null")
+    return value
