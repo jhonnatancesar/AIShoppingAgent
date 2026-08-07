@@ -1,5 +1,34 @@
 # Changelog
 
+## 2026-08-07 — Validação real da TASK-032
+
+- Executado `scripts\check.cmd` completo em Python 3.14.6 com Docker Desktop
+  disponível: `pip check`, `ruff check`, `ruff format --check`, 236 testes
+  aprovados com 94,79% de cobertura, grafo de migrações Alembic com uma única
+  head e configuração do Docker Compose válida.
+- Executada a validação manual real contra o Gemini do perfil `USER` com
+  `backend/scripts/validate_intent_interpreter.py`, cobrindo os quatro
+  valores de `IntentKind`: `create_mission` ("Quero um notebook gamer até R$
+  5000 na Pichau ou Kabum"), `mission_command` ("pausa minha missão do
+  notebook" → comando `pause`), `query_mission` ("Como está minha missão do
+  notebook?") e `unknown` ("Qual é a previsão do tempo em São Paulo
+  amanhã?").
+- Confirmado por auditoria que o vocabulário de `IntentKind` e
+  `IntentParameters` reaproveita exatamente `MissionCommand`
+  (`docs/MISSION_SYSTEM.md`), os campos de `MissionCriteria`
+  (`docs/MISSION_CRITERIA.md`) e as quatro fontes selecionáveis
+  (`docs/TELEGRAM.md`), sem nenhum campo novo de domínio.
+- Confirmado que a extração da tupla de exceções de parsing para a constante
+  de módulo `_PARSING_ERRORS` não é uma correção de um bug do Ruff: com
+  `target-version = "py314"`, o Ruff aplica a PEP 758 (Python 3.14) e remove
+  os parênteses de `except (A, B):`, produzindo `except A, B:`, sintaxe
+  válida somente a partir do Python 3.14. O ambiente de implementação
+  original só tinha Python 3.10, que rejeita essa sintaxe; no Python 3.14.6
+  real, ambas as formas compilam e passam por lint e testes. A constante
+  nomeada foi mantida por clareza, sem necessidade de reversão.
+- Nenhuma falha real foi encontrada; nenhuma correção de código foi
+  necessária.
+
 ## 2026-08-07 — TASK-032
 
 - Criado `IntentInterpreter`, agnóstico de canal, que traduz mensagens livres

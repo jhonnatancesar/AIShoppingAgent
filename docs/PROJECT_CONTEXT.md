@@ -3,9 +3,10 @@
 ## Estado
 
 Fase: perfis e telemetria de IA concluídos e validados contra o Gemini real nas
-TASKs 029 a 031; interpretação de intenção definida na TASK-032, com testes
-unitários aprovados e validação real contra o Gemini pendente de execução em
-máquina com Python 3.14. A próxima tarefa executável é a TASK-033.
+TASKs 029 a 031; interpretação de intenção da TASK-032 concluída e validada em
+Python 3.14.6, com `scripts\check.cmd` completo aprovado e os quatro valores
+de `IntentKind` confirmados contra o Gemini real do perfil `USER`. A próxima
+tarefa executável é a TASK-033.
 
 ## O que existe
 

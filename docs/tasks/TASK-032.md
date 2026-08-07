@@ -30,7 +30,9 @@ tipada, agnóstica de canal e sem lógica de domínio, usando exclusivamente o
 - Escopo concluído, documentado em `docs/INTENT_INTERPRETATION.md` e
   verificado conforme os critérios da tarefa.
 - Testes unitários cobrindo contrato, parsing estrito e fallback `unknown`
-  aprovados com Ruff (lint e formatação); execução real do `pytest` e do
-  script de validação com Gemini pendente de uma máquina com Python 3.14,
-  indisponível neste ambiente de execução (ver `docs/CHANGELOG.md`).
+  aprovados com Ruff (lint e formatação) e com execução real do `pytest` em
+  Python 3.14.6 (236 testes aprovados, 94,79% de cobertura).
+- Validação real contra o Gemini executada com o perfil `USER`, cobrindo os
+  quatro valores de `IntentKind`: `create_mission`, `query_mission`,
+  `mission_command` e `unknown` (ver `docs/CHANGELOG.md`).
 
