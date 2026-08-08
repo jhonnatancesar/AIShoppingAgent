@@ -113,7 +113,16 @@ invariavelmente a oferta recomendada para os mesmos dados. Inelegíveis ficam
 depois e nunca são ordenadas por preço; frete desconhecido mantém o preço do
 produto, mas seu total permanece `None` com exclusão explícita. PostgreSQL real
 confirmou o ranking, o histórico, `insufficient_data` e o rollback sem resíduos.
-A próxima tarefa executável é a TASK-040.
+
+A TASK-040 (`DEC-028`) está **concluída**: qualquer oferta elegível pode gerar
+uma confirmação temporária para o proprietário da missão. A solicitação guarda
+missão, oferta, observação exata e proprietário, expõe o snapshot completo e
+expira após 15 minutos em UTC. `confirm` recalcula a comparação e exige a mesma
+identidade, disponibilidade, moeda, preço, frete e total; expiração ou mudança
+produz `stale`, inclusive quando uma nova observação repete os mesmos valores.
+`cancel` dentro da validade produz `cancelled`. PostgreSQL real confirmou o
+fluxo e o rollback sem resíduos. Não há persistência nem ação financeira; a
+próxima tarefa executável é a TASK-041.
 
 A TASK-058 (`DEC-015`) está **concluída**: `create_mission` e
 `mission_command` não executam mais direto — ficam encenados em
@@ -255,6 +264,9 @@ reais observadas em produção.
 - Comparação completa e somente leitura das mesmas evidências (`app.purchase`,
   TASK-039), com ranking exclusivo das elegíveis e posição 1 invariável em
   relação à recomendação.
+- Confirmação explícita, temporária e somente em memória (`app.purchase`,
+  TASK-040), vinculada ao proprietário e à observação exata, com TTL e
+  revalidação integral antes de `confirmed`.
 - Documentos de visão, arquitetura, dados, módulos-alvo, escopo do MVP, backlog, itens fora de escopo, governança de decisões e workflow permanente de execução.
 - ADRs, RFCs e 62 tarefas planejadas.
 
@@ -272,8 +284,8 @@ worker/scheduler de coleta, detecção de `mission.status_changed`/`collection.c
 `collection.failed`/`offer.availability_changed` (nenhuma TASK a atribui
 ainda), inserção real de `PriceObservation` num fluxo de coleta
 orquestrado, suíte permanente de testes ponta a ponta nem credenciais reais
-configuradas. Também não existem confirmação de compra (TASK-040), trilha de
-compra (TASK-041) nem qualquer execução financeira.
+configuradas. Também não existem trilha persistente de compra (TASK-041) nem
+qualquer execução financeira.
 
 ## Invariantes
 
@@ -331,6 +343,9 @@ compra (TASK-041) nem qualquer execução financeira.
 - Comparações reutilizam exatamente a elegibilidade, as evidências e a ordem da
   recomendação. Apenas elegíveis recebem posição; a posição 1 coincide com a
   recomendação e frete desconhecido nunca produz `total_amount` (TASK-039).
+- Confirmações são temporárias, pertencem ao dono da missão e vinculam a
+  observação exata; expiração ou mudança relevante produz `stale`. Elas não
+  persistem nem autorizam ação financeira por si mesmas (TASK-040).
 - Módulos da aplicação acessam IA somente por `AIProviderManager`; USER usa apenas
   Gemini gratuito, sem fallback. ADMIN/DEV tenta Gemini premium, depois o Groq
   (opcional, TASK-059, só se configurado) e por fim o Gemini gratuito. OpenAI,

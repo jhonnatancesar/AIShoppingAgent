@@ -1,5 +1,27 @@
 # Changelog
 
+## 2026-08-08 — TASK-040: confirmação temporária vinculada à evidência exata
+
+- Criado `app.purchase.confirmation` com solicitações imutáveis para qualquer
+  oferta elegível escolhida pelo proprietário da missão.
+- Cada solicitação vincula `mission_id`, `offer_id`, `price_observation_id` e
+  `owner_user_id` ao snapshot completo e possui TTL fixo de 15 minutos em UTC.
+- A resolução aceita somente `confirm` e `cancel`. Solicitação expirada retorna
+  `stale`; outro usuário não pode solicitar nem resolver a confirmação.
+- Antes de produzir `confirmed`, a comparação da TASK-039 é recalculada e a
+  oferta precisa continuar elegível com a mesma observação, disponibilidade,
+  moeda, preço, frete e total. Até uma nova observação com valores idênticos
+  invalida a identidade anterior.
+- `cancel` válido retorna `cancelled`. Nenhum resultado persiste, compra,
+  reserva, abre checkout, publica evento ou cria auditoria; a trilha durável
+  permanece exclusiva da TASK-041.
+- Validação real no PostgreSQL 18 confirmou confirmação, cancelamento,
+  expiração, mudança de evidência, bloqueio de proprietário e oferta inelegível,
+  com rollback sem resíduos.
+- Pipeline completo aprovado em Python 3.14.6: 461 testes, 94,45% de cobertura,
+  Ruff, Alembic com head único e Docker Compose válidos. Nenhuma dependência ou
+  migration nova foi necessária.
+
 ## 2026-08-08 — TASK-039: comparação completa e ordenada de ofertas
 
 - Criado `compare_offers_for_mission`, com posições `1..N` apenas para ofertas

@@ -25,6 +25,22 @@ Após a classificação, registrar a decisão neste arquivo e atualizar a docume
 - **Justificativa:** impacto avaliado e motivo da classificação.
 - **Próxima ação:** documento a atualizar, TASK a criar quando aplicável, ou ação de não implementação.
 
+### DEC-028 — Vincular confirmação temporária à observação exata e fazê-la expirar
+
+- **Data:** 2026-08-08
+- **Ideia:** fechar a TASK-040 como uma confirmação explícita, temporária e
+  somente em memória para qualquer oferta elegível escolhida pelo proprietário.
+- **Classificação:** Implementar agora.
+- **Justificativa:** vincular somente valores monetários permitiria confirmar
+  uma evidência diferente que por acaso repetisse os mesmos números. A
+  solicitação guarda missão, oferta, observação e proprietário, além do snapshot
+  completo, e expira após 15 minutos em UTC. A resolução recalcula a comparação
+  e exige a mesma identidade e os mesmos campos relevantes; expiração, nova
+  observação ou divergência produz `stale`. Isso cria o guard de domínio sem
+  antecipar persistência, evento, auditoria, interface ou ação financeira.
+- **Próxima ação:** TASK-040 concluída e validada no PostgreSQL real; a trilha
+  durável e a próxima tarefa executável permanecem na TASK-041.
+
 ### DEC-027 — Compartilhar elegibilidade e ordenação entre recomendação e comparação
 
 - **Data:** 2026-08-08

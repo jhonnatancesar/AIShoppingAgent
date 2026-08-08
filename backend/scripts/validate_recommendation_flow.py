@@ -1,7 +1,8 @@
-"""Valida as TASKs 038 e 039 contra PostgreSQL real sem deixar dados persistidos."""
+"""Valida as TASKs 038 a 040 contra PostgreSQL real sem persistir dados."""
 
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from uuid import uuid4
 
 from app.collection.models import (
     CollectionRun,
@@ -20,11 +21,19 @@ from app.missions.models import (
 from app.offers.models import Offer
 from app.products.models import Product
 from app.purchase import (
+    PURCHASE_CONFIRMATION_TTL,
+    MissionOwnerMismatchForConfirmationError,
+    OfferNotEligibleForConfirmationError,
+    PurchaseConfirmationDecision,
+    PurchaseConfirmationStaleReason,
+    PurchaseConfirmationStatus,
     RecommendationExclusion,
     RecommendationReason,
     RecommendationStatus,
     compare_offers_for_mission,
     recommend_for_mission,
+    request_purchase_confirmation,
+    resolve_purchase_confirmation,
 )
 from app.stores.models import Seller, Store
 from app.users.models import User, UserRole
@@ -195,6 +204,109 @@ def validate() -> None:
         if any(item.eligible for item in comparison.items[first_ineligible:]):
             raise RuntimeError("ineligible evidence was placed before ranked offers")
 
+        confirmation_request = request_purchase_confirmation(
+            session,
+            mission_id=mission.id,
+            offer_id=recommended.id,
+            owner_user_id=user.id,
+            now=now,
+        )
+        if (
+            confirmation_request.mission_id != mission.id
+            or confirmation_request.owner_user_id != user.id
+            or confirmation_request.offer_id != recommended.id
+            or confirmation_request.price_observation_id != current.id
+            or confirmation_request.expires_at - confirmation_request.requested_at
+            != PURCHASE_CONFIRMATION_TTL
+        ):
+            raise RuntimeError("confirmation request is not bound to exact evidence")
+        confirmed = resolve_purchase_confirmation(
+            session,
+            confirmation_request,
+            owner_user_id=user.id,
+            decision=PurchaseConfirmationDecision.CONFIRM,
+            now=now + timedelta(minutes=1),
+        )
+        if confirmed.status is not PurchaseConfirmationStatus.CONFIRMED:
+            raise RuntimeError("unchanged evidence was not confirmed")
+        cancelled = resolve_purchase_confirmation(
+            session,
+            confirmation_request,
+            owner_user_id=user.id,
+            decision=PurchaseConfirmationDecision.CANCEL,
+            now=now + timedelta(minutes=2),
+        )
+        if cancelled.status is not PurchaseConfirmationStatus.CANCELLED:
+            raise RuntimeError("explicit cancellation was not preserved")
+        expired = resolve_purchase_confirmation(
+            session,
+            confirmation_request,
+            owner_user_id=user.id,
+            decision=PurchaseConfirmationDecision.CONFIRM,
+            now=confirmation_request.expires_at,
+        )
+        if (
+            expired.status is not PurchaseConfirmationStatus.STALE
+            or expired.stale_reason is not PurchaseConfirmationStaleReason.EXPIRED
+        ):
+            raise RuntimeError("expired confirmation was accepted")
+        try:
+            resolve_purchase_confirmation(
+                session,
+                confirmation_request,
+                owner_user_id=uuid4(),
+                decision=PurchaseConfirmationDecision.CONFIRM,
+                now=now + timedelta(minutes=1),
+            )
+        except MissionOwnerMismatchForConfirmationError:
+            pass
+        else:
+            raise RuntimeError("another user resolved the confirmation")
+        try:
+            request_purchase_confirmation(
+                session,
+                mission_id=mission.id,
+                offer_id=unknown_shipping.id,
+                owner_user_id=user.id,
+                now=now,
+            )
+        except OfferNotEligibleForConfirmationError:
+            pass
+        else:
+            raise RuntimeError("ineligible offer received a confirmation request")
+
+        newer_same_values = _observation(
+            session,
+            recommended,
+            pichau_run,
+            amount="2800",
+            shipping="100",
+            observed_at=now + timedelta(minutes=3),
+        )
+        session.flush()
+        stale = resolve_purchase_confirmation(
+            session,
+            confirmation_request,
+            owner_user_id=user.id,
+            decision=PurchaseConfirmationDecision.CONFIRM,
+            now=now + timedelta(minutes=4),
+        )
+        if (
+            stale.status is not PurchaseConfirmationStatus.STALE
+            or stale.stale_reason
+            is not PurchaseConfirmationStaleReason.EVIDENCE_CHANGED
+        ):
+            raise RuntimeError("new exact evidence did not invalidate confirmation")
+        refreshed_request = request_purchase_confirmation(
+            session,
+            mission_id=mission.id,
+            offer_id=recommended.id,
+            owner_user_id=user.id,
+            now=now + timedelta(minutes=4),
+        )
+        if refreshed_request.price_observation_id != newer_same_values.id:
+            raise RuntimeError("new confirmation did not use current evidence")
+
         insufficient = _mission(session, user, stores["pichau"])
         insufficient_offer = _offer(session, stores["pichau"], "only-unknown-shipping")
         insufficient_run = _run(session, insufficient, stores["pichau"], now)
@@ -227,12 +339,15 @@ def validate() -> None:
             raise RuntimeError("insufficient comparison invented a ranking or total")
 
         print(
-            "TASK-038/TASK-039 PostgreSQL validation passed:",
+            "TASK-038/TASK-039/TASK-040 PostgreSQL validation passed:",
             {
                 "status": result.status.value,
                 "evidence_count": len(result.evidence),
                 "history_count": history.observation_count,
                 "ranked_count": len(ranked_positions),
+                "confirmation_status": confirmed.status.value,
+                "expired_status": expired.status.value,
+                "changed_evidence_status": stale.status.value,
                 "insufficient_reason": insufficient_result.reason.value,
             },
         )
