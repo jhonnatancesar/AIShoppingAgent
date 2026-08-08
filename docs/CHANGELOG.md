@@ -1,5 +1,25 @@
 # Changelog
 
+## 2026-08-08 — TASK-044: consumo durável de eventos
+
+- Criados `ConsumptionOutcome` e `EventConsumptionAttempt`, com FK `RESTRICT`
+  para `events`, resultados `succeeded`/`failed`, código estável de falha e
+  histórico protegido contra `UPDATE`/`DELETE`.
+- A revisão Alembic `20260808_0004` adiciona a tabela
+  `event_consumption_attempts`, o enum `consumption_outcome`, índice parcial de
+  sucessos e trigger append-only; downgrade remove toda a estrutura e o enum.
+- `claim_unconsumed_events` reivindica em ordem determinística somente eventos
+  sem sucesso daquele consumidor, usando `FOR UPDATE SKIP LOCKED` e lote entre
+  1 e 1000. `record_consumption_attempt` valida e registra o desfecho sem fazer
+  commit, mantendo o controle transacional com o chamador.
+- Decidida semântica at-least-once por consumidor (`DEC-023`): falhas permitem
+  retry ilimitado; sucesso de um consumidor não afeta outro. Worker, backoff,
+  dead-letter queue, exactly-once e Telegram permanecem fora do escopo.
+- 394 testes automatizados aprovados, cobertura total de 95,46%. PostgreSQL
+  real descartável confirmou concorrência sem dupla reivindicação, retry após
+  falha, independência entre consumidores, append-only e ciclo
+  upgrade/downgrade/upgrade; nenhum resíduo temporário permaneceu.
+
 ## 2026-08-08 — Correção da identidade agregada de eventos
 
 - `publish_event` agora rejeita `aggregate_id` diferente do identificador do

@@ -2,7 +2,7 @@
 
 from app.audit.models import AuditEntry
 from app.collection.models import CollectionRun, PriceObservation
-from app.events.models import Event
+from app.events.models import Event, EventConsumptionAttempt
 from app.missions.models import (
     Mission,
     MissionCriteria,
@@ -30,4 +30,5 @@ REGISTERED_MODELS = (
     MissionSource,
     MissionSchedule,
     Event,
+    EventConsumptionAttempt,
 )

@@ -26,5 +26,6 @@ O resultado é um `PriceAlertCandidate` validado contra `app.events`.
 Persistência e publicação foram implementadas na TASK-043
 (`app.events.service.publish_event`) — quem tiver um `PriceAlertCandidate`
 desempacota seus campos (`event_type`, `aggregate_type`, `aggregate_id`,
-`payload`) na chamada. Consumo pertence à TASK-044 e notificação Telegram à
-TASK-036.
+`payload`) na chamada. A TASK-044 implementou o consumo genérico at-least-once
+por consumidor (`docs/EVENT_CONSUMPTION.md`); o consumidor concreto e a
+notificação Telegram pertencem à TASK-036.

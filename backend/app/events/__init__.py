@@ -15,7 +15,12 @@ from app.events.catalog import (
     resolve_event_spec,
     validate_event_payload,
 )
-from app.events.models import Event
+from app.events.consumption import (
+    EventConsumptionError,
+    claim_unconsumed_events,
+    record_consumption_attempt,
+)
+from app.events.models import ConsumptionOutcome, Event, EventConsumptionAttempt
 from app.events.service import EventPublicationError, publish_event
 
 __all__ = [
@@ -24,15 +29,20 @@ __all__ = [
     "AvailabilityChangedPayload",
     "CollectionCompletedPayload",
     "CollectionFailedPayload",
+    "ConsumptionOutcome",
     "Event",
     "EventCatalogError",
+    "EventConsumptionAttempt",
+    "EventConsumptionError",
     "EventPublicationError",
     "EventSpec",
     "EventType",
     "MissionStatusChangedPayload",
     "PriceDecreasedPayload",
     "PriceTargetReachedPayload",
+    "claim_unconsumed_events",
     "publish_event",
+    "record_consumption_attempt",
     "resolve_event_spec",
     "validate_event_payload",
 ]

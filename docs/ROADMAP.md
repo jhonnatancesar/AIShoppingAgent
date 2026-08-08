@@ -21,14 +21,14 @@
 | Segurança e entrega | TASK-046 a TASK-054 | Observabilidade, segurança e lançamento |
 | Expansão de fontes (futuro) | Tarefas a definir | Mercado Livre, Shopee, AliExpress e outras fontes futuras |
 
-As TASKs 000 a 035, a TASK-042, a TASK-043, a TASK-055, a TASK-056, a
-TASK-057, a TASK-058, a TASK-059 e a TASK-060 estão concluídas. O preflight
+As TASKs 000 a 035, as TASKs 042 a 044 e as TASKs 055 a 060 estão
+concluídas. O preflight
 da TASK-036 revelou dependências reais não satisfeitas (pipeline de eventos
 persistidos/publicados e `chat_id` do Telegram, nenhum dos dois existente
 antes desta sessão — `DEC-022`); TASK-043 (persistência e publicação de
-eventos) foi implementada primeiro, e a próxima tarefa executável é a
-TASK-044 (consumo de eventos). A retomada da TASK-036 fica para depois que
-a TASK-044 fechar seu próprio ciclo. A TASK-057 (`DEC-017`): validação real contra o
+eventos) e TASK-044 (consumo at-least-once por consumidor, `DEC-023`) foram
+implementadas primeiro. A próxima tarefa executável volta a ser a TASK-036,
+que inclui a definição do `chat_id` e o consumidor Telegram. A TASK-057 (`DEC-017`): validação real contra o
 `USER`/Gemini cobre 3 dos 4 `IntentKind`, e o usuário aceitou explicitamente
 encerrar nesse estado, adiando mais variedade de linguagem para a V2
 (`docs/tasks/TASK-057.md`, `docs/BACKLOG.md`). A TASK-058 (`DEC-015`):
@@ -42,7 +42,10 @@ contra o Telegram real. A TASK-043 (`DEC-022`): publicação durável de
 eventos — tabela `events` append-only e serviço genérico `publish_event`,
 validado contra PostgreSQL real com candidatos reais de
 `evaluate_price_alerts` (TASK-027); não inclui detecção dos demais tipos de
-evento nem qualquer worker/consumidor. A TASK-061 (`DEC-019`, autenticação
+evento nem qualquer worker/consumidor. A TASK-044 (`DEC-023`): histórico
+append-only de tentativas e reivindicação concorrente com
+`FOR UPDATE SKIP LOCKED`, validada em PostgreSQL real; não inclui worker,
+backoff, dead-letter queue ou notificação. A TASK-061 (`DEC-019`, autenticação
 real por usuário e senha) foi registrada e aguarda solicitação explícita.
 As demais continuam pendentes e só podem ser iniciadas por solicitação
 explícita. A

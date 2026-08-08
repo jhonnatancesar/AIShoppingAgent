@@ -74,6 +74,12 @@ Regras permanentes:
 - `20260802_0012`: cria observações imutáveis de preço.
 - `20260807_0001`: adiciona `telegram_user_id` (opcional, único) a `users` — identifica exclusivamente a pessoa no Telegram, nunca a conversa (`chat_id` não é persistido).
 - `20260807_0002`: semeia as quatro lojas selecionáveis da V1 (`pichau`, `terabyte`, `amazon`, `kabum`), conforme `docs/MARKETPLACE_SOURCES.md`, necessárias para `MissionSource.store_id`. O downgrade remove exatamente essas quatro linhas por código, nunca um `DELETE` genérico.
+- `20260808_0001`: adiciona os campos de cadastro inicial a `users`.
+- `20260808_0002`: adiciona `pending_intent` a `users` para confirmação durável de intenção.
+- `20260808_0003`: cria `events`, seus índices e proteção append-only.
+- `20260808_0004`: cria o enum `consumption_outcome`, a tabela
+  `event_consumption_attempts`, o índice parcial de sucessos e sua proteção
+  append-only; o downgrade remove também o enum.
 
 O downgrade de `20260802_0009` não apaga ofertas para forçar compatibilidade. Se
 existirem ofertas de vendedores diferentes com a mesma identidade antiga, elas

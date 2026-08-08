@@ -25,6 +25,26 @@ Após a classificação, registrar a decisão neste arquivo e atualizar a docume
 - **Justificativa:** impacto avaliado e motivo da classificação.
 - **Próxima ação:** documento a atualizar, TASK a criar quando aplicável, ou ação de não implementação.
 
+### DEC-023 — Adotar consumo at-least-once por consumidor com transação explícita
+
+- **Data:** 2026-08-08
+- **Ideia:** implementar a TASK-044 como uma fronteira genérica de consumo
+  concorrente, registrando cada tentativa em histórico append-only e
+  considerando concluído apenas o par evento/consumidor que possuir resultado
+  `succeeded`.
+- **Classificação:** Implementar agora.
+- **Justificativa:** `FOR UPDATE SKIP LOCKED` distribui eventos entre
+  transações concorrentes sem introduzir fila externa; manter reivindicação,
+  processamento e registro sob a transação controlada pelo chamador preserva o
+  lock até o desfecho. A semântica at-least-once permite retry após falha sem
+  apagar evidência. Exactly-once, backoff, limite de tentativas, dead-letter
+  queue, worker e integração Telegram aumentariam o escopo e pertencem a
+  tarefas posteriores.
+- **Próxima ação:** TASK-044 concluída e documentada em
+  `docs/EVENT_CONSUMPTION.md`; a próxima tarefa executável volta a ser a
+  TASK-036, que definirá o consumidor/notificação Telegram e o endereçamento
+  por `chat_id` sem alterar este contrato genérico.
+
 ### DEC-022 — Reordenar TASK-036 atrás de TASK-043 e TASK-044, e restringir a TASK-043 à publicação genérica
 
 - **Data:** 2026-08-08
@@ -54,10 +74,9 @@ Após a classificação, registrar a decisão neste arquivo e atualizar a docume
   padrão já foi aceito neste projeto para `AuditEntry` (TASK-016) e
   `MissionTransition` (TASK-021): tabelas append-only criadas e validadas
   contra PostgreSQL real antes de qualquer chamador de produção existir.
-- **Próxima ação:** TASK-043 implementada e concluída nesta sessão
-  (`docs/tasks/TASK-043.md`). TASK-044 (consumo) é a próxima tarefa
-  executável; a retomada da TASK-036 (incluindo a definição do `chat_id`)
-  fica para depois que a TASK-044 fechar seu próprio ciclo.
+- **Próxima ação:** TASK-043 e TASK-044 implementadas e concluídas
+  (`docs/tasks/TASK-043.md`, `docs/tasks/TASK-044.md`). A TASK-036 volta a
+  ser a próxima executável, incluindo a definição do `chat_id`.
 
 ### DEC-021 — Criar a fase V1.2 com uma lista priorizada de evoluções entre a V1 e a V2
 

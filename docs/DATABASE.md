@@ -31,6 +31,7 @@ erDiagram
     collection_runs ||--o{ price_observations : produces
     offers ||--o{ price_observations : receives
     missions ||--o{ events : relates
+    events ||--o{ event_consumption_attempts : attempted_by
     stores ||--o{ collection_runs : serves
     users o|--o{ audit_entries : acts
 ```
@@ -291,7 +292,25 @@ implementadas na TASK-043 pela revisão `20260808_0003` — tabela append-only
 `app.events.service.publish_event`, validado contra PostgreSQL real com
 candidatos reais de `evaluate_price_alerts` (TASK-027). `recorded_at` é
 gerado exclusivamente pelo PostgreSQL (`server_default=now()`), nunca pela
-aplicação. Tentativas de entrega e consumo pertencem à TASK-044.
+aplicação.
+
+### `event_consumption_attempts`
+
+Histórico imutável dos resultados de consumo por consumidor.
+
+| Coluna | Tipo | Regra |
+| --- | --- | --- |
+| `id` | `uuid` | Chave primária. |
+| `event_id` | `uuid` | FK obrigatória para `events.id`, com `RESTRICT`. |
+| `consumer_name` | `varchar(64)` | Obrigatório e não vazio. |
+| `outcome` | `consumption_outcome` | Enum `succeeded` ou `failed`. |
+| `failure_code` | `varchar(120)` | Nulo no sucesso; obrigatório e em snake_case na falha. |
+| `attempted_at` | `timestamptz` | Obrigatório e informado pelo consumidor. |
+
+A TASK-044 implementou a tabela pela revisão `20260808_0004`. Um trigger
+rejeita `UPDATE`/`DELETE`; falhas permanecem como evidência e não impedem novo
+consumo. A elegibilidade exclui somente eventos com sucesso do mesmo
+`consumer_name`. O contrato transacional está em `docs/EVENT_CONSUMPTION.md`.
 
 ### `audit_entries`
 
@@ -325,6 +344,7 @@ em `docs/AUDIT.md`.
 - `price_observations (offer_id, observed_at desc, id)` para histórico de uma oferta.
 - `price_observations (collection_run_id)` para rastrear os resultados de uma coleta.
 - `events (aggregate_type, aggregate_id, occurred_at, id)` e `events (mission_id, occurred_at, id)`.
+- `event_consumption_attempts (consumer_name, event_id)` parcial para tentativas com resultado `succeeded`.
 - `audit_entries (resource_type, resource_id, created_at, id)` e `audit_entries (actor_id, created_at)` quando `actor_id` não for nulo.
 
 Índices adicionais devem ser justificados por consultas reais; não serão antecipados.
@@ -334,9 +354,10 @@ em `docs/AUDIT.md`.
 - O banco deve reforçar nulabilidade, chaves, unicidade, domínios monetários e relações. Regras que dependem do estado atual, como transições, também serão validadas pelo domínio dentro da mesma transação.
 - Códigos de moeda devem conter três letras ASCII maiúsculas. URLs e textos obrigatórios não aceitam valores vazios após normalização.
 - Resultados históricos usam ordenação composta por horário e `id`, evitando ambiguidade quando dois registros tiverem o mesmo instante.
-- `updated_at` não é evidência de domínio; transições, preços, eventos e auditoria possuem seus próprios horários imutáveis.
+- `updated_at` não é evidência de domínio; transições, preços, eventos, tentativas de consumo e auditoria possuem seus próprios horários imutáveis.
 - O modelo não armazena credenciais, tokens, conteúdo integral de páginas ou dados pessoais desnecessários.
 - Migrações, metadata ORM, sessões e conexão foram configuradas na TASK-011.
   Todas as entidades previstas até `collection_runs` e `price_observations` já
-  foram implementadas, além de `events` (TASK-043). As consultas históricas da TASK-017 são somente leitura e
+  foram implementadas, além de `events` (TASK-043) e
+  `event_consumption_attempts` (TASK-044). As consultas históricas da TASK-017 são somente leitura e
   estão documentadas em `docs/PRICE_HISTORY.md`.

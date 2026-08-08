@@ -14,8 +14,7 @@ resolveu o pré-requisito de identidade que pausava a TASK-035 (`DEC-011`):
 conversa, validado em PostgreSQL 18 real. A TASK-035 ("Criar comandos de
 missão") fechou o loop: o webhook agora cria, consulta e comanda missões de
 verdade a partir do `Intent`, respondendo ao Telegram, validado de ponta a
-ponta contra PostgreSQL, Gemini e Telegram reais. A próxima tarefa executável
-é a TASK-036. A TASK-059 (`DEC-016`) foi concluída: `GroqProvider` real
+ponta contra PostgreSQL, Gemini e Telegram reais. A TASK-059 (`DEC-016`) foi concluída: `GroqProvider` real
 integrado como terceiro nível opcional do `AdminDevAIProviderManager`
 (Gemini premium → Groq → Gemini gratuito), e `IntentInterpreter.interpret`
 ganhou um parâmetro opcional de perfil para validação manual via ADMIN/DEV
@@ -59,11 +58,22 @@ contra PostgreSQL real com candidatos reais de `evaluate_price_alerts`
 (TASK-027) — o único produtor de eventos com lógica real hoje; a detecção
 dos outros cinco tipos de evento do catálogo (mudança de estado de missão,
 conclusão/falha de coleta, mudança de disponibilidade) segue sem nenhum
-ponto de integração, porque nenhuma TASK a atribui ainda. A próxima tarefa
-executável é a TASK-044 (consumo); a TASK-036 só será retomada depois dela.
+ponto de integração, porque nenhuma TASK a atribui ainda.
 Uma revisão posterior reforçou que o `aggregate_id` persistido deve coincidir
 com o identificador do agregado dentro do payload tipado, rejeitando divergências
 antes de adicionar o evento à sessão.
+
+A TASK-044 (`DEC-023`) está **concluída**: a revisão `20260808_0004` criou
+`event_consumption_attempts`, histórico append-only de sucessos e falhas por
+consumidor. `claim_unconsumed_events` usa ordem determinística e
+`FOR UPDATE SKIP LOCKED`; `record_consumption_attempt` registra o desfecho sem
+controlar o commit do chamador. O contrato é at-least-once, permite retry
+ilimitado após falha e considera o sucesso somente para aquele consumidor.
+Concorrência, retry, independência de consumidores, imutabilidade e reversão
+da migração foram validados em PostgreSQL real descartável. Não há worker,
+backoff, dead-letter queue, exactly-once ou integração Telegram. Com publicação
+e consumo genéricos prontos, a próxima tarefa executável volta a ser a TASK-036,
+que definirá o `chat_id` e o consumidor/notificação Telegram.
 
 A TASK-058 (`DEC-015`) está **concluída**: `create_mission` e
 `mission_command` não executam mais direto — ficam encenados em
@@ -191,19 +201,23 @@ reais observadas em produção.
   persiste com `recorded_at` gerado só pelo PostgreSQL. Validado contra
   PostgreSQL real usando candidatos reais de `evaluate_price_alerts`
   (TASK-027).
+- Consumo durável at-least-once por consumidor (`event_consumption_attempts`,
+  migração `20260808_0004`), com reivindicação transacional concorrente,
+  histórico append-only de sucesso/falha e retry após falha (TASK-044).
 - Documentos de visão, arquitetura, dados, módulos-alvo, escopo do MVP, backlog, itens fora de escopo, governança de decisões e workflow permanente de execução.
-- ADRs, RFCs e 61 tarefas planejadas.
+- ADRs, RFCs e 62 tarefas planejadas.
 
 ## O que não existe
 
 Além de `users`, `products`, `stores`, `sellers`, `offers`, `audit_entries`,
 `missions`, `mission_criteria`, `mission_sources`, `mission_transitions`,
-`mission_schedules`, `collection_runs`, `price_observations` e `events`, não
+`mission_schedules`, `collection_runs`, `price_observations`, `events` e
+`event_consumption_attempts`, não
 há outras tabelas de domínio implementadas. Também não existem autenticação real (senha, token, OAuth — TASK-061),
 autorização por papel de fato aplicada além da seleção de perfil de IA,
 persistência de `chat_id` do Telegram, teclado interativo de seleção de
-fontes, consumo de eventos publicados (TASK-044) nem notificações
-proativas (TASK-036), mudança real de plano/perfil pelo próprio usuário (o
+fontes, consumidor/worker concreto de eventos nem notificações proativas
+(TASK-036), mudança real de plano/perfil pelo próprio usuário (o
 `/upgrade` da TASK-060 é só um placeholder inativo), APIs de negócio,
 worker, detecção de `mission.status_changed`/`collection.completed`/
 `collection.failed`/`offer.availability_changed` (nenhuma TASK a atribui
@@ -247,6 +261,10 @@ configuradas.
   reforçado por trigger no banco (mesmo padrão de `mission_transitions` e
   `audit_entries`). `recorded_at` é gerado exclusivamente pelo PostgreSQL,
   nunca pela aplicação.
+- Tentativas de consumo são append-only e at-least-once por consumidor: falha
+  mantém o evento elegível, sucesso o encerra só para o mesmo
+  `consumer_name`; reivindicação, processamento e registro devem compartilhar
+  a transação controlada pelo chamador (TASK-044).
 - Alertas são candidatos determinísticos derivados do histórico; persistência,
   publicação, consumo e notificação permanecem desacoplados.
 - Módulos da aplicação acessam IA somente por `AIProviderManager`; USER usa apenas
