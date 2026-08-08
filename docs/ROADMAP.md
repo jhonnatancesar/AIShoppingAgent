@@ -21,7 +21,7 @@
 | Segurança e entrega | TASK-046 a TASK-054 | Segurança e lançamento |
 | Expansão de fontes (futuro) | Tarefas a definir | Mercado Livre, Shopee, AliExpress e outras fontes futuras |
 
-As TASKs 000 a 045 e as TASKs 055 a 060 estão
+As TASKs 000 a 046 e as TASKs 055 a 060 estão
 concluídas. O preflight
 da TASK-036 revelou dependências reais não satisfeitas (pipeline de eventos
 persistidos/publicados e `chat_id` do Telegram, nenhum dos dois existente
@@ -41,8 +41,10 @@ desconhecido sem total, também validada no PostgreSQL real. A TASK-040
 observação original, revalidada no PostgreSQL real. A TASK-041 (`DEC-029`)
 persistiu a solicitação imutável e sua trilha append-only, com recuperação,
 idempotência e concorrência reais. A TASK-045 (`DEC-031`) adicionou métricas
-Prometheus, traces OTLP/Jaeger, correlação segura e health/readiness. A próxima
-tarefa executável é a TASK-046 (autenticação). A TASK-057 (`DEC-017`): validação real contra o
+Prometheus, traces OTLP/Jaeger, correlação segura e health/readiness. A
+TASK-046 (`DEC-032`) passou a aceitar operações do Telegram somente após
+autenticar o transporte, validar o chat privado direto e resolver um usuário
+ativo. A próxima tarefa executável é a TASK-047 (autorização). A TASK-057 (`DEC-017`): validação real contra o
 `USER`/Gemini cobre 3 dos 4 `IntentKind`, e o usuário aceitou explicitamente
 encerrar nesse estado, adiando mais variedade de linguagem para a V2
 (`docs/tasks/TASK-057.md`, `docs/BACKLOG.md`). A TASK-058 (`DEC-015`):

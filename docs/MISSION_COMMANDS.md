@@ -61,8 +61,8 @@ confirmação continua pendente e o usuário é convidado a responder de novo.
 
 ## Limite entre `204` e `500`
 
-Depois que uma atualização é autenticada, a rota distingue dois tipos de
-falha:
+Depois que o transporte e a identidade mínima do canal são autenticados
+(TASK-046), a rota distingue dois tipos de falha:
 
 - **Erros esperados e conhecidos de domínio/validação** —
   `MissionNotFoundError`, `MissionVersionConflictError`,
@@ -99,7 +99,7 @@ a sessão. Os serviços de missão continuam usando `session.flush()`, nunca
 
 ## Limites
 
-Este documento não cobre autenticação real de usuário (TASK-046), comandos
+Este documento não cobre login por usuário/senha (TASK-061), comandos
 apresentados por teclado interativo (evolução futura), notificações
 proativas (implementadas separadamente na TASK-036) nem preferências de
 notificações (implementadas separadamente na TASK-037).

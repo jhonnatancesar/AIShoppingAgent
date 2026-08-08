@@ -25,6 +25,20 @@ Após a classificação, registrar a decisão neste arquivo e atualizar a docume
 - **Justificativa:** impacto avaliado e motivo da classificação.
 - **Próxima ação:** documento a atualizar, TASK a criar quando aplicável, ou ação de não implementação.
 
+### DEC-032 — Autenticar a identidade mínima do canal Telegram
+
+- **Data:** 2026-08-08
+- **Ideia:** fechar a fronteira de confiança do Telegram sem antecipar a
+  autenticação por senha da TASK-061 nem a autorização da TASK-047.
+- **Classificação:** Implementar agora.
+- **Justificativa:** o segredo autentica a entrega, mas uma identidade de
+  pessoa só é aceita depois, em chat privado direto com
+  `chat.id == message.from.id`. A conta interna precisa estar ativa antes de
+  IA, domínio ou qualquer mutação. Recusas terminam em `204` e logam somente
+  um motivo fechado, sem IDs ou payload.
+- **Próxima ação:** TASK-046 concluída; a próxima tarefa executável é a
+  TASK-047.
+
 ### DEC-031 — Separar métricas, traces e disponibilidade funcional
 
 - **Data:** 2026-08-08

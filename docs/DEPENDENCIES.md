@@ -13,6 +13,13 @@ Este documento é a referência de ambiente para qualquer nova máquina. Antes d
 
 PostgreSQL não exige instalação direta na máquina: o ambiente local usa a imagem oficial `postgres:18-alpine` por meio do Docker Compose.
 
+Na instalação oficial por usuário do Docker Desktop no Windows, o CLI pode
+ficar em
+`%LOCALAPPDATA%\Programs\DockerDesktop\resources\bin`. Esse diretório precisa
+estar no `PATH` do usuário; a máquina atual foi corrigida e validada assim na
+TASK-046. Um terminal já aberto pode precisar ser reiniciado para herdar a
+alteração.
+
 ## Política de versão do Python
 
 O projeto acompanha a versão estável mais recente do Python, sem permanecer fixado em uma série menor antiga. Em cada nova máquina ou nova versão estável, a compatibilidade das dependências deve ser validada com `python -m pip check` e com os testes aplicáveis antes do uso. A versão informada na tabela é a mais recente efetivamente validada pelo projeto e deve ser atualizada após cada validação.
@@ -63,7 +70,9 @@ e por `backend/scripts/register_telegram_commands.py`, que registra os
   comandos `/cadastro`, `/upgrade` (TASK-060) e `/preferencias` (TASK-037) no
   menu do bot) e
 `AISHOPPING_TELEGRAM_WEBHOOK_SECRET` (valor aleatório local, gerado com
-`secrets.token_urlsafe`, usado para autenticar as requisições recebidas). Ambos
+`secrets.token_urlsafe`, usado para autenticar as requisições recebidas). A
+TASK-046 compara esse segredo em tempo constante antes de confiar na identidade
+privada da pessoa. Ambos
 ficam apenas em `backend/.env`, nunca versionados.
 
 A TASK-036 reutiliza o mesmo token no processo `app.telegram.worker`. O

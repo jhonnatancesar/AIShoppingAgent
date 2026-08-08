@@ -93,7 +93,7 @@ def _update(**overrides: object) -> TelegramUpdate:
         "message": _TelegramIncomingMessage(
             text="Quero um notebook até R$ 5000",
             date=1754586000,
-            chat=_TelegramChat(id=111, type=TelegramChatType.GROUP),
+            chat=_TelegramChat(id=222, type=TelegramChatType.PRIVATE),
             from_=_TelegramSender(id=222, first_name="Fulano"),
         ),
     }
@@ -124,7 +124,8 @@ def _patch_user(
         return user
 
     monkeypatch.setattr(
-        "app.telegram.router.get_or_create_telegram_user", _fake_get_or_create
+        "app.telegram.authentication.get_or_create_telegram_user",
+        _fake_get_or_create,
     )
     return resolve_calls
 
@@ -157,7 +158,7 @@ async def test_valid_secret_and_text_message_returns_204_and_calls_adapter(
     assert response.status_code == 204
     assert len(adapter.calls) == 1
     message, profile = adapter.calls[0]
-    assert message.chat_id == 111
+    assert message.chat_id == 222
     assert message.user_id == 222
     assert message.text == "Quero um notebook até R$ 5000"
     assert message.received_at == datetime.fromtimestamp(1754586000, tz=UTC)
@@ -188,8 +189,10 @@ async def test_admin_user_uses_admin_dev_adapter(
 @pytest.mark.anyio
 @pytest.mark.parametrize("token", [None, "wrong-secret"])
 async def test_missing_or_wrong_secret_returns_401_without_calling_adapter(
+    monkeypatch: pytest.MonkeyPatch,
     token: str | None,
 ) -> None:
+    resolve_calls = _patch_user(monkeypatch, _fake_user())
     adapter = _FakeAdapter(_intent())
 
     response = await receive_telegram_webhook(
@@ -203,11 +206,15 @@ async def test_missing_or_wrong_secret_returns_401_without_calling_adapter(
     assert response.status_code == 401
     payload = json.loads(response.body)
     assert payload["error"]["code"] == "telegram_webhook_unauthorized"
+    assert resolve_calls == []
     assert adapter.calls == []
 
 
 @pytest.mark.anyio
-async def test_unconfigured_secret_rejects_every_request() -> None:
+async def test_unconfigured_secret_rejects_every_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    resolve_calls = _patch_user(monkeypatch, _fake_user())
     adapter = _FakeAdapter(_intent())
 
     response = await receive_telegram_webhook(
@@ -219,7 +226,92 @@ async def test_unconfigured_secret_rejects_every_request() -> None:
     )
 
     assert response.status_code == 401
+    assert resolve_calls == []
     assert adapter.calls == []
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("chat_type", "reason"),
+    [
+        (TelegramChatType.GROUP, "non_private_chat"),
+        (TelegramChatType.SUPERGROUP, "non_private_chat"),
+        (TelegramChatType.CHANNEL, "non_private_chat"),
+        (TelegramChatType.PRIVATE, "identity_mismatch"),
+    ],
+)
+async def test_rejected_telegram_identity_is_sanitized_no_op(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    chat_type: TelegramChatType,
+    reason: str,
+) -> None:
+    user = _fake_user()
+    resolve_calls = _patch_user(monkeypatch, user)
+    send_calls = _patch_send_message(monkeypatch)
+    remember = MagicMock(side_effect=AssertionError("must not remember chat"))
+    monkeypatch.setattr(
+        "app.telegram.router.remember_private_notification_chat", remember
+    )
+    adapter = _FakeAdapter(_intent())
+
+    with caplog.at_level("WARNING", logger="app.telegram"):
+        response = await receive_telegram_webhook(
+            update=_update(
+                message=_TelegramIncomingMessage(
+                    text="segredo-canario",
+                    date=1754586000,
+                    chat=_TelegramChat(id=111, type=chat_type),
+                    from_=_TelegramSender(id=222, first_name="Fulano"),
+                )
+            ),
+            x_telegram_bot_api_secret_token="correct-secret",
+            adapters=_adapters(adapter),  # type: ignore[arg-type]
+            settings=_settings(),
+            session=MagicMock(),
+        )
+
+    assert response.status_code == 204
+    assert resolve_calls == []
+    assert adapter.calls == []
+    assert send_calls == []
+    remember.assert_not_called()
+    record = caplog.records[-1]
+    assert record.message == "telegram_authentication_rejected"
+    assert record.authentication_reason == reason  # type: ignore[attr-defined]
+    assert "111" not in record.getMessage()
+    assert "222" not in record.getMessage()
+    assert "segredo-canario" not in record.getMessage()
+
+
+@pytest.mark.anyio
+async def test_inactive_user_is_rejected_before_side_effects(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user = _fake_user()
+    user.is_active = False
+    resolve_calls = _patch_user(monkeypatch, user)
+    send_calls = _patch_send_message(monkeypatch)
+    remember = MagicMock(side_effect=AssertionError("must not remember chat"))
+    monkeypatch.setattr(
+        "app.telegram.router.remember_private_notification_chat", remember
+    )
+    adapter = _FakeAdapter(_intent())
+
+    response = await receive_telegram_webhook(
+        update=_update(),
+        x_telegram_bot_api_secret_token="correct-secret",
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        settings=_settings(),
+        session=MagicMock(),
+    )
+
+    assert response.status_code == 204
+    assert resolve_calls == [(222, "Fulano")]
+    assert adapter.calls == []
+    assert send_calls == []
+    remember.assert_not_called()
+    assert user.telegram_chat_id is None
 
 
 @pytest.mark.anyio
@@ -341,7 +433,7 @@ async def test_create_mission_intent_stages_confirmation_without_creating(
         "target_currency": "BRL",
         "sources": ["pichau", "kabum"],
     }
-    assert send_calls[0][0] == 111
+    assert send_calls[0][0] == 222
     assert "notebook gamer" in send_calls[0][1]
     assert "sim" in send_calls[0][1].lower()
 
@@ -380,7 +472,7 @@ async def test_confirmed_pending_create_mission_executes_and_clears_step(
             message=_TelegramIncomingMessage(
                 text="sim",
                 date=1754586000,
-                chat=_TelegramChat(id=111, type=TelegramChatType.GROUP),
+                chat=_TelegramChat(id=222, type=TelegramChatType.PRIVATE),
                 from_=_TelegramSender(id=222, first_name="Fulano"),
             )
         ),
@@ -427,7 +519,7 @@ async def test_cancelled_pending_create_mission_does_not_execute(
             message=_TelegramIncomingMessage(
                 text="não",
                 date=1754586000,
-                chat=_TelegramChat(id=111, type=TelegramChatType.GROUP),
+                chat=_TelegramChat(id=222, type=TelegramChatType.PRIVATE),
                 from_=_TelegramSender(id=222, first_name="Fulano"),
             )
         ),
@@ -465,7 +557,7 @@ async def test_unrecognized_answer_to_pending_intent_keeps_it_staged(
             message=_TelegramIncomingMessage(
                 text="talvez",
                 date=1754586000,
-                chat=_TelegramChat(id=111, type=TelegramChatType.GROUP),
+                chat=_TelegramChat(id=222, type=TelegramChatType.PRIVATE),
                 from_=_TelegramSender(id=222, first_name="Fulano"),
             )
         ),
@@ -612,7 +704,7 @@ async def test_confirmed_pending_mission_command_executes_and_clears_step(
             message=_TelegramIncomingMessage(
                 text="confirmo",
                 date=1754586000,
-                chat=_TelegramChat(id=111, type=TelegramChatType.GROUP),
+                chat=_TelegramChat(id=222, type=TelegramChatType.PRIVATE),
                 from_=_TelegramSender(id=222, first_name="Fulano"),
             )
         ),
@@ -713,7 +805,7 @@ async def test_known_error_at_confirmed_execution_is_replied_and_clears_pending(
             message=_TelegramIncomingMessage(
                 text="sim",
                 date=1754586000,
-                chat=_TelegramChat(id=111, type=TelegramChatType.GROUP),
+                chat=_TelegramChat(id=222, type=TelegramChatType.PRIVATE),
                 from_=_TelegramSender(id=222, first_name="Fulano"),
             )
         ),
@@ -756,7 +848,7 @@ async def test_unexpected_error_at_confirmed_execution_is_not_masked_and_propaga
                 message=_TelegramIncomingMessage(
                     text="sim",
                     date=1754586000,
-                    chat=_TelegramChat(id=111, type=TelegramChatType.GROUP),
+                    chat=_TelegramChat(id=222, type=TelegramChatType.PRIVATE),
                     from_=_TelegramSender(id=222, first_name="Fulano"),
                 )
             ),
@@ -781,7 +873,7 @@ async def test_cadastro_command_starts_registration_without_calling_ai(
             message=_TelegramIncomingMessage(
                 text="/cadastro",
                 date=1754586000,
-                chat=_TelegramChat(id=111, type=TelegramChatType.GROUP),
+                chat=_TelegramChat(id=222, type=TelegramChatType.PRIVATE),
                 from_=_TelegramSender(id=222, first_name="Fulano"),
             )
         ),
@@ -811,7 +903,7 @@ async def test_registration_in_progress_consumes_reply_without_calling_ai(
             message=_TelegramIncomingMessage(
                 text="joaosilva",
                 date=1754586000,
-                chat=_TelegramChat(id=111, type=TelegramChatType.GROUP),
+                chat=_TelegramChat(id=222, type=TelegramChatType.PRIVATE),
                 from_=_TelegramSender(id=222, first_name="Fulano"),
             )
         ),
@@ -848,7 +940,7 @@ async def test_registration_full_flow_completes_and_clears_step(
                 message=_TelegramIncomingMessage(
                     text=text,
                     date=1754586000,
-                    chat=_TelegramChat(id=111, type=TelegramChatType.GROUP),
+                    chat=_TelegramChat(id=222, type=TelegramChatType.PRIVATE),
                     from_=_TelegramSender(id=222, first_name="Fulano"),
                 )
             ),
@@ -880,7 +972,7 @@ async def test_upgrade_command_replies_statically_without_calling_ai(
             message=_TelegramIncomingMessage(
                 text="/upgrade",
                 date=1754586000,
-                chat=_TelegramChat(id=111, type=TelegramChatType.GROUP),
+                chat=_TelegramChat(id=222, type=TelegramChatType.PRIVATE),
                 from_=_TelegramSender(id=222, first_name="Fulano"),
             )
         ),

@@ -135,8 +135,17 @@ PostgreSQL com timeout e não depende da observabilidade. `/metrics` e `/health`
 não geram traces; SQL exporta somente sistema e operação, sem statement,
 parâmetros, DSN ou resultados. Compose headless inclui Collector, Prometheus,
 Jaeger e regras que somente detectam estado, sem Alertmanager. A validação
-real cobriu falha/recuperação, canários e regra em `firing`. A próxima tarefa
-executável é a TASK-046.
+real cobriu falha/recuperação, canários e regra em `firing`.
+
+A TASK-046 (`DEC-032`) está **concluída**: o segredo do webhook continua
+autenticando o transporte em tempo constante; somente depois a aplicação aceita
+`message.from.id`, exclusivamente em chat privado direto com
+`chat.id == message.from.id`. O `User` é resolvido/provisionado após essas
+validações e precisa estar ativo antes de IA, domínio ou qualquer mutação.
+Recusas são terminais em `204` e registram somente motivo fechado. PostgreSQL
+18, API Docker e Telegram reais confirmaram primeiro contato, idempotência,
+inativo, ausência de efeitos e logs sanitizados. Login por senha continua na
+TASK-061 e autorização por papel na próxima tarefa executável, TASK-047.
 
 A TASK-058 (`DEC-015`) está **concluída**: `create_mission` e
 `mission_command` não executam mais direto — ficam encenados em
@@ -229,10 +238,14 @@ reais observadas em produção.
 - Webhook real `POST /telegram/webhook`, autenticado por segredo compartilhado,
   que recebe atualizações do Telegram, traduz mensagens de texto em `Intent`,
   script manual de registro contra a Bot API real.
+- Autenticação mínima do canal Telegram (TASK-046): transporte autenticado por
+  segredo em tempo constante, operações restritas ao chat privado direto e
+  bloqueio de conta inativa antes de qualquer efeito.
 - Resolução get-or-create de identidade (`get_or_create_telegram_user`) que
   vincula `User.telegram_user_id` — exclusivamente a pessoa do Telegram,
   nunca a conversa — de forma determinística e idempotente, protegida contra
-  corrida de criação concorrente por `SAVEPOINT`, sem autenticação real.
+  corrida de criação concorrente por `SAVEPOINT`; o resolvedor não autentica
+  sozinho nem implementa login por senha.
 - Despacho de comandos de missão pelo webhook: consulta responde direto;
   criar e comandar missão ficam encenados em `User.pending_intent` e só
   executam após confirmação explícita (TASK-058), com resposta síncrona ao

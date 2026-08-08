@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-08-08 — TASK-046: autenticação mínima do canal Telegram
+
+- Separada a autenticação do transporte, por segredo em tempo constante, da
+  aceitação da identidade da pessoa no Telegram.
+- Operações agora exigem chat privado direto (`chat.id == message.from.id`) e
+  `User.is_active=true` antes de IA, domínio, cadastro, preferências, resposta
+  ou atualização do destino.
+- Grupo, supergrupo, canal, identidade divergente e conta inativa encerram em
+  `204`; logs usam apenas motivo fechado, sem IDs, texto ou payload.
+- Usuário/senha, sessão e recuperação continuam na TASK-061; autorização por
+  papel continua na TASK-047.
+- PostgreSQL 18, API Docker e Telegram reais aprovados. Pipeline completo:
+  495 testes, 92,27% de cobertura, Ruff e Compose válidos.
+
 ## 2026-08-08 — TASK-045: observabilidade sanitizada e independente
 
 - Adicionados logs JSON correlacionados, UUID seguro de requisição, métricas

@@ -4,8 +4,23 @@ Telegram é o canal conversacional previsto para o MVP. O adaptador deve traduzi
 
 A fronteira de entrada que traduz uma mensagem bruta do Telegram em uma
 intenção estruturada está definida em `docs/TELEGRAM_ADAPTER.md`.
-Notificações proativas de alertas foram implementadas na TASK-036; autenticação
-real e sessões continuam reservadas à TASK-061.
+Notificações proativas de alertas foram implementadas na TASK-036. A TASK-046
+autentica minimamente a identidade do canal: somente mensagens privadas da
+própria pessoa e contas internas ativas podem operar. Usuário/senha, sessões,
+MFA e recuperação continuam reservados à TASK-061.
+
+## Fronteira de autenticação do canal (TASK-046)
+
+O webhook primeiro autentica o transporte pelo segredo compartilhado. Somente
+depois confia em `message.from.id`, e apenas quando a conversa é `private` e
+`chat.id == message.from.id`. Grupo, supergrupo, canal ou identidade divergente
+não provisionam usuário. `is_active=false` bloqueia IA, missões, cadastro,
+preferências, resposta e atualização do destino.
+
+Essas recusas devolvem `204`, portanto são terminais para a entrega, e registram
+somente `non_private_chat`, `identity_mismatch` ou `inactive_user`, sem IDs,
+texto ou payload. O segredo do webhook autentica o Telegram, não o usuário
+final; login por senha permanece separado na TASK-061.
 
 ## Notificações proativas (TASK-036)
 

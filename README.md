@@ -38,6 +38,10 @@ No Telegram, `/preferencias` consulta as notificações. Use
 Ambas começam ativadas; eventos bloqueados pela preferência não são reenviados
 quando ela for reativada.
 
+Operações de usuário pelo bot são aceitas somente no chat privado direto da
+própria pessoa e para uma conta interna ativa. Grupos, supergrupos e canais são
+ignorados sem resposta; login por usuário/senha ainda pertence à TASK-061.
+
 Com a API em execução, verifique sua vivacidade em `http://localhost:8000/health`. A resposta esperada é:
 
 ```json

@@ -2,8 +2,9 @@
 
 `telegram_user_id` identifica a pessoa (`message.from.id` no `Update` do
 Telegram), nunca a conversa (`chat.id`); este módulo não conhece nem persiste
-`chat_id`. Nenhuma autenticação real, senha, OAuth ou lógica de missão
-pertence a este serviço.
+`chat_id`. A fronteira da TASK-046 decide se a identidade do canal é aceitável
+antes de chamar este resolvedor. Senha, OAuth, sessão e lógica de missão não
+pertencem a este serviço.
 """
 
 from sqlalchemy import select

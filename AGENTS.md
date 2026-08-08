@@ -110,8 +110,9 @@ Nunca iniciar automaticamente a próxima TASK. Encerrar apresentando resumo da i
 
 ## Estado atual
 
-TASKs 000 a 045 e TASK-055 a TASK-060 concluídas. A observabilidade da
+TASKs 000 a 046 e TASK-055 a TASK-060 concluídas. A observabilidade da
 TASK-045 (`DEC-031`) foi validada com PostgreSQL, API, worker, Collector,
 Prometheus e Jaeger reais, incluindo falha/recuperação e privacidade. A
-próxima tarefa executável é a TASK-046. A TASK-061 foi registrada (`DEC-019`) e
+TASK-046 autentica a identidade mínima do canal Telegram (`DEC-032`). A próxima
+tarefa executável é a TASK-047. A TASK-061 foi registrada (`DEC-019`) e
 aguarda solicitação explícita.

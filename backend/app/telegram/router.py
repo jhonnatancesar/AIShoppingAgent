@@ -1,15 +1,12 @@
 """Webhook HTTP que recebe atualizações reais do Telegram.
 
-A rota autentica a entrega, extrai a mensagem de texto quando existir e a
-traduz em um `Intent` via `TelegramIntentAdapter` (TASK-033). A partir da
-TASK-035, ela também resolve a identidade do usuário (TASK-056), executa a
-ação de missão correspondente ao `Intent` e responde ao Telegram — sem
-teclado interativo e sem as notificações proativas orientadas a evento, que
-continuam reservadas à TASK-036.
+A rota autentica a entrega e, para mensagens de texto, aceita somente a
+identidade de uma pessoa ativa em seu chat privado direto (TASK-046). Depois
+traduz a mensagem em `Intent`, executa comandos já implementados e responde ao
+Telegram. Autorização por papel continua reservada à TASK-047.
 """
 
 import logging
-import secrets
 from datetime import UTC, datetime
 from decimal import Decimal
 from functools import lru_cache
@@ -45,6 +42,10 @@ from app.missions.service import (
     transition_mission,
 )
 from app.telegram.adapter import TelegramIntentAdapter
+from app.telegram.authentication import (
+    authenticate_telegram_user,
+    webhook_secret_matches,
+)
 from app.telegram.bot_api import send_message
 from app.telegram.confirmation import (
     ConfirmationError,
@@ -67,7 +68,6 @@ from app.users.registration import (
     advance_registration,
     start_registration,
 )
-from app.users.service import get_or_create_telegram_user
 
 logger = logging.getLogger("app.telegram")
 
@@ -168,7 +168,9 @@ async def receive_telegram_webhook(
     settings: Settings = Depends(get_settings),
     session: Session = Depends(get_session),
 ) -> Response:
-    if not _secret_matches(x_telegram_bot_api_secret_token, settings):
+    if not webhook_secret_matches(
+        x_telegram_bot_api_secret_token, settings.telegram_webhook_secret
+    ):
         return JSONResponse(
             status_code=status.HTTP_401_UNAUTHORIZED,
             content={
@@ -182,11 +184,23 @@ async def receive_telegram_webhook(
 
     message = _extract_message(update)
     if message is not None:
-        user = get_or_create_telegram_user(
+        authentication = authenticate_telegram_user(
             session,
-            telegram_user_id=message.user_id,
+            message=message,
             display_name=update.message.from_.first_name,
         )
+        if not authentication.authenticated:
+            failure = authentication.failure
+            if failure is None:
+                raise RuntimeError("authentication failure reason is missing")
+            logger.warning(
+                "telegram_authentication_rejected",
+                extra={"authentication_reason": failure.value},
+            )
+            return Response(status_code=status.HTTP_204_NO_CONTENT)
+        user = authentication.user
+        if user is None:
+            raise RuntimeError("authenticated user is missing")
         remember_private_notification_chat(user, message)
         reply = await _handle_message(
             message, user=user, adapters=adapters, session=session
@@ -383,13 +397,6 @@ def _execute_mission_command(
         actor_id=user.id,
     )
     return f'"{payload["mission_title"]}" agora está {transition.to_status.value}.'
-
-
-def _secret_matches(provided: str | None, settings: Settings) -> bool:
-    expected = settings.telegram_webhook_secret
-    if expected is None or provided is None:
-        return False
-    return secrets.compare_digest(provided, expected.get_secret_value())
 
 
 def _extract_message(update: TelegramUpdate) -> TelegramMessage | None:

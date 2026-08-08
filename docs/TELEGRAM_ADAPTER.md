@@ -33,7 +33,13 @@ envelope de erro padrão do `docs/API_CONVENTIONS.md`. Atualizações sem mensag
 de texto (foto, callback, mensagem editada) são reconhecidas e ignoradas com
 `204`, sem erro.
 
-Uma vez autenticada, a entrega da atualização e o processamento por IA são
+Depois de autenticar o transporte, a TASK-046 valida a identidade da pessoa:
+operações só seguem em chat `private` com `chat.id == message.from.id`, após
+resolver um `User` ativo. Grupo, supergrupo, canal, divergência ou conta inativa
+retornam `204` sem IA, domínio, resposta ou mutação; o log contém apenas um
+motivo fechado e sanitizado. Usuário/senha e sessão pertencem à TASK-061.
+
+Uma vez autenticadas entrega e identidade, o processamento por IA é
 tratados como falhas independentes: se a interpretação falhar (`AIProviderError`
 por cota ou indisponibilidade, ou `TelegramContractError` por conteúdo inválido),
 a falha é registrada — a telemetria sanitizada da TASK-031 já grava o resultado
@@ -57,10 +63,10 @@ despacho por `IntentKind`, a resolução de missão por texto e o limite entre
 
 ## Destino privado para notificações (TASK-036)
 
-O `TelegramMessage` também transporta `chat_type`. Depois que a identidade
-interna é resolvida, o webhook persiste `chat_id` somente para conversa
-`private` da mesma pessoa. Esse passo não envia notificação e não contém lógica
-de alerta; apenas mantém um destino seguro para o consumidor desacoplado.
+O `TelegramMessage` também transporta `chat_type`. Depois que a identidade do
+canal foi aceita e o usuário ativo foi resolvido, o webhook persiste `chat_id`
+da conversa privada direta. Esse passo não envia notificação e não contém
+lógica de alerta; apenas mantém um destino seguro para o consumidor desacoplado.
 
 ## Limites
 
