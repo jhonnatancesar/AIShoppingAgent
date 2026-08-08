@@ -96,7 +96,13 @@ Criar automaticamente um commit com Conventional Commits após a revisão final.
 
 ### 8. Repositório remoto
 
-Perguntar sempre se o usuário deseja realizar o push. Só realizar o push após autorização explícita; em caso de autorização, verificar a sincronização do repositório remoto e informar o resultado.
+Após o commit final, publicar automaticamente a branch da TASK no repositório
+remoto e atualizar a `main` local com essa branch. Não pedir confirmação para
+essas duas operações. Nunca atualizar a `main` remota automaticamente: o push
+de `main` para `origin/main` só pode ocorrer quando o usuário solicitar
+explicitamente. Antes e depois das operações, verificar a sincronização e
+informar separadamente os estados da branch da TASK, da `main` local e da
+`main` remota.
 
 ### 9. Encerramento
 

@@ -25,6 +25,21 @@ Após a classificação, registrar a decisão neste arquivo e atualizar a docume
 - **Justificativa:** impacto avaliado e motivo da classificação.
 - **Próxima ação:** documento a atualizar, TASK a criar quando aplicável, ou ação de não implementação.
 
+### DEC-030 — Publicar branch da TASK e atualizar apenas a main local
+
+- **Data:** 2026-08-08
+- **Ideia:** eliminar a confirmação repetitiva para publicação da branch sem
+  perder o controle explícito sobre a `main` remota.
+- **Classificação:** Implementar agora.
+- **Justificativa:** a branch da TASK é o artefato remoto de trabalho e pode ser
+  publicada automaticamente após testes, revisão e commit. A integração na
+  `main` local mantém o workspace pronto para a próxima tarefa. Já
+  `origin/main` continua sendo o ponto de publicação controlado pelo usuário e
+  nunca deve avançar sem pedido explícito.
+- **Próxima ação:** ao concluir cada TASK, subir sua branch e atualizar a
+  `main` local automaticamente; aguardar pedido somente para atualizar a
+  `main` remota.
+
 ### DEC-029 — Separar solicitação imutável da trilha append-only de confirmação
 
 - **Data:** 2026-08-08
@@ -549,7 +564,9 @@ Após a classificação, registrar a decisão neste arquivo e atualizar a docume
 - **Ideia:** padronizar preparação, validação, implementação, testes, revisão, documentação, commit e push para toda TASK.
 - **Classificação:** Implementar agora
 - **Justificativa:** o workflow preserva o escopo do MVP, aumenta a rastreabilidade das entregas e garante que código, documentação e repositório permaneçam sincronizados.
-- **Próxima ação:** aplicar automaticamente o workflow definido em `AGENTS.md` a toda TASK futura; solicitar autorização explícita antes de cada push.
+- **Próxima ação:** aplicar automaticamente o workflow definido em `AGENTS.md`
+  a toda TASK futura. A política de push foi posteriormente refinada pela
+  `DEC-030`.
 
 ### DEC-003 — Inventariar dependências para novas máquinas
 

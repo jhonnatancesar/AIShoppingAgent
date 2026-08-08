@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-08-08 — Workflow Git: branch automática e main remota controlada
+
+- Atualizado o workflow permanente (`DEC-030`): após concluir uma TASK, sua
+  branch é publicada automaticamente e a `main` local é atualizada.
+- Removida a pergunta recorrente para subir a branch da TASK.
+- A `main` remota permanece protegida e só recebe push quando o usuário pedir
+  explicitamente.
+
 ## 2026-08-08 — TASK-041: confirmação persistente e trilha append-only
 
 - Adicionadas `purchase_confirmations` para a solicitação imutável e
@@ -909,7 +917,9 @@
 - Adicionadas referências cruzadas a esses documentos no contexto do projeto e no roadmap.
 - Criado `docs/DECISION_LOG.md` e adicionada política permanente de classificação prévia de novas funcionalidades no `AGENTS.md`.
 - Reordenadas as dependências de ciclo de vida de missões e de catálogo de eventos; criada a TASK-055 para o Store Provider Kabum.
-- Instituído o workflow oficial e permanente de execução de TASKs, com validação, testes, revisão técnica, documentação, commit convencional e push condicionado à autorização.
+- Instituído o workflow oficial e permanente de execução de TASKs, com
+  validação, testes, revisão técnica, documentação e commit convencional. A
+  política original de push foi posteriormente substituída pela `DEC-030`.
 - Nenhuma funcionalidade foi implementada.
 
 ## 2026-08-01 — TASK-000
