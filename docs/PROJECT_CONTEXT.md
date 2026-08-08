@@ -71,9 +71,18 @@ controlar o commit do chamador. O contrato é at-least-once, permite retry
 ilimitado após falha e considera o sucesso somente para aquele consumidor.
 Concorrência, retry, independência de consumidores, imutabilidade e reversão
 da migração foram validados em PostgreSQL real descartável. Não há worker,
-backoff, dead-letter queue, exactly-once ou integração Telegram. Com publicação
-e consumo genéricos prontos, a próxima tarefa executável volta a ser a TASK-036,
-que definirá o `chat_id` e o consumidor/notificação Telegram.
+backoff, dead-letter queue, exactly-once ou integração Telegram.
+
+A TASK-036 (`DEC-024`) está **concluída**: a revisão `20260808_0005`
+adicionou `User.telegram_chat_id`, atualizado somente por mensagens privadas da
+própria pessoa. `telegram_price_alerts_v1` consome os eventos
+`price.decreased.v1` e `price.target_reached.v1`, envia mensagens em português
+pela Bot API e registra sucesso/falha append-only pela TASK-044. Rejeição
+`ok=false` agora é falha real, não falso sucesso. O worker contínuo roda como
+`app.telegram.worker` e como serviço Compose `telegram_notifier`, validado no
+Docker Linux headless. PostgreSQL real confirmou a migração reversível; um
+evento temporário foi entregue ao Telegram real, registrado como `succeeded` e
+revertido sem resíduos. A próxima tarefa executável é a TASK-037.
 
 A TASK-058 (`DEC-015`) está **concluída**: `create_mission` e
 `mission_command` não executam mais direto — ficam encenados em
@@ -113,7 +122,7 @@ reais observadas em produção.
 - Modelo relacional PostgreSQL do MVP definido com entidades, tipos, relações, restrições, índices e regras de preservação histórica.
 - SQLAlchemy, Psycopg e Alembic configurados com conexão tipada, metadata compartilhada, sessões explícitas e baseline reversível.
 - Entidade `User` persistente com UUID, nome, papel tipado, ativação lógica,
-  identidade do Telegram, campos opcionais de cadastro inicial (nome de
+  identidade da pessoa e destino privado do Telegram, campos opcionais de cadastro inicial (nome de
   usuário, e-mail, lojas favoritas, categorias preferidas, passo de
   cadastro pendente — TASK-060), timestamps e restrições de integridade.
 - Entidade `Product` persistente com identidade canônica, nome, marca e modelo opcionais, timestamps e restrições de integridade.
@@ -204,6 +213,9 @@ reais observadas em produção.
 - Consumo durável at-least-once por consumidor (`event_consumption_attempts`,
   migração `20260808_0004`), com reivindicação transacional concorrente,
   histórico append-only de sucesso/falha e retry após falha (TASK-044).
+- Notificações proativas dos alertas de preço pelo consumidor
+  `telegram_price_alerts_v1`, com destino privado persistido, mensagens
+  sanitizadas e worker contínuo no Docker Compose (TASK-036).
 - Documentos de visão, arquitetura, dados, módulos-alvo, escopo do MVP, backlog, itens fora de escopo, governança de decisões e workflow permanente de execução.
 - ADRs, RFCs e 62 tarefas planejadas.
 
@@ -215,11 +227,10 @@ Além de `users`, `products`, `stores`, `sellers`, `offers`, `audit_entries`,
 `event_consumption_attempts`, não
 há outras tabelas de domínio implementadas. Também não existem autenticação real (senha, token, OAuth — TASK-061),
 autorização por papel de fato aplicada além da seleção de perfil de IA,
-persistência de `chat_id` do Telegram, teclado interativo de seleção de
-fontes, consumidor/worker concreto de eventos nem notificações proativas
-(TASK-036), mudança real de plano/perfil pelo próprio usuário (o
+teclado interativo de seleção de fontes, preferências de notificação
+(TASK-037), mudança real de plano/perfil pelo próprio usuário (o
 `/upgrade` da TASK-060 é só um placeholder inativo), APIs de negócio,
-worker, detecção de `mission.status_changed`/`collection.completed`/
+worker/scheduler de coleta, detecção de `mission.status_changed`/`collection.completed`/
 `collection.failed`/`offer.availability_changed` (nenhuma TASK a atribui
 ainda), inserção real de `PriceObservation` num fluxo de coleta
 orquestrado, suíte permanente de testes ponta a ponta nem credenciais reais
@@ -265,6 +276,10 @@ configuradas.
   mantém o evento elegível, sucesso o encerra só para o mesmo
   `consumer_name`; reivindicação, processamento e registro devem compartilhar
   a transação controlada pelo chamador (TASK-044).
+- O destino Telegram é sempre o chat privado correspondente à pessoa; chats de
+  grupo, supergrupo e canal nunca são persistidos automaticamente. Entregas de
+  alerta são at-least-once e podem se repetir se a API aceitar a mensagem antes
+  de um rollback do banco (TASK-036).
 - Alertas são candidatos determinísticos derivados do histórico; persistência,
   publicação, consumo e notificação permanecem desacoplados.
 - Módulos da aplicação acessam IA somente por `AIProviderManager`; USER usa apenas

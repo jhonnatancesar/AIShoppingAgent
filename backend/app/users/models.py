@@ -47,6 +47,11 @@ class User(Base):
             "email IS NULL OR btrim(email) <> ''",
             name="ck_users_email_not_blank",
         ),
+        CheckConstraint(
+            "telegram_chat_id IS NULL OR "
+            "(telegram_user_id IS NOT NULL AND telegram_chat_id = telegram_user_id)",
+            name="ck_users_telegram_private_chat",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(
@@ -73,6 +78,11 @@ class User(Base):
         server_default="true",
     )
     telegram_user_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        unique=True,
+        nullable=True,
+    )
+    telegram_chat_id: Mapped[int | None] = mapped_column(
         BigInteger,
         unique=True,
         nullable=True,

@@ -32,6 +32,7 @@ def test_user_table_matches_data_contract() -> None:
         table.c.role,
         table.c.is_active,
         table.c.telegram_user_id,
+        table.c.telegram_chat_id,
         table.c.username,
         table.c.email,
         table.c.favorite_stores,
@@ -51,6 +52,8 @@ def test_user_table_matches_data_contract() -> None:
     assert table.c.is_active.nullable is False
     assert table.c.telegram_user_id.nullable is True
     assert isinstance(table.c.telegram_user_id.type, BigInteger)
+    assert table.c.telegram_chat_id.nullable is True
+    assert isinstance(table.c.telegram_chat_id.type, BigInteger)
     assert table.c.username.nullable is True
     assert table.c.username.type.length == 32
     assert table.c.email.nullable is True
@@ -66,8 +69,8 @@ def test_user_table_matches_data_contract() -> None:
     assert table.c.updated_at.type.timezone is True
 
 
-def test_user_telegram_user_id_is_unique() -> None:
-    """A coluna deve identificar exclusivamente a pessoa, nunca a conversa."""
+def test_user_telegram_identifiers_are_unique() -> None:
+    """Pessoa e conversa privada possuem identidades externas exclusivas."""
     table = User.__table__
 
     unique_constraints = [
@@ -77,6 +80,10 @@ def test_user_telegram_user_id_is_unique() -> None:
     ]
     assert any(
         {column.name for column in constraint.columns} == {"telegram_user_id"}
+        for constraint in unique_constraints
+    )
+    assert any(
+        {column.name for column in constraint.columns} == {"telegram_chat_id"}
         for constraint in unique_constraints
     )
 
@@ -93,6 +100,13 @@ def test_user_table_rejects_blank_display_name_by_constraint() -> None:
     assert "user_role_values" in check_names
     assert "ck_users_username_not_blank" in check_names
     assert "ck_users_email_not_blank" in check_names
+    assert "ck_users_telegram_private_chat" in check_names
+    private_chat_check = next(
+        constraint
+        for constraint in User.__table__.constraints
+        if constraint.name == "ck_users_telegram_private_chat"
+    )
+    assert "telegram_user_id IS NOT NULL" in str(private_chat_check.sqltext)
 
 
 def test_user_username_is_unique() -> None:
@@ -123,6 +137,7 @@ def test_user_registration_fields_are_optional_before_persistence() -> None:
     assert user.email is None
     assert user.registration_step is None
     assert user.pending_intent is None
+    assert user.telegram_chat_id is None
 
 
 def test_user_model_is_registered_in_shared_metadata() -> None:

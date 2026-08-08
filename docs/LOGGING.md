@@ -40,10 +40,19 @@ reset ausente permanece `null`; a aplicação não estima nem inventa esse prazo
 
 `AISHOPPING_LOG_LEVEL` aceita `DEBUG`, `INFO`, `WARNING`, `ERROR` ou `CRITICAL` e usa `INFO` por padrão. O mesmo formato é aplicado aos loggers da aplicação e do Uvicorn.
 
+## Notificações Telegram
+
+O worker emite `telegram_notification_batch` para lotes com eventos e inclui
+somente contagens de reivindicados, sucessos e falhas; lotes vazios ficam em
+`DEBUG`. Falhas conhecidas emitem `telegram_notification_failed` com `event_id`
+e código sanitizado. Chat, usuário, texto, payload, resposta bruta e token não
+são registrados.
+
 Para acompanhar eventos no ambiente local:
 
 ```powershell
 docker compose logs --follow api
+docker compose logs --follow telegram_notifier
 ```
 
 Métricas, tracing, correlação distribuída, retenção e envio para serviços externos não pertencem a esta etapa e serão tratados nas tarefas específicas de observabilidade e operação.

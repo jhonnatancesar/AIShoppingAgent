@@ -25,6 +25,24 @@ Após a classificação, registrar a decisão neste arquivo e atualizar a docume
 - **Justificativa:** impacto avaliado e motivo da classificação.
 - **Próxima ação:** documento a atualizar, TASK a criar quando aplicável, ou ação de não implementação.
 
+### DEC-024 — Restringir notificações Telegram a alertas e chats privados
+
+- **Data:** 2026-08-08
+- **Ideia:** implementar a TASK-036 como consumidor contínuo dos eventos
+  `price.decreased.v1` e `price.target_reached.v1`, enviando somente para o
+  chat privado confirmado do proprietário da missão.
+- **Classificação:** Implementar agora.
+- **Justificativa:** decisões anteriores reservam a TASK-036 às notificações
+  proativas de alerta, enquanto preferências pertencem à TASK-037. Persistir
+  chats de grupos/canais como destino automático poderia expor dados de uma
+  missão a terceiros; por isso `telegram_chat_id` só é atualizado quando a Bot
+  API identifica `chat.type=private` e o ID corresponde ao
+  `telegram_user_id`. O consumidor usa a semântica at-least-once da TASK-044:
+  rejeições da API e destinos ausentes/inativos ficam como falha rastreável e
+  podem repetir; exatamente uma vez não é prometido.
+- **Próxima ação:** TASK-036 concluída. A TASK-037 é a próxima executável e
+  poderá definir preferências sem alterar a segurança do destino privado.
+
 ### DEC-023 — Adotar consumo at-least-once por consumidor com transação explícita
 
 - **Data:** 2026-08-08

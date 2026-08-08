@@ -29,4 +29,5 @@ reescritos.
 O contrato executável está em `app.events`. A TASK-042 não cria a tabela
 `events`, não detecta fatos, não publica, não consome e não notifica. Alertas de
 preço pertencem à TASK-027; persistência/publicação e consumo pertencem às
-TASKs 043 e 044.
+TASKs 043 e 044. A TASK-036 entrega pelo Telegram os dois eventos de alerta de
+preço quando publicados com uma missão destinatária.

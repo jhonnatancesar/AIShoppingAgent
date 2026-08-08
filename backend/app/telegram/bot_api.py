@@ -14,6 +14,15 @@ from urllib.request import Request, urlopen
 from pydantic import SecretStr
 
 
+class TelegramBotAPIError(RuntimeError):
+    """Indica que a Bot API recebeu a chamada, mas rejeitou a operação."""
+
+    def __init__(self, error_code: int | None = None) -> None:
+        self.error_code = error_code
+        suffix = f" ({error_code})" if error_code is not None else ""
+        super().__init__(f"telegram api rejected the request{suffix}")
+
+
 def call_bot_api(
     method: str,
     params: dict[str, object] | None = None,
@@ -41,9 +50,13 @@ def call_bot_api(
 
 async def send_message(chat_id: int, text: str, *, bot_token: SecretStr) -> None:
     """Envia uma mensagem de texto para uma conversa, sem bloquear o loop de eventos."""
-    await asyncio.to_thread(
+    response = await asyncio.to_thread(
         call_bot_api,
         "sendMessage",
         {"chat_id": chat_id, "text": text},
         bot_token=bot_token,
     )
+    if response.get("ok") is not True:
+        raw_error_code = response.get("error_code")
+        error_code = raw_error_code if isinstance(raw_error_code, int) else None
+        raise TelegramBotAPIError(error_code)

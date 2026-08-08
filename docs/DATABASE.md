@@ -51,6 +51,7 @@ Identidade interna usada como proprietária de missões e como ator auditável.
 | `role` | `varchar(16)` | Obrigatório; valores iniciais `USER`, `ADMIN` ou `DEV`. |
 | `is_active` | `boolean` | Obrigatório, padrão `true`. |
 | `telegram_user_id` | `bigint` | Opcional, único; identifica a pessoa no Telegram (TASK-056). |
+| `telegram_chat_id` | `bigint` | Opcional, único; chat privado da mesma pessoa para notificações (TASK-036). |
 | `username` | `varchar(32)` | Opcional, único; cadastro inicial (TASK-060). |
 | `email` | `varchar(254)` | Opcional; cadastro inicial (TASK-060). |
 | `favorite_stores` | `varchar(32)[]` | Obrigatório, padrão `{}`; cadastro inicial (TASK-060). |
@@ -62,8 +63,9 @@ Identidade interna usada como proprietária de missões e como ator auditável.
 Credenciais de autenticação real (senha, token) não pertencem a esta tabela nesta fase — ver TASK-061.
 
 Esta entidade foi implementada na TASK-012 pela revisão `20260802_0002`,
-`telegram_user_id` pela revisão `20260807_0001` e os campos do cadastro
-inicial pela revisão `20260808_0001`. Seu contrato funcional e limites estão em `docs/USERS.md`.
+`telegram_user_id` pela revisão `20260807_0001`, os campos do cadastro
+inicial pela revisão `20260808_0001` e `telegram_chat_id` pela revisão
+`20260808_0005`. Seu contrato funcional e limites estão em `docs/USERS.md`.
 
 ### `missions`
 

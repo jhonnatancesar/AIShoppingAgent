@@ -1,5 +1,30 @@
 # Changelog
 
+## 2026-08-08 — TASK-036: notificações proativas Telegram
+
+- Adicionado `users.telegram_chat_id` pela migração `20260808_0005`, com
+  unicidade e constraint que aceita somente o chat privado correspondente ao
+  `telegram_user_id`; o webhook nunca salva grupos, supergrupos ou canais como
+  destino automático (`DEC-024`).
+- Criado `app.telegram.notifications`: o consumidor
+  `telegram_price_alerts_v1` reivindica apenas `price.decreased.v1` e
+  `price.target_reached.v1`, resolve o proprietário da missão, formata a
+  mensagem em português e registra sucesso/falha append-only pela TASK-044.
+- `claim_unconsumed_events` ganhou filtro opcional por tipos, preservando o
+  contrato genérico e impedindo que o consumidor Telegram reivindique eventos
+  fora do seu escopo.
+- `send_message` agora rejeita respostas `ok=false` com erro sanitizado; a
+  falha vira `telegram_delivery_failed` e permanece elegível para retry, em
+  vez de produzir falso sucesso.
+- Criados o processo contínuo `app.telegram.worker` e o serviço Compose
+  `telegram_notifier`, com lote e intervalo configuráveis, executáveis em
+  Docker/Linux headless para o futuro Ubuntu Server.
+- 411 testes automatizados aprovados e cobertura de 94,89%. PostgreSQL real
+  confirmou upgrade/downgrade/upgrade; Telegram real aceitou um alerta
+  temporário e a tentativa durável foi `succeeded`; transação de teste
+  revertida sem resíduos. Imagem Linux construída e worker `--once` aprovado
+  no Docker.
+
 ## 2026-08-08 — TASK-044: consumo durável de eventos
 
 - Criados `ConsumptionOutcome` e `EventConsumptionAttempt`, com FK `RESTRICT`

@@ -28,4 +28,7 @@ Persistência e publicação foram implementadas na TASK-043
 desempacota seus campos (`event_type`, `aggregate_type`, `aggregate_id`,
 `payload`) na chamada. A TASK-044 implementou o consumo genérico at-least-once
 por consumidor (`docs/EVENT_CONSUMPTION.md`); o consumidor concreto e a
-notificação Telegram pertencem à TASK-036.
+notificação Telegram foram implementados na TASK-036. Ainda não existe um
+fluxo de coleta que invoque automaticamente avaliação e publicação; quando o
+evento durável existe, `telegram_price_alerts_v1` o entrega e registra o
+resultado.

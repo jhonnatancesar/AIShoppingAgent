@@ -5,7 +5,7 @@ import pytest
 from app.ai_provider import AIRequest, AIResponse
 from app.intent import IntentInterpreter, IntentKind
 from app.missions.models import MissionCommand
-from app.telegram import TelegramIntentAdapter, TelegramMessage
+from app.telegram import TelegramChatType, TelegramIntentAdapter, TelegramMessage
 from app.users.models import UserRole
 
 
@@ -46,6 +46,7 @@ def _response(**overrides: object) -> str:
 def _message(**overrides: object) -> TelegramMessage:
     defaults: dict[str, object] = {
         "chat_id": 123,
+        "chat_type": TelegramChatType.GROUP,
         "user_id": 456,
         "text": "Quero um notebook gamer até R$ 5000 na Pichau ou Kabum",
         "received_at": datetime.now(UTC),

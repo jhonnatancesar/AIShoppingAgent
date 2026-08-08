@@ -4,8 +4,20 @@ Telegram é o canal conversacional previsto para o MVP. O adaptador deve traduzi
 
 A fronteira de entrada que traduz uma mensagem bruta do Telegram em uma
 intenção estruturada está definida em `docs/TELEGRAM_ADAPTER.md`.
-Autenticação real, sessões e notificações proativas continuam reservadas a
-tarefas posteriores (TASK-036, TASK-061).
+Notificações proativas de alertas foram implementadas na TASK-036; autenticação
+real e sessões continuam reservadas à TASK-061.
+
+## Notificações proativas (TASK-036)
+
+O webhook memoriza como destino somente conversas que a Bot API classifica
+como `private` e cujo `chat.id` coincide com a identidade da pessoa. Grupos,
+supergrupos e canais nunca são persistidos como destino automático.
+
+O processo `app.telegram.worker` consome `price.decreased.v1` e
+`price.target_reached.v1` pelo contrato at-least-once da TASK-044. Cada envio
+gera uma tentativa append-only; falhas de destino, payload ou Bot API podem ser
+tentadas novamente. Detalhes operacionais estão em
+`docs/EVENT_CONSUMPTION.md`.
 
 ## Comandos dedicados (TASK-060)
 

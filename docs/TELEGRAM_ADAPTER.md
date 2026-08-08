@@ -55,10 +55,16 @@ Telegram com `backend/app/telegram/bot_api.py` (`send_message`, via
 despacho por `IntentKind`, a resolução de missão por texto e o limite entre
 `204` e `500` estão detalhados em `docs/MISSION_COMMANDS.md`.
 
+## Destino privado para notificações (TASK-036)
+
+O `TelegramMessage` também transporta `chat_type`. Depois que a identidade
+interna é resolvida, o webhook persiste `chat_id` somente para conversa
+`private` da mesma pessoa. Esse passo não envia notificação e não contém lógica
+de alerta; apenas mantém um destino seguro para o consumidor desacoplado.
+
 ## Limites
 
 Este módulo não usa nenhum SDK do Telegram, não define teclado interativo e
-não envia notificações proativas orientadas a evento nem resolve preferências
-de usuário. Essas responsabilidades pertencem, respectivamente, a uma
-evolução futura, à TASK-036 (notificações) e à TASK-037 (preferências de
-usuário).
+não resolve preferências de usuário. A apresentação interativa pertence a uma
+evolução futura; preferências pertencem à TASK-037. A entrega proativa fica no
+consumidor `app.telegram.notifications`, não na fronteira de entrada.

@@ -80,6 +80,10 @@ Regras permanentes:
 - `20260808_0004`: cria o enum `consumption_outcome`, a tabela
   `event_consumption_attempts`, o índice parcial de sucessos e sua proteção
   append-only; o downgrade remove também o enum.
+- `20260808_0005`: adiciona `users.telegram_chat_id`, sua unicidade e a
+  constraint que restringe o destino ao chat privado correspondente ao
+  `telegram_user_id`; o downgrade preserva a identidade da pessoa e remove
+  somente o destino de notificação.
 
 O downgrade de `20260802_0009` não apaga ofertas para forçar compatibilidade. Se
 existirem ofertas de vendedores diferentes com a mesma identidade antiga, elas

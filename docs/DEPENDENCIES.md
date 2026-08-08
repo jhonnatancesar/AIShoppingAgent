@@ -60,6 +60,14 @@ comandos `/cadastro` e `/upgrade` da TASK-060 no menu do bot) e
 `secrets.token_urlsafe`, usado para autenticar as requisições recebidas). Ambos
 ficam apenas em `backend/.env`, nunca versionados.
 
+A TASK-036 reutiliza o mesmo token no processo `app.telegram.worker`. O
+intervalo e o tamanho do lote são configuráveis por
+`AISHOPPING_TELEGRAM_NOTIFICATION_POLL_SECONDS` (padrão 5) e
+`AISHOPPING_TELEGRAM_NOTIFICATION_BATCH_SIZE` (padrão 50). No Docker Compose,
+API e `telegram_notifier` carregam `backend/.env` quando presente; as variáveis
+de conexão ao banco continuam explicitamente sobrescritas para o serviço
+`database`.
+
 As versões validadas na TASK-011 foram SQLAlchemy 2.0.51, Alembic 1.18.5 e Psycopg 3.3.4. O extra binário do Psycopg evita exigir uma instalação separada de `libpq` e possui suporte validado a Python 3.14 e PostgreSQL 18.
 
 Playwright 1.62.0 e Chromium 151.0.7922.34 foram validados na TASK-024. O pacote

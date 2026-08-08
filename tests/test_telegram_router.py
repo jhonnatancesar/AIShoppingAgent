@@ -13,7 +13,7 @@ from app.main import app
 from app.missions.query import MissionReferenceError
 from app.missions.service import MissionCreationError, MissionTransitionConditionError
 from app.telegram.confirmation import ConfirmationError
-from app.telegram.contracts import TelegramMessage
+from app.telegram.contracts import TelegramChatType, TelegramMessage
 from app.telegram.router import (
     TelegramUpdate,
     _TelegramChat,
@@ -59,6 +59,9 @@ def _fake_user(
     return SimpleNamespace(
         id=uuid4(),
         role=role,
+        telegram_user_id=222,
+        telegram_chat_id=None,
+        is_active=True,
         registration_step=registration_step,
         pending_intent=pending_intent,
         username=None,
@@ -88,7 +91,7 @@ def _update(**overrides: object) -> TelegramUpdate:
         "message": _TelegramIncomingMessage(
             text="Quero um notebook até R$ 5000",
             date=1754586000,
-            chat=_TelegramChat(id=111),
+            chat=_TelegramChat(id=111, type=TelegramChatType.GROUP),
             from_=_TelegramSender(id=222, first_name="Fulano"),
         ),
     }
@@ -240,7 +243,7 @@ async def test_message_without_text_is_a_no_op_204() -> None:
         message=_TelegramIncomingMessage(
             text=None,
             date=1754586000,
-            chat=_TelegramChat(id=111),
+            chat=_TelegramChat(id=111, type=TelegramChatType.GROUP),
             from_=_TelegramSender(id=222, first_name="Fulano"),
         )
     )
@@ -375,7 +378,7 @@ async def test_confirmed_pending_create_mission_executes_and_clears_step(
             message=_TelegramIncomingMessage(
                 text="sim",
                 date=1754586000,
-                chat=_TelegramChat(id=111),
+                chat=_TelegramChat(id=111, type=TelegramChatType.GROUP),
                 from_=_TelegramSender(id=222, first_name="Fulano"),
             )
         ),
@@ -422,7 +425,7 @@ async def test_cancelled_pending_create_mission_does_not_execute(
             message=_TelegramIncomingMessage(
                 text="não",
                 date=1754586000,
-                chat=_TelegramChat(id=111),
+                chat=_TelegramChat(id=111, type=TelegramChatType.GROUP),
                 from_=_TelegramSender(id=222, first_name="Fulano"),
             )
         ),
@@ -460,7 +463,7 @@ async def test_unrecognized_answer_to_pending_intent_keeps_it_staged(
             message=_TelegramIncomingMessage(
                 text="talvez",
                 date=1754586000,
-                chat=_TelegramChat(id=111),
+                chat=_TelegramChat(id=111, type=TelegramChatType.GROUP),
                 from_=_TelegramSender(id=222, first_name="Fulano"),
             )
         ),
@@ -607,7 +610,7 @@ async def test_confirmed_pending_mission_command_executes_and_clears_step(
             message=_TelegramIncomingMessage(
                 text="confirmo",
                 date=1754586000,
-                chat=_TelegramChat(id=111),
+                chat=_TelegramChat(id=111, type=TelegramChatType.GROUP),
                 from_=_TelegramSender(id=222, first_name="Fulano"),
             )
         ),
@@ -708,7 +711,7 @@ async def test_known_error_at_confirmed_execution_is_replied_and_clears_pending(
             message=_TelegramIncomingMessage(
                 text="sim",
                 date=1754586000,
-                chat=_TelegramChat(id=111),
+                chat=_TelegramChat(id=111, type=TelegramChatType.GROUP),
                 from_=_TelegramSender(id=222, first_name="Fulano"),
             )
         ),
@@ -751,7 +754,7 @@ async def test_unexpected_error_at_confirmed_execution_is_not_masked_and_propaga
                 message=_TelegramIncomingMessage(
                     text="sim",
                     date=1754586000,
-                    chat=_TelegramChat(id=111),
+                    chat=_TelegramChat(id=111, type=TelegramChatType.GROUP),
                     from_=_TelegramSender(id=222, first_name="Fulano"),
                 )
             ),
@@ -776,7 +779,7 @@ async def test_cadastro_command_starts_registration_without_calling_ai(
             message=_TelegramIncomingMessage(
                 text="/cadastro",
                 date=1754586000,
-                chat=_TelegramChat(id=111),
+                chat=_TelegramChat(id=111, type=TelegramChatType.GROUP),
                 from_=_TelegramSender(id=222, first_name="Fulano"),
             )
         ),
@@ -806,7 +809,7 @@ async def test_registration_in_progress_consumes_reply_without_calling_ai(
             message=_TelegramIncomingMessage(
                 text="joaosilva",
                 date=1754586000,
-                chat=_TelegramChat(id=111),
+                chat=_TelegramChat(id=111, type=TelegramChatType.GROUP),
                 from_=_TelegramSender(id=222, first_name="Fulano"),
             )
         ),
@@ -843,7 +846,7 @@ async def test_registration_full_flow_completes_and_clears_step(
                 message=_TelegramIncomingMessage(
                     text=text,
                     date=1754586000,
-                    chat=_TelegramChat(id=111),
+                    chat=_TelegramChat(id=111, type=TelegramChatType.GROUP),
                     from_=_TelegramSender(id=222, first_name="Fulano"),
                 )
             ),
@@ -875,7 +878,7 @@ async def test_upgrade_command_replies_statically_without_calling_ai(
             message=_TelegramIncomingMessage(
                 text="/upgrade",
                 date=1754586000,
-                chat=_TelegramChat(id=111),
+                chat=_TelegramChat(id=111, type=TelegramChatType.GROUP),
                 from_=_TelegramSender(id=222, first_name="Fulano"),
             )
         ),
@@ -888,3 +891,31 @@ async def test_upgrade_command_replies_statically_without_calling_ai(
     assert response.status_code == 204
     assert adapter.calls == []
     assert "em breve" in send_calls[0][1].lower()
+
+
+@pytest.mark.anyio
+async def test_private_webhook_message_remembers_notification_chat(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_user = _fake_user()
+    _patch_user(monkeypatch, fake_user)
+    _patch_send_message(monkeypatch)
+    adapter = _FakeAdapter(_intent(kind=IntentKind.UNKNOWN))
+
+    response = await receive_telegram_webhook(
+        update=_update(
+            message=_TelegramIncomingMessage(
+                text="oi",
+                date=1754586000,
+                chat=_TelegramChat(id=222, type=TelegramChatType.PRIVATE),
+                from_=_TelegramSender(id=222, first_name="Fulano"),
+            )
+        ),
+        x_telegram_bot_api_secret_token="correct-secret",
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        settings=_settings(),
+        session=MagicMock(),
+    )
+
+    assert response.status_code == 204
+    assert fake_user.telegram_chat_id == 222

@@ -37,6 +37,8 @@ class Settings(BaseSettings):
     groq_model: str = Field(default="llama-3.3-70b-versatile", min_length=1)
     telegram_bot_token: SecretStr | None = None
     telegram_webhook_secret: SecretStr | None = None
+    telegram_notification_poll_seconds: float = Field(default=5.0, gt=0, le=3600)
+    telegram_notification_batch_size: int = Field(default=50, ge=1, le=1000)
 
 
 @lru_cache

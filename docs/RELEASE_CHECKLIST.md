@@ -12,15 +12,15 @@ TASK-054 (preparar release), que ainda está pendente.
 
 Atualizar este documento sempre que uma TASK relevante para produção for
 concluída ou revisada. Snapshot gerado em **2026-08-08**, logo após a
-conclusão da TASK-044.
+conclusão da TASK-036.
 
 ## Resumo executivo
 
-**Não está pronto para produção.** 45 das 62 tarefas planejadas estão
-concluídas, mas as 17 pendentes cobrem exatamente as áreas que separam
+**Não está pronto para produção.** 46 das 62 tarefas planejadas estão
+concluídas, mas as 16 pendentes cobrem exatamente as áreas que separam
 "funciona quando eu valido manualmente" de "está seguro para um usuário
 real depender disso": autenticação, autorização, segredos, observabilidade,
-resiliência, notificações e — mais importante — não existe hoje nenhum
+resiliência, recomendação/compra e — mais importante — não existe hoje nenhum
 mecanismo que dispare a coleta de preços sozinho. Uma missão criada fica
 "ativa" no banco, mas nada a pesquisa automaticamente.
 
@@ -31,7 +31,7 @@ mecanismo que dispare a coleta de preços sozinho. Uma missão criada fica
 | 1 | Ambiente local sobe de forma documentada e reproduzível | ✅ Atendido | Docker Compose, `docs/DEPENDENCIES.md`, `scripts\check.cmd` |
 | 2 | Usuário autorizado cria e consulta missão pelo Telegram | ⚠️ Parcial | Fluxo real validado ponta a ponta (TASK-035/058/060), mas "autorizado" hoje só significa `telegram_user_id` resolvido — não há autenticação (TASK-046/061) nem autorização por papel aplicada de fato (TASK-047) |
 | 3 | Sistema pesquisa todas as fontes selecionadas, normaliza e preserva histórico | ⚠️ Parcial | Store Providers (TASK-055) e normalização (TASK-025) existem e funcionam isoladamente, mas **nada os aciona automaticamente** — não existe worker/scheduler lendo `mission_schedules`, nem serviço que insira `PriceObservation` real em produção (confirmado durante a TASK-043) |
-| 4 | Condição de preço produz evento e notificação rastreáveis | ⚠️ Parcial | Avaliação de alertas (TASK-027), publicação (TASK-043) e consumo duráveis (TASK-044) prontos; consumidor concreto e notificação Telegram (TASK-036) pendentes |
+| 4 | Condição de preço produz evento e notificação rastreáveis | ⚠️ Parcial | Avaliação (TASK-027), publicação (TASK-043), consumo (TASK-044) e notificação Telegram (TASK-036) funcionam e foram validados realmente; ainda não existe fluxo de coleta que invoque automaticamente avaliação/publicação em produção |
 | 5 | Recomendação/comparação básica com evidências históricas | ❌ Faltando | TASK-038 (recomendação) e TASK-039 (comparação) pendentes; só a consulta de histórico (TASK-017) existe como bloco de construção |
 | 6 | Todo uso de IA passa pelo AI Provider Manager | ✅ Atendido | Invariante reforçada e validada em todas as tarefas de IA (TASK-028 a TASK-032, TASK-057 a TASK-060) |
 | 7 | Fluxos críticos com testes de integração e ponta a ponta | ❌ Faltando | TASK-052 (integração) e TASK-053 (e2e) pendentes; validação real hoje é manual/pontual por TASK, sem suíte permanente |
@@ -56,9 +56,9 @@ Além dos critérios formais do MVP:
 - **Sem limites nem resiliência** (TASK-049): sem rate limiting, retries
   padronizados ou circuit breakers além do que cada integração implementa
   isoladamente.
-- **Sem notificação ao usuário** (TASK-036): publicação e consumo genéricos
-  estão prontos, mas o
-  usuário não é avisado de nada que acontece com a missão dele.
+- **Notificador sem produtor automático**: a TASK-036 entrega eventos reais já
+  publicados, mas hoje nenhum fluxo contínuo de coleta cria esses eventos sem
+  preparação manual.
 - **Ambiente de validação é manual e efêmero**: a API roda direto no host
   (`uvicorn app.main:app`), o túnel `cloudflared` é recriado a cada sessão
   e o webhook do Telegram é reregistrado manualmente — não há deploy
@@ -73,7 +73,7 @@ Além dos critérios formais do MVP:
 | Ciclo de vida de missões | TASK-018 | 1/1 | — |
 | Missões e coleta | TASK-019 a TASK-026 | 8/8 | — |
 | Alertas de preço | TASK-027 | 1/1 | — |
-| Gerenciador de IA e Telegram | TASK-028 a TASK-037 | 8/10 | TASK-036, TASK-037 |
+| Gerenciador de IA e Telegram | TASK-028 a TASK-037 | 9/10 | TASK-037 |
 | Compra e eventos | TASK-038 a TASK-041, TASK-043 a TASK-045 | 2/7 | TASK-038 a TASK-041, TASK-045 |
 | Catálogo de eventos | TASK-042 | 1/1 | — |
 | Segurança e entrega | TASK-046 a TASK-054 | 0/9 | TASK-046 a TASK-054 |
@@ -81,7 +81,7 @@ Além dos critérios formais do MVP:
 | Robustez, confirmação e IA (V1.2 antecipado) | TASK-057 a TASK-060 | 4/4 | — |
 | Autenticação real (V1.2) | TASK-061 | 0/1 | TASK-061 |
 
-**Total: 45 concluídas, 17 pendentes.**
+**Total: 46 concluídas, 16 pendentes.**
 
 ## Recomendação
 
@@ -90,6 +90,6 @@ seguro. Colocar um usuário real dependendo do sistema hoje não é — os
 maiores riscos são a ausência de coleta automática (a missão nunca
 "funciona sozinha") e a ausência de autenticação/autorização reais. A
 ordem mais natural para fechar essas lacunas segue o próprio
-`docs/ROADMAP.md`: TASK-036/037 → TASK-038 a TASK-041 → TASK-045 → fase de
+`docs/ROADMAP.md`: TASK-037 → TASK-038 a TASK-041 → TASK-045 → fase de
 Segurança e entrega (TASK-046 a TASK-054), com a TASK-061 podendo entrar
 antes ou depois dependendo de quando a V1.2 for retomada.

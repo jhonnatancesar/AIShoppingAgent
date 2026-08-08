@@ -6,7 +6,7 @@ A TASK-035 fecha o loop iniciado pelas TASKs 032 a 034 e 056: o webhook
 correspondente ao `Intent` já traduzido, respondendo ao Telegram. Sem teclado
 interativo — a seleção de fontes vem do que o `IntentInterpreter` (TASK-032)
 já extraiu do texto livre — e sem as notificações proativas orientadas a
-evento, que continuam reservadas à TASK-036.
+evento, implementadas separadamente na TASK-036.
 
 Desde a TASK-058, `create_mission` e `mission_command` não executam mais
 direto: ficam **encenados** e só executam após confirmação explícita do
@@ -101,4 +101,5 @@ a sessão. Os serviços de missão continuam usando `session.flush()`, nunca
 
 Este documento não cobre autenticação real de usuário (TASK-046), comandos
 apresentados por teclado interativo (evolução futura), notificações
-proativas (TASK-036) nem preferências de usuário (TASK-037).
+proativas (implementadas separadamente na TASK-036) nem preferências de
+usuário (TASK-037).

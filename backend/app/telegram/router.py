@@ -54,7 +54,12 @@ from app.telegram.confirmation import (
     stage_create_mission,
     stage_mission_command,
 )
-from app.telegram.contracts import TelegramContractError, TelegramMessage
+from app.telegram.contracts import (
+    TelegramChatType,
+    TelegramContractError,
+    TelegramMessage,
+)
+from app.telegram.notifications import remember_private_notification_chat
 from app.users.models import User, UserRole
 from app.users.registration import (
     RegistrationError,
@@ -96,6 +101,7 @@ _KNOWN_DISPATCH_ERRORS = (
 
 class _TelegramChat(BaseModel):
     id: int
+    type: TelegramChatType
 
 
 class _TelegramSender(BaseModel):
@@ -180,6 +186,7 @@ async def receive_telegram_webhook(
             telegram_user_id=message.user_id,
             display_name=update.message.from_.first_name,
         )
+        remember_private_notification_chat(user, message)
         reply = await _handle_message(
             message, user=user, adapters=adapters, session=session
         )
@@ -388,6 +395,7 @@ def _extract_message(update: TelegramUpdate) -> TelegramMessage | None:
         return None
     return TelegramMessage(
         chat_id=incoming.chat.id,
+        chat_type=incoming.chat.type,
         user_id=incoming.from_.id,
         text=incoming.text,
         received_at=datetime.fromtimestamp(incoming.date, tz=UTC),

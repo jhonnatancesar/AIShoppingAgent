@@ -6,7 +6,7 @@ from unittest.mock import patch
 from urllib.error import HTTPError, URLError
 
 import pytest
-from app.telegram.bot_api import call_bot_api, send_message
+from app.telegram.bot_api import TelegramBotAPIError, call_bot_api, send_message
 from pydantic import SecretStr
 
 
@@ -91,3 +91,18 @@ async def test_send_message_calls_the_bot_api_with_chat_id_and_text() -> None:
         await send_message(123, "oi", bot_token=SecretStr("secret-token"))
 
     assert captured["data"] == {"chat_id": 123, "text": "oi"}
+
+
+@pytest.mark.anyio
+async def test_send_message_raises_sanitized_error_when_api_rejects() -> None:
+    def _fake_urlopen(request: object, timeout: int = 10) -> _FakeResponse:
+        return _FakeResponse({"ok": False, "error_code": 403})
+
+    with (
+        patch("app.telegram.bot_api.urlopen", _fake_urlopen),
+        pytest.raises(TelegramBotAPIError, match="403") as captured,
+    ):
+        await send_message(123, "oi", bot_token=SecretStr("secret-token"))
+
+    assert captured.value.error_code == 403
+    assert "secret-token" not in str(captured.value)

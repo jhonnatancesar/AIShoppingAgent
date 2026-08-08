@@ -1,5 +1,6 @@
 """Reivindicação transacional e registro append-only do consumo de eventos."""
 
+from collections.abc import Collection
 from datetime import datetime
 from re import fullmatch
 from uuid import UUID
@@ -19,11 +20,13 @@ def claim_unconsumed_events(
     *,
     consumer_name: str,
     limit: int = 100,
+    event_types: Collection[str] | None = None,
 ) -> list[Event]:
     """Bloqueia eventos sem sucesso do consumidor na transação corrente."""
     _validate_consumer_name(consumer_name)
     if not 1 <= limit <= 1000:
         raise EventConsumptionError("limit must be between 1 and 1000")
+    normalized_event_types = _validate_event_types(event_types)
 
     succeeded = exists(
         select(EventConsumptionAttempt.id).where(
@@ -32,14 +35,28 @@ def claim_unconsumed_events(
             EventConsumptionAttempt.outcome == ConsumptionOutcome.SUCCEEDED,
         )
     )
+    statement = select(Event).where(~succeeded)
+    if normalized_event_types is not None:
+        statement = statement.where(Event.event_type.in_(normalized_event_types))
     statement = (
-        select(Event)
-        .where(~succeeded)
-        .order_by(Event.recorded_at, Event.id)
+        statement.order_by(Event.recorded_at, Event.id)
         .limit(limit)
         .with_for_update(skip_locked=True, of=Event)
     )
     return list(session.scalars(statement))
+
+
+def _validate_event_types(
+    event_types: Collection[str] | None,
+) -> tuple[str, ...] | None:
+    if event_types is None:
+        return None
+    if not event_types or any(
+        not isinstance(event_type, str) or not event_type.strip()
+        for event_type in event_types
+    ):
+        raise EventConsumptionError("event_types must contain non-blank strings")
+    return tuple(sorted(set(event_types)))
 
 
 def record_consumption_attempt(

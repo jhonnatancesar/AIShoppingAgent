@@ -10,6 +10,8 @@
 - `is_active`: indicador administrativo, verdadeiro por padrão;
 - `telegram_user_id`: identificador opcional e único da **pessoa** no Telegram
   (`message.from.id` no `Update`), introduzido pela TASK-056;
+- `telegram_chat_id`: destino opcional e único de notificação, persistido pela
+  TASK-036 somente para o chat `private` da mesma pessoa;
 - `username`: nome de usuário opcional e único do cadastro inicial (TASK-060),
   até 32 caracteres, não vazio quando presente;
 - `email`: e-mail opcional do cadastro inicial (TASK-060), até 254
@@ -29,11 +31,10 @@ O banco reforça a nulabilidade, o tamanho do nome, o conjunto fechado de papéi
 O Telegram distingue `user.id` (a pessoa, estável entre conversas) de
 `chat.id` (a conversa — em chats privados os dois coincidem numericamente,
 mas em grupos e canais divergem). `telegram_user_id` guarda exclusivamente o
-`user.id` do remetente. Este campo **não** representa nem substitui um
-`chat_id`; nenhum identificador de conversa é persistido em `User` — se uma
-tarefa futura precisar endereçar uma conversa (por exemplo, para enviar
-notificações), ela deve definir e justificar esse campo separadamente, com
-sua própria necessidade funcional.
+`user.id` do remetente. Este campo não representa nem substitui um `chat_id`.
+A TASK-036 adicionou `telegram_chat_id` separadamente e o banco exige que ele
+coincida com `telegram_user_id`, pois somente a conversa privada direta é aceita
+como destino. Mensagens em grupos, supergrupos e canais não alteram esse campo.
 
 ## Papéis
 
@@ -76,4 +77,6 @@ revisão Alembic `20260802_0002`, `telegram_user_id` foi adicionado pela
 revisão `20260807_0001` e os campos do cadastro inicial (TASK-060) pela
 revisão `20260808_0001`. A resolução get-or-create está em
 `backend/app/users/service.py`; o fluxo de cadastro está em
-`backend/app/users/registration.py`.
+`backend/app/users/registration.py`. O destino privado foi adicionado pela
+revisão `20260808_0005` e é atualizado pelo webhook por meio de
+`app.telegram.notifications.remember_private_notification_chat`.

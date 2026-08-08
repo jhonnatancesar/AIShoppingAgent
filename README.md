@@ -14,14 +14,22 @@ Consulte `AGENTS.md` antes de executar tarefas e `docs/ROADMAP.md` para a sequê
 
 ## Ambiente local com Docker Compose
 
-Copie `.env.example` para `.env`, substitua a senha de exemplo e inicie os serviços:
+Copie os exemplos de configuração, substitua a senha no `.env` da raiz e as
+credenciais Telegram em `backend/.env`, inicie o banco, aplique as migrações e
+então suba os serviços:
 
 ```powershell
 Copy-Item .env.example .env
+Copy-Item backend/.env.example backend/.env
+docker compose up -d database
+docker compose run --rm api python -m alembic -c alembic.ini upgrade head
 docker compose up --build
 ```
 
-A API ficará disponível em `http://localhost:8000` e o PostgreSQL em `localhost:5432`, salvo alteração das portas no `.env`. Para encerrar os contêineres sem apagar o volume do banco, execute `docker compose down`.
+A API ficará disponível em `http://localhost:8000`, o PostgreSQL em
+`localhost:5432` e o serviço `telegram_notifier` consumirá continuamente os
+alertas de preço. Para encerrar os contêineres sem apagar o volume do banco,
+execute `docker compose down`.
 
 Com a API em execução, verifique sua vivacidade em `http://localhost:8000/health`. A resposta esperada é:
 
@@ -52,7 +60,9 @@ Os testes geram relatório de cobertura no terminal e exigem cobertura mínima d
 
 As regras para novos endpoints estão em `docs/API_CONVENTIONS.md`. O contrato executável da aplicação pode ser consultado em `http://localhost:8000/openapi.json` quando a API estiver ativa.
 
-Os logs da aplicação são emitidos como JSON em `stdout`. Use `docker compose logs --follow api` para acompanhá-los e consulte `docs/LOGGING.md` para o contrato dos eventos.
+Os logs da aplicação são emitidos como JSON em `stdout`. Use
+`docker compose logs --follow api telegram_notifier` para acompanhá-los e
+consulte `docs/LOGGING.md` para o contrato dos eventos.
 
 ## Pipeline local
 

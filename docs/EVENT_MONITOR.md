@@ -9,6 +9,6 @@ e publicação foram implementadas na TASK-043
 implementou a reivindicação concorrente e o histórico append-only de tentativas
 por consumidor; o contrato at-least-once e seus limites estão em
 `docs/EVENT_CONSUMPTION.md`. Detecção de fatos além dos alertas de preço
-(TASK-027), consumidores concretos e notificações permanecem nas tarefas
-próprias — ver `docs/PRICE_ALERTS.md`, `docs/tasks/TASK-043.md` e
-`docs/tasks/TASK-044.md`.
+(TASK-027) permanecem nas tarefas próprias. A TASK-036 adicionou o consumidor
+concreto dos dois alertas de preço e sua entrega Telegram; ver
+`docs/PRICE_ALERTS.md`, `docs/EVENT_CONSUMPTION.md` e as TASKs 043–044.

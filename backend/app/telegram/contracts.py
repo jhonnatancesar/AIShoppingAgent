@@ -7,10 +7,20 @@ contrato; a tradução para uma intenção estruturada cabe ao adaptador.
 
 from dataclasses import dataclass
 from datetime import datetime
+from enum import StrEnum
 
 
 class TelegramContractError(ValueError):
     """Indica uma mensagem do Telegram fora do contrato esperado."""
+
+
+class TelegramChatType(StrEnum):
+    """Tipos de conversa expostos pela Bot API."""
+
+    PRIVATE = "private"
+    GROUP = "group"
+    SUPERGROUP = "supergroup"
+    CHANNEL = "channel"
 
 
 @dataclass(frozen=True, slots=True)
@@ -18,6 +28,7 @@ class TelegramMessage:
     """Mensagem bruta recebida de uma conversa do Telegram."""
 
     chat_id: int
+    chat_type: TelegramChatType
     user_id: int
     text: str
     received_at: datetime
@@ -25,6 +36,8 @@ class TelegramMessage:
     def __post_init__(self) -> None:
         _require_int(self.chat_id, "chat_id")
         _require_int(self.user_id, "user_id")
+        if not isinstance(self.chat_type, TelegramChatType):
+            raise TelegramContractError("chat_type must use TelegramChatType")
         if not isinstance(self.text, str) or not self.text.strip():
             raise TelegramContractError("text must not be blank")
         if (

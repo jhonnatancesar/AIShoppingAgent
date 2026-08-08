@@ -2,9 +2,13 @@ name: aishoppingagent
 
 services:
   api:
+    image: aishoppingagent-app:local
     build:
       context: ./backend
       dockerfile: Dockerfile
+    env_file:
+      - path: ./backend/.env
+        required: false
     environment:
       AISHOPPING_APP_NAME: ${AISHOPPING_APP_NAME:-AIShoppingAgent}
       AISHOPPING_DEBUG: ${AISHOPPING_DEBUG:-false}
@@ -30,6 +34,28 @@ services:
       timeout: 3s
       retries: 10
       start_period: 5s
+
+  telegram_notifier:
+    image: aishoppingagent-app:local
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    env_file:
+      - path: ./backend/.env
+        required: false
+    environment:
+      AISHOPPING_ENVIRONMENT: ${AISHOPPING_ENVIRONMENT:-development}
+      AISHOPPING_LOG_LEVEL: ${AISHOPPING_LOG_LEVEL:-INFO}
+      AISHOPPING_DATABASE_HOST: database
+      AISHOPPING_DATABASE_PORT: 5432
+      AISHOPPING_DATABASE_NAME: ${POSTGRES_DB:-aishoppingagent}
+      AISHOPPING_DATABASE_USER: ${POSTGRES_USER:-aishoppingagent}
+      AISHOPPING_DATABASE_PASSWORD: ${POSTGRES_PASSWORD:?define POSTGRES_PASSWORD in the root .env file}
+    command: ["python", "-m", "app.telegram.worker"]
+    depends_on:
+      database:
+        condition: service_healthy
+    restart: unless-stopped
 
   database:
     image: postgres:18-alpine

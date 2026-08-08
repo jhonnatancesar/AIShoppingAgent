@@ -99,6 +99,28 @@ def test_claim_returns_deterministic_locked_events() -> None:
     assert statement._for_update_arg.of == [Event.__table__]
 
 
+def test_claim_can_filter_event_types_for_a_concrete_consumer() -> None:
+    session = MagicMock()
+    session.scalars.return_value = []
+
+    claim_unconsumed_events(
+        session,
+        consumer_name="telegram_price_alerts_v1",
+        event_types={"price.target_reached.v1", "price.decreased.v1"},
+    )
+
+    rendered = str(session.scalars.call_args.args[0])
+    assert "events.event_type IN" in rendered
+
+
+@pytest.mark.parametrize("event_types", [set(), {""}])
+def test_claim_rejects_invalid_event_type_filter(event_types: set[str]) -> None:
+    with pytest.raises(EventConsumptionError, match="event_types"):
+        claim_unconsumed_events(
+            MagicMock(), consumer_name="consumer", event_types=event_types
+        )
+
+
 @pytest.mark.parametrize("limit", [0, 1001])
 def test_claim_rejects_invalid_limit(limit: int) -> None:
     with pytest.raises(EventConsumptionError, match="limit"):
