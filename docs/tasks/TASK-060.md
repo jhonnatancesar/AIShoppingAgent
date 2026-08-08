@@ -57,7 +57,7 @@ despacho do webhook.
 - Não implementa senha nem autenticação real — ver TASK-061 (`DEC-019`).
 - Não altera o vocabulário fechado de `IntentKind`/`IntentParameters`/
   `MissionCommand`.
-- Não é a TASK-036 (notificações) nem a TASK-037 (preferências de usuário)
+- Não é a TASK-036 (notificações) nem a TASK-037 (preferências de notificação)
   nem a TASK-058 (confirmação de intenção antes de executar).
 
 ## Critério de aceite

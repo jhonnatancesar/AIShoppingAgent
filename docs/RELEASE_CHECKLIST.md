@@ -12,12 +12,12 @@ TASK-054 (preparar release), que ainda está pendente.
 
 Atualizar este documento sempre que uma TASK relevante para produção for
 concluída ou revisada. Snapshot gerado em **2026-08-08**, logo após a
-conclusão da TASK-036.
+conclusão da TASK-037.
 
 ## Resumo executivo
 
-**Não está pronto para produção.** 46 das 62 tarefas planejadas estão
-concluídas, mas as 16 pendentes cobrem exatamente as áreas que separam
+**Não está pronto para produção.** 47 das 62 tarefas planejadas estão
+concluídas, mas as 15 pendentes cobrem exatamente as áreas que separam
 "funciona quando eu valido manualmente" de "está seguro para um usuário
 real depender disso": autenticação, autorização, segredos, observabilidade,
 resiliência, recomendação/compra e — mais importante — não existe hoje nenhum
@@ -73,7 +73,7 @@ Além dos critérios formais do MVP:
 | Ciclo de vida de missões | TASK-018 | 1/1 | — |
 | Missões e coleta | TASK-019 a TASK-026 | 8/8 | — |
 | Alertas de preço | TASK-027 | 1/1 | — |
-| Gerenciador de IA e Telegram | TASK-028 a TASK-037 | 9/10 | TASK-037 |
+| Gerenciador de IA e Telegram | TASK-028 a TASK-037 | 10/10 | — |
 | Compra e eventos | TASK-038 a TASK-041, TASK-043 a TASK-045 | 2/7 | TASK-038 a TASK-041, TASK-045 |
 | Catálogo de eventos | TASK-042 | 1/1 | — |
 | Segurança e entrega | TASK-046 a TASK-054 | 0/9 | TASK-046 a TASK-054 |
@@ -81,7 +81,7 @@ Além dos critérios formais do MVP:
 | Robustez, confirmação e IA (V1.2 antecipado) | TASK-057 a TASK-060 | 4/4 | — |
 | Autenticação real (V1.2) | TASK-061 | 0/1 | TASK-061 |
 
-**Total: 46 concluídas, 16 pendentes.**
+**Total: 47 concluídas, 15 pendentes.**
 
 ## Recomendação
 
@@ -90,6 +90,6 @@ seguro. Colocar um usuário real dependendo do sistema hoje não é — os
 maiores riscos são a ausência de coleta automática (a missão nunca
 "funciona sozinha") e a ausência de autenticação/autorização reais. A
 ordem mais natural para fechar essas lacunas segue o próprio
-`docs/ROADMAP.md`: TASK-037 → TASK-038 a TASK-041 → TASK-045 → fase de
+`docs/ROADMAP.md`: TASK-038 a TASK-041 → TASK-045 → fase de
 Segurança e entrega (TASK-046 a TASK-054), com a TASK-061 podendo entrar
 antes ou depois dependendo de quando a V1.2 for retomada.

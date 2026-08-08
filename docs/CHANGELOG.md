@@ -1,5 +1,28 @@
 # Changelog
 
+## 2026-08-08 — TASK-037: preferências de notificações Telegram
+
+- Corrigido o escopo genérico da TASK-037 (`DEC-025`): ela controla somente
+  notificações de queda de preço e preço-alvo; lojas, categorias, e-mail,
+  autenticação e todo o cadastro da TASK-060 permaneceram inalterados.
+- Adicionado `/preferencias`, sem IA e sem botões, para consultar e executar
+  `quedas ativar|desativar` e `alvo ativar|desativar`; o menu real do bot foi
+  atualizado.
+- A revisão `20260808_0006` adiciona `notify_price_decreases` e
+  `notify_target_reached` a `users`, ambos obrigatórios e `true` por padrão,
+  inclusive para registros existentes.
+- `ConsumptionOutcome` ganhou `skipped`: sem `failure_code`, append-only e
+  terminal como `succeeded`. O índice e `claim_unconsumed_events` consideram
+  ambos terminais, evitando retry, pendência e reenvio retroativo após
+  reativação.
+- PostgreSQL 18 isolado aprovou defaults, constraints, índice e ciclo
+  `upgrade → downgrade → upgrade`. Validação real com Telegram registrou dois
+  `skipped`, entregou somente um evento novo após reativação e terminou sem
+  pendências; dados de teste foram revertidos.
+- Pipeline completo aprovado em Python 3.14.6: 429 testes, 94,97% de cobertura,
+  Ruff, grafo Alembic com head único e Docker Compose válidos; imagem Linux
+  reconstruída e smoke test do novo contrato aprovado.
+
 ## 2026-08-08 — TASK-036: notificações proativas Telegram
 
 - Adicionado `users.telegram_chat_id` pela migração `20260808_0005`, com

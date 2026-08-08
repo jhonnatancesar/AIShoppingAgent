@@ -18,6 +18,7 @@ from app.events import (
 from app.missions.models import Mission
 from app.telegram.bot_api import TelegramBotAPIError, send_message
 from app.telegram.contracts import TelegramChatType, TelegramMessage
+from app.telegram.preferences import notification_is_enabled
 from app.users.models import User
 
 logger = logging.getLogger("app.telegram.notifications")
@@ -37,11 +38,16 @@ class TelegramNotificationError(ValueError):
         super().__init__(failure_code)
 
 
+class TelegramNotificationSkipped(RuntimeError):
+    """O usuário desativou o tipo de alerta; o consumo termina sem envio."""
+
+
 @dataclass(frozen=True, slots=True)
 class TelegramNotificationBatch:
     claimed: int
     succeeded: int
     failed: int
+    skipped: int
 
 
 def remember_private_notification_chat(user: User, message: TelegramMessage) -> bool:
@@ -69,21 +75,21 @@ async def process_telegram_notifications(
     )
     succeeded = 0
     failed = 0
+    skipped = 0
     for event in events:
         failure_code: str | None = None
+        outcome = ConsumptionOutcome.SUCCEEDED
         try:
             recipient, text = _prepare_notification(session, event)
             await send_message(recipient, text, bot_token=bot_token)
+        except TelegramNotificationSkipped:
+            outcome = ConsumptionOutcome.SKIPPED
         except TelegramNotificationError as error:
             failure_code = error.failure_code
+            outcome = ConsumptionOutcome.FAILED
         except ConnectionError, TelegramBotAPIError:
             failure_code = "telegram_delivery_failed"
-
-        outcome = (
-            ConsumptionOutcome.SUCCEEDED
-            if failure_code is None
-            else ConsumptionOutcome.FAILED
-        )
+            outcome = ConsumptionOutcome.FAILED
         record_consumption_attempt(
             session,
             event=event,
@@ -92,8 +98,10 @@ async def process_telegram_notifications(
             attempted_at=utc_now(),
             failure_code=failure_code,
         )
-        if failure_code is None:
+        if outcome is ConsumptionOutcome.SUCCEEDED:
             succeeded += 1
+        elif outcome is ConsumptionOutcome.SKIPPED:
+            skipped += 1
         else:
             failed += 1
             logger.warning(
@@ -103,7 +111,7 @@ async def process_telegram_notifications(
                     "notification_failure_code": failure_code,
                 },
             )
-    return TelegramNotificationBatch(len(events), succeeded, failed)
+    return TelegramNotificationBatch(len(events), succeeded, failed, skipped)
 
 
 def _prepare_notification(session: Session, event: Event) -> tuple[int, str]:
@@ -113,7 +121,11 @@ def _prepare_notification(session: Session, event: Event) -> tuple[int, str]:
     if mission is None:
         raise TelegramNotificationError("notification_mission_missing")
     user = session.get(User, mission.user_id)
-    if user is None or user.telegram_chat_id is None:
+    if user is None:
+        raise TelegramNotificationError("notification_recipient_missing")
+    if not notification_is_enabled(user, event.event_type):
+        raise TelegramNotificationSkipped
+    if user.telegram_chat_id is None:
         raise TelegramNotificationError("notification_recipient_missing")
     if not user.is_active:
         raise TelegramNotificationError("notification_recipient_inactive")

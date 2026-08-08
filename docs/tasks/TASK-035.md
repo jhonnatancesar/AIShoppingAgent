@@ -36,7 +36,7 @@ pelas TASKs 032 a 034.
   desde a TASK-032. A apresentação interativa fica para uma evolução futura.
 - Sem autenticação real, sem lógica nova de identidade (reaproveita a
   TASK-056), sem notificações proativas (TASK-036) e sem preferências de
-  usuário (TASK-037).
+  notificação (TASK-037).
 
 ## Critério de aceite
 

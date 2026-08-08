@@ -21,7 +21,12 @@ from pydantic import SecretStr
 NOW = datetime(2026, 8, 8, 20, 0, tzinfo=UTC)
 
 
-def _user(*, chat_id: int | None = 123) -> User:
+def _user(
+    *,
+    chat_id: int | None = 123,
+    notify_price_decreases: bool = True,
+    notify_target_reached: bool = True,
+) -> User:
     return User(
         id=uuid4(),
         display_name="Cliente",
@@ -29,6 +34,8 @@ def _user(*, chat_id: int | None = 123) -> User:
         is_active=True,
         telegram_user_id=123,
         telegram_chat_id=chat_id,
+        notify_price_decreases=notify_price_decreases,
+        notify_target_reached=notify_target_reached,
     )
 
 
@@ -149,11 +156,47 @@ async def test_process_sends_alert_and_records_success(
 
     assert result.claimed == result.succeeded == 1
     assert result.failed == 0
+    assert result.skipped == 0
     assert sent[0][0] == 123
     assert expected_fragment in sent[0][1]
     attempt = session.add.call_args.args[0]
     assert attempt.consumer_name == TELEGRAM_NOTIFICATION_CONSUMER
     assert attempt.outcome is ConsumptionOutcome.SUCCEEDED
+    assert attempt.failure_code is None
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("event_type", "user_overrides"),
+    [
+        ("price.decreased.v1", {"notify_price_decreases": False}),
+        ("price.target_reached.v1", {"notify_target_reached": False}),
+    ],
+)
+async def test_process_records_disabled_preference_as_terminal_skipped(
+    monkeypatch: pytest.MonkeyPatch,
+    event_type: str,
+    user_overrides: dict[str, bool],
+) -> None:
+    user = _user(**user_overrides)
+    mission = _mission(user)
+    event = _event(mission, event_type=event_type)
+    session = MagicMock()
+    session.get.side_effect = [mission, user]
+    monkeypatch.setattr(
+        "app.telegram.notifications.claim_unconsumed_events",
+        lambda *args, **kwargs: [event],
+    )
+    send = MagicMock()
+    monkeypatch.setattr("app.telegram.notifications.send_message", send)
+
+    result = await process_telegram_notifications(session, bot_token=SecretStr("token"))
+
+    assert result.claimed == result.skipped == 1
+    assert result.succeeded == result.failed == 0
+    send.assert_not_called()
+    attempt = session.add.call_args.args[0]
+    assert attempt.outcome is ConsumptionOutcome.SKIPPED
     assert attempt.failure_code is None
 
 

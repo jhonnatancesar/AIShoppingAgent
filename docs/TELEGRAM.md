@@ -19,9 +19,9 @@ gera uma tentativa append-only; falhas de destino, payload ou Bot API podem ser
 tentadas novamente. Detalhes operacionais estão em
 `docs/EVENT_CONSUMPTION.md`.
 
-## Comandos dedicados (TASK-060)
+## Comandos dedicados
 
-Dois comandos são reconhecidos diretamente pelo webhook, antes de qualquer
+Três comandos são reconhecidos diretamente pelo webhook, antes de qualquer
 interpretação por IA — não passam pelo vocabulário fechado do
 `IntentInterpreter`:
 
@@ -31,6 +31,13 @@ interpretação por IA — não passam pelo vocabulário fechado do
 - `/upgrade`: existe e aparece no menu do bot, mas responde apenas que a
   função está "em breve" — nenhuma lógica real de mudança de plano ou
   perfil está implementada.
+- `/preferencias` (TASK-037): consulta as notificações e aceita
+  `quedas ativar|desativar` ou `alvo ativar|desativar`. Não altera cadastro,
+  e-mail, autenticação ou fontes e não usa botões.
+
+As preferências começam ativadas. Um alerta bloqueado é consumido como
+`skipped`, sem retry nem reenvio retroativo. A entrega continua restrita ao
+chat privado da própria pessoa.
 
 O perfil de IA usado por uma interação real (`USER` vs `ADMIN`/`DEV`) é
 decidido pelo `User.role` já resolvido, nunca por escolha do próprio

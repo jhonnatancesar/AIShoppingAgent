@@ -61,6 +61,8 @@ def _fake_user(
         role=role,
         telegram_user_id=222,
         telegram_chat_id=None,
+        notify_price_decreases=True,
+        notify_target_reached=True,
         is_active=True,
         registration_step=registration_step,
         pending_intent=pending_intent,
@@ -891,6 +893,65 @@ async def test_upgrade_command_replies_statically_without_calling_ai(
     assert response.status_code == 204
     assert adapter.calls == []
     assert "em breve" in send_calls[0][1].lower()
+
+
+@pytest.mark.anyio
+async def test_preferences_command_queries_without_calling_ai(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_user = _fake_user()
+    _patch_user(monkeypatch, fake_user)
+    send_calls = _patch_send_message(monkeypatch)
+    adapter = _FakeAdapter(_intent())
+
+    response = await receive_telegram_webhook(
+        update=_update(
+            message=_TelegramIncomingMessage(
+                text="/preferencias",
+                date=1754586000,
+                chat=_TelegramChat(id=222, type=TelegramChatType.PRIVATE),
+                from_=_TelegramSender(id=222, first_name="Fulano"),
+            )
+        ),
+        x_telegram_bot_api_secret_token="correct-secret",
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        settings=_settings(),
+        session=MagicMock(),
+    )
+
+    assert response.status_code == 204
+    assert adapter.calls == []
+    assert "quedas de preço: ativadas" in send_calls[0][1].lower()
+    assert "preço-alvo atingido: ativadas" in send_calls[0][1].lower()
+
+
+@pytest.mark.anyio
+async def test_preferences_command_disables_only_requested_alert(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_user = _fake_user()
+    _patch_user(monkeypatch, fake_user)
+    _patch_send_message(monkeypatch)
+    adapter = _FakeAdapter(_intent())
+
+    await receive_telegram_webhook(
+        update=_update(
+            message=_TelegramIncomingMessage(
+                text="/preferencias quedas desativar",
+                date=1754586000,
+                chat=_TelegramChat(id=222, type=TelegramChatType.PRIVATE),
+                from_=_TelegramSender(id=222, first_name="Fulano"),
+            )
+        ),
+        x_telegram_bot_api_secret_token="correct-secret",
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        settings=_settings(),
+        session=MagicMock(),
+    )
+
+    assert adapter.calls == []
+    assert fake_user.notify_price_decreases is False
+    assert fake_user.notify_target_reached is True
 
 
 @pytest.mark.anyio

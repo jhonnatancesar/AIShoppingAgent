@@ -43,7 +43,8 @@ reset ausente permanece `null`; a aplicação não estima nem inventa esse prazo
 ## Notificações Telegram
 
 O worker emite `telegram_notification_batch` para lotes com eventos e inclui
-somente contagens de reivindicados, sucessos e falhas; lotes vazios ficam em
+somente contagens de reivindicados, sucessos, falhas e descartados por
+preferência (`notification_skipped`); lotes vazios ficam em
 `DEBUG`. Falhas conhecidas emitem `telegram_notification_failed` com `event_id`
 e código sanitizado. Chat, usuário, texto, payload, resposta bruta e token não
 são registrados.

@@ -15,7 +15,7 @@ exclusivamente o `IntentInterpreter` da TASK-032.
 - `TelegramIntentAdapter`, que encaminha a mensagem ao `IntentInterpreter`
   já existente e devolve o `Intent` resultante sem interpretá-lo.
 - Nenhum SDK do Telegram, webhook, comando, teclado, notificação ou
-  preferência de usuário (TASK-034 a TASK-037).
+  preferência de notificação (TASK-034 a TASK-037).
 
 ## Critério de aceite
 

@@ -64,7 +64,7 @@ de alerta; apenas mantém um destino seguro para o consumidor desacoplado.
 
 ## Limites
 
-Este módulo não usa nenhum SDK do Telegram, não define teclado interativo e
-não resolve preferências de usuário. A apresentação interativa pertence a uma
-evolução futura; preferências pertencem à TASK-037. A entrega proativa fica no
-consumidor `app.telegram.notifications`, não na fronteira de entrada.
+O adaptador de intenção não usa SDK, não define teclado interativo e não resolve
+preferências. A TASK-037 adicionou `/preferencias` diretamente no roteador,
+antes da IA, por `app.telegram.preferences`; isso não altera esta fronteira. A
+entrega proativa fica em `app.telegram.notifications`.

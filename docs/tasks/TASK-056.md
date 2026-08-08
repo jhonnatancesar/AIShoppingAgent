@@ -25,7 +25,7 @@ proprietário válido.
 - Não implementar login, senha, OAuth, sessão, token ou qualquer mecanismo
   de autenticação real — isso pertence à TASK-046. Não implementar
   autorização (TASK-047).
-- Não implementar preferências de usuário (permanece na TASK-037, que passa
+- Não implementar preferências de notificação (permanece na TASK-037, que passa
   a poder assumir um `User` já vinculado) nem qualquer lógica de missão:
   esta tarefa só garante a existência e a resolução do `User`, sem criar,
   consultar ou transicionar missões.

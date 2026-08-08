@@ -53,6 +53,7 @@ async def run_worker(
                     "notification_claimed": result.claimed,
                     "notification_succeeded": result.succeeded,
                     "notification_failed": result.failed,
+                    "notification_skipped": result.skipped,
                 },
             )
             if once:

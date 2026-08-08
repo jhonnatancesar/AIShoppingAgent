@@ -31,6 +31,12 @@ A API ficará disponível em `http://localhost:8000`, o PostgreSQL em
 alertas de preço. Para encerrar os contêineres sem apagar o volume do banco,
 execute `docker compose down`.
 
+No Telegram, `/preferencias` consulta as notificações. Use
+`/preferencias quedas ativar|desativar` e
+`/preferencias alvo ativar|desativar` para configurá-las separadamente.
+Ambas começam ativadas; eventos bloqueados pela preferência não são reenviados
+quando ela for reativada.
+
 Com a API em execução, verifique sua vivacidade em `http://localhost:8000/health`. A resposta esperada é:
 
 ```json

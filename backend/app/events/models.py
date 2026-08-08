@@ -85,6 +85,7 @@ class Event(Base):
 class ConsumptionOutcome(StrEnum):
     SUCCEEDED = "succeeded"
     FAILED = "failed"
+    SKIPPED = "skipped"
 
 
 class EventConsumptionAttempt(Base):
@@ -97,16 +98,16 @@ class EventConsumptionAttempt(Base):
             name="ck_event_consumption_attempts_consumer_not_blank",
         ),
         CheckConstraint(
-            "(outcome = 'succeeded' AND failure_code IS NULL) OR "
+            "(outcome IN ('succeeded', 'skipped') AND failure_code IS NULL) OR "
             "(outcome = 'failed' AND failure_code IS NOT NULL AND "
             "failure_code ~ '^[a-z][a-z0-9]*(_[a-z0-9]+)*$')",
             name="ck_event_consumption_attempts_outcome_failure",
         ),
         Index(
-            "ix_event_consumption_attempts_success",
+            "ix_event_consumption_attempts_terminal",
             "consumer_name",
             "event_id",
-            postgresql_where=text("outcome = 'succeeded'"),
+            postgresql_where=text("outcome IN ('succeeded', 'skipped')"),
         ),
     )
 

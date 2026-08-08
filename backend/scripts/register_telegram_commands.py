@@ -5,6 +5,7 @@ from app.telegram.bot_api import call_bot_api
 
 _COMMANDS = [
     {"command": "cadastro", "description": "Cadastrar dados básicos do seu perfil"},
+    {"command": "preferencias", "description": "Configurar notificações"},
     {"command": "upgrade", "description": "Mudar de perfil (em breve)"},
 ]
 

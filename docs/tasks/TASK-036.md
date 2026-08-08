@@ -20,7 +20,7 @@ compatível com Docker e Ubuntu Server.
   da TASK-044; falha permanece elegível para retry at-least-once.
 - Disponibilizar processo contínuo `python -m app.telegram.worker` e o serviço
   Docker Compose `telegram_notifier`.
-- Não implementar preferências (TASK-037), backoff/dead-letter queue
+- Não implementar preferências de notificação (TASK-037), backoff/dead-letter queue
   (resiliência futura), e-mail, scheduler de coleta ou novos produtores de
   eventos.
 
@@ -59,5 +59,5 @@ compatível com Docker e Ubuntu Server.
 
 ## Próxima tarefa no fluxo
 
-TASK-037 — Criar preferências de usuário.
+TASK-037 — Criar preferências de notificações.
 

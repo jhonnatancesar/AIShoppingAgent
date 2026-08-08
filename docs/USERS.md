@@ -12,6 +12,10 @@
   (`message.from.id` no `Update`), introduzido pela TASK-056;
 - `telegram_chat_id`: destino opcional e único de notificação, persistido pela
   TASK-036 somente para o chat `private` da mesma pessoa;
+- `notify_price_decreases`: ativa notificações de queda de preço, `true` por
+  padrão (TASK-037);
+- `notify_target_reached`: ativa notificações de preço-alvo atingido, `true`
+  por padrão (TASK-037);
 - `username`: nome de usuário opcional e único do cadastro inicial (TASK-060),
   até 32 caracteres, não vazio quando presente;
 - `email`: e-mail opcional do cadastro inicial (TASK-060), até 254
@@ -71,6 +75,9 @@ O papel `PLUS` permanece fora do MVP. O campo `role` ainda não concede permiss�
   bot, mas responde apenas que a função está "em breve" — nenhuma lógica
   real de mudança de plano/perfil está implementada
   (`docs/OUT_OF_SCOPE.md`).
+- O comando `/preferencias` (TASK-037) consulta ou altera exclusivamente
+  `notify_price_decreases` e `notify_target_reached`, sem modificar nenhum
+  campo do cadastro da TASK-060. O fluxo é textual, sem IA e sem botões.
 
 O modelo está em `backend/app/users/models.py`; sua criação reversível está na
 revisão Alembic `20260802_0002`, `telegram_user_id` foi adicionado pela
@@ -79,4 +86,5 @@ revisão `20260808_0001`. A resolução get-or-create está em
 `backend/app/users/service.py`; o fluxo de cadastro está em
 `backend/app/users/registration.py`. O destino privado foi adicionado pela
 revisão `20260808_0005` e é atualizado pelo webhook por meio de
-`app.telegram.notifications.remember_private_notification_chat`.
+`app.telegram.notifications.remember_private_notification_chat`. As duas
+preferências foram adicionadas pela revisão `20260808_0006`.

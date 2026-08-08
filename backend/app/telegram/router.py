@@ -60,6 +60,7 @@ from app.telegram.contracts import (
     TelegramMessage,
 )
 from app.telegram.notifications import remember_private_notification_chat
+from app.telegram.preferences import PREFERENCES_COMMAND, handle_preferences_command
 from app.users.models import User, UserRole
 from app.users.registration import (
     RegistrationError,
@@ -209,6 +210,8 @@ async def _handle_message(
         return start_registration(user)
     if lowered == _UPGRADE_COMMAND:
         return _UPGRADE_REPLY
+    if lowered == PREFERENCES_COMMAND or lowered.startswith(f"{PREFERENCES_COMMAND} "):
+        return handle_preferences_command(user, lowered)
     if user.registration_step is not None:
         try:
             return advance_registration(user, answer=message.text)

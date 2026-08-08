@@ -46,7 +46,7 @@ do escopo da TASK-057.
 ## Fora de escopo
 
 - Não é a TASK-036 (notificações proativas orientadas a evento) nem a
-  TASK-037 (preferências de usuário).
+  TASK-037 (preferências de notificação).
 - Não expõe teclado interativo nem qualquer UI além de texto.
 
 ## Critério de aceite

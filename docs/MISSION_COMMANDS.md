@@ -102,4 +102,4 @@ a sessão. Os serviços de missão continuam usando `session.flush()`, nunca
 Este documento não cobre autenticação real de usuário (TASK-046), comandos
 apresentados por teclado interativo (evolução futura), notificações
 proativas (implementadas separadamente na TASK-036) nem preferências de
-usuário (TASK-037).
+notificações (implementadas separadamente na TASK-037).

@@ -87,6 +87,18 @@ class User(Base):
         unique=True,
         nullable=True,
     )
+    notify_price_decreases: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=True,
+        server_default="true",
+    )
+    notify_target_reached: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=True,
+        server_default="true",
+    )
     username: Mapped[str | None] = mapped_column(
         String(32),
         unique=True,

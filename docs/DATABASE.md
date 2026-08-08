@@ -52,6 +52,8 @@ Identidade interna usada como proprietária de missões e como ator auditável.
 | `is_active` | `boolean` | Obrigatório, padrão `true`. |
 | `telegram_user_id` | `bigint` | Opcional, único; identifica a pessoa no Telegram (TASK-056). |
 | `telegram_chat_id` | `bigint` | Opcional, único; chat privado da mesma pessoa para notificações (TASK-036). |
+| `notify_price_decreases` | `boolean` | Obrigatório, padrão `true`; notificações de queda (TASK-037). |
+| `notify_target_reached` | `boolean` | Obrigatório, padrão `true`; notificações de preço-alvo (TASK-037). |
 | `username` | `varchar(32)` | Opcional, único; cadastro inicial (TASK-060). |
 | `email` | `varchar(254)` | Opcional; cadastro inicial (TASK-060). |
 | `favorite_stores` | `varchar(32)[]` | Obrigatório, padrão `{}`; cadastro inicial (TASK-060). |
@@ -65,7 +67,8 @@ Credenciais de autenticação real (senha, token) não pertencem a esta tabela n
 Esta entidade foi implementada na TASK-012 pela revisão `20260802_0002`,
 `telegram_user_id` pela revisão `20260807_0001`, os campos do cadastro
 inicial pela revisão `20260808_0001` e `telegram_chat_id` pela revisão
-`20260808_0005`. Seu contrato funcional e limites estão em `docs/USERS.md`.
+`20260808_0005` e as preferências de notificação pela revisão
+`20260808_0006`. Seu contrato funcional e limites estão em `docs/USERS.md`.
 
 ### `missions`
 
@@ -305,14 +308,16 @@ Histórico imutável dos resultados de consumo por consumidor.
 | `id` | `uuid` | Chave primária. |
 | `event_id` | `uuid` | FK obrigatória para `events.id`, com `RESTRICT`. |
 | `consumer_name` | `varchar(64)` | Obrigatório e não vazio. |
-| `outcome` | `consumption_outcome` | Enum `succeeded` ou `failed`. |
-| `failure_code` | `varchar(120)` | Nulo no sucesso; obrigatório e em snake_case na falha. |
+| `outcome` | `consumption_outcome` | Enum `succeeded`, `failed` ou `skipped`. |
+| `failure_code` | `varchar(120)` | Nulo em `succeeded`/`skipped`; obrigatório e em snake_case na falha. |
 | `attempted_at` | `timestamptz` | Obrigatório e informado pelo consumidor. |
 
-A TASK-044 implementou a tabela pela revisão `20260808_0004`. Um trigger
+A TASK-044 implementou a tabela pela revisão `20260808_0004`; a TASK-037
+adicionou o resultado terminal `skipped` pela revisão `20260808_0006`. Um trigger
 rejeita `UPDATE`/`DELETE`; falhas permanecem como evidência e não impedem novo
-consumo. A elegibilidade exclui somente eventos com sucesso do mesmo
-`consumer_name`. O contrato transacional está em `docs/EVENT_CONSUMPTION.md`.
+consumo. A elegibilidade exclui eventos com resultado terminal (`succeeded` ou
+`skipped`) do mesmo `consumer_name`. O contrato transacional está em
+`docs/EVENT_CONSUMPTION.md`.
 
 ### `audit_entries`
 
@@ -346,7 +351,7 @@ em `docs/AUDIT.md`.
 - `price_observations (offer_id, observed_at desc, id)` para histórico de uma oferta.
 - `price_observations (collection_run_id)` para rastrear os resultados de uma coleta.
 - `events (aggregate_type, aggregate_id, occurred_at, id)` e `events (mission_id, occurred_at, id)`.
-- `event_consumption_attempts (consumer_name, event_id)` parcial para tentativas com resultado `succeeded`.
+- `event_consumption_attempts (consumer_name, event_id)` parcial para tentativas terminais (`succeeded` ou `skipped`).
 - `audit_entries (resource_type, resource_id, created_at, id)` e `audit_entries (actor_id, created_at)` quando `actor_id` não for nulo.
 
 Índices adicionais devem ser justificados por consultas reais; não serão antecipados.

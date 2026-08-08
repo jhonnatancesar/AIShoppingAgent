@@ -22,20 +22,22 @@ def claim_unconsumed_events(
     limit: int = 100,
     event_types: Collection[str] | None = None,
 ) -> list[Event]:
-    """Bloqueia eventos sem sucesso do consumidor na transação corrente."""
+    """Bloqueia eventos sem resultado terminal do consumidor na transação."""
     _validate_consumer_name(consumer_name)
     if not 1 <= limit <= 1000:
         raise EventConsumptionError("limit must be between 1 and 1000")
     normalized_event_types = _validate_event_types(event_types)
 
-    succeeded = exists(
+    terminal = exists(
         select(EventConsumptionAttempt.id).where(
             EventConsumptionAttempt.event_id == Event.id,
             EventConsumptionAttempt.consumer_name == consumer_name,
-            EventConsumptionAttempt.outcome == ConsumptionOutcome.SUCCEEDED,
+            EventConsumptionAttempt.outcome.in_(
+                (ConsumptionOutcome.SUCCEEDED, ConsumptionOutcome.SKIPPED)
+            ),
         )
     )
-    statement = select(Event).where(~succeeded)
+    statement = select(Event).where(~terminal)
     if normalized_event_types is not None:
         statement = statement.where(Event.event_type.in_(normalized_event_types))
     statement = (
@@ -106,9 +108,9 @@ def _require_aware(attempted_at: datetime) -> None:
 
 
 def _validate_failure(outcome: ConsumptionOutcome, failure_code: str | None) -> None:
-    if outcome is ConsumptionOutcome.SUCCEEDED:
+    if outcome in (ConsumptionOutcome.SUCCEEDED, ConsumptionOutcome.SKIPPED):
         if failure_code is not None:
-            raise EventConsumptionError("successful attempt cannot have failure_code")
+            raise EventConsumptionError("terminal attempt cannot have failure_code")
         return
     if (
         not isinstance(failure_code, str)

@@ -33,6 +33,8 @@ def test_user_table_matches_data_contract() -> None:
         table.c.is_active,
         table.c.telegram_user_id,
         table.c.telegram_chat_id,
+        table.c.notify_price_decreases,
+        table.c.notify_target_reached,
         table.c.username,
         table.c.email,
         table.c.favorite_stores,
@@ -54,6 +56,10 @@ def test_user_table_matches_data_contract() -> None:
     assert isinstance(table.c.telegram_user_id.type, BigInteger)
     assert table.c.telegram_chat_id.nullable is True
     assert isinstance(table.c.telegram_chat_id.type, BigInteger)
+    assert table.c.notify_price_decreases.nullable is False
+    assert str(table.c.notify_price_decreases.server_default.arg) == "true"
+    assert table.c.notify_target_reached.nullable is False
+    assert str(table.c.notify_target_reached.server_default.arg) == "true"
     assert table.c.username.nullable is True
     assert table.c.username.type.length == 32
     assert table.c.email.nullable is True

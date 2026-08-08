@@ -62,13 +62,13 @@ def test_consumption_attempt_table_matches_contract() -> None:
     assert element.target_fullname == "events.id"
     assert element.ondelete == "RESTRICT"
     index = next(index for index in table.indexes if isinstance(index, Index))
-    assert index.name == "ix_event_consumption_attempts_success"
+    assert index.name == "ix_event_consumption_attempts_terminal"
     assert tuple(column.name for column in index.columns) == (
         "consumer_name",
         "event_id",
     )
     assert str(index.dialect_options["postgresql"]["where"]) == (
-        "outcome = 'succeeded'"
+        "outcome IN ('succeeded', 'skipped')"
     )
 
 
@@ -147,6 +147,7 @@ def test_consumption_rejects_invalid_consumer_name(consumer_name: str) -> None:
     ("outcome", "failure_code"),
     [
         (ConsumptionOutcome.SUCCEEDED, "unexpected_error"),
+        (ConsumptionOutcome.SKIPPED, "preference_disabled"),
         (ConsumptionOutcome.FAILED, None),
         (ConsumptionOutcome.FAILED, "Invalid code"),
         (ConsumptionOutcome.FAILED, "x" * 121),
@@ -200,6 +201,7 @@ def test_record_rejects_invalid_event_outcome_and_time() -> None:
     [
         (ConsumptionOutcome.SUCCEEDED, None),
         (ConsumptionOutcome.FAILED, "delivery_timeout"),
+        (ConsumptionOutcome.SKIPPED, None),
     ],
 )
 def test_record_adds_and_flushes_append_only_attempt(

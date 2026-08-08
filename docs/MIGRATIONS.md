@@ -84,6 +84,11 @@ Regras permanentes:
   constraint que restringe o destino ao chat privado correspondente ao
   `telegram_user_id`; o downgrade preserva a identidade da pessoa e remove
   somente o destino de notificação.
+- `20260808_0006`: adiciona as preferências booleanas de queda de preço e
+  preço-alvo, ambas `true` por padrão; acrescenta `skipped` ao enum de consumo
+  e substitui o índice de sucessos pelo índice terminal (`succeeded` ou
+  `skipped`). O downgrade é seguro enquanto não houver tentativas `skipped`;
+  se houver, ele interrompe em vez de reclassificar ou apagar histórico.
 
 O downgrade de `20260802_0009` não apaga ofertas para forçar compatibilidade. Se
 existirem ofertas de vendedores diferentes com a mesma identidade antiga, elas

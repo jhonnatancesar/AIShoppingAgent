@@ -55,7 +55,8 @@ O webhook do Telegram (TASK-034) não usa SDK — chama a Bot API diretamente co
 `urllib` da biblioteca padrão. Exige `AISHOPPING_TELEGRAM_BOT_TOKEN` (criado via
 `@BotFather` no Telegram, usado por `backend/scripts/register_telegram_webhook.py`
 e por `backend/scripts/register_telegram_commands.py`, que registra os
-comandos `/cadastro` e `/upgrade` da TASK-060 no menu do bot) e
+  comandos `/cadastro`, `/upgrade` (TASK-060) e `/preferencias` (TASK-037) no
+  menu do bot) e
 `AISHOPPING_TELEGRAM_WEBHOOK_SECRET` (valor aleatório local, gerado com
 `secrets.token_urlsafe`, usado para autenticar as requisições recebidas). Ambos
 ficam apenas em `backend/.env`, nunca versionados.

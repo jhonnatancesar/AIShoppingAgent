@@ -47,7 +47,7 @@ async def test_worker_once_processes_and_commits_one_batch(
 
     async def _process(active_session: object, *, bot_token: object, limit: int):
         calls.append((active_session, limit))
-        return TelegramNotificationBatch(claimed=1, succeeded=1, failed=0)
+        return TelegramNotificationBatch(claimed=1, succeeded=1, failed=0, skipped=0)
 
     monkeypatch.setattr("app.telegram.worker.process_telegram_notifications", _process)
 

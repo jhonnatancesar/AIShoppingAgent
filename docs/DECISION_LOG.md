@@ -25,6 +25,26 @@ Após a classificação, registrar a decisão neste arquivo e atualizar a docume
 - **Justificativa:** impacto avaliado e motivo da classificação.
 - **Próxima ação:** documento a atualizar, TASK a criar quando aplicável, ou ação de não implementação.
 
+### DEC-025 — Restringir a TASK-037 a preferências de notificações com skipped terminal
+
+- **Data:** 2026-08-08
+- **Ideia:** resolver a sobreposição aparente entre a TASK-037 genérica
+  ("preferências de usuário") e os campos de lojas/categorias já entregues
+  pela TASK-060, tornando a TASK-037 exclusivamente responsável por ativar ou
+  desativar, de forma independente, notificações de queda de preço e de
+  preço-alvo atingido pelo comando textual `/preferencias`.
+- **Classificação:** Implementar agora.
+- **Justificativa:** `docs/PROJECT_CONTEXT.md` já reservava explicitamente
+  preferências de notificação à TASK-037, enquanto a TASK-060 possui escopo e
+  validação próprios para cadastro. Ambas as notificações começam ativadas para
+  preservar compatibilidade. Tratar opt-out como falha causaria retry infinito;
+  ignorar sem histórico deixaria o consumo sem rastreabilidade. Por isso
+  `skipped` é um resultado append-only, sem `failure_code`, e terminal como
+  `succeeded`: não envia, não fica pendente e não reaparece ao reativar. O chat
+  privado da TASK-036 continua sendo o único destino.
+- **Próxima ação:** TASK-037 concluída e validada contra PostgreSQL e Telegram
+  reais; TASK-060 permanece inalterada. A próxima executável é a TASK-038.
+
 ### DEC-024 — Restringir notificações Telegram a alertas e chats privados
 
 - **Data:** 2026-08-08
@@ -33,7 +53,7 @@ Após a classificação, registrar a decisão neste arquivo e atualizar a docume
   chat privado confirmado do proprietário da missão.
 - **Classificação:** Implementar agora.
 - **Justificativa:** decisões anteriores reservam a TASK-036 às notificações
-  proativas de alerta, enquanto preferências pertencem à TASK-037. Persistir
+  proativas de alerta, enquanto preferências de notificação pertencem à TASK-037. Persistir
   chats de grupos/canais como destino automático poderia expor dados de uma
   missão a terceiros; por isso `telegram_chat_id` só é atualizado quando a Bot
   API identifica `chat.type=private` e o ID corresponde ao
@@ -262,7 +282,7 @@ Após a classificação, registrar a decisão neste arquivo e atualizar a docume
   webhook (resposta síncrona ao comando do usuário), explicitamente fora do
   escopo da TASK-057 (`docs/tasks/TASK-057.md`, seção "Fora de escopo": "Não
   altera `app.telegram`... TASKs 033 a 035") e não coberta pela TASK-036
-  (notificações proativas de alerta) nem pela TASK-037 (preferências).
+  (notificações proativas de alerta) nem pela TASK-037 (preferências de notificação).
   Confirmação de intenção antes de agir é uma decisão de domínio nova e
   não-trivial — mesmo padrão que justificou TASK própria para a identidade
   do Telegram (`DEC-011`) — não um refinamento mecânico que caiba em outra
@@ -397,7 +417,7 @@ Após a classificação, registrar a decisão neste arquivo e atualizar a docume
   domínio" e que autenticação, webhooks, comandos e notificações ficam para
   tarefas posteriores. `docs/ROADMAP.md` já reserva a TASK-034 para o
   webhook real, a TASK-035 para comandos de missão, a TASK-036 para
-  notificações e a TASK-037 para preferências de usuário. Incluir qualquer
+  notificações e a TASK-037 para preferências de notificação. Incluir qualquer
   uma dessas responsabilidades na TASK-033 seria antecipar tarefas futuras,
   proibido por `AGENTS.md`.
 - **Próxima ação:** nenhuma; documentado em `docs/TELEGRAM_ADAPTER.md` e

@@ -72,6 +72,8 @@ ilimitado após falha e considera o sucesso somente para aquele consumidor.
 Concorrência, retry, independência de consumidores, imutabilidade e reversão
 da migração foram validados em PostgreSQL real descartável. Não há worker,
 backoff, dead-letter queue, exactly-once ou integração Telegram.
+Posteriormente, a TASK-037 acrescentou `skipped` como segundo resultado
+terminal, preservando `failed` como o único resultado elegível para retry.
 
 A TASK-036 (`DEC-024`) está **concluída**: a revisão `20260808_0005`
 adicionou `User.telegram_chat_id`, atualizado somente por mensagens privadas da
@@ -82,7 +84,18 @@ pela Bot API e registra sucesso/falha append-only pela TASK-044. Rejeição
 `app.telegram.worker` e como serviço Compose `telegram_notifier`, validado no
 Docker Linux headless. PostgreSQL real confirmou a migração reversível; um
 evento temporário foi entregue ao Telegram real, registrado como `succeeded` e
-revertido sem resíduos. A próxima tarefa executável é a TASK-037.
+revertido sem resíduos.
+
+A TASK-037 (`DEC-025`) está **concluída** e foi restringida exclusivamente a
+preferências de notificações, sem alterar o cadastro da TASK-060. A revisão
+`20260808_0006` adicionou `notify_price_decreases` e
+`notify_target_reached`, ativados por padrão, e estendeu
+`ConsumptionOutcome` com `skipped`. `/preferencias` consulta e altera cada
+opção por texto, sem IA nem botões. Um evento suprimido fica terminal, sem
+retry, pendência ou reenvio retroativo. PostgreSQL real confirmou defaults,
+migração reversível e terminalidade; o Telegram real recebeu os comandos e
+somente o evento novo depois da reativação. A próxima tarefa executável é a
+TASK-038.
 
 A TASK-058 (`DEC-015`) está **concluída**: `create_mission` e
 `mission_command` não executam mais direto — ficam encenados em
@@ -216,6 +229,8 @@ reais observadas em produção.
 - Notificações proativas dos alertas de preço pelo consumidor
   `telegram_price_alerts_v1`, com destino privado persistido, mensagens
   sanitizadas e worker contínuo no Docker Compose (TASK-036).
+- Preferências independentes de notificações de queda e preço-alvo pelo comando
+  `/preferencias`; supressões ficam terminalmente `skipped` (TASK-037).
 - Documentos de visão, arquitetura, dados, módulos-alvo, escopo do MVP, backlog, itens fora de escopo, governança de decisões e workflow permanente de execução.
 - ADRs, RFCs e 62 tarefas planejadas.
 
@@ -227,8 +242,7 @@ Além de `users`, `products`, `stores`, `sellers`, `offers`, `audit_entries`,
 `event_consumption_attempts`, não
 há outras tabelas de domínio implementadas. Também não existem autenticação real (senha, token, OAuth — TASK-061),
 autorização por papel de fato aplicada além da seleção de perfil de IA,
-teclado interativo de seleção de fontes, preferências de notificação
-(TASK-037), mudança real de plano/perfil pelo próprio usuário (o
+teclado interativo de seleção de fontes, mudança real de plano/perfil pelo próprio usuário (o
 `/upgrade` da TASK-060 é só um placeholder inativo), APIs de negócio,
 worker/scheduler de coleta, detecção de `mission.status_changed`/`collection.completed`/
 `collection.failed`/`offer.availability_changed` (nenhuma TASK a atribui
@@ -273,13 +287,16 @@ configuradas.
   `audit_entries`). `recorded_at` é gerado exclusivamente pelo PostgreSQL,
   nunca pela aplicação.
 - Tentativas de consumo são append-only e at-least-once por consumidor: falha
-  mantém o evento elegível, sucesso o encerra só para o mesmo
+  mantém o evento elegível; sucesso ou descarte por preferência o encerram só para o mesmo
   `consumer_name`; reivindicação, processamento e registro devem compartilhar
   a transação controlada pelo chamador (TASK-044).
 - O destino Telegram é sempre o chat privado correspondente à pessoa; chats de
   grupo, supergrupo e canal nunca são persistidos automaticamente. Entregas de
   alerta são at-least-once e podem se repetir se a API aceitar a mensagem antes
   de um rollback do banco (TASK-036).
+- Preferências de queda e preço-alvo começam ativadas; `skipped` é terminal e
+  sem código de falha, portanto opt-out não gera retry nem backlog retroativo
+  (TASK-037).
 - Alertas são candidatos determinísticos derivados do histórico; persistência,
   publicação, consumo e notificação permanecem desacoplados.
 - Módulos da aplicação acessam IA somente por `AIProviderManager`; USER usa apenas

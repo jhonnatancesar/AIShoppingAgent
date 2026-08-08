@@ -38,7 +38,7 @@ uma variedade maior de estilos de escrita, não de um defeito estrutural.
 - Não altera `AIProviderManager`, o perfil `USER` ou o modelo Gemini usado.
 - Não altera `app.telegram` (adaptador, webhook ou despacho de missão —
   TASKs 033 a 035), nem cria teclado interativo, notificações (TASK-036) ou
-  preferências de usuário (TASK-037).
+  preferências de notificação (TASK-037).
 
 ## Critério de aceite
 
