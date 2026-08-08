@@ -132,13 +132,17 @@ def _row(
 def _recommend(rows, *, currency: str | None = "BRL") -> RecommendationResult:
     mission, criteria = _mission(currency=currency)
     session = _SessionStub((mission, criteria), rows)
-    return recommend_for_mission(session, mission.id)  # type: ignore[arg-type]
+    return recommend_for_mission(  # type: ignore[arg-type]
+        session, mission.id, owner_user_id=mission.user_id
+    )
 
 
 def _compare(rows, *, currency: str | None = "BRL"):
     mission, criteria = _mission(currency=currency)
     session = _SessionStub((mission, criteria), rows)
-    return compare_offers_for_mission(session, mission.id)  # type: ignore[arg-type]
+    return compare_offers_for_mission(  # type: ignore[arg-type]
+        session, mission.id, owner_user_id=mission.user_id
+    )
 
 
 def test_recommendation_selects_lowest_determinable_total_and_keeps_evidence() -> None:
@@ -262,14 +266,14 @@ def test_recommendation_rejects_missing_or_inactive_mission() -> None:
     missing_session = _SessionStub(None, [])
     with pytest.raises(MissionNotFoundForRecommendationError):
         recommend_for_mission(  # type: ignore[arg-type]
-            missing_session, UUID(int=100)
+            missing_session, UUID(int=100), owner_user_id=UUID(int=200)
         )
 
     mission, criteria = _mission(status=MissionStatus.PAUSED)
     inactive_session = _SessionStub((mission, criteria), [])
     with pytest.raises(MissionNotActiveForRecommendationError):
         recommend_for_mission(  # type: ignore[arg-type]
-            inactive_session, mission.id
+            inactive_session, mission.id, owner_user_id=mission.user_id
         )
 
 
@@ -277,7 +281,9 @@ def test_recommendation_query_is_restricted_to_mission_sources_and_success() -> 
     mission, criteria = _mission()
     session = _SessionStub((mission, criteria), [])
 
-    recommend_for_mission(session, mission.id)  # type: ignore[arg-type]
+    recommend_for_mission(  # type: ignore[arg-type]
+        session, mission.id, owner_user_id=mission.user_id
+    )
 
     sql = str(
         session.statements[1].compile(
@@ -289,6 +295,13 @@ def test_recommendation_query_is_restricted_to_mission_sources_and_success() -> 
     assert "collection_runs.status = 'succeeded'" in sql
     assert "collection_runs.store_id = stores.id" in sql
     assert "ORDER BY offers.id ASC" in sql
+    mission_sql = str(
+        session.statements[0].compile(
+            dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}
+        )
+    )
+    assert "missions.user_id" in mission_sql
+    assert str(mission.user_id) in mission_sql
 
 
 def test_recommendation_result_enforces_consistent_terminal_shape() -> None:

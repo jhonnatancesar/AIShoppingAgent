@@ -2,8 +2,8 @@
 
 A rota autentica a entrega e, para mensagens de texto, aceita somente a
 identidade de uma pessoa ativa em seu chat privado direto (TASK-046). Depois
-traduz a mensagem em `Intent`, executa comandos já implementados e responde ao
-Telegram. Autorização por papel continua reservada à TASK-047.
+aplica a autorização por papel e ownership da TASK-047, traduz a mensagem em
+`Intent`, executa comandos já implementados e responde ao Telegram.
 """
 
 import logging
@@ -23,10 +23,17 @@ from app.ai_provider import (
     build_admin_dev_ai_provider_manager,
     build_user_ai_provider_manager,
 )
+from app.authorization import (
+    AuthorizationDenied,
+    Permission,
+    ai_profile_for_user,
+    authorize,
+    deny_resource_unavailable,
+)
 from app.core.config import Settings, get_settings
 from app.database.dependency import get_session
 from app.intent import Intent, IntentInterpreter, IntentKind
-from app.missions.models import MissionCommand
+from app.missions.models import Mission, MissionCommand
 from app.missions.query import (
     MissionReferenceError,
     find_missions_by_reference,
@@ -201,10 +208,19 @@ async def receive_telegram_webhook(
         user = authentication.user
         if user is None:
             raise RuntimeError("authenticated user is missing")
+        try:
+            authorize(session, user, Permission.TELEGRAM_INTERACT)
+        except AuthorizationDenied as error:
+            _log_authorization_denial(error, user)
+            return Response(status_code=status.HTTP_204_NO_CONTENT)
+        try:
+            reply = await _handle_message(
+                message, user=user, adapters=adapters, session=session
+            )
+        except AuthorizationDenied as error:
+            _log_authorization_denial(error, user)
+            return Response(status_code=status.HTTP_204_NO_CONTENT)
         remember_private_notification_chat(user, message)
-        reply = await _handle_message(
-            message, user=user, adapters=adapters, session=session
-        )
         if reply is not None and settings.telegram_bot_token is not None:
             await send_message(
                 message.chat_id, reply, bot_token=settings.telegram_bot_token
@@ -221,12 +237,16 @@ async def _handle_message(
 ) -> str | None:
     lowered = message.text.strip().lower()
     if lowered == _CADASTRO_COMMAND:
+        authorize(session, user, Permission.PROFILE_MANAGE)
         return start_registration(user)
     if lowered == _UPGRADE_COMMAND:
+        authorize(session, user, Permission.PROFILE_MANAGE)
         return _UPGRADE_REPLY
     if lowered == PREFERENCES_COMMAND or lowered.startswith(f"{PREFERENCES_COMMAND} "):
+        authorize(session, user, Permission.NOTIFICATION_PREFERENCES_MANAGE)
         return handle_preferences_command(user, lowered)
     if user.registration_step is not None:
+        authorize(session, user, Permission.PROFILE_MANAGE)
         try:
             return advance_registration(user, answer=message.text)
         except RegistrationError as error:
@@ -237,8 +257,10 @@ async def _handle_message(
             message, adapters=adapters, session=session, user=user
         )
 
+    authorize(session, user, Permission.AI_INTERPRET)
+    profile = ai_profile_for_user(session, user)
     try:
-        intent = await adapters[user.role].interpret(message, profile=user.role)
+        intent = await adapters[profile].interpret(message, profile=profile)
     except TelegramContractError, AIProviderError:
         logger.warning(
             "telegram_webhook_intent_failed",
@@ -266,21 +288,31 @@ async def _resolve_pending_intent(
     session: Session,
     user: User,
 ) -> str:
+    permission = (
+        Permission.MISSION_CREATE
+        if user.pending_intent.get("kind") == "create_mission"
+        else Permission.MISSION_TRANSITION
+    )
+    authorize(session, user, permission)
+    profile = ai_profile_for_user(session, user)
     try:
         confirmed = await resolve_answer(
-            message.text, manager=adapters[user.role].manager, profile=user.role
+            message.text, manager=adapters[profile].manager, profile=profile
         )
     except ConfirmationError as error:
         return str(error)
 
     payload = user.pending_intent
-    user.pending_intent = None
     if not confirmed:
+        user.pending_intent = None
         return "Combinado, cancelei."
 
     try:
-        return _execute_pending_intent(payload, session=session, user=user)
+        reply = _execute_pending_intent(payload, session=session, user=user)
+    except AuthorizationDenied:
+        raise
     except _KNOWN_DISPATCH_ERRORS as error:
+        user.pending_intent = None
         logger.warning(
             "telegram_webhook_mission_failed",
             extra={
@@ -289,6 +321,11 @@ async def _resolve_pending_intent(
             },
         )
         return str(error)
+    except Exception:
+        user.pending_intent = None
+        raise
+    user.pending_intent = None
+    return reply
 
 
 def _dispatch_intent(intent: Intent, *, session: Session, user: User) -> str:
@@ -300,10 +337,13 @@ def _dispatch_intent(intent: Intent, *, session: Session, user: User) -> str:
     somente leitura e continua respondendo direto.
     """
     if intent.kind is IntentKind.CREATE_MISSION:
+        authorize(session, user, Permission.MISSION_CREATE)
         return _stage_create_mission(intent, user=user)
     if intent.kind is IntentKind.QUERY_MISSION:
+        authorize(session, user, Permission.MISSION_READ)
         return _handle_query_mission(intent, session=session, user=user)
     if intent.kind is IntentKind.MISSION_COMMAND:
+        authorize(session, user, Permission.MISSION_TRANSITION)
         return _stage_mission_command(intent, session=session, user=user)
     return _UNKNOWN_REPLY
 
@@ -366,6 +406,7 @@ def _execute_pending_intent(
 def _execute_create_mission(
     payload: dict[str, Any], *, session: Session, user: User
 ) -> str:
+    authorize(session, user, Permission.MISSION_CREATE)
     target_amount = (
         Decimal(payload["target_amount"])
         if payload["target_amount"] is not None
@@ -388,15 +429,44 @@ def _execute_create_mission(
 def _execute_mission_command(
     payload: dict[str, Any], *, session: Session, user: User
 ) -> str:
+    authorize(
+        session,
+        user,
+        Permission.MISSION_TRANSITION,
+        resource_type="mission",
+        resource_id=UUID(payload["mission_id"]),
+    )
+    mission_id = UUID(payload["mission_id"])
+    mission = session.get(Mission, mission_id)
+    if mission is None or mission.user_id != user.id:
+        deny_resource_unavailable(
+            session,
+            user,
+            Permission.MISSION_TRANSITION,
+            resource_type="mission",
+            resource_id=mission_id,
+        )
     transition = transition_mission(
         session,
-        mission_id=UUID(payload["mission_id"]),
+        mission_id=mission_id,
         command=MissionCommand(payload["command"]),
         expected_state_version=payload["expected_state_version"],
         actor_type="telegram",
         actor_id=user.id,
     )
     return f'"{payload["mission_title"]}" agora está {transition.to_status.value}.'
+
+
+def _log_authorization_denial(error: AuthorizationDenied, user: User) -> None:
+    role = user.role.value if isinstance(user.role, UserRole) else "unknown"
+    logger.warning(
+        "telegram_authorization_denied",
+        extra={
+            "authorization_permission": error.permission.value,
+            "authorization_reason": error.reason.value,
+            "authorization_role": role,
+        },
+    )
 
 
 def _extract_message(update: TelegramUpdate) -> TelegramMessage | None:

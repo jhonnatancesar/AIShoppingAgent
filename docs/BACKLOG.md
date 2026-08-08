@@ -42,6 +42,15 @@ Para cada item novo, registrar uma descrição curta, a motivação e eventuais 
 - Sistema de pagamentos.
 - Integrações adicionais não essenciais à V1.
 
+## Papéis e planos da V2
+
+- múltiplos papéis por usuário e tabela `user_roles`;
+- composição simultânea de USER, ADMIN e DEV;
+- planos FREE, PLUS e PRO, assinatura e entitlements;
+- gestão administrativa explícita de papéis;
+- separação estrutural avançada entre papéis de autorização e perfis de IA;
+- ferramentas cross-user de suporte/auditoria somente com permissão própria.
+
 ## Regra de uso
 
 Tudo que não constar em `docs/MVP.md` é considerado fora do escopo da V1. Quando uma ideia for explicitamente descartada para a V1, ela deve ser registrada também em `docs/OUT_OF_SCOPE.md`.

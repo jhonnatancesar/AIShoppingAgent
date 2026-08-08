@@ -112,7 +112,7 @@ def _request(
     monkeypatch.setattr(
         confirmation_module,
         "compare_offers_for_mission",
-        lambda session, mission_id: comparison,
+        lambda session, mission_id, *, owner_user_id: comparison,
     )
     selected_id = offer_id if offer_id is not None else items[0].offer_id
     return request_purchase_confirmation(
@@ -149,7 +149,7 @@ def test_request_rejects_a_different_owner(monkeypatch) -> None:
     monkeypatch.setattr(
         confirmation_module,
         "compare_offers_for_mission",
-        lambda session, mission_id: _comparison(item),
+        lambda session, mission_id, *, owner_user_id: _comparison(item),
     )
 
     with pytest.raises(MissionOwnerMismatchForConfirmationError):
@@ -185,7 +185,7 @@ def test_request_rejects_an_ineligible_offer(monkeypatch) -> None:
     monkeypatch.setattr(
         confirmation_module,
         "compare_offers_for_mission",
-        lambda session, mission_id: _comparison(ineligible),
+        lambda session, mission_id, *, owner_user_id: _comparison(ineligible),
     )
 
     with pytest.raises(OfferNotEligibleForConfirmationError):
@@ -221,7 +221,9 @@ def test_cancellation_is_terminal_without_revalidating_evidence(monkeypatch) -> 
     monkeypatch.setattr(
         confirmation_module,
         "compare_offers_for_mission",
-        lambda session, mission_id: pytest.fail("cancel must not recalculate"),
+        lambda session, mission_id, *, owner_user_id: pytest.fail(
+            "cancel must not recalculate"
+        ),
     )
 
     result = resolve_purchase_confirmation(
@@ -242,7 +244,9 @@ def test_expired_confirm_is_stale_without_recalculating(monkeypatch) -> None:
     monkeypatch.setattr(
         confirmation_module,
         "compare_offers_for_mission",
-        lambda session, mission_id: pytest.fail("expired request must not recalculate"),
+        lambda session, mission_id, *, owner_user_id: pytest.fail(
+            "expired request must not recalculate"
+        ),
     )
 
     result = resolve_purchase_confirmation(
@@ -263,7 +267,9 @@ def test_expired_request_can_still_be_cancelled(monkeypatch) -> None:
     monkeypatch.setattr(
         confirmation_module,
         "compare_offers_for_mission",
-        lambda session, mission_id: pytest.fail("cancel must not recalculate"),
+        lambda session, mission_id, *, owner_user_id: pytest.fail(
+            "cancel must not recalculate"
+        ),
     )
 
     result = resolve_purchase_confirmation(
@@ -294,7 +300,7 @@ def test_changed_evidence_is_stale(monkeypatch, changed_item) -> None:
     monkeypatch.setattr(
         confirmation_module,
         "compare_offers_for_mission",
-        lambda session, mission_id: _comparison(changed_item),
+        lambda session, mission_id, *, owner_user_id: _comparison(changed_item),
     )
 
     result = resolve_purchase_confirmation(
@@ -323,7 +329,7 @@ def test_new_observation_with_equivalent_material_evidence_remains_valid(
     monkeypatch.setattr(
         confirmation_module,
         "compare_offers_for_mission",
-        lambda session, mission_id: _comparison(newer),
+        lambda session, mission_id, *, owner_user_id: _comparison(newer),
     )
 
     result = resolve_purchase_confirmation(
@@ -351,7 +357,7 @@ def test_offer_that_becomes_unavailable_is_stale(monkeypatch) -> None:
     monkeypatch.setattr(
         confirmation_module,
         "compare_offers_for_mission",
-        lambda session, mission_id: _comparison(unavailable),
+        lambda session, mission_id, *, owner_user_id: _comparison(unavailable),
     )
 
     result = resolve_purchase_confirmation(

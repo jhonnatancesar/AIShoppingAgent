@@ -136,7 +136,11 @@ def _build_purchase_confirmation_request(
 ) -> PurchaseConfirmationRequest:
     """Monta uma solicitação para uma oferta atualmente elegível."""
     _require_mission_owner(session, mission_id, owner_user_id)
-    comparison = compare_offers_for_mission(session, mission_id)
+    comparison = compare_offers_for_mission(
+        session,
+        mission_id,
+        owner_user_id=owner_user_id,
+    )
     selected = _eligible_offer(comparison.items, offer_id)
     if selected is None:
         raise OfferNotEligibleForConfirmationError(
@@ -219,7 +223,11 @@ def _evaluate_purchase_confirmation(
             resolved_at,
         )
     try:
-        comparison = compare_offers_for_mission(session, request.mission_id)
+        comparison = compare_offers_for_mission(
+            session,
+            request.mission_id,
+            owner_user_id=request.owner_user_id,
+        )
     except RecommendationError:
         return _stale_result(
             request,

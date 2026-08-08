@@ -1,5 +1,32 @@
 # Changelog
 
+## 2026-08-08 — TASK-047: autorização por papel único e ownership
+
+- Criada política RBAC fail-closed em `app.authorization`, com herança estrita
+  `USER ⊂ ADMIN ⊂ DEV`; papéis desconhecidos não recebem permissões.
+- O webhook autoriza depois da autenticação da TASK-046 e antes de IA, leitura
+  ou mutação. Recusa retorna `204`, não envia resposta nem altera estado
+  funcional e acrescenta somente `authorization.denied` sanitizado.
+- Novos usuários do Telegram continuam exclusivamente USER; nenhum payload,
+  texto, comando ou cadastro pode atribuir ADMIN/DEV ou promover a conta.
+- Ownership permanece obrigatório inclusive para DEV. Recomendação e
+  comparação passaram a filtrar também `Mission.user_id`; intenção pendente
+  adulterada não é executada nem apagada após recusa.
+- O único proprietário ADMIN ativo, com vínculo privado do Telegram, foi
+  promovido uma vez para DEV por UUID explicitamente validado. A mesma
+  transação acrescentou `user.role_changed`; não existe migration, script
+  persistente, regra geral ou lógica de startup para essa alteração.
+- PostgreSQL 18, API/worker Docker e Telegram Bot API reais aprovaram o fluxo;
+  a validação temporária do banco sofreu rollback sem resíduos.
+- A validação cruzada detectou o banco persistente ainda em `20260808_0006`;
+  aplicado `alembic upgrade head` para `20260808_0007`, corrigindo a ausência
+  das tabelas da TASK-041 sem perda de dados, e o fluxo completo de
+  recomendação/comparação/confirmação voltou a passar no PostgreSQL real.
+- Pipeline completo aprovado em Python 3.14.6: 508 testes, 92,47% de cobertura,
+  Ruff, Alembic com head único e Docker Compose válidos.
+- O Docker CLI oficial da instalação por usuário foi incluído de forma
+  idempotente no PATH persistente do usuário.
+
 ## 2026-08-08 — Workflow: TASK-061 depois da TASK-047
 
 - A TASK-061 deixou de pertencer à fila da V1.2 e passou a integrar o fluxo

@@ -12,12 +12,12 @@ TASK-054 (preparar release), que ainda está pendente.
 
 Atualizar este documento sempre que uma TASK relevante para produção for
 concluída ou revisada. Snapshot gerado em **2026-08-08**, logo após a
-conclusão da TASK-046.
+conclusão da TASK-047.
 
 ## Resumo executivo
 
-**Não está pronto para produção.** 53 das 62 tarefas planejadas estão
-concluídas, mas as 9 pendentes cobrem áreas que separam
+**Não está pronto para produção.** 54 das 62 tarefas planejadas estão
+concluídas, mas as 8 pendentes cobrem áreas que separam
 "funciona quando eu valido manualmente" de "está seguro para um usuário
 real depender disso": autorização, segredos, privacidade, resiliência,
 integração/release e — mais importante — não existe hoje nenhum
@@ -29,7 +29,7 @@ mecanismo que dispare a coleta de preços sozinho. Uma missão criada fica
 | # | Critério | Status | Evidência |
 | --- | --- | --- | --- |
 | 1 | Ambiente local sobe de forma documentada e reproduzível | ✅ Atendido | Docker Compose, `docs/DEPENDENCIES.md`, `scripts\check.cmd` |
-| 2 | Usuário autorizado cria e consulta missão pelo Telegram | ⚠️ Parcial | Fluxo real validado ponta a ponta; a TASK-046 autentica transporte, chat privado direto e conta ativa, mas autorização por papel (TASK-047) e login por usuário/senha (TASK-061) ainda não existem |
+| 2 | Usuário autorizado cria e consulta missão pelo Telegram | ⚠️ Parcial | Fluxo real validado ponta a ponta; TASK-046 autentica transporte/identidade e TASK-047 aplica RBAC fail-closed com ownership. Login por usuário/senha da TASK-061 ainda não existe |
 | 3 | Sistema pesquisa todas as fontes selecionadas, normaliza e preserva histórico | ⚠️ Parcial | Store Providers (TASK-055) e normalização (TASK-025) existem e funcionam isoladamente, mas **nada os aciona automaticamente** — não existe worker/scheduler lendo `mission_schedules`, nem serviço que insira `PriceObservation` real em produção (confirmado durante a TASK-043) |
 | 4 | Condição de preço produz evento e notificação rastreáveis | ⚠️ Parcial | Avaliação (TASK-027), publicação (TASK-043), consumo (TASK-044) e notificação Telegram (TASK-036) funcionam e foram validados realmente; ainda não existe fluxo de coleta que invoque automaticamente avaliação/publicação em produção |
 | 5 | Recomendação/comparação básica com evidências históricas | ✅ Atendido | TASK-038 recomenda uma oferta com regras monetárias seguras e histórico identificável; TASK-039 compara as mesmas evidências, mantém a posição 1 invariável e não inventa total para frete desconhecido |
@@ -46,9 +46,10 @@ Além dos critérios formais do MVP:
   observação de preço sozinha.
 - **Autenticação limitada ao canal**: a TASK-046 valida segredo do webhook,
   chat privado direto e conta ativa. Ainda não há login, senha, sessão, MFA ou
-  recuperação de conta (TASK-061); o único `ADMIN` foi promovido manualmente.
-- **Sem autorização aplicada** (TASK-047): `role` seleciona o perfil de IA,
-  mas não restringe nenhuma ação por permissão.
+  recuperação de conta (TASK-061).
+- **Autorização aplicada** (TASK-047): RBAC usa `USER ⊂ ADMIN ⊂ DEV`, falha
+  fechado e preserva ownership para todos os papéis; o proprietário foi
+  promovido para DEV por operação one-shot auditada.
 - **Segredos só em `.env` local** (TASK-048): sem secret store, rotação ou
   proteção além do `.gitignore`.
 - **Observabilidade disponível** (TASK-045): logs JSON, métricas Prometheus,
@@ -77,20 +78,20 @@ Além dos critérios formais do MVP:
 | Gerenciador de IA e Telegram | TASK-028 a TASK-037 | 10/10 | — |
 | Compra e eventos | TASK-038 a TASK-041, TASK-043 a TASK-045 | 7/7 | — |
 | Catálogo de eventos | TASK-042 | 1/1 | — |
-| Segurança — canal, autorização e autenticação real | TASK-046, TASK-047, TASK-061 | 1/3 | TASK-047, depois TASK-061 |
+| Segurança — canal, autorização e autenticação real | TASK-046, TASK-047, TASK-061 | 2/3 | TASK-061 |
 | Segurança e entrega — continuação | TASK-048 a TASK-054 | 0/7 | TASK-048 a TASK-054 |
 | Store Providers e identidade | TASK-055, TASK-056 | 2/2 | — |
 | Robustez, confirmação e IA (V1.2 antecipado) | TASK-057 a TASK-060 | 4/4 | — |
 
-**Total: 53 concluídas, 9 pendentes.**
+**Total: 54 concluídas, 8 pendentes.**
 
 ## Recomendação
 
 Continuar validando manualmente por sessão (como já vem sendo feito) é
 seguro. Colocar um usuário real dependendo do sistema hoje não é — os
 maiores riscos são a ausência de coleta automática (a missão nunca
-"funciona sozinha") e a ausência de autorização por papel e controles de
+"funciona sozinha") e os controles de autenticação real,
 segurança/release ainda pendentes. A
 ordem mais natural para fechar essas lacunas segue o próprio
-`docs/ROADMAP.md`: TASK-047 → TASK-061 → TASK-048 e demais tarefas de
+`docs/ROADMAP.md`: TASK-061 → TASK-048 e demais tarefas de
 Segurança e entrega até a TASK-054.

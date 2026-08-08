@@ -146,8 +146,19 @@ validações e precisa estar ativo antes de IA, domínio ou qualquer mutação.
 Recusas são terminais em `204` e registram somente motivo fechado. PostgreSQL
 18, API Docker e Telegram reais confirmaram primeiro contato, idempotência,
 inativo, ausência de efeitos e logs sanitizados. Login por senha continua na
-TASK-061. A próxima tarefa executável é a TASK-047, seguida obrigatoriamente
-pela TASK-061 e então pela TASK-048 (`DEC-033`).
+TASK-061.
+
+A TASK-047 (`DEC-034`) está **concluída**: `app.authorization` aplica uma
+matriz fail-closed com papel único e herança `USER ⊂ ADMIN ⊂ DEV` depois da
+autenticação e antes de IA/domínio. Novos usuários do Telegram continuam
+sempre USER; não existe promoção pública. Ownership permanece obrigatório
+inclusive para DEV, e recomendação/comparação agora exigem o proprietário na
+própria consulta. Recusas encerram em `204`, sem efeito funcional, e geram
+somente `authorization.denied` sanitizado. O proprietário ativo, previamente o
+único ADMIN, foi promovido para DEV por UUID explicitamente verificado em uma
+operação one-shot com `user.role_changed` auditado, sem migration ou lógica de
+startup. PostgreSQL 18, API Docker e Telegram reais confirmaram o fluxo. A
+próxima tarefa executável é a TASK-061 e depois a TASK-048 (`DEC-033`).
 
 A TASK-058 (`DEC-015`) está **concluída**: `create_mission` e
 `mission_command` não executam mais direto — ficam encenados em

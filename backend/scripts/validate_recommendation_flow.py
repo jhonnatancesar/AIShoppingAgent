@@ -143,7 +143,7 @@ def validate() -> None:
         )
         session.flush()
 
-        result = recommend_for_mission(session, mission.id)
+        result = recommend_for_mission(session, mission.id, owner_user_id=user.id)
         if result.status is not RecommendationStatus.RECOMMENDED:
             raise RuntimeError(f"unexpected recommendation status: {result.status}")
         if (
@@ -174,7 +174,9 @@ def validate() -> None:
         ):
             raise RuntimeError("historical evidence is not identifiable")
 
-        comparison = compare_offers_for_mission(session, mission.id)
+        comparison = compare_offers_for_mission(
+            session, mission.id, owner_user_id=user.id
+        )
         if (
             comparison.recommendation_offer_id != result.recommendation.offer_id
             or comparison.items[0].offer_id != result.recommendation.offer_id
@@ -336,14 +338,18 @@ def validate() -> None:
             observed_at=now,
         )
         session.flush()
-        insufficient_result = recommend_for_mission(session, insufficient.id)
+        insufficient_result = recommend_for_mission(
+            session, insufficient.id, owner_user_id=user.id
+        )
         if (
             insufficient_result.status is not RecommendationStatus.INSUFFICIENT_DATA
             or insufficient_result.reason
             is not RecommendationReason.NO_DETERMINABLE_TOTALS
         ):
             raise RuntimeError("unknown-only totals did not return insufficient_data")
-        insufficient_comparison = compare_offers_for_mission(session, insufficient.id)
+        insufficient_comparison = compare_offers_for_mission(
+            session, insufficient.id, owner_user_id=user.id
+        )
         if (
             insufficient_comparison.status is not RecommendationStatus.INSUFFICIENT_DATA
             or insufficient_comparison.reason

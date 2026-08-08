@@ -1,8 +1,9 @@
 # Usuários
 
 `User` é a identidade interna mínima do sistema. A TASK-046 usa essa entidade
-depois de autenticar o transporte e validar a identidade privada do Telegram.
-Isso não implementa senha, sessão ou autorização por papel.
+depois de autenticar o transporte e validar a identidade privada do Telegram;
+a TASK-047 aplica então autorização por papel e ownership. Isso não implementa
+senha ou sessão.
 
 ## Campos
 
@@ -44,11 +45,15 @@ como destino. Mensagens em grupos, supergrupos e canais não alteram esse campo.
 
 ## Papéis
 
-- `USER`: perfil de uso comum previsto para a V1;
-- `ADMIN`: perfil administrativo previsto;
-- `DEV`: perfil de desenvolvimento previsto.
+- `USER`: papel obrigatório e padrão para usuários normais;
+- `ADMIN`: papel privilegiado de gestão operacional, atribuído somente de
+  forma manual;
+- `DEV`: superusuário técnico da V1, também atribuído somente de forma manual.
 
-O papel `PLUS` permanece fora do MVP. O campo `role` ainda não concede permissões; autorização será implementada somente na TASK-047.
+A política da TASK-047 implementa `USER ⊂ ADMIN ⊂ DEV` como herança de
+permissões. DEV continua diferente de ADMIN, e nenhum dos dois contorna
+ownership nas funcionalidades normais. Papel ausente ou desconhecido falha
+fechado. O papel `PLUS`, planos e múltiplos papéis permanecem fora do MVP.
 
 ## Limites
 
@@ -60,6 +65,9 @@ O papel `PLUS` permanece fora do MVP. O campo `role` ainda não concede permiss�
   parte dessa lista a partir da TASK-060 (`DEC-020`): é dado pessoal comum
   de cadastro, não uma credencial.
 - Não existem endpoints, repositórios genéricos de CRUD ou usuário inicial automático.
+- Todo usuário criado automaticamente pelo Telegram recebe `USER`. Nenhum
+  fluxo público aceita papel por payload, texto, comando ou cadastro; não há
+  autopromoção nem gestão de papéis pelo bot.
 - Exclusão e anonimização serão definidas pelas tarefas de segurança e privacidade, preservando referências históricas.
 - `telegram_user_id` (TASK-056) é confiado pela TASK-046 somente após validar
   o segredo do webhook, chat privado e igualdade entre chat e remetente. Isso
@@ -71,8 +79,9 @@ O papel `PLUS` permanece fora do MVP. O campo `role` ainda não concede permiss�
   (TASK-060): o webhook do Telegram escolhe entre `USER` (Gemini gratuito,
   sem fallback) e a cascata `ADMIN`/`DEV` (`AdminDevAIProviderManager`,
   TASK-059) a partir do `User.role` já resolvido — nunca por escolha do
-  próprio usuário. Não existe autopromoção: elevar um usuário para
-  `ADMIN`/`DEV` é uma ação manual e pontual, fora deste fluxo.
+  próprio usuário. O proprietário da V1 foi promovido uma única vez de ADMIN
+  para DEV por UUID validado, com auditoria append-only. Não existe migration,
+  rotina de startup nem conversão geral de ADMIN para DEV.
 - O comando `/cadastro` (TASK-060) captura `username`, `email`,
   `favorite_stores` e `preferred_categories` em passos sequenciais,
   guardando o passo pendente em `registration_step`; ele intercepta a
@@ -94,3 +103,6 @@ revisão `20260808_0001`. A resolução get-or-create está em
 revisão `20260808_0005` e é atualizado pelo webhook por meio de
 `app.telegram.notifications.remember_private_notification_chat`. As duas
 preferências foram adicionadas pela revisão `20260808_0006`.
+A matriz e as regras de recusa da TASK-047 estão em
+`backend/app/authorization/` e `docs/AUTHORIZATION.md`; nenhuma migration foi
+necessária.

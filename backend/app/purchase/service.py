@@ -54,12 +54,17 @@ class _ObservationRow:
     seller: Seller | None
 
 
-def recommend_for_mission(session: Session, mission_id: UUID) -> RecommendationResult:
+def recommend_for_mission(
+    session: Session,
+    mission_id: UUID,
+    *,
+    owner_user_id: UUID,
+) -> RecommendationResult:
     """Retorna a oferta elegível de menor custo total para uma missão ativa."""
     mission_row = session.execute(
         select(Mission, MissionCriteria)
         .outerjoin(MissionCriteria, MissionCriteria.mission_id == Mission.id)
-        .where(Mission.id == mission_id)
+        .where(Mission.id == mission_id, Mission.user_id == owner_user_id)
     ).one_or_none()
     if mission_row is None:
         raise MissionNotFoundForRecommendationError("mission was not found")

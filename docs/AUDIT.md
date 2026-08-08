@@ -32,5 +32,8 @@ consultas por usuário sem indexar atores não vinculados a uma identidade inter
 
 `metadata` deve conter apenas contexto mínimo e sanitizado. Credenciais, tokens,
 corpos integrais de requisição e dados pessoais desnecessários são proibidos.
-A TASK-016 não cria catálogo de ações, API, autenticação, autorização, eventos ou
-instrumentação automática dos fluxos futuros.
+A TASK-016 não criou catálogo geral de ações, API, autenticação ou eventos. A
+TASK-047 passou a gravar dois fatos específicos: `authorization.denied` para
+recusa sanitizada e `user.role_changed` para a promoção one-shot controlada do
+proprietário. Isso não cria gestão pública de papéis nem duplica logs
+operacionais.

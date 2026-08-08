@@ -25,6 +25,22 @@ Após a classificação, registrar a decisão neste arquivo e atualizar a docume
 - **Justificativa:** impacto avaliado e motivo da classificação.
 - **Próxima ação:** documento a atualizar, TASK a criar quando aplicável, ou ação de não implementação.
 
+### DEC-034 — Autorizar a V1 com papel único e ownership obrigatório
+
+- **Data:** 2026-08-08
+- **Ideia:** manter um único `users.role`, definir DEV como superusuário
+  técnico por herança e aplicar autorização sem permitir bypass dos dados de
+  outros usuários.
+- **Classificação:** Implementar agora.
+- **Justificativa:** `USER ⊂ ADMIN ⊂ DEV` atende às capacidades existentes sem
+  introduzir múltiplos papéis, planos ou entitlements. A autenticação da
+  TASK-046 precede a política fail-closed; ownership continua uma condição
+  independente para todos os papéis. Recusas encerram o webhook sem efeito
+  funcional e deixam somente auditoria sanitizada. A promoção do proprietário
+  de ADMIN para DEV é one-shot, por UUID validado, e não vira regra de sistema.
+- **Próxima ação:** TASK-047 concluída; executar a TASK-061 antes da TASK-048.
+  Múltiplos papéis, planos e gestão de roles permanecem na V2.
+
 ### DEC-033 — Executar a TASK-061 depois da TASK-047
 
 - **Data:** 2026-08-08

@@ -52,7 +52,7 @@ def _patch_resolve_answer(
 
 def _fake_user(
     *,
-    role: UserRole = UserRole.USER,
+    role: object = UserRole.USER,
     registration_step: str | None = None,
     pending_intent: dict | None = None,
 ) -> SimpleNamespace:
@@ -698,6 +698,8 @@ async def test_confirmed_pending_mission_command_executes_and_clears_step(
     )
     send_calls = _patch_send_message(monkeypatch)
     adapter = _FakeAdapter(_intent())
+    session = MagicMock()
+    session.get.return_value = SimpleNamespace(user_id=fake_user.id)
 
     response = await receive_telegram_webhook(
         update=_update(
@@ -711,13 +713,81 @@ async def test_confirmed_pending_mission_command_executes_and_clears_step(
         x_telegram_bot_api_secret_token="correct-secret",
         adapters=_adapters(adapter),  # type: ignore[arg-type]
         settings=_settings(),
-        session=MagicMock(),
+        session=session,
     )
 
     assert response.status_code == 204
     assert adapter.calls == []
     assert fake_user.pending_intent is None
     assert "paused" in send_calls[0][1]
+
+
+@pytest.mark.anyio
+async def test_unknown_role_is_denied_without_functional_side_effects(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_user = _fake_user(role="OWNER")
+    _patch_user(monkeypatch, fake_user)
+    send_calls = _patch_send_message(monkeypatch)
+    adapter = _FakeAdapter(_intent(kind=IntentKind.QUERY_MISSION))
+    session = MagicMock()
+
+    response = await receive_telegram_webhook(
+        update=_update(),
+        x_telegram_bot_api_secret_token="correct-secret",
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        settings=_settings(),
+        session=session,
+    )
+
+    assert response.status_code == 204
+    assert adapter.calls == []
+    assert send_calls == []
+    assert fake_user.telegram_chat_id is None
+    audit = session.add.call_args.args[0]
+    assert audit.action == "authorization.denied"
+    assert audit.entry_metadata == {
+        "permission": "telegram.interact",
+        "reason": "unknown_role",
+        "role": "unknown",
+    }
+
+
+@pytest.mark.anyio
+async def test_forged_pending_mission_keeps_state_and_is_denied(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mission_id = uuid4()
+    pending = {
+        "kind": "mission_command",
+        "mission_id": str(mission_id),
+        "mission_title": "missao de outro usuario",
+        "command": "pause",
+        "expected_state_version": 1,
+    }
+    fake_user = _fake_user(pending_intent=pending)
+    _patch_user(monkeypatch, fake_user)
+    _patch_resolve_answer(monkeypatch, True)
+    send_calls = _patch_send_message(monkeypatch)
+    adapter = _FakeAdapter(_intent())
+    session = MagicMock()
+    session.get.return_value = SimpleNamespace(user_id=uuid4())
+
+    response = await receive_telegram_webhook(
+        update=_update(),
+        x_telegram_bot_api_secret_token="correct-secret",
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        settings=_settings(),
+        session=session,
+    )
+
+    assert response.status_code == 204
+    assert fake_user.pending_intent == pending
+    assert fake_user.telegram_chat_id is None
+    assert send_calls == []
+    audit = session.add.call_args.args[0]
+    assert audit.resource_id == mission_id
+    assert audit.entry_metadata["reason"] == "resource_unavailable"
 
 
 @pytest.mark.anyio

@@ -9,6 +9,19 @@ autentica minimamente a identidade do canal: somente mensagens privadas da
 própria pessoa e contas internas ativas podem operar. Usuário/senha, sessões,
 MFA e recuperação continuam reservados à TASK-061.
 
+## Fronteira de autorização (TASK-047)
+
+Depois da TASK-046, o webhook exige uma permissão do papel persistido antes de
+IA, leitura ou mutação funcional. `USER`, `ADMIN` e `DEV` formam a hierarquia
+estrita `USER ⊂ ADMIN ⊂ DEV`, mas todos continuam limitados aos próprios
+recursos. Papel ausente/desconhecido e recurso alheio falham fechados.
+
+Uma recusa retorna `204`, não envia resposta e não atualiza o destino privado
+nem o estado funcional. Somente `authorization.denied` é acrescentado à
+auditoria com campos controlados. Papel nunca é aceito da mensagem, payload,
+cadastro ou comando; novos contatos continuam sendo provisionados como USER.
+Detalhes estão em `docs/AUTHORIZATION.md`.
+
 ## Fronteira de autenticação do canal (TASK-046)
 
 O webhook primeiro autentica o transporte pelo segredo compartilhado. Somente

@@ -91,10 +91,17 @@ class OfferComparisonResult:
 
 
 def compare_offers_for_mission(
-    session: Session, mission_id: UUID
+    session: Session,
+    mission_id: UUID,
+    *,
+    owner_user_id: UUID,
 ) -> OfferComparisonResult:
     """Compara todas as evidências sem redefinir elegibilidade ou recomendação."""
-    recommendation = recommend_for_mission(session, mission_id)
+    recommendation = recommend_for_mission(
+        session,
+        mission_id,
+        owner_user_id=owner_user_id,
+    )
     ranked = rank_eligible_evidence(recommendation.evidence)
     eligible_items = tuple(
         _comparison_item(item, position=position)
