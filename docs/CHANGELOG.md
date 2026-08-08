@@ -1,5 +1,51 @@
 # Changelog
 
+## 2026-08-08 — TASK-058: confirmação da intenção interpretada antes de executar
+
+- `backend/migrations/versions/20260808_0002...`: `users` ganha
+  `pending_intent` (JSONB opcional) para guardar a ação encenada aguardando
+  confirmação.
+- `backend/app/telegram/confirmation.py` (novo): classifica
+  confirmar/cancelar via `AIProviderManager` com propósito e prompt
+  dedicados (`interpret_confirmation_reply`), fora do vocabulário fechado
+  do `IntentInterpreter` — reconhece linguagem informal e erros de
+  português, não só palavra exata (decisão revista em campo depois da
+  primeira validação real, que usava só palavra exata).
+- `backend/app/telegram/router.py`: `create_mission` e `mission_command`
+  passam a ser "encenados" (`user.pending_intent`) em vez de executados
+  direto; a mensagem seguinte do usuário é checada contra a confirmação
+  pendente antes de qualquer outro processamento. `query_mission` e
+  `unknown` continuam imediatos. Texto de `unknown` agora deixa explícito
+  que o bot não conversa sobre outros assuntos.
+- `backend/app/intent/interpreter.py` e `backend/app/telegram/adapter.py`
+  ganham uma propriedade `manager`, para o classificador de confirmação
+  reaproveitar o `AIProviderManager` já resolvido por perfil (TASK-060).
+- **Duas correções reais de infraestrutura**, achadas durante a validação
+  real contra o Telegram:
+  - `AISHOPPING_GEMINI_API_KEY` virou duas chaves —
+    `AISHOPPING_GEMINI_API_KEY_USER` e `AISHOPPING_GEMINI_API_KEY_ADMIN_DEV`
+    — para que a cota gratuita do perfil `USER` nunca compita com a do
+    `ADMIN`/`DEV`, nem no nível da credencial.
+  - `validate_provider_response` estava fora do `try/except` em
+    `UserAIProviderManager`/`AdminDevAIProviderManager`: uma resposta
+    reprovada por essa checagem (ex.: `finished_at` antes de
+    `requested_at`) escapava sem telemetria nem fallback. Causa raiz real:
+    `TelegramIntentAdapter` repassava `message.received_at` (relógio do
+    Telegram) como `requested_at`, comparado contra `finished_at` do nosso
+    próprio relógio (sem sincronia NTP na máquina local) — removida essa
+    comparação entre relógios de fontes diferentes.
+- Testes novos/ajustados em `tests/test_telegram_confirmation.py`,
+  `tests/test_telegram_router.py`, `tests/test_telegram_adapter.py`,
+  `tests/test_gemini_user_profile.py` (regressão do bug de telemetria) e
+  `tests/test_users.py`. `scripts\check.cmd` completo aprovado: 368
+  testes, 95,29% de cobertura.
+- **Validação real completa contra o Telegram**: criar missão sem citar
+  loja (quatro fontes-padrão, confirmação descrita corretamente), cancelar
+  com frase informal ("cancela essa aí, quero mais não" → reconhecido como
+  cancelamento), e confirmar um comando de missão — todos via a cascata
+  real `ADMIN/DEV` (premium → Groq), sem falhas silenciosas depois das
+  correções.
+
 ## 2026-08-08 — TASK-060: perfil de IA por papel, cadastro inicial e placeholder de upgrade
 
 - Registradas `DEC-018` (TASK-060), `DEC-019` (TASK-061, autenticação real

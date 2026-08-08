@@ -8,29 +8,56 @@ interativo — a seleção de fontes vem do que o `IntentInterpreter` (TASK-032)
 já extraiu do texto livre — e sem as notificações proativas orientadas a
 evento, que continuam reservadas à TASK-036.
 
+Desde a TASK-058, `create_mission` e `mission_command` não executam mais
+direto: ficam **encenados** e só executam após confirmação explícita do
+usuário — ver "Confirmação antes de executar" abaixo.
+
 ## Despacho por `IntentKind`
 
-- **`create_mission`**: `create_mission_from_criteria`
-  (`backend/app/missions/service.py`) cria `Mission` + `MissionCriteria` e
-  ativa imediatamente. Fontes efetivas: as informadas em
+- **`create_mission`**: fontes efetivas são as informadas em
   `IntentParameters.sources` quando presentes; quando o `Intent` não traz
   nenhuma, usa automaticamente as quatro fontes da V1 (Pichau, Terabyte,
-  Amazon, Kabum). Uma `CREATE_MISSION` válida é **sempre** criada com pelo
-  menos uma fonte e sai `active` — não existe caminho para ficar em `draft`
-  por falta de fonte.
-- **`query_mission`**: com `mission_reference`, usa
-  `find_missions_by_reference` (busca case-insensitive por substring em
-  `MissionCriteria.search_query`); sem referência, usa
-  `list_missions_for_user` (mais recentes primeiro). A resposta lista o que
-  for encontrado, incluindo o caso de nenhuma missão.
+  Amazon, Kabum). Uma `CREATE_MISSION` válida sempre fica encenada com pelo
+  menos uma fonte; ao ser confirmada, `create_mission_from_criteria`
+  (`backend/app/missions/service.py`) cria `Mission` + `MissionCriteria` e
+  ativa imediatamente — não existe caminho para ficar em `draft` por falta
+  de fonte.
+- **`query_mission`**: somente leitura, continua respondendo direto, sem
+  confirmação. Com `mission_reference`, usa `find_missions_by_reference`
+  (busca case-insensitive por substring em `MissionCriteria.search_query`);
+  sem referência, usa `list_missions_for_user` (mais recentes primeiro). A
+  resposta lista o que for encontrado, incluindo o caso de nenhuma missão.
 - **`mission_command`**: `resolve_mission_for_command`
-  (`backend/app/missions/query.py`) exige exatamente uma missão alvo. Com
+  (`backend/app/missions/query.py`) exige exatamente uma missão alvo no
+  momento em que a intenção é interpretada (antes de encenar). Com
   `mission_reference`, a correspondência deve ser única. Sem referência,
   exige exatamente uma missão não terminal do usuário — a V1 nunca expõe um
   identificador de missão, então mais de uma candidata é ambiguidade real,
-  não um detalhe de implementação. Resolvida a missão, `transition_mission`
-  (TASK-021) executa o comando normalmente.
-- **`unknown`**: resposta fixa pedindo para o usuário reformular.
+  não um detalhe de implementação. Ao ser confirmado, `transition_mission`
+  (TASK-021) executa o comando usando a versão de estado capturada no
+  momento em que a confirmação foi encenada.
+- **`unknown`**: resposta fixa pedindo para o usuário reformular, deixando
+  explícito que o bot não conversa sobre outros assuntos.
+
+## Confirmação antes de executar (TASK-058)
+
+Depois que `create_mission` ou `mission_command` é interpretado e validado
+(fonte presente, missão resolvida), o webhook não executa a ação — grava os
+dados mínimos necessários em `User.pending_intent` (JSONB) e responde
+descrevendo a ação em português, pedindo confirmação
+(`backend/app/telegram/confirmation.py`). A mensagem seguinte do mesmo
+usuário é tratada como resposta a essa confirmação, **antes** de qualquer
+outro processamento (comandos `/cadastro`/`/upgrade`, cadastro em
+andamento e interpretação por IA só entram em jogo se não houver
+confirmação pendente).
+
+A classificação da resposta (`confirmar`/`cancelar`/`não entendi`) passa
+pelo `AIProviderManager` do próprio perfil do usuário, com um propósito e
+um prompt dedicados (`interpret_confirmation_reply`) — não pela palavra
+exata nem pelo vocabulário fechado do `IntentInterpreter` — para reconhecer
+respostas informais, gírias e erros de português. Confirmado, a ação
+gravada é executada; cancelado, é descartada; não reconhecido, a
+confirmação continua pendente e o usuário é convidado a responder de novo.
 
 ## Limite entre `204` e `500`
 

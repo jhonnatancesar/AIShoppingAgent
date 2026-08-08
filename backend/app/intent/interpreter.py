@@ -97,6 +97,10 @@ class IntentInterpreter:
     def __init__(self, manager: AIProviderManager) -> None:
         self._manager = manager
 
+    @property
+    def manager(self) -> AIProviderManager:
+        return self._manager
+
     async def interpret(
         self,
         message: str,

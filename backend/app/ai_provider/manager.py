@@ -28,10 +28,10 @@ class UserAIProviderManager:
             raise AIRequestError("USER manager accepts only USER profile")
         try:
             response = await self._provider.generate(request)
+            validate_provider_response(request, response)
         except AIProviderError as error:
             _record_provider_error(request, self._provider, error, fallback=False)
             raise
-        validate_provider_response(request, response)
         record_ai_attempt(
             request,
             provider=response.provider,
@@ -70,6 +70,7 @@ class AdminDevAIProviderManager:
             fallback = index > 0
             try:
                 response = await provider.generate(request)
+                validate_provider_response(request, response)
             except (AIProviderQuotaExceeded, AIProviderUnavailable) as error:
                 _record_provider_error(request, provider, error, fallback=fallback)
                 last_error = error
@@ -77,7 +78,6 @@ class AdminDevAIProviderManager:
             except AIProviderError as error:
                 _record_provider_error(request, provider, error, fallback=fallback)
                 raise
-            validate_provider_response(request, response)
             record_ai_attempt(
                 request,
                 provider=response.provider,
@@ -97,23 +97,32 @@ def build_user_ai_provider_manager(
 ) -> UserAIProviderManager:
     """Monta o perfil USER somente quando a credencial segura está disponível."""
     current = settings or get_settings()
-    if current.gemini_api_key is None:
-        raise AIRequestError("AISHOPPING_GEMINI_API_KEY is required for USER profile")
-    provider = GeminiProvider(current.gemini_api_key, current.gemini_model)
+    if current.gemini_api_key_user is None:
+        raise AIRequestError(
+            "AISHOPPING_GEMINI_API_KEY_USER is required for USER profile"
+        )
+    provider = GeminiProvider(current.gemini_api_key_user, current.gemini_model)
     return UserAIProviderManager(provider)
 
 
 def build_admin_dev_ai_provider_manager(
     settings: Settings | None = None,
 ) -> AdminDevAIProviderManager:
-    """Monta a política de ADMIN/DEV: Gemini premium, Groq opcional, Gemini gratuito."""
+    """Monta a política de ADMIN/DEV: Gemini premium, Groq opcional, Gemini gratuito.
+
+    Usa uma chave Gemini dedicada (`AISHOPPING_GEMINI_API_KEY_ADMIN_DEV`),
+    separada da chave do perfil `USER`, para que a cota gratuita do
+    ADMIN/DEV nunca compita com a cota compartilhada de usuários reais.
+    """
     current = settings or get_settings()
-    if current.gemini_api_key is None:
+    if current.gemini_api_key_admin_dev is None:
         raise AIRequestError(
-            "AISHOPPING_GEMINI_API_KEY is required for ADMIN/DEV profile"
+            "AISHOPPING_GEMINI_API_KEY_ADMIN_DEV is required for ADMIN/DEV profile"
         )
-    premium = GeminiProvider(current.gemini_api_key, current.gemini_premium_model)
-    free = GeminiProvider(current.gemini_api_key, current.gemini_model)
+    premium = GeminiProvider(
+        current.gemini_api_key_admin_dev, current.gemini_premium_model
+    )
+    free = GeminiProvider(current.gemini_api_key_admin_dev, current.gemini_model)
     groq = (
         GroqProvider(current.groq_api_key, current.groq_model)
         if current.groq_api_key is not None

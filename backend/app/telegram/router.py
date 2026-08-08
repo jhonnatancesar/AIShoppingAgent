@@ -11,8 +11,10 @@ continuam reservadas à TASK-036.
 import logging
 import secrets
 from datetime import UTC, datetime
+from decimal import Decimal
 from functools import lru_cache
-from typing import Annotated
+from typing import Annotated, Any
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, status
 from fastapi.responses import JSONResponse, Response
@@ -27,6 +29,7 @@ from app.ai_provider import (
 from app.core.config import Settings, get_settings
 from app.database.dependency import get_session
 from app.intent import Intent, IntentInterpreter, IntentKind
+from app.missions.models import MissionCommand
 from app.missions.query import (
     MissionReferenceError,
     find_missions_by_reference,
@@ -43,6 +46,14 @@ from app.missions.service import (
 )
 from app.telegram.adapter import TelegramIntentAdapter
 from app.telegram.bot_api import send_message
+from app.telegram.confirmation import (
+    ConfirmationError,
+    describe_create_mission,
+    describe_mission_command,
+    resolve_answer,
+    stage_create_mission,
+    stage_mission_command,
+)
 from app.telegram.contracts import TelegramContractError, TelegramMessage
 from app.users.models import User, UserRole
 from app.users.registration import (
@@ -57,7 +68,8 @@ logger = logging.getLogger("app.telegram")
 router = APIRouter(tags=["telegram"])
 
 _UNKNOWN_REPLY = (
-    "Não entendi seu pedido. Você pode:\n\n"
+    "Não entendi seu pedido. Não converso sobre outros assuntos — só ajudo "
+    "com suas missões de compra. Você pode:\n\n"
     '• Criar uma missão (ex.: "quero uma RTX 4060 até R$ 2500 na Kabum")\n'
     "• Consultar suas missões\n"
     "• Dar um comando (pausar, retomar, concluir ou cancelar uma missão)"
@@ -196,6 +208,11 @@ async def _handle_message(
         except RegistrationError as error:
             return str(error)
 
+    if user.pending_intent is not None:
+        return await _resolve_pending_intent(
+            message, adapters=adapters, session=session, user=user
+        )
+
     try:
         intent = await adapters[user.role].interpret(message, profile=user.role)
     except TelegramContractError, AIProviderError:
@@ -218,34 +235,69 @@ async def _handle_message(
         return str(error)
 
 
+async def _resolve_pending_intent(
+    message: TelegramMessage,
+    *,
+    adapters: dict[UserRole, TelegramIntentAdapter],
+    session: Session,
+    user: User,
+) -> str:
+    try:
+        confirmed = await resolve_answer(
+            message.text, manager=adapters[user.role].manager, profile=user.role
+        )
+    except ConfirmationError as error:
+        return str(error)
+
+    payload = user.pending_intent
+    user.pending_intent = None
+    if not confirmed:
+        return "Combinado, cancelei."
+
+    try:
+        return _execute_pending_intent(payload, session=session, user=user)
+    except _KNOWN_DISPATCH_ERRORS as error:
+        logger.warning(
+            "telegram_webhook_mission_failed",
+            extra={
+                "telegram_chat_id": message.chat_id,
+                "mission_error": type(error).__name__,
+            },
+        )
+        return str(error)
+
+
 def _dispatch_intent(intent: Intent, *, session: Session, user: User) -> str:
+    """Interpreta o `Intent` e decide a resposta.
+
+    `create_mission` e `mission_command` mudam estado — em vez de executar
+    direto, ficam "encenados" em `user.pending_intent` e só são executados
+    após confirmação explícita do usuário (TASK-058). `query_mission` é
+    somente leitura e continua respondendo direto.
+    """
     if intent.kind is IntentKind.CREATE_MISSION:
-        return _handle_create_mission(intent, session=session, user=user)
+        return _stage_create_mission(intent, user=user)
     if intent.kind is IntentKind.QUERY_MISSION:
         return _handle_query_mission(intent, session=session, user=user)
     if intent.kind is IntentKind.MISSION_COMMAND:
-        return _handle_mission_command(intent, session=session, user=user)
+        return _stage_mission_command(intent, session=session, user=user)
     return _UNKNOWN_REPLY
 
 
-def _handle_create_mission(intent: Intent, *, session: Session, user: User) -> str:
+def _stage_create_mission(intent: Intent, *, user: User) -> str:
     search_query = intent.parameters.search_query
     if not search_query:
         raise MissionIntentError(
             "Não entendi o que você quer buscar. Pode detalhar o produto?"
         )
-    mission, sources = create_mission_from_criteria(
-        session,
-        user_id=user.id,
+    payload = stage_create_mission(
         search_query=search_query,
         target_amount=intent.parameters.target_amount,
         target_currency=intent.parameters.target_currency,
-        source_codes=intent.parameters.sources,
-        requested_at=intent.interpreted_at,
+        sources=intent.parameters.sources,
     )
-    return (
-        f'Missão "{mission.title}" criada e ativa! Buscando em: {", ".join(sources)}.'
-    )
+    user.pending_intent = payload
+    return describe_create_mission(payload)
 
 
 def _handle_query_mission(intent: Intent, *, session: Session, user: User) -> str:
@@ -263,21 +315,64 @@ def _handle_query_mission(intent: Intent, *, session: Session, user: User) -> st
     return "\n".join(lines)
 
 
-def _handle_mission_command(intent: Intent, *, session: Session, user: User) -> str:
+def _stage_mission_command(intent: Intent, *, session: Session, user: User) -> str:
     mission = resolve_mission_for_command(
         session,
         user_id=user.id,
         reference=intent.parameters.mission_reference,
     )
-    transition = transition_mission(
-        session,
+    payload = stage_mission_command(
         mission_id=mission.id,
+        mission_title=mission.title,
         command=intent.command,
         expected_state_version=mission.state_version,
+    )
+    user.pending_intent = payload
+    return describe_mission_command(payload)
+
+
+def _execute_pending_intent(
+    payload: dict[str, Any], *, session: Session, user: User
+) -> str:
+    if payload["kind"] == "create_mission":
+        return _execute_create_mission(payload, session=session, user=user)
+    return _execute_mission_command(payload, session=session, user=user)
+
+
+def _execute_create_mission(
+    payload: dict[str, Any], *, session: Session, user: User
+) -> str:
+    target_amount = (
+        Decimal(payload["target_amount"])
+        if payload["target_amount"] is not None
+        else None
+    )
+    mission, sources = create_mission_from_criteria(
+        session,
+        user_id=user.id,
+        search_query=payload["search_query"],
+        target_amount=target_amount,
+        target_currency=payload["target_currency"],
+        source_codes=tuple(payload["sources"]),
+        requested_at=datetime.now(UTC),
+    )
+    return (
+        f'Missão "{mission.title}" criada e ativa! Buscando em: {", ".join(sources)}.'
+    )
+
+
+def _execute_mission_command(
+    payload: dict[str, Any], *, session: Session, user: User
+) -> str:
+    transition = transition_mission(
+        session,
+        mission_id=UUID(payload["mission_id"]),
+        command=MissionCommand(payload["command"]),
+        expected_state_version=payload["expected_state_version"],
         actor_type="telegram",
         actor_id=user.id,
     )
-    return f'"{mission.title}" agora está {transition.to_status.value}.'
+    return f'"{payload["mission_title"]}" agora está {transition.to_status.value}.'
 
 
 def _secret_matches(provided: str | None, settings: Settings) -> bool:

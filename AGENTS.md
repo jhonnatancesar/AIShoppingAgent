@@ -104,4 +104,4 @@ Nunca iniciar automaticamente a próxima TASK. Encerrar apresentando resumo da i
 
 ## Estado atual
 
-TASKs 000 a 035, TASK-042, TASK-055, TASK-056, TASK-057, TASK-059 e TASK-060 concluídas. A próxima tarefa executável é a TASK-036. A TASK-058 e a TASK-061 foram registradas (`DEC-015`, `DEC-019`) e aguardam solicitação explícita.
+TASKs 000 a 035, TASK-042, TASK-055, TASK-056, TASK-057, TASK-058, TASK-059 e TASK-060 concluídas. A próxima tarefa executável é a TASK-036. A TASK-061 foi registrada (`DEC-019`) e aguarda solicitação explícita.

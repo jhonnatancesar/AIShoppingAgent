@@ -14,6 +14,7 @@ from sqlalchemy import (
     String,
     func,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PostgreSQLUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -95,6 +96,7 @@ class User(Base):
         server_default="{}",
     )
     registration_step: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    pending_intent: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

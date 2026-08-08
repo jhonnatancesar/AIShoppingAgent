@@ -12,6 +12,7 @@ from app.intent import Intent, IntentKind, IntentParameters
 from app.main import app
 from app.missions.query import MissionReferenceError
 from app.missions.service import MissionCreationError, MissionTransitionConditionError
+from app.telegram.confirmation import ConfirmationError
 from app.telegram.contracts import TelegramMessage
 from app.telegram.router import (
     TelegramUpdate,
@@ -27,6 +28,7 @@ class _FakeAdapter:
     def __init__(self, outcome: Intent | Exception) -> None:
         self.outcome = outcome
         self.calls: list[tuple[TelegramMessage, UserRole]] = []
+        self.manager = object()
 
     async def interpret(
         self, message: TelegramMessage, *, profile: UserRole = UserRole.USER
@@ -37,13 +39,28 @@ class _FakeAdapter:
         return self.outcome
 
 
+def _patch_resolve_answer(
+    monkeypatch: pytest.MonkeyPatch, outcome: bool | Exception
+) -> None:
+    async def _fake_resolve_answer(text: str, *, manager: object, profile: UserRole):
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    monkeypatch.setattr("app.telegram.router.resolve_answer", _fake_resolve_answer)
+
+
 def _fake_user(
-    *, role: UserRole = UserRole.USER, registration_step: str | None = None
+    *,
+    role: UserRole = UserRole.USER,
+    registration_step: str | None = None,
+    pending_intent: dict | None = None,
 ) -> SimpleNamespace:
     return SimpleNamespace(
         id=uuid4(),
         role=role,
         registration_step=registration_step,
+        pending_intent=pending_intent,
         username=None,
         email=None,
         favorite_stores=[],
@@ -273,18 +290,17 @@ def test_telegram_webhook_route_is_exposed_in_openapi() -> None:
 
 
 @pytest.mark.anyio
-async def test_create_mission_intent_resolves_user_creates_and_replies(
+async def test_create_mission_intent_stages_confirmation_without_creating(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     fake_user = _fake_user()
-    fake_mission = SimpleNamespace(title="notebook gamer")
     create_calls: list[dict[str, object]] = []
 
     resolve_calls = _patch_user(monkeypatch, fake_user)
 
     def _fake_create_mission(session: object, **kwargs: object):
         create_calls.append(kwargs)
-        return fake_mission, ("pichau", "kabum")
+        raise AssertionError("create_mission_from_criteria should not run yet")
 
     monkeypatch.setattr(
         "app.telegram.router.create_mission_from_criteria", _fake_create_mission
@@ -312,10 +328,152 @@ async def test_create_mission_intent_resolves_user_creates_and_replies(
 
     assert response.status_code == 204
     assert resolve_calls == [(222, "Fulano")]
-    assert create_calls[0]["search_query"] == "notebook gamer"
-    assert create_calls[0]["source_codes"] == ("pichau", "kabum")
+    assert create_calls == []
+    assert fake_user.pending_intent == {
+        "kind": "create_mission",
+        "search_query": "notebook gamer",
+        "target_amount": "5000.00",
+        "target_currency": "BRL",
+        "sources": ["pichau", "kabum"],
+    }
     assert send_calls[0][0] == 111
     assert "notebook gamer" in send_calls[0][1]
+    assert "sim" in send_calls[0][1].lower()
+
+
+@pytest.mark.anyio
+async def test_confirmed_pending_create_mission_executes_and_clears_step(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_user = _fake_user(
+        pending_intent={
+            "kind": "create_mission",
+            "search_query": "notebook gamer",
+            "target_amount": "5000.00",
+            "target_currency": "BRL",
+            "sources": ["pichau", "kabum"],
+        }
+    )
+    fake_mission = SimpleNamespace(title="notebook gamer")
+    create_calls: list[dict[str, object]] = []
+
+    _patch_user(monkeypatch, fake_user)
+    _patch_resolve_answer(monkeypatch, True)
+
+    def _fake_create_mission(session: object, **kwargs: object):
+        create_calls.append(kwargs)
+        return fake_mission, ("pichau", "kabum")
+
+    monkeypatch.setattr(
+        "app.telegram.router.create_mission_from_criteria", _fake_create_mission
+    )
+    send_calls = _patch_send_message(monkeypatch)
+    adapter = _FakeAdapter(_intent())
+
+    response = await receive_telegram_webhook(
+        update=_update(
+            message=_TelegramIncomingMessage(
+                text="sim",
+                date=1754586000,
+                chat=_TelegramChat(id=111),
+                from_=_TelegramSender(id=222, first_name="Fulano"),
+            )
+        ),
+        x_telegram_bot_api_secret_token="correct-secret",
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        settings=_settings(),
+        session=MagicMock(),
+    )
+
+    assert response.status_code == 204
+    # confirmação usa um classificador de IA próprio, não o IntentInterpreter
+    assert adapter.calls == []
+    assert create_calls[0]["search_query"] == "notebook gamer"
+    assert create_calls[0]["source_codes"] == ("pichau", "kabum")
+    assert fake_user.pending_intent is None
+    assert "notebook gamer" in send_calls[0][1]
+
+
+@pytest.mark.anyio
+async def test_cancelled_pending_create_mission_does_not_execute(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_user = _fake_user(
+        pending_intent={
+            "kind": "create_mission",
+            "search_query": "notebook gamer",
+            "target_amount": None,
+            "target_currency": None,
+            "sources": [],
+        }
+    )
+    _patch_user(monkeypatch, fake_user)
+    _patch_resolve_answer(monkeypatch, False)
+
+    def _fail(*args: object, **kwargs: object) -> object:
+        raise AssertionError("create_mission_from_criteria should not run")
+
+    monkeypatch.setattr("app.telegram.router.create_mission_from_criteria", _fail)
+    send_calls = _patch_send_message(monkeypatch)
+    adapter = _FakeAdapter(_intent())
+
+    response = await receive_telegram_webhook(
+        update=_update(
+            message=_TelegramIncomingMessage(
+                text="não",
+                date=1754586000,
+                chat=_TelegramChat(id=111),
+                from_=_TelegramSender(id=222, first_name="Fulano"),
+            )
+        ),
+        x_telegram_bot_api_secret_token="correct-secret",
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        settings=_settings(),
+        session=MagicMock(),
+    )
+
+    assert response.status_code == 204
+    assert adapter.calls == []
+    assert fake_user.pending_intent is None
+    assert "cancel" in send_calls[0][1].lower()
+
+
+@pytest.mark.anyio
+async def test_unrecognized_answer_to_pending_intent_keeps_it_staged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pending = {
+        "kind": "create_mission",
+        "search_query": "notebook gamer",
+        "target_amount": None,
+        "target_currency": None,
+        "sources": [],
+    }
+    fake_user = _fake_user(pending_intent=pending)
+    _patch_user(monkeypatch, fake_user)
+    _patch_resolve_answer(monkeypatch, ConfirmationError("Não entendi. Tente de novo."))
+    send_calls = _patch_send_message(monkeypatch)
+    adapter = _FakeAdapter(_intent())
+
+    response = await receive_telegram_webhook(
+        update=_update(
+            message=_TelegramIncomingMessage(
+                text="talvez",
+                date=1754586000,
+                chat=_TelegramChat(id=111),
+                from_=_TelegramSender(id=222, first_name="Fulano"),
+            )
+        ),
+        x_telegram_bot_api_secret_token="correct-secret",
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        settings=_settings(),
+        session=MagicMock(),
+    )
+
+    assert response.status_code == 204
+    assert adapter.calls == []
+    assert fake_user.pending_intent == pending
+    assert "não entendi" in send_calls[0][1].lower()
 
 
 @pytest.mark.anyio
@@ -371,23 +529,24 @@ async def test_query_mission_intent_lists_missions_found(
 
 
 @pytest.mark.anyio
-async def test_mission_command_intent_transitions_and_replies(
+async def test_mission_command_intent_stages_confirmation_without_transitioning(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from app.missions.models import MissionCommand, MissionStatus
+    from app.missions.models import MissionCommand
 
+    fake_user = _fake_user()
     fake_mission = SimpleNamespace(id=uuid4(), title="notebook gamer", state_version=1)
-    fake_transition = SimpleNamespace(to_status=MissionStatus.PAUSED)
 
-    _patch_user(monkeypatch, _fake_user())
+    _patch_user(monkeypatch, fake_user)
     monkeypatch.setattr(
         "app.telegram.router.resolve_mission_for_command",
         lambda session, **kwargs: fake_mission,
     )
-    monkeypatch.setattr(
-        "app.telegram.router.transition_mission",
-        lambda session, **kwargs: fake_transition,
-    )
+
+    def _fail_transition(*args: object, **kwargs: object) -> object:
+        raise AssertionError("transition_mission should not run yet")
+
+    monkeypatch.setattr("app.telegram.router.transition_mission", _fail_transition)
     send_calls = _patch_send_message(monkeypatch)
 
     intent = _intent(
@@ -405,6 +564,62 @@ async def test_mission_command_intent_transitions_and_replies(
     )
 
     assert response.status_code == 204
+    assert fake_user.pending_intent == {
+        "kind": "mission_command",
+        "mission_id": str(fake_mission.id),
+        "mission_title": "notebook gamer",
+        "command": "pause",
+        "expected_state_version": 1,
+    }
+    assert "pausar" in send_calls[0][1]
+    assert "notebook gamer" in send_calls[0][1]
+
+
+@pytest.mark.anyio
+async def test_confirmed_pending_mission_command_executes_and_clears_step(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.missions.models import MissionStatus
+
+    mission_id = uuid4()
+    fake_user = _fake_user(
+        pending_intent={
+            "kind": "mission_command",
+            "mission_id": str(mission_id),
+            "mission_title": "notebook gamer",
+            "command": "pause",
+            "expected_state_version": 1,
+        }
+    )
+    fake_transition = SimpleNamespace(to_status=MissionStatus.PAUSED)
+
+    _patch_user(monkeypatch, fake_user)
+    _patch_resolve_answer(monkeypatch, True)
+    monkeypatch.setattr(
+        "app.telegram.router.transition_mission",
+        lambda session, **kwargs: fake_transition,
+    )
+    send_calls = _patch_send_message(monkeypatch)
+    adapter = _FakeAdapter(_intent())
+
+    response = await receive_telegram_webhook(
+        update=_update(
+            message=_TelegramIncomingMessage(
+                text="confirmo",
+                date=1754586000,
+                chat=_TelegramChat(id=111),
+                from_=_TelegramSender(id=222, first_name="Fulano"),
+            )
+        ),
+        x_telegram_bot_api_secret_token="correct-secret",
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        settings=_settings(),
+        session=MagicMock(),
+    )
+
+    assert response.status_code == 204
+    assert adapter.calls == []
+    assert fake_user.pending_intent is None
     assert "paused" in send_calls[0][1]
 
 
@@ -431,28 +646,23 @@ async def test_unknown_intent_replies_asking_to_rephrase(
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize(
-    "error",
-    [
-        MissionTransitionConditionError("A missão precisa de fontes."),
-        MissionReferenceError("Não encontrei nenhuma missão correspondente."),
-    ],
-)
-async def test_known_mission_error_is_replied_and_returns_204(
-    monkeypatch: pytest.MonkeyPatch, error: Exception
+async def test_mission_reference_error_at_staging_is_replied_without_pending_intent(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _patch_user(monkeypatch, _fake_user())
+    from app.missions.models import MissionCommand
+
+    fake_user = _fake_user()
+    error = MissionReferenceError("Não encontrei nenhuma missão correspondente.")
+
+    _patch_user(monkeypatch, fake_user)
 
     def _raise(*args: object, **kwargs: object) -> object:
         raise error
 
-    monkeypatch.setattr("app.telegram.router.create_mission_from_criteria", _raise)
+    monkeypatch.setattr("app.telegram.router.resolve_mission_for_command", _raise)
     send_calls = _patch_send_message(monkeypatch)
 
-    intent = _intent(
-        kind=IntentKind.CREATE_MISSION,
-        parameters=IntentParameters(search_query="notebook gamer"),
-    )
+    intent = _intent(kind=IntentKind.MISSION_COMMAND, command=MissionCommand.PAUSE)
     adapter = _FakeAdapter(intent)
 
     response = await receive_telegram_webhook(
@@ -464,29 +674,87 @@ async def test_known_mission_error_is_replied_and_returns_204(
     )
 
     assert response.status_code == 204
+    assert fake_user.pending_intent is None
     assert send_calls[0][1] == str(error)
 
 
 @pytest.mark.anyio
-async def test_unexpected_error_is_not_masked_and_propagates(
+async def test_known_error_at_confirmed_execution_is_replied_and_clears_pending(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _patch_user(monkeypatch, _fake_user())
+    error = MissionTransitionConditionError("A missão precisa de fontes.")
+    fake_user = _fake_user(
+        pending_intent={
+            "kind": "create_mission",
+            "search_query": "notebook gamer",
+            "target_amount": None,
+            "target_currency": None,
+            "sources": [],
+        }
+    )
+
+    _patch_user(monkeypatch, fake_user)
+    _patch_resolve_answer(monkeypatch, True)
+
+    def _raise(*args: object, **kwargs: object) -> object:
+        raise error
+
+    monkeypatch.setattr("app.telegram.router.create_mission_from_criteria", _raise)
+    send_calls = _patch_send_message(monkeypatch)
+    adapter = _FakeAdapter(_intent())
+
+    response = await receive_telegram_webhook(
+        update=_update(
+            message=_TelegramIncomingMessage(
+                text="sim",
+                date=1754586000,
+                chat=_TelegramChat(id=111),
+                from_=_TelegramSender(id=222, first_name="Fulano"),
+            )
+        ),
+        x_telegram_bot_api_secret_token="correct-secret",
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        settings=_settings(),
+        session=MagicMock(),
+    )
+
+    assert response.status_code == 204
+    assert fake_user.pending_intent is None
+    assert send_calls[0][1] == str(error)
+
+
+@pytest.mark.anyio
+async def test_unexpected_error_at_confirmed_execution_is_not_masked_and_propagates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_user = _fake_user(
+        pending_intent={
+            "kind": "create_mission",
+            "search_query": "notebook gamer",
+            "target_amount": None,
+            "target_currency": None,
+            "sources": [],
+        }
+    )
+    _patch_user(monkeypatch, fake_user)
+    _patch_resolve_answer(monkeypatch, True)
 
     def _raise(*args: object, **kwargs: object) -> object:
         raise MissionCreationError("stores not seeded for codes: pichau")
 
     monkeypatch.setattr("app.telegram.router.create_mission_from_criteria", _raise)
-
-    intent = _intent(
-        kind=IntentKind.CREATE_MISSION,
-        parameters=IntentParameters(search_query="notebook gamer"),
-    )
-    adapter = _FakeAdapter(intent)
+    adapter = _FakeAdapter(_intent())
 
     with pytest.raises(MissionCreationError):
         await receive_telegram_webhook(
-            update=_update(),
+            update=_update(
+                message=_TelegramIncomingMessage(
+                    text="sim",
+                    date=1754586000,
+                    chat=_TelegramChat(id=111),
+                    from_=_TelegramSender(id=222, first_name="Fulano"),
+                )
+            ),
             x_telegram_bot_api_secret_token="correct-secret",
             adapters=_adapters(adapter),  # type: ignore[arg-type]
             settings=_settings(),

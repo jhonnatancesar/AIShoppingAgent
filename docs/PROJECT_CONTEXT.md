@@ -15,9 +15,7 @@ conversa, validado em PostgreSQL 18 real. A TASK-035 ("Criar comandos de
 missão") fechou o loop: o webhook agora cria, consulta e comanda missões de
 verdade a partir do `Intent`, respondendo ao Telegram, validado de ponta a
 ponta contra PostgreSQL, Gemini e Telegram reais. A próxima tarefa executável
-é a TASK-036. A TASK-058 foi registrada (`DEC-015`): confirmar a intenção
-interpretada com o usuário antes de executar comandos de missão, ainda não
-implementada. A TASK-059 (`DEC-016`) foi concluída: `GroqProvider` real
+é a TASK-036. A TASK-059 (`DEC-016`) foi concluída: `GroqProvider` real
 integrado como terceiro nível opcional do `AdminDevAIProviderManager`
 (Gemini premium → Groq → Gemini gratuito), e `IntentInterpreter.interpret`
 ganhou um parâmetro opcional de perfil para validação manual via ADMIN/DEV
@@ -47,6 +45,26 @@ oferta de upgrade (`docs/OUT_OF_SCOPE.md`). A TASK-061 (`DEC-019`) foi
 registrada para autenticação real por usuário e senha, retirada do escopo
 da TASK-060 por exigir desenho de segurança próprio; ainda não
 implementada.
+
+A TASK-058 (`DEC-015`) está **concluída**: `create_mission` e
+`mission_command` não executam mais direto — ficam encenados em
+`User.pending_intent` e só executam após confirmação explícita, descrita em
+português para o usuário. A classificação de confirmar/cancelar passa por
+um classificador de IA dedicado (`interpret_confirmation_reply`, prompt e
+propósito próprios, fora do vocabulário fechado do `IntentInterpreter`),
+reconhecendo respostas informais e erros de português, não só palavra
+exata. Validado de ponta a ponta contra o Telegram real: criar missão sem
+citar loja, cancelar com frase informal, e confirmar comando de missão
+funcionaram corretamente. Duas correções reais surgiram dessa validação:
+(1) a chave Gemini deixou de ser compartilhada entre perfis —
+`AISHOPPING_GEMINI_API_KEY_USER` e `AISHOPPING_GEMINI_API_KEY_ADMIN_DEV`
+são credenciais distintas; (2) `AdminDevAIProviderManager`/
+`UserAIProviderManager` tinham `validate_provider_response` fora do
+try/except, então uma resposta reprovada por essa checagem escapava sem
+telemetria; e o adaptador do Telegram parou de repassar
+`message.received_at` (relógio do Telegram) como `requested_at`, evitando
+comparar relógios de fontes diferentes — a causa raiz de falhas silenciosas
+reais observadas em produção.
 
 ## O que existe
 
@@ -123,13 +141,20 @@ implementada.
   vincula `User.telegram_user_id` — exclusivamente a pessoa do Telegram,
   nunca a conversa — de forma determinística e idempotente, protegida contra
   corrida de criação concorrente por `SAVEPOINT`, sem autenticação real.
-- Despacho de comandos de missão pelo webhook: cria, consulta e comanda
-  missões a partir do `Intent`, com resposta síncrona ao Telegram
-  (`send_message`); toda `CREATE_MISSION` válida sai `active`, usando as
-  quatro fontes-padrão da V1 quando o `Intent` não especifica nenhuma; erro
-  conhecido de domínio responde `204` com explicação, falha inesperada sobe
-  como `500`, nunca mascarada. Primeira dependência FastAPI de sessão de
-  banco por requisição (`get_session`).
+- Despacho de comandos de missão pelo webhook: consulta responde direto;
+  criar e comandar missão ficam encenados em `User.pending_intent` e só
+  executam após confirmação explícita (TASK-058), com resposta síncrona ao
+  Telegram (`send_message`); toda `CREATE_MISSION` válida sai `active`,
+  usando as quatro fontes-padrão da V1 quando o `Intent` não especifica
+  nenhuma; erro conhecido de domínio responde `204` com explicação, falha
+  inesperada sobe como `500`, nunca mascarada. Primeira dependência FastAPI
+  de sessão de banco por requisição (`get_session`).
+- Confirmação da intenção interpretada antes de executar (TASK-058):
+  classificador de IA dedicado (`interpret_confirmation_reply`,
+  `backend/app/telegram/confirmation.py`), fora do vocabulário fechado do
+  `IntentInterpreter`, reconhece confirmação/cancelamento em linguagem
+  informal via o `AIProviderManager` do próprio perfil do usuário.
+  Validado de ponta a ponta contra o Telegram real.
 - Seed das quatro lojas selecionáveis da V1 (Pichau, Terabyte, Amazon,
   Kabum) em `stores`, necessário para `MissionSource`.
 - Seleção do perfil de IA do webhook a partir do `User.role` resolvido

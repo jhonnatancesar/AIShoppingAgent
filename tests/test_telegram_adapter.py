@@ -1,5 +1,5 @@
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from app.ai_provider import AIRequest, AIResponse
@@ -55,17 +55,23 @@ def _message(**overrides: object) -> TelegramMessage:
 
 
 @pytest.mark.anyio
-async def test_interpret_forwards_text_and_received_at_to_the_interpreter() -> None:
+async def test_interpret_forwards_text_and_uses_local_clock_for_requested_at() -> None:
+    """`requested_at` usa o relógio local, não `message.received_at` (TASK-058):
+    o horário do Telegram vem de outra fonte que `finished_at` do provedor, e
+    comparar os dois faz `validate_provider_response` falhar sob qualquer
+    desalinhamento de relógio.
+    """
     manager = _FakeManager(_response())
     adapter = TelegramIntentAdapter(IntentInterpreter(manager))
-    message = _message()
+    message = _message(received_at=datetime(2020, 1, 1, tzinfo=UTC))
 
     await adapter.interpret(message)
 
     request = manager.captured_request
     assert request is not None
     assert request.messages[-1].content == message.text
-    assert request.requested_at == message.received_at
+    assert request.requested_at != message.received_at
+    assert (datetime.now(UTC) - request.requested_at) < timedelta(seconds=5)
 
 
 @pytest.mark.anyio

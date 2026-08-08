@@ -11,9 +11,13 @@ não decide nem executa nada.
   e `user_id` (identificadores brutos do Telegram, sem resolução para o
   `User` interno), `text` e `received_at` (sempre com fuso horário).
 - `TelegramIntentAdapter` recebe um `IntentInterpreter` já configurado e
-  expõe `interpret(message)`, que encaminha `text` e `received_at` ao
+  expõe `interpret(message)`, que encaminha `text` ao
   `IntentInterpreter.interpret` e devolve o `Intent` resultante sem
-  inspecionar `kind` ou `command`.
+  inspecionar `kind` ou `command`. `requested_at` usa o relógio local no
+  instante da chamada, não `message.received_at` (TASK-058): o horário do
+  Telegram vem de outra fonte que `finished_at` da resposta do provedor, e
+  comparar os dois faz `validate_provider_response` falhar sob qualquer
+  desalinhamento entre os relógios.
 
 Toda a interpretação de linguagem natural continua exclusivamente no
 `IntentInterpreter` (`docs/INTENT_INTERPRETATION.md`), agnóstico de canal;

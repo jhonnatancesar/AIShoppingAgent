@@ -33,9 +33,14 @@ A fonte de verdade para dependências Python é `backend/requirements.txt`:
 - `pydantic-settings>=2.0,<3.0`
 - `uvicorn[standard]>=0.30,<1.0`
 
-`google-genai` 2.16.0 é o SDK oficial validado para o perfil USER. A chamada ao
-Gemini exige `AISHOPPING_GEMINI_API_KEY`; o modelo padrão configurável é
-`gemini-3.6-flash`. A chave fica apenas no ambiente ou `.env` ignorado pelo Git.
+`google-genai` 2.16.0 é o SDK oficial validado para os perfis USER e
+ADMIN/DEV. A chamada ao Gemini exige uma chave por perfil —
+`AISHOPPING_GEMINI_API_KEY_USER` para o perfil USER e
+`AISHOPPING_GEMINI_API_KEY_ADMIN_DEV` para a cascata ADMIN/DEV (TASK-059),
+mantendo as cotas gratuitas completamente separadas entre usuários reais e
+validação/uso administrativo. O modelo padrão configurável é
+`gemini-3.6-flash`. As chaves ficam apenas no ambiente ou `.env` ignorado
+pelo Git.
 
 `httpx` 0.28.1 (TASK-059) é usado por `GroqProvider` para chamar a API
 compatível com OpenAI do Groq (`/openai/v1/chat/completions`), fallback

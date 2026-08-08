@@ -25,6 +25,30 @@ Após a classificação, registrar a decisão neste arquivo e atualizar a docume
 - **Justificativa:** impacto avaliado e motivo da classificação.
 - **Próxima ação:** documento a atualizar, TASK a criar quando aplicável, ou ação de não implementação.
 
+### DEC-021 — Criar a fase V1.2 com uma lista priorizada de evoluções entre a V1 e a V2
+
+- **Data:** 2026-08-08
+- **Ideia:** o usuário pediu um documento próprio para uma fase "V1.2",
+  que sai depois da V1 e antes da V2, com ordem de execução definida:
+  TASK-061 primeiro (já registrada), seguida por: ajustar o cadastro para
+  pedir e-mail visando notificações; enviar notificações por e-mail;
+  pesquisa de cupons; e um painel administrativo web com acesso/edição
+  direta ao banco, login de administrador, status/consumo da aplicação e
+  controles operacionais (reiniciar aplicação/banco). Pediu para pensar em
+  quantos itens fazem sentido para o painel, sem criar um arquivo de TASK
+  por item agora — só listar dentro do próprio documento da V1.2.
+- **Classificação:** Versão futura.
+- **Justificativa:** nenhum destes itens está em `docs/MVP.md` (a V1 só
+  prevê notificações essenciais via Telegram, não e-mail nem cupons nem
+  painel administrativo). Diferente do registro sem compromisso do
+  `docs/BACKLOG.md`, o usuário quer prioridade e ordem definidas — por
+  isso ganham um documento próprio (`docs/V1_2.md`) com a lista já
+  ordenada, sem criar `docs/tasks/TASK-XXX.md` individuais ainda; cada
+  item vira TASK de verdade (com preflight, validação e critério de
+  aceite próprios) só quando for solicitado para execução.
+- **Próxima ação:** criado `docs/V1_2.md` com a ordem de execução e a
+  decomposição do painel administrativo; nenhuma implementação iniciada.
+
 ## Registros
 
 ### DEC-020 — Permitir armazenar e-mail em User, mantendo senha e token de fora

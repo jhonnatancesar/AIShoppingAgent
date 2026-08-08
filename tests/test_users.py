@@ -37,6 +37,7 @@ def test_user_table_matches_data_contract() -> None:
         table.c.favorite_stores,
         table.c.preferred_categories,
         table.c.registration_step,
+        table.c.pending_intent,
         table.c.created_at,
         table.c.updated_at,
     ]
@@ -60,6 +61,7 @@ def test_user_table_matches_data_contract() -> None:
     assert table.c.preferred_categories.nullable is False
     assert isinstance(table.c.preferred_categories.type, ARRAY)
     assert table.c.registration_step.nullable is True
+    assert table.c.pending_intent.nullable is True
     assert table.c.created_at.type.timezone is True
     assert table.c.updated_at.type.timezone is True
 
@@ -120,6 +122,7 @@ def test_user_registration_fields_are_optional_before_persistence() -> None:
     assert user.username is None
     assert user.email is None
     assert user.registration_step is None
+    assert user.pending_intent is None
 
 
 def test_user_model_is_registered_in_shared_metadata() -> None:

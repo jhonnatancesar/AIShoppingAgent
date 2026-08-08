@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -240,7 +240,7 @@ def test_admin_dev_factory_wires_groq_only_when_key_configured() -> None:
     without_groq = build_admin_dev_ai_provider_manager(
         Settings(
             _env_file=None,
-            gemini_api_key="configured-key",
+            gemini_api_key_admin_dev="configured-key",
             gemini_model="gemini-3.6-flash",
             gemini_premium_model="gemini-3.1-pro-preview",
         )
@@ -250,7 +250,7 @@ def test_admin_dev_factory_wires_groq_only_when_key_configured() -> None:
     with_groq = build_admin_dev_ai_provider_manager(
         Settings(
             _env_file=None,
-            gemini_api_key="configured-key",
+            gemini_api_key_admin_dev="configured-key",
             groq_api_key="configured-groq-key",
             groq_model="llama-3.3-70b-versatile",
         )
@@ -311,24 +311,88 @@ def test_gemini_requires_non_blank_secret_and_model() -> None:
 
 
 def test_user_manager_factory_requires_key_and_uses_configured_model() -> None:
-    with pytest.raises(AIRequestError, match="AISHOPPING_GEMINI_API_KEY"):
+    with pytest.raises(AIRequestError, match="AISHOPPING_GEMINI_API_KEY_USER"):
         build_user_ai_provider_manager(Settings(_env_file=None))
 
     manager = build_user_ai_provider_manager(
-        Settings(gemini_api_key="configured-key", gemini_model="gemini-3.6-flash")
+        Settings(
+            _env_file=None,
+            gemini_api_key_user="configured-key",
+            gemini_model="gemini-3.6-flash",
+        )
     )
     assert isinstance(manager, UserAIProviderManager)
 
 
 def test_admin_dev_factory_requires_key_and_configures_both_models() -> None:
-    with pytest.raises(AIRequestError, match="AISHOPPING_GEMINI_API_KEY"):
+    with pytest.raises(AIRequestError, match="AISHOPPING_GEMINI_API_KEY_ADMIN_DEV"):
         build_admin_dev_ai_provider_manager(Settings(_env_file=None))
 
     manager = build_admin_dev_ai_provider_manager(
         Settings(
-            gemini_api_key="configured-key",
+            _env_file=None,
+            gemini_api_key_admin_dev="configured-key",
             gemini_model="gemini-3.6-flash",
             gemini_premium_model="gemini-3.1-pro-preview",
         )
     )
     assert isinstance(manager, AdminDevAIProviderManager)
+
+
+@pytest.mark.anyio
+async def test_user_manager_records_telemetry_and_raises_on_time_mismatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regressão: `validate_provider_response` precisa ficar dentro do
+    try/except, senão uma resposta com `finished_at` anterior ao
+    `requested_at` (relógio local sem sincronia NTP, por exemplo) escapa
+    sem telemetria nem log — só sobe crua para quem chamou.
+    """
+    recorded: list[str] = []
+    monkeypatch.setattr(
+        "app.ai_provider.manager.record_ai_attempt",
+        lambda *args, **kwargs: recorded.append(kwargs.get("outcome")),
+    )
+
+    provider, _ = _provider(_FakeModels())
+    manager = UserAIProviderManager(provider)
+    request = AIRequest(
+        uuid4(),
+        UserRole.USER,
+        "user_assistance",
+        (AIMessage(AIMessageRole.USER, "Olá"),),
+        datetime.now(UTC) + timedelta(seconds=5),
+    )
+
+    with pytest.raises(AIProviderError, match="provider_time_mismatch"):
+        await manager.generate(request)
+
+    assert recorded == ["failed"]
+
+
+@pytest.mark.anyio
+async def test_admin_dev_records_telemetry_and_raises_on_time_mismatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    recorded: list[str] = []
+    monkeypatch.setattr(
+        "app.ai_provider.manager.record_ai_attempt",
+        lambda *args, **kwargs: recorded.append(kwargs.get("outcome")),
+    )
+
+    premium, _ = _provider(_FakeModels(response_text="Resposta premium"))
+    manager = AdminDevAIProviderManager(
+        premium, _PoisonProvider(), groq=_PoisonProvider()
+    )
+    request = AIRequest(
+        uuid4(),
+        UserRole.ADMIN,
+        "user_assistance",
+        (AIMessage(AIMessageRole.USER, "Olá"),),
+        datetime.now(UTC) + timedelta(seconds=5),
+    )
+
+    with pytest.raises(AIProviderError, match="provider_time_mismatch"):
+        await manager.generate(request)
+
+    assert recorded == ["failed"]

@@ -19,7 +19,7 @@ diretamente. `AIProvider` é uma porta interna usada apenas pelo manager.
 Perfis previstos:
 
 - `USER`: implementado com o SDK oficial `google-genai` e o modelo configurável
-  `gemini-3.6-flash`; exige `AISHOPPING_GEMINI_API_KEY`. Sem fallback.
+  `gemini-3.6-flash`; exige `AISHOPPING_GEMINI_API_KEY_USER`. Sem fallback.
 - `ADMIN/DEV`: política única que tenta `gemini-3.1-pro-preview`, depois o
   Groq (`GroqProvider`, TASK-059, opcional — só entra se
   `AISHOPPING_GROQ_API_KEY` estiver configurada) e, por último, o
@@ -71,3 +71,11 @@ real: uma mensagem de um usuário `ADMIN` real acionou o Gemini premium, que
 retornou `429`, caindo para o Groq real com sucesso — a mesma cascata da
 TASK-059, agora acionada por uma interação real, não só por ferramentas de
 validação manual.
+
+Ainda em 2026-08-08 (TASK-058), a chave Gemini deixou de ser compartilhada
+entre perfis: `AISHOPPING_GEMINI_API_KEY_USER` (perfil `USER`) e
+`AISHOPPING_GEMINI_API_KEY_ADMIN_DEV` (premium e gratuito da cascata
+`ADMIN`/`DEV`) são credenciais distintas, para que a cota gratuita de
+usuários reais nunca seja consumida por validação manual ou uso
+administrativo — mesmo objetivo do `--profile admin` da TASK-059, agora
+garantido também no nível da credencial, não só do perfil lógico.
