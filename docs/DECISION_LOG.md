@@ -25,6 +25,25 @@ Após a classificação, registrar a decisão neste arquivo e atualizar a docume
 - **Justificativa:** impacto avaliado e motivo da classificação.
 - **Próxima ação:** documento a atualizar, TASK a criar quando aplicável, ou ação de não implementação.
 
+### DEC-026 — Restringir recomendação ao menor custo total determinável na moeda da missão
+
+- **Data:** 2026-08-08
+- **Ideia:** fechar o escopo genérico da TASK-038 como uma recomendação única e
+  determinística por missão ativa, preservando a comparação completa para a
+  TASK-039 e compra, confirmação e trilha para as TASKs 040 e 041.
+- **Classificação:** Implementar agora.
+- **Justificativa:** frete desconhecido não prova custo zero e, portanto, não
+  pode vencer uma seleção por total. Moedas diferentes também não são
+  comparáveis sem uma política de conversão, ausente do MVP. A recomendação usa
+  somente coletas bem-sucedidas da própria missão, fontes selecionadas,
+  disponibilidade atual, moeda exata do critério e frete conhecido. Vendedor é
+  evidência opcional porque varejistas diretos não possuem `Seller`. Ofertas
+  inelegíveis permanecem explicadas, sem formar a comparação ordenada da
+  TASK-039. Ausência de candidata válida vira `insufficient_data`, nunca uma
+  escolha parcial.
+- **Próxima ação:** TASK-038 concluída e validada no PostgreSQL real; a próxima
+  tarefa executável é a TASK-039.
+
 ### DEC-025 — Restringir a TASK-037 a preferências de notificações com skipped terminal
 
 - **Data:** 2026-08-08

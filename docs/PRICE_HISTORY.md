@@ -16,3 +16,8 @@ comparações.
 
 Horários de filtro devem conter fuso. As consultas não modificam, deduplicam nem
 descartam observações e preservam valores monetários como `Decimal` no modelo.
+
+A TASK-038 usa o mesmo histórico imutável em um recorte próprio da missão:
+somente coletas bem-sucedidas e fontes selecionadas, mantendo identificáveis a
+observação corrente, a anterior comparável e o menor total comparável. Esse uso
+é somente leitura e não altera as consultas públicas deste módulo.

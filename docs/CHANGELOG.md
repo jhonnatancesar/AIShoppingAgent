@@ -1,5 +1,28 @@
 # Changelog
 
+## 2026-08-08 — TASK-038: recomendação determinística por missão
+
+- Corrigido o escopo genérico da TASK-038 (`DEC-026`) e preservadas as
+  fronteiras: TASK-039 compara ofertas; TASK-040 confirma compra; TASK-041
+  registra a trilha.
+- Criado `app.purchase` com contratos imutáveis e
+  `recommend_for_mission`: somente missão ativa, coletas bem-sucedidas da
+  própria missão e fontes selecionadas entram no recorte.
+- A observação mais recente define o estado da oferta. Apenas disponibilidade
+  `available`, moeda idêntica à do critério e frete conhecido tornam a oferta
+  elegível; frete nulo nunca é zero/grátis e não existe conversão monetária.
+- O menor `total_amount` vence deterministicamente, com desempate por recência
+  e UUID. O resultado mantém vendedor opcional, evidências das ofertas
+  inelegíveis e identificadores do histórico anterior/mínimo utilizado.
+- Ausência de moeda, observações, disponibilidade, moeda compatível ou total
+  determinável retorna `insufficient_data` com razão estável.
+- Validação real no PostgreSQL 18 confirmou menor total elegível, exclusão de
+  frete desconhecido, USD e fonte não selecionada, vendedor opcional, histórico
+  identificável, retorno insuficiente e rollback sem resíduos.
+- Pipeline completo aprovado em Python 3.14.6: 440 testes, 95,09% de cobertura,
+  Ruff, Alembic com head único e Docker Compose válidos. Nenhuma dependência ou
+  migração nova foi necessária.
+
 ## 2026-08-08 — TASK-037: preferências de notificações Telegram
 
 - Corrigido o escopo genérico da TASK-037 (`DEC-025`): ela controla somente

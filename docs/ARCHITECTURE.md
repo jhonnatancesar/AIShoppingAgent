@@ -19,3 +19,8 @@ PostgreSQL com locks transacionais e envia pela Bot API. Não é um novo serviç
 de domínio nem uma fila externa; API e worker compartilham código, migrações e
 banco e são implantados juntos pelo Docker Compose, inclusive em Linux
 headless/Ubuntu Server.
+
+A TASK-038 adicionou `app.purchase` como módulo somente leitura. Ele consulta
+missões, fontes, coletas e histórico já persistidos e produz uma recomendação
+determinística sem IA, novo processo ou nova tabela. Comparação completa,
+confirmação e trilha permanecem nas TASKs 039 a 041.

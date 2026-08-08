@@ -104,4 +104,4 @@ Nunca iniciar automaticamente a próxima TASK. Encerrar apresentando resumo da i
 
 ## Estado atual
 
-TASKs 000 a 037, TASK-042 a TASK-044 e TASK-055 a TASK-060 concluídas. As preferências de notificações Telegram foram validadas de ponta a ponta (`DEC-025`); a próxima tarefa executável é a TASK-038. A TASK-061 foi registrada (`DEC-019`) e aguarda solicitação explícita.
+TASKs 000 a 038, TASK-042 a TASK-044 e TASK-055 a TASK-060 concluídas. A recomendação determinística por missão foi validada contra PostgreSQL real (`DEC-026`); a próxima tarefa executável é a TASK-039. A TASK-061 foi registrada (`DEC-019`) e aguarda solicitação explícita.
