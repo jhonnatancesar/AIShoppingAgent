@@ -285,8 +285,13 @@ Registro durável de fatos de domínio para publicação e consumo futuros.
 | `occurred_at` | `timestamptz` | Obrigatório. |
 | `recorded_at` | `timestamptz` | Obrigatório. |
 
-O catálogo lógico foi definido na TASK-042 sem criar esta tabela. Persistência,
-publicação, tentativas e consumo pertencem às TASKs 043 e 044.
+O catálogo lógico foi definido na TASK-042. Persistência e publicação foram
+implementadas na TASK-043 pela revisão `20260808_0003` — tabela append-only
+(trigger rejeitando `UPDATE`/`DELETE`) e o serviço genérico
+`app.events.service.publish_event`, validado contra PostgreSQL real com
+candidatos reais de `evaluate_price_alerts` (TASK-027). `recorded_at` é
+gerado exclusivamente pelo PostgreSQL (`server_default=now()`), nunca pela
+aplicação. Tentativas de entrega e consumo pertencem à TASK-044.
 
 ### `audit_entries`
 
@@ -333,5 +338,5 @@ em `docs/AUDIT.md`.
 - O modelo não armazena credenciais, tokens, conteúdo integral de páginas ou dados pessoais desnecessários.
 - Migrações, metadata ORM, sessões e conexão foram configuradas na TASK-011.
   Todas as entidades previstas até `collection_runs` e `price_observations` já
-  foram implementadas. As consultas históricas da TASK-017 são somente leitura e
+  foram implementadas, além de `events` (TASK-043). As consultas históricas da TASK-017 são somente leitura e
   estão documentadas em `docs/PRICE_HISTORY.md`.

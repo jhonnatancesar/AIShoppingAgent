@@ -1,5 +1,38 @@
 # Changelog
 
+## 2026-08-08 — TASK-043: publicação durável de eventos
+
+- `backend/migrations/versions/20260808_0003_create_events.py` (novo): cria
+  `events` conforme `docs/DATABASE.md` — `event_type`/`aggregate_type` em
+  texto validado pela aplicação, `mission_id` FK opcional `RESTRICT`,
+  `payload` JSONB, `occurred_at` informado pelo produtor, `recorded_at`
+  gerado só pelo PostgreSQL (`server_default=now()`); dois índices
+  compostos; trigger `trg_events_append_only` rejeitando `UPDATE`/`DELETE`,
+  mesmo padrão de `mission_transitions`/`audit_entries`.
+- `backend/app/events/models.py` (novo): modelo `Event`, registrado em
+  `backend/app/database/model_registry.py`.
+- `backend/app/events/service.py` (novo): `publish_event` — valida
+  `occurred_at` consciente de fuso, reaproveita `validate_event_payload`
+  do catálogo (TASK-042) para checar tipo/agregado, serializa o payload em
+  JSON seguro sem perda de precisão (`UUID`/`Decimal` → `str`, `Enum` →
+  `.value`) e persiste. Deliberadamente sem importar `app.alerts` — quem
+  tiver um `PriceAlertCandidate` desempacota os campos na chamada.
+- Escopo restrito à publicação genérica: nenhuma detecção nova para
+  `mission.status_changed`/`collection.completed`/`collection.failed`/
+  `offer.availability_changed` (nenhuma TASK atribui essa detecção ainda) e
+  nenhum worker/consumidor (TASK-044) — ver `DEC-022`.
+- Testes novos em `tests/test_event_publication.py` (forma da tabela,
+  serviço, validação tz-aware/naive, incompatibilidade de agregado,
+  propagação de `EventCatalogError`); `tests/test_database.py` atualizado
+  para incluir `events` na lista fechada de tabelas implementadas.
+- Validação real contra PostgreSQL (dentro de uma transação revertida, sem
+  resíduo no banco local): `evaluate_price_alerts` (TASK-027) real produziu
+  2 candidatos a partir de uma queda de preço cruzando o alvo da missão;
+  `publish_event` persistiu ambos com `recorded_at` populado pelo servidor
+  via `RETURNING`; `UPDATE` e `DELETE` reais em `events` foram rejeitados
+  pelo trigger. `scripts\check.cmd` completo aprovado: 376 testes, 95,33%
+  de cobertura, grafo de migrações com único head (`20260808_0003`).
+
 ## 2026-08-08 — TASK-058: confirmação da intenção interpretada antes de executar
 
 - `backend/migrations/versions/20260808_0002...`: `users` ganha

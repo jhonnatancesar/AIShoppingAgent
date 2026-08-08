@@ -46,6 +46,22 @@ registrada para autenticação real por usuário e senha, retirada do escopo
 da TASK-060 por exigir desenho de segurança próprio; ainda não
 implementada.
 
+A TASK-043 (`DEC-022`) está **concluída**: o preflight da TASK-036 revelou
+duas dependências reais não satisfeitas — um pipeline de eventos
+persistidos/publicados e um `chat_id` do Telegram, nenhum dos dois
+existente. A TASK-043 resolve a primeira: `events` (migração
+`20260808_0003`) é uma tabela durável e append-only (trigger rejeitando
+`UPDATE`/`DELETE`, mesmo padrão de `mission_transitions`/`audit_entries`),
+e `app.events.service.publish_event` valida (`occurred_at` consciente de
+fuso, tipo/agregado contra o catálogo da TASK-042) e persiste qualquer
+evento do catálogo, com `recorded_at` gerado só pelo PostgreSQL. Validado
+contra PostgreSQL real com candidatos reais de `evaluate_price_alerts`
+(TASK-027) — o único produtor de eventos com lógica real hoje; a detecção
+dos outros cinco tipos de evento do catálogo (mudança de estado de missão,
+conclusão/falha de coleta, mudança de disponibilidade) segue sem nenhum
+ponto de integração, porque nenhuma TASK a atribui ainda. A próxima tarefa
+executável é a TASK-044 (consumo); a TASK-036 só será retomada depois dela.
+
 A TASK-058 (`DEC-015`) está **concluída**: `create_mission` e
 `mission_command` não executam mais direto — ficam encenados em
 `User.pending_intent` e só executam após confirmação explícita, descrita em
@@ -166,6 +182,12 @@ reais observadas em produção.
   `users`, interceptando a mensagem seguinte do usuário sem passar pelo
   `IntentInterpreter`. Comando `/upgrade` visível no bot, inativo (só "em
   breve").
+- Registro durável e append-only de eventos de domínio (`events`, migração
+  `20260808_0003`) e o serviço genérico `app.events.service.publish_event`
+  (TASK-043), que valida qualquer evento do catálogo fechado (TASK-042) e o
+  persiste com `recorded_at` gerado só pelo PostgreSQL. Validado contra
+  PostgreSQL real usando candidatos reais de `evaluate_price_alerts`
+  (TASK-027).
 - Documentos de visão, arquitetura, dados, módulos-alvo, escopo do MVP, backlog, itens fora de escopo, governança de decisões e workflow permanente de execução.
 - ADRs, RFCs e 61 tarefas planejadas.
 
@@ -173,14 +195,18 @@ reais observadas em produção.
 
 Além de `users`, `products`, `stores`, `sellers`, `offers`, `audit_entries`,
 `missions`, `mission_criteria`, `mission_sources`, `mission_transitions`,
-`mission_schedules`, `collection_runs` e `price_observations`, não há outras
-tabelas de domínio implementadas. Também não existem autenticação real (senha, token, OAuth — TASK-061),
+`mission_schedules`, `collection_runs`, `price_observations` e `events`, não
+há outras tabelas de domínio implementadas. Também não existem autenticação real (senha, token, OAuth — TASK-061),
 autorização por papel de fato aplicada além da seleção de perfil de IA,
 persistência de `chat_id` do Telegram, teclado interativo de seleção de
-fontes, notificações proativas (TASK-036), mudança real de plano/perfil
-pelo próprio usuário (o `/upgrade` da TASK-060 é só um placeholder inativo),
-APIs de negócio, worker, suíte permanente de testes ponta a ponta nem
-credenciais reais configuradas.
+fontes, consumo de eventos publicados (TASK-044) nem notificações
+proativas (TASK-036), mudança real de plano/perfil pelo próprio usuário (o
+`/upgrade` da TASK-060 é só um placeholder inativo), APIs de negócio,
+worker, detecção de `mission.status_changed`/`collection.completed`/
+`collection.failed`/`offer.availability_changed` (nenhuma TASK a atribui
+ainda), inserção real de `PriceObservation` num fluxo de coleta
+orquestrado, suíte permanente de testes ponta a ponta nem credenciais reais
+configuradas.
 
 ## Invariantes
 
@@ -212,8 +238,12 @@ credenciais reais configuradas.
 - Missões nascem em `draft`; alterações de estado e de `state_version` são executadas atomicamente com histórico append-only e versão concorrente.
 - Critérios usam busca textual e preço-alvo opcional pareado com moeda; recorrência usa agenda separada com intervalo fixo positivo.
 - Eventos usam nomes versionados e payloads mínimos do catálogo; tipos
-  desconhecidos e payloads incompatíveis são rejeitados antes da futura
-  persistência ou publicação.
+  desconhecidos e payloads incompatíveis são rejeitados antes da
+  persistência ou publicação (TASK-043).
+- `events` é append-only: nenhuma linha publicada é alterada ou removida,
+  reforçado por trigger no banco (mesmo padrão de `mission_transitions` e
+  `audit_entries`). `recorded_at` é gerado exclusivamente pelo PostgreSQL,
+  nunca pela aplicação.
 - Alertas são candidatos determinísticos derivados do histórico; persistência,
   publicação, consumo e notificação permanecem desacoplados.
 - Módulos da aplicação acessam IA somente por `AIProviderManager`; USER usa apenas

@@ -25,6 +25,40 @@ Após a classificação, registrar a decisão neste arquivo e atualizar a docume
 - **Justificativa:** impacto avaliado e motivo da classificação.
 - **Próxima ação:** documento a atualizar, TASK a criar quando aplicável, ou ação de não implementação.
 
+### DEC-022 — Reordenar TASK-036 atrás de TASK-043 e TASK-044, e restringir a TASK-043 à publicação genérica
+
+- **Data:** 2026-08-08
+- **Ideia:** ao iniciar o preflight da TASK-036 ("Criar notificações
+  Telegram"), a próxima tarefa executável pela ordem do `docs/ROADMAP.md`,
+  descobri que ela depende de duas coisas inexistentes: um pipeline real de
+  eventos persistidos/publicados (`docs/PRICE_ALERTS.md` já atribuía
+  "persistência e publicação" à TASK-043 e "consumo" à TASK-044) e um
+  `chat_id` persistido para endereçar conversas do Telegram
+  (`docs/USERS.md` já previa isso como responsabilidade de uma tarefa
+  futura). O usuário confirmou implementar TASK-043 e TASK-044 antes de
+  retomar a TASK-036. Durante a exploração para a TASK-043, ficou claro que
+  nenhum dos seis tipos de evento do catálogo (TASK-042) tem hoje um
+  produtor real com chamador em produção, exceto `evaluate_price_alerts`
+  (TASK-027) — que também não tinha chamador, porque não existe ainda
+  nenhum serviço que insira `PriceObservation` de verdade. Escopo da
+  TASK-043 restrito a: tabela `events` (migração + modelo, conforme
+  `docs/DATABASE.md`) e um serviço genérico `publish_event`, validado
+  contra PostgreSQL real usando candidatos reais de `evaluate_price_alerts`
+  — sem detectar os outros cinco tipos de evento (nenhuma TASK atribui essa
+  detecção ainda) e sem nenhum worker/consumidor (TASK-044).
+- **Classificação:** Implementar agora.
+- **Justificativa:** a numeração da TASK não substitui dependências
+  explícitas (`docs/ROADMAP.md`); implementar a TASK-036 sem um pipeline
+  real de eventos e sem `chat_id` exigiria mockar exatamente o que
+  `AGENTS.md` proíbe substituir por implementação incompleta. O mesmo
+  padrão já foi aceito neste projeto para `AuditEntry` (TASK-016) e
+  `MissionTransition` (TASK-021): tabelas append-only criadas e validadas
+  contra PostgreSQL real antes de qualquer chamador de produção existir.
+- **Próxima ação:** TASK-043 implementada e concluída nesta sessão
+  (`docs/tasks/TASK-043.md`). TASK-044 (consumo) é a próxima tarefa
+  executável; a retomada da TASK-036 (incluindo a definição do `chat_id`)
+  fica para depois que a TASK-044 fechar seu próprio ciclo.
+
 ### DEC-021 — Criar a fase V1.2 com uma lista priorizada de evoluções entre a V1 e a V2
 
 - **Data:** 2026-08-08

@@ -22,6 +22,9 @@ O total usa `Decimal` e corresponde ao item somado ao frete conhecido. Frete nul
 não é tratado como frete grátis; mantém a semântica definida em
 `docs/PRICE_ENGINE.md`.
 
-O resultado é um `PriceAlertCandidate` validado contra `app.events`. Persistência
-e publicação pertencem à TASK-043, consumo à TASK-044 e notificação Telegram à
+O resultado é um `PriceAlertCandidate` validado contra `app.events`.
+Persistência e publicação foram implementadas na TASK-043
+(`app.events.service.publish_event`) — quem tiver um `PriceAlertCandidate`
+desempacota seus campos (`event_type`, `aggregate_type`, `aggregate_id`,
+`payload`) na chamada. Consumo pertence à TASK-044 e notificação Telegram à
 TASK-036.
