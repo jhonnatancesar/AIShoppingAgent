@@ -27,6 +27,73 @@ Após a classificação, registrar a decisão neste arquivo e atualizar a docume
 
 ## Registros
 
+### DEC-020 — Permitir armazenar e-mail em User, mantendo senha e token de fora
+
+- **Data:** 2026-08-08
+- **Ideia:** `docs/USERS.md` ("Limites") registrava "Não são armazenadas
+  senhas, tokens, e-mails ou credenciais de autenticação real" como um
+  invariante único. O cadastro inicial da TASK-060 pede e-mail como campo
+  não sensível; senha/token continuam explicitamente fora (TASK-061,
+  `DEC-019`). É preciso separar e-mail (dado pessoal comum) desse
+  invariante, que na origem tratava tudo como "credencial de autenticação".
+- **Classificação:** Implementar agora.
+- **Justificativa:** e-mail não é, por si só, uma credencial de
+  autenticação — é dado pessoal padrão em cadastros, e o usuário confirmou
+  explicitamente querer incluí-lo na TASK-060 mesmo sabendo do invariante
+  anterior. Senha e token continuam de fora, sem mudança nenhuma nessa
+  parte. `docs/USERS.md` será atualizado para refletir a separação.
+- **Próxima ação:** atualizar `docs/USERS.md` e `docs/DATABASE.md`
+  removendo "e-mails" da lista de dados não armazenados, mantendo
+  senha/token/credenciais de autenticação real de fora.
+
+### DEC-019 — Criar a TASK-061 para autenticação real por usuário e senha
+
+- **Data:** 2026-08-08
+- **Ideia:** ao detalhar os campos do cadastro inicial da TASK-060, o
+  usuário pediu também uma senha para autenticar no bot (usuário + senha),
+  "pra saber que é ele mesmo".
+- **Classificação:** Nova TASK do MVP.
+- **Justificativa:** autenticação real por senha não é "dado não sensível"
+  — exige hashing seguro (nunca texto puro), fluxo de verificação e
+  provavelmente recuperação de conta; é uma peça de segurança com desenho
+  próprio, não um campo a mais num cadastro. `docs/PROJECT_CONTEXT.md`
+  ("O que não existe") já registra que não há autenticação real hoje, de
+  propósito — a identidade via Telegram (`User.telegram_user_id`, TASK-056)
+  já é confiável para o canal atual. O usuário concordou em tirar isso da
+  TASK-060 e tratar como TASK própria quando pedir.
+- **Próxima ação:** criada `docs/tasks/TASK-061.md` (stub, escopo a definir
+  na validação); aguarda solicitação explícita.
+
+### DEC-018 — Criar a TASK-060 para seleção de perfil de IA por papel, cadastro inicial e placeholder de upgrade
+
+- **Data:** 2026-08-08
+- **Ideia:** três pedidos relacionados do usuário, feitos juntos ao pedir
+  para executar a TASK-058: (1) o webhook do Telegram passar a escolher o
+  perfil de IA (`USER` vs `ADMIN`/`DEV`) a partir de `User.role`, em vez de
+  sempre usar `USER` fixo, e o usuário (dono do projeto) ter seu próprio
+  `User` elevado para `ADMIN` manualmente; (2) um fluxo de cadastro inicial
+  via Telegram, capturando dados não sensíveis a definir; (3) um comando ou
+  opção de "mudar de usuário/perfil" visível ao usuário, mas inativo —
+  reservado para uma futura oferta de upgrade, gratuita por enquanto.
+- **Classificação:** Nova TASK do MVP.
+- **Justificativa:** mudar de qual perfil de IA uma interação real usa é
+  uma alteração de comportamento de produção no despacho do webhook (TASKs
+  033–035), afetando diretamente o invariante que separava `USER` (Gemini
+  gratuito, sem fallback, reservado a usuários reais) de `ADMIN/DEV`
+  (cascata premium/Groq, TASK-059) — precisa de análise própria de como o
+  papel é determinado e protegido, não pode ser um ajuste dentro de outra
+  TASK. O cadastro inicial introduz persistência nova (campos ainda a
+  definir) e também exige TASK própria. O placeholder de "mudar de
+  usuário/perfil" fica deliberadamente **inativo** — nenhuma lógica de
+  cobrança, plano pago ou mudança real de papel por autoatendimento — para
+  não violar `docs/OUT_OF_SCOPE.md` ("Plano PLUS", "Usuário pago"), que
+  reserva qualquer oferta paga para a V2; é só uma afordance visível,
+  reservada para decisão futura.
+- **Próxima ação:** criada `docs/tasks/TASK-060.md`, registrada no
+  roadmap; a elevação manual do usuário do próprio dono do projeto para
+  `ADMIN` é uma ação pontual e deliberada dentro desta TASK, não uma
+  capacidade geral exposta a qualquer usuário.
+
 ### DEC-017 — Encerrar a TASK-057 com validação real parcial e adiar mais variedade de linguagem para a V2
 
 - **Data:** 2026-08-08

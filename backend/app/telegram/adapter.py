@@ -7,6 +7,7 @@ apenas encaminha o texto e o instante de recebimento da mensagem ao
 
 from app.intent import Intent, IntentInterpreter
 from app.telegram.contracts import TelegramMessage
+from app.users.models import UserRole
 
 
 class TelegramIntentAdapter:
@@ -15,8 +16,11 @@ class TelegramIntentAdapter:
     def __init__(self, interpreter: IntentInterpreter) -> None:
         self._interpreter = interpreter
 
-    async def interpret(self, message: TelegramMessage) -> Intent:
+    async def interpret(
+        self, message: TelegramMessage, *, profile: UserRole = UserRole.USER
+    ) -> Intent:
         return await self._interpreter.interpret(
             message.text,
             requested_at=message.received_at,
+            profile=profile,
         )

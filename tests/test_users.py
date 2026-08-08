@@ -6,7 +6,14 @@ from app.database.base import Base
 from app.database.model_registry import REGISTERED_MODELS
 from app.database.time import utc_now
 from app.users.models import User, UserRole
-from sqlalchemy import BigInteger, CheckConstraint, Enum, UniqueConstraint
+from sqlalchemy import (
+    ARRAY,
+    BigInteger,
+    CheckConstraint,
+    Enum,
+    String,
+    UniqueConstraint,
+)
 
 
 def test_user_role_has_only_v1_profiles() -> None:
@@ -25,6 +32,11 @@ def test_user_table_matches_data_contract() -> None:
         table.c.role,
         table.c.is_active,
         table.c.telegram_user_id,
+        table.c.username,
+        table.c.email,
+        table.c.favorite_stores,
+        table.c.preferred_categories,
+        table.c.registration_step,
         table.c.created_at,
         table.c.updated_at,
     ]
@@ -38,6 +50,16 @@ def test_user_table_matches_data_contract() -> None:
     assert table.c.is_active.nullable is False
     assert table.c.telegram_user_id.nullable is True
     assert isinstance(table.c.telegram_user_id.type, BigInteger)
+    assert table.c.username.nullable is True
+    assert table.c.username.type.length == 32
+    assert table.c.email.nullable is True
+    assert table.c.email.type.length == 254
+    assert table.c.favorite_stores.nullable is False
+    assert isinstance(table.c.favorite_stores.type, ARRAY)
+    assert isinstance(table.c.favorite_stores.type.item_type, String)
+    assert table.c.preferred_categories.nullable is False
+    assert isinstance(table.c.preferred_categories.type, ARRAY)
+    assert table.c.registration_step.nullable is True
     assert table.c.created_at.type.timezone is True
     assert table.c.updated_at.type.timezone is True
 
@@ -67,6 +89,37 @@ def test_user_table_rejects_blank_display_name_by_constraint() -> None:
 
     assert "ck_users_display_name_not_blank" in check_names
     assert "user_role_values" in check_names
+    assert "ck_users_username_not_blank" in check_names
+    assert "ck_users_email_not_blank" in check_names
+
+
+def test_user_username_is_unique() -> None:
+    """Nome de usuário do cadastro inicial (TASK-060) deve ser exclusivo."""
+    table = User.__table__
+
+    unique_constraints = [
+        constraint
+        for constraint in table.constraints
+        if isinstance(constraint, UniqueConstraint)
+    ]
+    assert any(
+        {column.name for column in constraint.columns} == {"username"}
+        for constraint in unique_constraints
+    )
+
+
+def test_user_registration_fields_are_optional_before_persistence() -> None:
+    """Campos do cadastro inicial (TASK-060) não são exigidos na construção.
+
+    `favorite_stores`/`preferred_categories` só ganham `[]` via
+    `server_default`/`default` no INSERT (mesmo padrão de `is_active`);
+    antes de um flush real, o atributo Python permanece `None`.
+    """
+    user = User(display_name="Usuário de teste", role=UserRole.USER)
+
+    assert user.username is None
+    assert user.email is None
+    assert user.registration_step is None
 
 
 def test_user_model_is_registered_in_shared_metadata() -> None:

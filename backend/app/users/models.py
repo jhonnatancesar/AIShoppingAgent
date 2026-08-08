@@ -5,6 +5,7 @@ from enum import StrEnum
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
+    ARRAY,
     BigInteger,
     Boolean,
     CheckConstraint,
@@ -37,6 +38,14 @@ class User(Base):
             "btrim(display_name) <> ''",
             name="ck_users_display_name_not_blank",
         ),
+        CheckConstraint(
+            "username IS NULL OR btrim(username) <> ''",
+            name="ck_users_username_not_blank",
+        ),
+        CheckConstraint(
+            "email IS NULL OR btrim(email) <> ''",
+            name="ck_users_email_not_blank",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(
@@ -67,6 +76,25 @@ class User(Base):
         unique=True,
         nullable=True,
     )
+    username: Mapped[str | None] = mapped_column(
+        String(32),
+        unique=True,
+        nullable=True,
+    )
+    email: Mapped[str | None] = mapped_column(String(254), nullable=True)
+    favorite_stores: Mapped[list[str]] = mapped_column(
+        ARRAY(String(32)),
+        nullable=False,
+        default=list,
+        server_default="{}",
+    )
+    preferred_categories: Mapped[list[str]] = mapped_column(
+        ARRAY(String(64)),
+        nullable=False,
+        default=list,
+        server_default="{}",
+    )
+    registration_step: Mapped[str | None] = mapped_column(String(32), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

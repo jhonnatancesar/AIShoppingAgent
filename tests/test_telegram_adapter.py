@@ -6,6 +6,7 @@ from app.ai_provider import AIRequest, AIResponse
 from app.intent import IntentInterpreter, IntentKind
 from app.missions.models import MissionCommand
 from app.telegram import TelegramIntentAdapter, TelegramMessage
+from app.users.models import UserRole
 
 
 class _FakeManager:
@@ -122,6 +123,18 @@ async def test_interpret_returns_the_intent_unchanged_for_mission_command() -> N
 
     assert intent.kind is IntentKind.MISSION_COMMAND
     assert intent.command is MissionCommand.PAUSE
+
+
+@pytest.mark.anyio
+async def test_interpret_forwards_explicit_profile_to_the_interpreter() -> None:
+    manager = _FakeManager(_response())
+    adapter = TelegramIntentAdapter(IntentInterpreter(manager))
+
+    await adapter.interpret(_message(), profile=UserRole.ADMIN)
+
+    request = manager.captured_request
+    assert request is not None
+    assert request.profile is UserRole.ADMIN
 
 
 @pytest.mark.anyio

@@ -21,9 +21,8 @@ implementada. A TASK-059 (`DEC-016`) foi concluída: `GroqProvider` real
 integrado como terceiro nível opcional do `AdminDevAIProviderManager`
 (Gemini premium → Groq → Gemini gratuito), e `IntentInterpreter.interpret`
 ganhou um parâmetro opcional de perfil para validação manual via ADMIN/DEV
-sem consumir a cota do `USER` — o webhook de produção continua fixo em
-`USER`, sem mudança de comportamento. Isso desbloqueou a TASK-057 (robustez
-do `IntentInterpreter` para escrita informal), agora **concluída**
+sem consumir a cota do `USER`. Isso desbloqueou a TASK-057 (robustez
+do `IntentInterpreter` para escrita informal), concluída
 (`DEC-017`): as 19 mensagens do conjunto ampliado foram validadas com
 sucesso via ADMIN/DEV (premium/Groq/gratuito), e a confirmação final contra
 o `USER`/Gemini real cobre 3 dos 4 `IntentKind` (`create_mission`,
@@ -31,6 +30,23 @@ o `USER`/Gemini real cobre 3 dos 4 `IntentKind` (`create_mission`,
 contra o `USER` real por nova exaustão de cota, e o usuário aceitou
 explicitamente encerrar a TASK nesse estado, adiando mais variedade de
 linguagem para a V2 (`docs/tasks/TASK-057.md`, `docs/BACKLOG.md`).
+
+A TASK-060 (`DEC-018`) está **concluída**: o webhook do Telegram agora
+resolve o `User` antes de interpretar (não mais depois) e escolhe entre o
+adaptador `USER` (Gemini gratuito) e o adaptador `ADMIN`/`DEV` (cascata da
+TASK-059) a partir do `User.role` resolvido — validado de ponta a ponta
+contra o Telegram real, incluindo o caso real em que o premium retornou
+`429` e a cascata caiu para o Groq real com sucesso. O dono do projeto foi
+elevado manualmente para `ADMIN`. Um comando `/cadastro` captura nome de
+usuário, e-mail e preferências (lojas e categorias) em passos sequenciais,
+persistidos em `users` (revisão `20260808_0001`), sem passar pelo
+`IntentInterpreter`; validado de ponta a ponta contra o Telegram real. Um
+comando `/upgrade` existe e é visível no bot, mas responde apenas "em
+breve", sem nenhuma lógica real — placeholder deliberado para uma futura
+oferta de upgrade (`docs/OUT_OF_SCOPE.md`). A TASK-061 (`DEC-019`) foi
+registrada para autenticação real por usuário e senha, retirada do escopo
+da TASK-060 por exigir desenho de segurança próprio; ainda não
+implementada.
 
 ## O que existe
 
@@ -49,7 +65,10 @@ linguagem para a V2 (`docs/tasks/TASK-057.md`, `docs/BACKLOG.md`).
 - Contrato de ciclo de vida de missões com estados, comandos, transições, invariantes e auditoria mínima definidos antes do modelo persistente.
 - Modelo relacional PostgreSQL do MVP definido com entidades, tipos, relações, restrições, índices e regras de preservação histórica.
 - SQLAlchemy, Psycopg e Alembic configurados com conexão tipada, metadata compartilhada, sessões explícitas e baseline reversível.
-- Entidade `User` persistente com UUID, nome, papel tipado, ativação lógica, timestamps e restrições de integridade.
+- Entidade `User` persistente com UUID, nome, papel tipado, ativação lógica,
+  identidade do Telegram, campos opcionais de cadastro inicial (nome de
+  usuário, e-mail, lojas favoritas, categorias preferidas, passo de
+  cadastro pendente — TASK-060), timestamps e restrições de integridade.
 - Entidade `Product` persistente com identidade canônica, nome, marca e modelo opcionais, timestamps e restrições de integridade.
 - Entidades `Store`, `Seller` e `Offer` persistentes com fonte tipada, relações restritivas e identidade estável por varejista ou vendedor de marketplace.
 - Entidade `AuditEntry` persistente e append-only, com JSONB sanitizado, referência opcional de ator e índices históricos.
@@ -91,9 +110,9 @@ linguagem para a V2 (`docs/tasks/TASK-057.md`, `docs/BACKLOG.md`).
   para `unknown`. Prompt de sistema refinado (TASK-057) com orientação
   explícita de robustez a escrita informal, gírias, erros de digitação e
   ordem livre das informações, sem alterar o vocabulário fechado. Desde a
-  TASK-059, `interpret` aceita um parâmetro opcional de perfil (`ADMIN`/`DEV`)
-  usado só por ferramentas de validação manual, nunca pelo webhook — o
-  caminho de produção continua fixo em `USER`.
+  TASK-059, `interpret` aceita um parâmetro opcional de perfil (`ADMIN`/`DEV`);
+  desde a TASK-060, o webhook de produção o usa de verdade, escolhendo o
+  perfil a partir do `User.role` resolvido em vez de ficar fixo em `USER`.
 - Fronteira de entrada do canal Telegram (`TelegramMessage`,
   `TelegramIntentAdapter`) que traduz uma mensagem bruta do Telegram em um
   `Intent`, reaproveitando exclusivamente o `IntentInterpreter`.
@@ -113,19 +132,30 @@ linguagem para a V2 (`docs/tasks/TASK-057.md`, `docs/BACKLOG.md`).
   banco por requisição (`get_session`).
 - Seed das quatro lojas selecionáveis da V1 (Pichau, Terabyte, Amazon,
   Kabum) em `stores`, necessário para `MissionSource`.
+- Seleção do perfil de IA do webhook a partir do `User.role` resolvido
+  (TASK-060): `USER` sempre usa o adaptador Gemini gratuito, `ADMIN`/`DEV`
+  sempre a cascata do `AdminDevAIProviderManager`; validado de ponta a
+  ponta contra o Telegram real, incluindo o caso real de fallback para o
+  Groq. Comando `/cadastro` captura nome de usuário, e-mail, lojas
+  favoritas e categorias preferidas em passos sequenciais persistidos em
+  `users`, interceptando a mensagem seguinte do usuário sem passar pelo
+  `IntentInterpreter`. Comando `/upgrade` visível no bot, inativo (só "em
+  breve").
 - Documentos de visão, arquitetura, dados, módulos-alvo, escopo do MVP, backlog, itens fora de escopo, governança de decisões e workflow permanente de execução.
-- ADRs, RFCs e 57 tarefas planejadas.
+- ADRs, RFCs e 61 tarefas planejadas.
 
 ## O que não existe
 
 Além de `users`, `products`, `stores`, `sellers`, `offers`, `audit_entries`,
 `missions`, `mission_criteria`, `mission_sources`, `mission_transitions`,
 `mission_schedules`, `collection_runs` e `price_observations`, não há outras
-tabelas de domínio implementadas. Também não existem autenticação, autorização,
+tabelas de domínio implementadas. Também não existem autenticação real (senha, token, OAuth — TASK-061),
+autorização por papel de fato aplicada além da seleção de perfil de IA,
 persistência de `chat_id` do Telegram, teclado interativo de seleção de
-fontes, notificações proativas, preferências de usuário, APIs de negócio,
-worker, suíte permanente de testes ponta a ponta nem credenciais reais
-configuradas.
+fontes, notificações proativas (TASK-036), mudança real de plano/perfil
+pelo próprio usuário (o `/upgrade` da TASK-060 é só um placeholder inativo),
+APIs de negócio, worker, suíte permanente de testes ponta a ponta nem
+credenciais reais configuradas.
 
 ## Invariantes
 

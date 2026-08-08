@@ -19,7 +19,11 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
-from app.ai_provider import AIProviderError, build_user_ai_provider_manager
+from app.ai_provider import (
+    AIProviderError,
+    build_admin_dev_ai_provider_manager,
+    build_user_ai_provider_manager,
+)
 from app.core.config import Settings, get_settings
 from app.database.dependency import get_session
 from app.intent import Intent, IntentInterpreter, IntentKind
@@ -40,7 +44,12 @@ from app.missions.service import (
 from app.telegram.adapter import TelegramIntentAdapter
 from app.telegram.bot_api import send_message
 from app.telegram.contracts import TelegramContractError, TelegramMessage
-from app.users.models import User
+from app.users.models import User, UserRole
+from app.users.registration import (
+    RegistrationError,
+    advance_registration,
+    start_registration,
+)
 from app.users.service import get_or_create_telegram_user
 
 logger = logging.getLogger("app.telegram")
@@ -53,6 +62,10 @@ _UNKNOWN_REPLY = (
     "• Consultar suas missões\n"
     "• Dar um comando (pausar, retomar, concluir ou cancelar uma missão)"
 )
+
+_CADASTRO_COMMAND = "/cadastro"
+_UPGRADE_COMMAND = "/upgrade"
+_UPGRADE_REPLY = "🔒 Mudar de usuário/perfil — em breve."
 
 
 class MissionIntentError(ValueError):
@@ -97,10 +110,22 @@ class TelegramUpdate(BaseModel):
 
 
 @lru_cache
-def get_telegram_intent_adapter() -> TelegramIntentAdapter:
-    """Monta o adaptador uma única vez, reaproveitando o IntentInterpreter."""
-    manager = build_user_ai_provider_manager()
-    return TelegramIntentAdapter(IntentInterpreter(manager))
+def get_telegram_intent_adapters() -> dict[UserRole, TelegramIntentAdapter]:
+    """Monta um adaptador por perfil, uma única vez, reaproveitando os managers.
+
+    `USER` fala exclusivamente com o Gemini gratuito, sem fallback;
+    `ADMIN`/`DEV` compartilham a cascata do `AdminDevAIProviderManager`
+    (Gemini premium, Groq opcional, Gemini gratuito — TASK-059). Qual
+    adaptador é usado numa interação real depende de `User.role`
+    (TASK-060), nunca de escolha do próprio usuário.
+    """
+    user_interpreter = IntentInterpreter(build_user_ai_provider_manager())
+    admin_dev_interpreter = IntentInterpreter(build_admin_dev_ai_provider_manager())
+    return {
+        UserRole.USER: TelegramIntentAdapter(user_interpreter),
+        UserRole.ADMIN: TelegramIntentAdapter(admin_dev_interpreter),
+        UserRole.DEV: TelegramIntentAdapter(admin_dev_interpreter),
+    }
 
 
 @router.post(
@@ -118,7 +143,9 @@ def get_telegram_intent_adapter() -> TelegramIntentAdapter:
 async def receive_telegram_webhook(
     update: TelegramUpdate,
     x_telegram_bot_api_secret_token: Annotated[str | None, Header()] = None,
-    adapter: TelegramIntentAdapter = Depends(get_telegram_intent_adapter),
+    adapters: dict[UserRole, TelegramIntentAdapter] = Depends(
+        get_telegram_intent_adapters
+    ),
     settings: Settings = Depends(get_settings),
     session: Session = Depends(get_session),
 ) -> Response:
@@ -136,39 +163,50 @@ async def receive_telegram_webhook(
 
     message = _extract_message(update)
     if message is not None:
-        try:
-            intent = await adapter.interpret(message)
-        except TelegramContractError, AIProviderError:
-            logger.warning(
-                "telegram_webhook_intent_failed",
-                extra={"telegram_chat_id": message.chat_id},
-            )
-        else:
-            await _handle_intent(
-                intent,
-                message=message,
-                first_name=update.message.from_.first_name,
-                session=session,
-                settings=settings,
+        user = get_or_create_telegram_user(
+            session,
+            telegram_user_id=message.user_id,
+            display_name=update.message.from_.first_name,
+        )
+        reply = await _handle_message(
+            message, user=user, adapters=adapters, session=session
+        )
+        if reply is not None and settings.telegram_bot_token is not None:
+            await send_message(
+                message.chat_id, reply, bot_token=settings.telegram_bot_token
             )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-async def _handle_intent(
-    intent: Intent,
-    *,
+async def _handle_message(
     message: TelegramMessage,
-    first_name: str,
+    *,
+    user: User,
+    adapters: dict[UserRole, TelegramIntentAdapter],
     session: Session,
-    settings: Settings,
-) -> None:
-    user = get_or_create_telegram_user(
-        session,
-        telegram_user_id=message.user_id,
-        display_name=first_name,
-    )
+) -> str | None:
+    lowered = message.text.strip().lower()
+    if lowered == _CADASTRO_COMMAND:
+        return start_registration(user)
+    if lowered == _UPGRADE_COMMAND:
+        return _UPGRADE_REPLY
+    if user.registration_step is not None:
+        try:
+            return advance_registration(user, answer=message.text)
+        except RegistrationError as error:
+            return str(error)
+
     try:
-        reply = _dispatch_intent(intent, session=session, user=user)
+        intent = await adapters[user.role].interpret(message, profile=user.role)
+    except TelegramContractError, AIProviderError:
+        logger.warning(
+            "telegram_webhook_intent_failed",
+            extra={"telegram_chat_id": message.chat_id},
+        )
+        return None
+
+    try:
+        return _dispatch_intent(intent, session=session, user=user)
     except _KNOWN_DISPATCH_ERRORS as error:
         logger.warning(
             "telegram_webhook_mission_failed",
@@ -177,12 +215,7 @@ async def _handle_intent(
                 "mission_error": type(error).__name__,
             },
         )
-        reply = str(error)
-
-    if settings.telegram_bot_token is not None:
-        await send_message(
-            message.chat_id, reply, bot_token=settings.telegram_bot_token
-        )
+        return str(error)
 
 
 def _dispatch_intent(intent: Intent, *, session: Session, user: User) -> str:

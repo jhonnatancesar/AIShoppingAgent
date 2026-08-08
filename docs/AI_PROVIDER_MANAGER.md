@@ -62,3 +62,12 @@ premium real forçado a falhar por cota, confirmando que o Groq real é
 alcançado e responde. As 19 mensagens diversas de validação do
 `IntentInterpreter` (TASK-057) foram classificadas corretamente via essa
 cascata, sem tocar na cota compartilhada do perfil `USER`.
+
+Em 2026-08-08 (TASK-060), o webhook do Telegram passou a escolher qual
+adaptador/perfil usar a partir do `User.role` já resolvido — `USER` sempre
+fala com o Gemini gratuito, `ADMIN`/`DEV` sempre com a cascata do
+`AdminDevAIProviderManager`. Validado de ponta a ponta contra o Telegram
+real: uma mensagem de um usuário `ADMIN` real acionou o Gemini premium, que
+retornou `429`, caindo para o Groq real com sucesso — a mesma cascata da
+TASK-059, agora acionada por uma interação real, não só por ferramentas de
+validação manual.

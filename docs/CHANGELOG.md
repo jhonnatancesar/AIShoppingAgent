@@ -1,5 +1,40 @@
 # Changelog
 
+## 2026-08-08 — TASK-060: perfil de IA por papel, cadastro inicial e placeholder de upgrade
+
+- Registradas `DEC-018` (TASK-060), `DEC-019` (TASK-061, autenticação real
+  por usuário e senha, retirada do cadastro por exigir desenho de segurança
+  próprio) e `DEC-020` (e-mail deixa de ser tratado como credencial em
+  `User`, mantendo senha/token de fora).
+- `backend/app/telegram/router.py`: o webhook agora resolve o `User`
+  (TASK-056) **antes** de interpretar a intenção (antes era depois), e
+  escolhe entre dois `IntentInterpreter` — um ligado ao
+  `UserAIProviderManager` (`USER`), outro ao `AdminDevAIProviderManager`
+  (`ADMIN`/`DEV`, TASK-059) — a partir do `User.role` resolvido.
+- Migração `20260808_0001`: `users` ganha `username` (único), `email`,
+  `favorite_stores`, `preferred_categories` e `registration_step`, todos
+  opcionais ou com padrão vazio; nenhum dado de autenticação real.
+- `backend/app/users/registration.py` (novo): fluxo de cadastro inicial
+  dirigido pelo comando `/cadastro`, com passos sequenciais
+  (username → email → lojas favoritas → categorias), interceptando a
+  mensagem seguinte do usuário sem passar pelo `IntentInterpreter`.
+- Comando `/upgrade` registrado no menu do bot
+  (`backend/scripts/register_telegram_commands.py`, novo), responde apenas
+  "em breve" — nenhuma lógica real, placeholder deliberado
+  (`docs/OUT_OF_SCOPE.md`: "Plano PLUS", "Usuário pago" continuam na V2).
+- Testes novos (`tests/test_user_registration.py`) e ajustados
+  (`tests/test_telegram_router.py`, `tests/test_telegram_adapter.py`,
+  `tests/test_users.py`, `tests/test_gemini_user_profile.py`).
+  `scripts\check.cmd` completo aprovado: 345 testes, 94,98% de cobertura.
+- **Validação real completa contra o Telegram**: mensagem de um usuário
+  `USER` interpretada via Gemini; usuário elevado manualmente a `ADMIN`
+  (dono do projeto); mensagem seguinte do mesmo usuário como `ADMIN`
+  acionou o Gemini premium, que retornou `429`, caindo para o Groq real com
+  sucesso — a cascata da TASK-059 acionada por uma interação real, não só
+  por ferramentas de validação. `/cadastro` completo validado de ponta a
+  ponta (username, e-mail, lojas, categorias, `registration_step` limpo ao
+  final). `/upgrade` validado (resposta estática, sem chamada de IA).
+
 ## 2026-08-08 — TASK-057 encerrada (`DEC-017`)
 
 - O usuário autorizou explicitamente encerrar a TASK-057 com a cobertura
