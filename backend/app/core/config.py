@@ -32,6 +32,8 @@ class Settings(BaseSettings):
     gemini_api_key: SecretStr | None = None
     gemini_model: str = Field(default="gemini-3.6-flash", min_length=1)
     gemini_premium_model: str = Field(default="gemini-3.1-pro-preview", min_length=1)
+    groq_api_key: SecretStr | None = None
+    groq_model: str = Field(default="llama-3.3-70b-versatile", min_length=1)
     telegram_bot_token: SecretStr | None = None
     telegram_webhook_secret: SecretStr | None = None
 

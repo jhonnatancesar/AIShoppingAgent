@@ -104,4 +104,4 @@ Nunca iniciar automaticamente a próxima TASK. Encerrar apresentando resumo da i
 
 ## Estado atual
 
-TASKs 000 a 035, TASK-042, TASK-055 e TASK-056 concluídas. A próxima tarefa executável é a TASK-036. A TASK-057 está em execução, pausada por esgotamento da cota gratuita do Gemini durante a validação real (ver impedimento em `docs/tasks/TASK-057.md`). A TASK-058 foi registrada (`DEC-015`) e aguarda solicitação explícita.
+TASKs 000 a 035, TASK-042, TASK-055, TASK-056 e TASK-059 concluídas. A próxima tarefa executável é a TASK-036. A TASK-057 está em execução: 3 dos 4 `IntentKind` confirmados contra o `USER`/Gemini real, pausada por nova exaustão de cota antes de confirmar `unknown` (ver `docs/tasks/TASK-057.md`). A TASK-058 foi registrada (`DEC-015`) e aguarda solicitação explícita.

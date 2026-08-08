@@ -12,7 +12,9 @@ from app.ai_provider import (
     AIProviderUnavailable,
     AIRequest,
     AIRequestError,
+    AIResponse,
     GeminiProvider,
+    GroqProvider,
     UserAIProviderManager,
     build_admin_dev_ai_provider_manager,
     build_user_ai_provider_manager,
@@ -112,6 +114,39 @@ async def test_user_manager_rejects_admin_and_dev_profiles() -> None:
             await manager.generate(_request(profile))
 
 
+class _StaticProvider:
+    """Fake AIProvider mínimo, sem passar pelo protocolo HTTP do Gemini/Groq."""
+
+    def __init__(
+        self, provider_id: str, model: str, *, response_text: str = "", error=None
+    ) -> None:
+        self.provider_id = provider_id
+        self.model = model
+        self._response_text = response_text
+        self._error = error
+
+    async def generate(self, request: AIRequest) -> AIResponse:
+        if self._error is not None:
+            raise self._error
+        return AIResponse(
+            request_id=request.request_id,
+            provider=self.provider_id,
+            model=self.model,
+            content=self._response_text,
+            finished_at=datetime.now(UTC),
+        )
+
+
+class _PoisonProvider:
+    """Fake AIProvider que falha o teste se for chamado (tier que deve ser pulado)."""
+
+    provider_id = "poison"
+    model = "poison"
+
+    async def generate(self, request: AIRequest) -> AIResponse:
+        raise AssertionError("this provider tier should not have been called")
+
+
 @pytest.mark.anyio
 @pytest.mark.parametrize("profile", [UserRole.ADMIN, UserRole.DEV])
 async def test_admin_dev_share_premium_policy(profile: UserRole) -> None:
@@ -147,6 +182,81 @@ async def test_admin_dev_manager_rejects_user() -> None:
 
     with pytest.raises(AIRequestError, match="ADMIN/DEV"):
         await manager.generate(_request(UserRole.USER))
+
+
+@pytest.mark.anyio
+async def test_admin_dev_falls_back_to_groq_before_free_gemini() -> None:
+    premium, _ = _provider(_FakeModels(error=AIProviderQuotaExceeded()))
+    groq = _StaticProvider("groq", "llama-3.3-70b-versatile", response_text="Groq")
+    free = _PoisonProvider()
+    manager = AdminDevAIProviderManager(premium, free, groq=groq)
+
+    response = await manager.generate(_request(UserRole.ADMIN))
+
+    assert response.provider == "groq"
+    assert response.content == "Groq"
+
+
+@pytest.mark.anyio
+async def test_admin_dev_falls_back_to_free_gemini_when_premium_and_groq_fail() -> None:
+    premium, _ = _provider(_FakeModels(error=AIProviderUnavailable()))
+    groq = _StaticProvider(
+        "groq", "llama-3.3-70b-versatile", error=AIProviderQuotaExceeded()
+    )
+    free, _ = _provider(_FakeModels(response_text="Resposta gratuita"))
+    manager = AdminDevAIProviderManager(premium, free, groq=groq)
+
+    response = await manager.generate(_request(UserRole.DEV))
+
+    assert response.model == "gemini-3.6-flash"
+    assert response.content == "Resposta gratuita"
+
+
+@pytest.mark.anyio
+async def test_admin_dev_raises_last_error_when_every_tier_fails() -> None:
+    premium, _ = _provider(_FakeModels(error=AIProviderQuotaExceeded()))
+    groq = _StaticProvider("groq", "m", error=AIProviderUnavailable())
+    free, _ = _provider(_FakeModels(error=AIProviderQuotaExceeded()))
+    manager = AdminDevAIProviderManager(premium, free, groq=groq)
+
+    with pytest.raises(AIProviderQuotaExceeded):
+        await manager.generate(_request(UserRole.ADMIN))
+
+
+@pytest.mark.anyio
+async def test_admin_dev_non_retryable_premium_error_skips_remaining_tiers() -> None:
+    premium, _ = _provider(
+        _FakeModels(error=AIProviderError("provider_request_rejected", retryable=False))
+    )
+    manager = AdminDevAIProviderManager(
+        premium, _PoisonProvider(), groq=_PoisonProvider()
+    )
+
+    with pytest.raises(AIProviderError, match="provider_request_rejected"):
+        await manager.generate(_request(UserRole.ADMIN))
+
+
+def test_admin_dev_factory_wires_groq_only_when_key_configured() -> None:
+    without_groq = build_admin_dev_ai_provider_manager(
+        Settings(
+            _env_file=None,
+            gemini_api_key="configured-key",
+            gemini_model="gemini-3.6-flash",
+            gemini_premium_model="gemini-3.1-pro-preview",
+        )
+    )
+    assert without_groq._groq is None  # noqa: SLF001
+
+    with_groq = build_admin_dev_ai_provider_manager(
+        Settings(
+            _env_file=None,
+            gemini_api_key="configured-key",
+            groq_api_key="configured-groq-key",
+            groq_model="llama-3.3-70b-versatile",
+        )
+    )
+    assert isinstance(with_groq._groq, GroqProvider)  # noqa: SLF001
+    assert with_groq._groq.model == "llama-3.3-70b-versatile"  # noqa: SLF001
 
 
 @pytest.mark.anyio

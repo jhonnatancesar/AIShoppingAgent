@@ -2,8 +2,16 @@
 
 A TASK-032 traduz uma mensagem livre do usuário em uma intenção estruturada,
 agnóstica de canal e sem lógica de domínio. `IntentInterpreter` é o único ponto
-de entrada e usa exclusivamente `AIProviderManager` no perfil `USER`, conforme
+de entrada e usa `AIProviderManager` no perfil `USER` por padrão, conforme
 `docs/AI_PROVIDER_MANAGER.md`.
+
+Desde a TASK-059, `interpret` aceita um parâmetro nomeado opcional `profile`
+(default `USER`). O caminho de produção — o webhook do Telegram (TASKs
+033–035) — nunca o passa e continua sempre em `USER`. Só ferramentas de
+validação manual (`backend/scripts/validate_intent_interpreter.py`) podem
+passar `ADMIN`/`DEV`, para rodar contra a cascata de fallback do
+`AdminDevAIProviderManager` (Gemini premium → Groq → Gemini gratuito) sem
+consumir a cota gratuita compartilhada com usuários reais do `USER`.
 
 ## Contrato
 

@@ -27,6 +27,40 @@ Após a classificação, registrar a decisão neste arquivo e atualizar a docume
 
 ## Registros
 
+### DEC-016 — Criar a TASK-059 para avaliar o Groq como fallback de cota do AIProviderManager
+
+- **Data:** 2026-08-08
+- **Ideia:** durante o impedimento de cota da TASK-057, o usuário pediu para
+  testar a chave `AISHOPPING_GROQ_API_KEY` já presente em `backend/.env`,
+  fora do `AIProviderManager` e sem tocar em nenhum módulo do app (script
+  descartável em `scratchpad`, nunca importado por `backend/app`). A chave
+  respondeu `200` com conteúdo coerente (`llama-3.3-70b-versatile`). O
+  usuário pediu para registrar a possibilidade de usar o Groq como fallback
+  para quando a cota gratuita do Gemini se esgotar.
+- **Classificação:** Nova TASK do MVP
+- **Justificativa:** um `GroqProvider` dentro de `app.ai_provider` seguindo
+  o mesmo contrato agnóstico (`AIProvider`) já usado pelo Gemini é uma
+  mudança arquitetural real no `AIProviderManager`, não um ajuste mecânico
+  — por isso não pode ser implementada dentro de outra TASK, mesmo
+  padrão que justificou TASK própria para TASK-056/057/058. Há tensão
+  explícita com o invariante já documentado em `docs/AI_PROVIDER_MANAGER.md`
+  ("OpenAI, Claude, usuário pago e comparação multi-IA ficam para a V2") e
+  em `docs/PROJECT_CONTEXT.md` ("USER usa apenas Gemini gratuito... OpenAI,
+  Claude e usuário pago ficam para a V2"): embora o Groq não esteja citado
+  nominalmente nessas exclusões, o princípio por trás delas — a V1 usa
+  somente o Gemini como provedor de IA — precisa ser revisto
+  explicitamente antes de qualquer implementação, não assumido por
+  conveniência de disponibilidade de uma chave. A motivação é real e
+  relevante ao MVP (a cota gratuita do Gemini se mostrou frágil o bastante
+  nesta própria sessão para bloquear validação real), mas a decisão de
+  introduzir um segundo provedor no MVP exige análise própria de escopo,
+  custo, confiabilidade e consistência de contrato entre respostas de
+  provedores diferentes.
+- **Próxima ação:** criada `docs/tasks/TASK-059.md`, registrada no roadmap;
+  aguarda solicitação explícita para ser executada — incluindo, como parte
+  da própria TASK, decidir se o invariante "só Gemini na V1" deve ser
+  revisto.
+
 ### DEC-015 — Criar a TASK-058 para confirmação da intenção interpretada antes da execução
 
 - **Data:** 2026-08-08

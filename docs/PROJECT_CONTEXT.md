@@ -15,14 +15,20 @@ conversa, validado em PostgreSQL 18 real. A TASK-035 ("Criar comandos de
 missão") fechou o loop: o webhook agora cria, consulta e comanda missões de
 verdade a partir do `Intent`, respondendo ao Telegram, validado de ponta a
 ponta contra PostgreSQL, Gemini e Telegram reais. A próxima tarefa executável
-é a TASK-036. A TASK-057 (robustez do `IntentInterpreter` para escrita
-informal) está em execução: prompt refinado, validação manual ampliada para
-19 mensagens e suíte automatizada aprovados, mas a validação real contra o
-Gemini ficou parcial (3 de 19 mensagens) por esgotamento da cota gratuita do
-perfil `USER`, sem horário de reset informado — retomar quando a cota
-voltar (`docs/tasks/TASK-057.md`). A TASK-058 foi registrada (`DEC-015`):
-confirmar a intenção interpretada com o usuário antes de executar comandos
-de missão, ainda não implementada.
+é a TASK-036. A TASK-058 foi registrada (`DEC-015`): confirmar a intenção
+interpretada com o usuário antes de executar comandos de missão, ainda não
+implementada. A TASK-059 (`DEC-016`) foi concluída: `GroqProvider` real
+integrado como terceiro nível opcional do `AdminDevAIProviderManager`
+(Gemini premium → Groq → Gemini gratuito), e `IntentInterpreter.interpret`
+ganhou um parâmetro opcional de perfil para validação manual via ADMIN/DEV
+sem consumir a cota do `USER` — o webhook de produção continua fixo em
+`USER`, sem mudança de comportamento. Isso desbloqueou a TASK-057 (robustez
+do `IntentInterpreter` para escrita informal): as 19 mensagens do conjunto
+ampliado foram validadas com sucesso via ADMIN/DEV (premium/Groq/gratuito),
+e a confirmação final contra o `USER`/Gemini real cobre agora 3 dos 4
+`IntentKind` (`create_mission`, `query_mission`, `mission_command`); só
+`unknown` segue pendente de confirmação real, por nova exaustão da cota
+gratuita do `USER` — retomar quando a cota voltar (`docs/tasks/TASK-057.md`).
 
 ## O que existe
 
@@ -67,20 +73,25 @@ de missão, ainda não implementada.
   providers internos e a porta única `AIProviderManager`.
 - Adaptador Gemini do perfil USER com SDK oficial, cliente assíncrono,
   configuração segura e tradução sanitizada de falhas.
-- Política compartilhada de ADMIN/DEV que tenta o Gemini premium e retorna ao
-  Gemini gratuito em quota ou indisponibilidade.
+- Política compartilhada de ADMIN/DEV que tenta o Gemini premium, depois o
+  Groq (`GroqProvider`, TASK-059, opcional e via `httpx`) e por fim o Gemini
+  gratuito; sem a chave do Groq configurada, mantém o comportamento de dois
+  níveis já validado nas TASKs 029–031. Cascata validada de ponta a ponta
+  contra o Groq real.
 - Telemetria estruturada e sanitizada de tentativas de IA, diferenciando modelo
   premium, fallback gratuito, resultado e reset de cota quando informado.
 - Aviso de cota agnóstico de canal, com prazo conhecido em UTC ou indicação
   explícita de prazo desconhecido.
 - Interpretação de intenção (`IntentInterpreter`) agnóstica de canal, que
-  traduz mensagens livres em `Intent` estruturado via `AIProviderManager`
-  (perfil `USER`), reaproveitando `MissionCommand` e os campos existentes de
-  `MissionCriteria`, com parsing estrito e fallback seguro para `unknown`.
-  Prompt de sistema refinado (TASK-057) com orientação explícita de
-  robustez a escrita informal, gírias, erros de digitação e ordem livre das
-  informações, sem alterar o vocabulário fechado; validação real completa
-  contra o Gemini ainda pendente.
+  traduz mensagens livres em `Intent` estruturado via `AIProviderManager`,
+  perfil `USER` por padrão, reaproveitando `MissionCommand` e os campos
+  existentes de `MissionCriteria`, com parsing estrito e fallback seguro
+  para `unknown`. Prompt de sistema refinado (TASK-057) com orientação
+  explícita de robustez a escrita informal, gírias, erros de digitação e
+  ordem livre das informações, sem alterar o vocabulário fechado. Desde a
+  TASK-059, `interpret` aceita um parâmetro opcional de perfil (`ADMIN`/`DEV`)
+  usado só por ferramentas de validação manual, nunca pelo webhook — o
+  caminho de produção continua fixo em `USER`.
 - Fronteira de entrada do canal Telegram (`TelegramMessage`,
   `TelegramIntentAdapter`) que traduz uma mensagem bruta do Telegram em um
   `Intent`, reaproveitando exclusivamente o `IntentInterpreter`.
@@ -149,6 +160,8 @@ configuradas.
 - Alertas são candidatos determinísticos derivados do histórico; persistência,
   publicação, consumo e notificação permanecem desacoplados.
 - Módulos da aplicação acessam IA somente por `AIProviderManager`; USER usa apenas
-  Gemini gratuito e ADMIN/DEV compartilham tentativa premium com fallback
-  gratuito. OpenAI, Claude e usuário pago ficam para a V2. Credenciais nunca são
+  Gemini gratuito, sem fallback. ADMIN/DEV tenta Gemini premium, depois o Groq
+  (opcional, TASK-059, só se configurado) e por fim o Gemini gratuito. OpenAI,
+  Claude e usuário pago ficam para a V2 — o Groq é fallback interno de
+  infraestrutura, nunca escolha exposta ao usuário. Credenciais nunca são
   versionadas.

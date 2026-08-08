@@ -19,16 +19,27 @@ diretamente. `AIProvider` é uma porta interna usada apenas pelo manager.
 Perfis previstos:
 
 - `USER`: implementado com o SDK oficial `google-genai` e o modelo configurável
-  `gemini-3.6-flash`; exige `AISHOPPING_GEMINI_API_KEY`.
-- `ADMIN/DEV`: política única que tenta `gemini-3.1-pro-preview` e retorna ao
-  `gemini-3.6-flash` em quota ou indisponibilidade do nível premium.
+  `gemini-3.6-flash`; exige `AISHOPPING_GEMINI_API_KEY`. Sem fallback.
+- `ADMIN/DEV`: política única que tenta `gemini-3.1-pro-preview`, depois o
+  Groq (`GroqProvider`, TASK-059, opcional — só entra se
+  `AISHOPPING_GROQ_API_KEY` estiver configurada) e, por último, o
+  `gemini-3.6-flash` gratuito. Sem a chave do Groq, o comportamento é o
+  mesmo de dois níveis já validado nas TASKs 029–031.
 - `PLUS`: futuro; não existe no contrato nem na V1.
 
 O perfil USER traduz mensagens para o contrato Gemini, fecha o cliente assíncrono
 após cada chamada e converte quota, indisponibilidade, autenticação e rejeição em
 erros sanitizados. Ao atingir o limite, `AIProviderQuotaExceeded` permite ao canal
 informar que o usuário tente novamente mais tarde. USER nunca tenta o modelo
-premium. OpenAI, Claude, usuário pago e comparação multi-IA ficam para a V2.
+premium nem o Groq. OpenAI, Claude, usuário pago e comparação multi-IA ficam
+para a V2 — o Groq só existe como fallback interno de infraestrutura do
+ADMIN/DEV, nunca como escolha exposta ao usuário final.
+
+`GroqProvider` (TASK-059) chama a API compatível com OpenAI do Groq via
+`httpx`, traduzindo os papéis `system`/`user`/`assistant` diretamente (sem a
+fusão de mensagens de sistema exigida pelo Gemini) e convertendo erros para
+os mesmos tipos sanitizados do `GeminiProvider`, incluindo `quota_reset_at`
+a partir do cabeçalho `retry-after` quando informado.
 
 Cada tentativa gera `ai_provider_attempt` com UUID de correlação, perfil,
 finalidade, provedor, modelo, resultado, indicador de fallback e reset de quota
@@ -43,3 +54,11 @@ uma chave descartável inválida, confirmando erro sanitizado sem exposição do
 ou da resposta bruta. A telemetria foi validada novamente no fluxo ADMIN/DEV real:
 o premium retornou `429` com reset e o Flash gratuito concluiu o fallback. Nenhuma
 credencial é versionada.
+
+Em 2026-08-08 (TASK-059), o `GroqProvider` foi validado com uma chamada real
+autenticada contra a API do Groq (`llama-3.3-70b-versatile`), e a cascata de
+3 níveis do `AdminDevAIProviderManager` foi validada de ponta a ponta com um
+premium real forçado a falhar por cota, confirmando que o Groq real é
+alcançado e responde. As 19 mensagens diversas de validação do
+`IntentInterpreter` (TASK-057) foram classificadas corretamente via essa
+cascata, sem tocar na cota compartilhada do perfil `USER`.

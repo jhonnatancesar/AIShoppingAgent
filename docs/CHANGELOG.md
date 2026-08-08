@@ -1,5 +1,45 @@
 # Changelog
 
+## 2026-08-08 — TASK-059: Groq como fallback do ADMIN/DEV + perfil configurável de validação
+
+- Registrada `DEC-016` e criada `docs/tasks/TASK-059.md` depois que a chave
+  `AISHOPPING_GROQ_API_KEY` (já presente em `backend/.env`) foi testada
+  isoladamente com sucesso, fora do `AIProviderManager`.
+- Criado `GroqProvider` (`backend/app/ai_provider/groq.py`) via `httpx`
+  contra a API compatível com OpenAI do Groq, seguindo o mesmo contrato
+  sanitizado (`AIProviderQuotaExceeded` com `quota_reset_at` do cabeçalho
+  `retry-after`, `AIProviderUnavailable`, erros de autenticação/rejeição)
+  já usado pelo `GeminiProvider`. `httpx` declarado explicitamente em
+  `backend/requirements.txt` (já presente de forma transitiva).
+- `AdminDevAIProviderManager` (`backend/app/ai_provider/manager.py`) agora
+  tenta até três níveis — Gemini premium → Groq → Gemini gratuito — com o
+  Groq opcional: sem `AISHOPPING_GROQ_API_KEY` configurada,
+  `build_admin_dev_ai_provider_manager` mantém o comportamento de dois
+  níveis já validado nas TASKs 029–031. `USER` continua sem fallback,
+  inalterado.
+- `IntentInterpreter.interpret` (`backend/app/intent/interpreter.py`) ganhou
+  um parâmetro nomeado opcional `profile` (default `USER`, inalterado para
+  o webhook de produção — TASKs 033–035), para que ferramentas de validação
+  manual rodem via `ADMIN`/`DEV` sem consumir a cota gratuita compartilhada
+  do `USER`.
+- `backend/scripts/validate_intent_interpreter.py` ganhou a opção
+  `--profile` (`admin` como padrão, `dev`, `user`), com pacing mais curto
+  para `ADMIN/DEV` (5s) e mantendo o pacing conservador para `user` (60s).
+- Testes novos (`tests/test_groq_provider.py`) e ajustados
+  (`tests/test_gemini_user_profile.py`, `tests/test_intent_interpreter.py`).
+  `scripts\check.cmd` completo aprovado: 316 testes, 94,96% de cobertura.
+- **Validação real**: chamada direta ao Groq real via `AIProviderManager`
+  (resposta coerente do `llama-3.3-70b-versatile`); cascata de 3 níveis
+  validada de ponta a ponta com um premium real forçado a falhar por cota,
+  confirmando que o Groq real é alcançado e responde. As 19 mensagens
+  diversas da TASK-057 foram classificadas corretamente via `--profile
+  admin`, sem tocar na cota do `USER`.
+- **TASK-057 avançou**: com o perfil `ADMIN/DEV` validado, a confirmação
+  final contra o `USER`/Gemini real passou de 3/19 para cobrir 3 dos 4
+  `IntentKind` (`create_mission`, `query_mission`, `mission_command`); só
+  `unknown` segue pendente por nova exaustão da cota gratuita do `USER`
+  (`docs/tasks/TASK-057.md`).
+
 ## 2026-08-08 — TASK-057 (parcial) e TASK-058 (registro)
 
 - Registrada `DEC-015` e criada `docs/tasks/TASK-058.md`: confirmar a

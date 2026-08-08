@@ -1,22 +1,41 @@
-"""Validação manual do IntentInterpreter contra o Gemini real do perfil USER.
+"""Validação manual do IntentInterpreter contra provedores de IA reais.
 
 Sem argumentos, roda um conjunto amplo e diverso de mensagens reais —
 escrita informal, gírias, erros de digitação e ordens de frase variadas —
 cobrindo os quatro valores de `IntentKind`, para validar a robustez de
 classificação exigida pela TASK-057. Com `--message`, valida apenas uma
 mensagem pontual.
+
+Por padrão usa o perfil `admin` (cascata Gemini premium → Groq → Gemini
+gratuito, TASK-059), para não consumir a cota gratuita compartilhada do
+perfil `user` real. Use `--profile user` só para a confirmação final antes
+de considerar a robustez validada de verdade — é o único perfil que reflete
+exatamente o caminho de produção do webhook do Telegram.
 """
 
 import argparse
 import asyncio
 from datetime import UTC, datetime
 
-from app.ai_provider import AIProviderQuotaExceeded, build_user_ai_provider_manager
+from app.ai_provider import (
+    AIProviderManager,
+    AIProviderQuotaExceeded,
+    build_admin_dev_ai_provider_manager,
+    build_user_ai_provider_manager,
+)
 from app.intent import Intent, IntentInterpreter
+from app.users.models import UserRole
 
-_REQUEST_INTERVAL_SECONDS = 60.0
+_ADMIN_REQUEST_INTERVAL_SECONDS = 5.0
+_USER_REQUEST_INTERVAL_SECONDS = 60.0
 _QUOTA_RETRY_ATTEMPTS = 5
 _QUOTA_FALLBACK_BACKOFF_SECONDS = 60.0
+
+_PROFILE_ROLES: dict[str, UserRole] = {
+    "admin": UserRole.ADMIN,
+    "dev": UserRole.DEV,
+    "user": UserRole.USER,
+}
 
 _DIVERSE_MESSAGES: tuple[str, ...] = (
     # create_mission: formal, gírias, sem valor-alvo, múltiplas fontes.
@@ -45,12 +64,26 @@ _DIVERSE_MESSAGES: tuple[str, ...] = (
 )
 
 
+def _build_manager(profile_name: str) -> AIProviderManager:
+    if profile_name == "user":
+        return build_user_ai_provider_manager()
+    return build_admin_dev_ai_provider_manager()
+
+
+def _request_interval(profile_name: str) -> float:
+    return (
+        _USER_REQUEST_INTERVAL_SECONDS
+        if profile_name == "user"
+        else _ADMIN_REQUEST_INTERVAL_SECONDS
+    )
+
+
 async def _interpret_with_quota_retry(
-    interpreter: IntentInterpreter, message: str
+    interpreter: IntentInterpreter, message: str, *, role: UserRole
 ) -> Intent:
     for attempt in range(1, _QUOTA_RETRY_ATTEMPTS + 1):
         try:
-            return await interpreter.interpret(message)
+            return await interpreter.interpret(message, profile=role)
         except AIProviderQuotaExceeded as error:
             if attempt == _QUOTA_RETRY_ATTEMPTS:
                 raise
@@ -59,7 +92,7 @@ async def _interpret_with_quota_retry(
                 remaining = (error.quota_reset_at - datetime.now(UTC)).total_seconds()
                 backoff = max(backoff, remaining)
             print(
-                f"cota do Gemini excedida (tentativa {attempt}/{_QUOTA_RETRY_ATTEMPTS}); "
+                f"cota excedida (tentativa {attempt}/{_QUOTA_RETRY_ATTEMPTS}); "
                 f"aguardando {backoff:.0f}s antes de repetir a mesma mensagem"
             )
             await asyncio.sleep(backoff)
@@ -67,12 +100,16 @@ async def _interpret_with_quota_retry(
 
 
 async def validate(
-    message: str, *, interpreter: IntentInterpreter | None = None
+    message: str,
+    *,
+    profile_name: str = "admin",
+    interpreter: IntentInterpreter | None = None,
 ) -> None:
+    role = _PROFILE_ROLES[profile_name]
     if interpreter is None:
-        interpreter = IntentInterpreter(build_user_ai_provider_manager())
+        interpreter = IntentInterpreter(_build_manager(profile_name))
 
-    intent = await _interpret_with_quota_retry(interpreter, message)
+    intent = await _interpret_with_quota_retry(interpreter, message, role=role)
 
     print(f"mensagem: {message!r}")
     print(f"kind: {intent.kind.value}")
@@ -85,14 +122,15 @@ async def validate(
     print(f"mission_reference: {intent.parameters.mission_reference}")
 
 
-async def validate_all(messages: tuple[str, ...]) -> None:
-    interpreter = IntentInterpreter(build_user_ai_provider_manager())
+async def validate_all(messages: tuple[str, ...], *, profile_name: str) -> None:
+    interpreter = IntentInterpreter(_build_manager(profile_name))
+    interval = _request_interval(profile_name)
     for index, message in enumerate(messages, start=1):
         print(f"--- [{index}/{len(messages)}] ---")
-        await validate(message, interpreter=interpreter)
+        await validate(message, profile_name=profile_name, interpreter=interpreter)
         print()
         if index < len(messages):
-            await asyncio.sleep(_REQUEST_INTERVAL_SECONDS)
+            await asyncio.sleep(interval)
 
 
 def main() -> None:
@@ -105,12 +143,22 @@ def main() -> None:
             "conjunto diverso padrão cobrindo os quatro IntentKind."
         ),
     )
+    parser.add_argument(
+        "--profile",
+        choices=sorted(_PROFILE_ROLES),
+        default="admin",
+        help=(
+            "Perfil usado para validar (default: admin, cascata Gemini "
+            "premium/Groq/Gemini gratuito). Use 'user' só para a "
+            "confirmação final contra o caminho real de produção."
+        ),
+    )
     args = parser.parse_args()
 
     if args.message is not None:
-        asyncio.run(validate(args.message))
+        asyncio.run(validate(args.message, profile_name=args.profile))
     else:
-        asyncio.run(validate_all(_DIVERSE_MESSAGES))
+        asyncio.run(validate_all(_DIVERSE_MESSAGES, profile_name=args.profile))
 
 
 if __name__ == "__main__":

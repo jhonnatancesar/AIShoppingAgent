@@ -25,6 +25,7 @@ A fonte de verdade para dependências Python é `backend/requirements.txt`:
 
 - `fastapi>=0.115,<1.0`
 - `google-genai>=2.16,<3.0`
+- `httpx>=0.28,<1.0`
 - `playwright>=1.62,<2.0`
 - `SQLAlchemy>=2.0,<2.1`
 - `alembic>=1.18,<2.0`
@@ -35,6 +36,15 @@ A fonte de verdade para dependências Python é `backend/requirements.txt`:
 `google-genai` 2.16.0 é o SDK oficial validado para o perfil USER. A chamada ao
 Gemini exige `AISHOPPING_GEMINI_API_KEY`; o modelo padrão configurável é
 `gemini-3.6-flash`. A chave fica apenas no ambiente ou `.env` ignorado pelo Git.
+
+`httpx` 0.28.1 (TASK-059) é usado por `GroqProvider` para chamar a API
+compatível com OpenAI do Groq (`/openai/v1/chat/completions`), fallback
+opcional do perfil ADMIN/DEV entre o Gemini premium e o Gemini gratuito.
+Exige `AISHOPPING_GROQ_API_KEY`; o modelo padrão configurável é
+`AISHOPPING_GROQ_MODEL` (`llama-3.3-70b-versatile`). Sem a chave, o
+`AdminDevAIProviderManager` mantém o comportamento de dois níveis (Gemini
+premium → Gemini gratuito) já validado nas TASKs 029–031. A chave fica
+apenas em `backend/.env`, nunca versionada.
 
 O webhook do Telegram (TASK-034) não usa SDK — chama a Bot API diretamente com
 `urllib` da biblioteca padrão. Exige `AISHOPPING_TELEGRAM_BOT_TOKEN` (criado via

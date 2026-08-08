@@ -102,14 +102,21 @@ class IntentInterpreter:
         message: str,
         *,
         requested_at: datetime | None = None,
+        profile: UserRole = UserRole.USER,
     ) -> Intent:
+        """Interpreta uma mensagem livre via `AIProviderManager`.
+
+        `profile` sempre é `USER` no caminho de produção (webhook do
+        Telegram); só ferramentas de validação manual passam `ADMIN`/`DEV`,
+        para não consumir a cota gratuita compartilhada do perfil `USER`.
+        """
         if not isinstance(message, str) or not message.strip():
             raise IntentError("message must not be blank")
 
         moment = requested_at or datetime.now(UTC)
         request = AIRequest(
             request_id=uuid4(),
-            profile=UserRole.USER,
+            profile=profile,
             purpose=PURPOSE,
             messages=(
                 AIMessage(AIMessageRole.SYSTEM, _SYSTEM_PROMPT),

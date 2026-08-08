@@ -11,6 +11,7 @@ from app.ai_provider.contracts import (
     validate_provider_response,
 )
 from app.ai_provider.gemini import GeminiProvider
+from app.ai_provider.groq import GroqProvider
 from app.ai_provider.telemetry import AIAttemptOutcome, record_ai_attempt
 from app.core.config import Settings, get_settings
 from app.users.models import UserRole
@@ -42,40 +43,53 @@ class UserAIProviderManager:
 
 
 class AdminDevAIProviderManager:
-    """Política única de ADMIN/DEV com fallback seguro para o Gemini gratuito."""
+    """Política única de ADMIN/DEV: premium, Groq opcional, depois Gemini gratuito."""
 
-    def __init__(self, premium: AIProvider, free: AIProvider) -> None:
+    def __init__(
+        self,
+        premium: AIProvider,
+        free: AIProvider,
+        *,
+        groq: AIProvider | None = None,
+    ) -> None:
         self._premium = premium
         self._free = free
+        self._groq = groq
 
     async def generate(self, request: AIRequest) -> AIResponse:
         if request.profile not in {UserRole.ADMIN, UserRole.DEV}:
             raise AIRequestError("ADMIN/DEV manager accepts only ADMIN or DEV profile")
-        fallback_used = False
-        try:
-            response = await self._premium.generate(request)
-        except (AIProviderQuotaExceeded, AIProviderUnavailable) as error:
-            _record_provider_error(request, self._premium, error, fallback=False)
-            fallback_used = True
+
+        tiers = [self._premium]
+        if self._groq is not None:
+            tiers.append(self._groq)
+        tiers.append(self._free)
+
+        last_error: AIProviderError | None = None
+        for index, provider in enumerate(tiers):
+            fallback = index > 0
             try:
-                response = await self._free.generate(request)
-            except AIProviderError as fallback_error:
-                _record_provider_error(
-                    request, self._free, fallback_error, fallback=True
-                )
+                response = await provider.generate(request)
+            except (AIProviderQuotaExceeded, AIProviderUnavailable) as error:
+                _record_provider_error(request, provider, error, fallback=fallback)
+                last_error = error
+                continue
+            except AIProviderError as error:
+                _record_provider_error(request, provider, error, fallback=fallback)
                 raise
-        except AIProviderError as error:
-            _record_provider_error(request, self._premium, error, fallback=False)
-            raise
-        validate_provider_response(request, response)
-        record_ai_attempt(
-            request,
-            provider=response.provider,
-            model=response.model,
-            outcome=AIAttemptOutcome.SUCCEEDED,
-            fallback=fallback_used,
-        )
-        return response
+            validate_provider_response(request, response)
+            record_ai_attempt(
+                request,
+                provider=response.provider,
+                model=response.model,
+                outcome=AIAttemptOutcome.SUCCEEDED,
+                fallback=fallback,
+            )
+            return response
+
+        if last_error is not None:
+            raise last_error
+        raise AIProviderError("provider_error", retryable=False)
 
 
 def build_user_ai_provider_manager(
@@ -92,7 +106,7 @@ def build_user_ai_provider_manager(
 def build_admin_dev_ai_provider_manager(
     settings: Settings | None = None,
 ) -> AdminDevAIProviderManager:
-    """Monta a política compartilhada de ADMIN/DEV com dois níveis Gemini."""
+    """Monta a política de ADMIN/DEV: Gemini premium, Groq opcional, Gemini gratuito."""
     current = settings or get_settings()
     if current.gemini_api_key is None:
         raise AIRequestError(
@@ -100,7 +114,12 @@ def build_admin_dev_ai_provider_manager(
         )
     premium = GeminiProvider(current.gemini_api_key, current.gemini_premium_model)
     free = GeminiProvider(current.gemini_api_key, current.gemini_model)
-    return AdminDevAIProviderManager(premium, free)
+    groq = (
+        GroqProvider(current.groq_api_key, current.groq_model)
+        if current.groq_api_key is not None
+        else None
+    )
+    return AdminDevAIProviderManager(premium, free, groq=groq)
 
 
 def _record_provider_error(

@@ -15,6 +15,7 @@ from app.ai_provider.contracts import (
     validate_provider_response,
 )
 from app.ai_provider.gemini import GeminiProvider
+from app.ai_provider.groq import GroqProvider
 from app.ai_provider.manager import (
     AdminDevAIProviderManager,
     UserAIProviderManager,
@@ -39,6 +40,7 @@ __all__ = [
     "AIRequestError",
     "AIResponse",
     "GeminiProvider",
+    "GroqProvider",
     "UserAIProviderManager",
     "build_admin_dev_ai_provider_manager",
     "build_user_ai_provider_manager",

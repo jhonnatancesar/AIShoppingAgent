@@ -1,6 +1,6 @@
 # TASK-057 — Melhorar a robustez da interpretação de intenção
 
-Status: Em execução — pausada por impedimento de cota, validação real parcial
+Status: Em execução — 3 de 4 IntentKind confirmados no USER real, pausada por cota
 
 ## Objetivo
 
@@ -74,3 +74,30 @@ backend/scripts/validate_intent_interpreter.py`) quando a cota gratuita do
 Gemini for reposta, cobrindo as mensagens de `query_mission`,
 `mission_command` e `unknown` ainda não validadas, antes de marcar esta TASK
 como concluída.
+
+## Atualização (2026-08-08, pós-TASK-059)
+
+A TASK-059 entregou uma cascata `ADMIN/DEV` (Gemini premium → Groq → Gemini
+gratuito) e um parâmetro de perfil opcional em `IntentInterpreter.interpret`
+para rodar validação manual sem consumir a cota do `USER`. Com
+`--profile admin`, as 19 mensagens diversas foram classificadas corretamente
+contra provedores reais (premium/Groq), sem tocar na cota do `USER` — ver
+`docs/tasks/TASK-059.md`.
+
+Isso permitiu retomar a confirmação final contra o `USER`/Gemini real (o
+único caminho que reflete produção): além das 3 mensagens `create_mission`
+já confirmadas antes, foram confirmadas com sucesso uma mensagem de
+`query_mission` ("e ai como ta indo a busca do meu ssd?" → `query_mission`,
+`mission_reference: ssd`) e uma de `mission_command` ("pausa a busca do ssd
+por enquanto" → `mission_command`/`pause`, `mission_reference: ssd`).
+
+A cota do `USER` esgotou de novo antes de confirmar uma mensagem `unknown`
+("oi bom dia") — mesmo padrão de impedimento já documentado acima
+(`quota_reset_at` desconhecido, 5 tentativas com espera de 60s sem sucesso).
+
+**Estado atual:** 3 dos 4 `IntentKind` confirmados no `USER`/Gemini real
+(`create_mission`, `query_mission`, `mission_command`); falta confirmar
+`unknown`. **Próxima ação revisada:** rodar `python
+backend/scripts/validate_intent_interpreter.py --profile user --message
+"oi bom dia"` (ou outra mensagem `unknown` do conjunto) quando a cota do
+`USER` for reposta, para fechar a TASK-057.

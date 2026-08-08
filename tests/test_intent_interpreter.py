@@ -74,6 +74,21 @@ async def test_interpret_builds_request_restricted_to_user_profile_and_purpose()
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("profile", [UserRole.ADMIN, UserRole.DEV])
+async def test_interpret_accepts_explicit_profile_for_manual_validation_tooling(
+    profile: UserRole,
+) -> None:
+    manager = _FakeManager(_response())
+    interpreter = IntentInterpreter(manager)
+
+    await interpreter.interpret("Quero um notebook gamer", profile=profile)
+
+    request = manager.captured_request
+    assert request is not None
+    assert request.profile is profile
+
+
+@pytest.mark.anyio
 async def test_interpret_parses_create_mission_with_parameters() -> None:
     manager = _FakeManager(_response())
     interpreter = IntentInterpreter(manager)
