@@ -1,6 +1,6 @@
 # TASK-057 — Melhorar a robustez da interpretação de intenção
 
-Status: Em execução — 3 de 4 IntentKind confirmados no USER real, pausada por cota
+Status: Concluída
 
 ## Objetivo
 
@@ -101,3 +101,17 @@ A cota do `USER` esgotou de novo antes de confirmar uma mensagem `unknown`
 backend/scripts/validate_intent_interpreter.py --profile user --message
 "oi bom dia"` (ou outra mensagem `unknown` do conjunto) quando a cota do
 `USER` for reposta, para fechar a TASK-057.
+
+## Encerramento (2026-08-08, `DEC-017`)
+
+O usuário autorizou explicitamente encerrar esta TASK nesse estado, sem
+esperar a confirmação de `unknown` contra o `USER`/Gemini real: "dá a task
+57 como encerrada... qualquer coisa na v2 a gente testa mais tipos de
+linguagens." O critério de aceite original (os quatro `IntentKind`
+validados contra o Gemini real) não foi cumprido à risca no perfil `USER`
+especificamente — `unknown` só tem confirmação real via a cascata
+`ADMIN/DEV` (Gemini premium/Groq), não via o Gemini gratuito do `USER` —
+mas não há indício de comportamento incorreto observado para `unknown`,
+apenas lacuna de confirmação por escassez de cota. Ampliar ainda mais a
+variedade de linguagem testada fica registrado para a V2 em
+`docs/BACKLOG.md`.

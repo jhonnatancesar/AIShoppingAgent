@@ -20,6 +20,9 @@ Para cada item novo, registrar uma descrição curta, a motivação e eventuais 
 
 ## Inteligência e automação
 
+- Ampliar ainda mais a robustez do `IntentInterpreter` (TASK-032/057) para
+  novos tipos e estilos de linguagem informal além do conjunto já validado,
+  com nova rodada de validação real (`DEC-017`).
 - Perfil pago na V2, com créditos configurados para comparar Gemini premium,
   OpenAI e Claude e aplicar fallback conforme capacidade e disponibilidade.
 - OCR para extrair informações de imagens, comprovantes ou páginas.

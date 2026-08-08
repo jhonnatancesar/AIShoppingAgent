@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-08-08 — TASK-057 encerrada (`DEC-017`)
+
+- O usuário autorizou explicitamente encerrar a TASK-057 com a cobertura
+  real atual: 3 dos 4 `IntentKind` confirmados contra o `USER`/Gemini real
+  (`create_mission`, `query_mission`, `mission_command`); `unknown` só tem
+  confirmação via a cascata `ADMIN/DEV` (Gemini premium/Groq), não contra o
+  Gemini gratuito real do `USER`, por nova exaustão de cota. Sem indício de
+  comportamento incorreto — só lacuna de confirmação.
+- Ampliar ainda mais a variedade de linguagem testada pelo
+  `IntentInterpreter` registrada em `docs/BACKLOG.md` para a V2.
+- `docs/tasks/TASK-057.md` marcada como concluída.
+
 ## 2026-08-08 — TASK-059: Groq como fallback do ADMIN/DEV + perfil configurável de validação
 
 - Registrada `DEC-016` e criada `docs/tasks/TASK-059.md` depois que a chave

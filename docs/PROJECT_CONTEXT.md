@@ -23,12 +23,14 @@ integrado como terceiro nível opcional do `AdminDevAIProviderManager`
 ganhou um parâmetro opcional de perfil para validação manual via ADMIN/DEV
 sem consumir a cota do `USER` — o webhook de produção continua fixo em
 `USER`, sem mudança de comportamento. Isso desbloqueou a TASK-057 (robustez
-do `IntentInterpreter` para escrita informal): as 19 mensagens do conjunto
-ampliado foram validadas com sucesso via ADMIN/DEV (premium/Groq/gratuito),
-e a confirmação final contra o `USER`/Gemini real cobre agora 3 dos 4
-`IntentKind` (`create_mission`, `query_mission`, `mission_command`); só
-`unknown` segue pendente de confirmação real, por nova exaustão da cota
-gratuita do `USER` — retomar quando a cota voltar (`docs/tasks/TASK-057.md`).
+do `IntentInterpreter` para escrita informal), agora **concluída**
+(`DEC-017`): as 19 mensagens do conjunto ampliado foram validadas com
+sucesso via ADMIN/DEV (premium/Groq/gratuito), e a confirmação final contra
+o `USER`/Gemini real cobre 3 dos 4 `IntentKind` (`create_mission`,
+`query_mission`, `mission_command`) — `unknown` não chegou a ser confirmado
+contra o `USER` real por nova exaustão de cota, e o usuário aceitou
+explicitamente encerrar a TASK nesse estado, adiando mais variedade de
+linguagem para a V2 (`docs/tasks/TASK-057.md`, `docs/BACKLOG.md`).
 
 ## O que existe
 

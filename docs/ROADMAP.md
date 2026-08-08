@@ -19,11 +19,12 @@
 | Segurança e entrega | TASK-046 a TASK-054 | Observabilidade, segurança e lançamento |
 | Expansão de fontes (futuro) | Tarefas a definir | Mercado Livre, Shopee, AliExpress e outras fontes futuras |
 
-As TASKs 000 a 035, a TASK-042, a TASK-055, a TASK-056 e a TASK-059 estão
-concluídas. A próxima tarefa executável é a TASK-036. A TASK-057 está em execução: a
-validação real contra o `USER`/Gemini cobre 3 dos 4 `IntentKind`, pausada
-por nova exaustão de cota antes de confirmar `unknown`
-(`docs/tasks/TASK-057.md`). A TASK-058 (`DEC-015`) foi registrada e aguarda
+As TASKs 000 a 035, a TASK-042, a TASK-055, a TASK-056, a TASK-057 e a
+TASK-059 estão concluídas. A próxima tarefa executável é a TASK-036. A TASK-057 está concluída
+(`DEC-017`): validação real contra o `USER`/Gemini cobre 3 dos 4
+`IntentKind`, e o usuário aceitou explicitamente encerrar nesse estado,
+adiando mais variedade de linguagem para a V2 (`docs/tasks/TASK-057.md`,
+`docs/BACKLOG.md`). A TASK-058 (`DEC-015`) foi registrada e aguarda
 solicitação explícita. A TASK-059 (`DEC-016`) está concluída: Groq como
 fallback opcional do `ADMIN/DEV` e perfil configurável de validação do
 `IntentInterpreter`. As demais continuam pendentes e só podem ser iniciadas

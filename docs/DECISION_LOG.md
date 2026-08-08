@@ -27,6 +27,33 @@ Após a classificação, registrar a decisão neste arquivo e atualizar a docume
 
 ## Registros
 
+### DEC-017 — Encerrar a TASK-057 com validação real parcial e adiar mais variedade de linguagem para a V2
+
+- **Data:** 2026-08-08
+- **Ideia:** encerrar a TASK-057 aceitando a cobertura real atual — 3 dos 4
+  valores de `IntentKind` confirmados contra o `USER`/Gemini real
+  (`create_mission`, `query_mission`, `mission_command`); `unknown` só foi
+  confirmado via a cascata `ADMIN/DEV` (Gemini premium/Groq), não contra o
+  Gemini gratuito real do `USER`, por esgotamento repetido da cota
+  gratuita. Testar ainda mais tipos/estilos de linguagem informal fica para
+  a V2, em vez de continuar tentando fechar 100% da cobertura agora.
+- **Classificação:** Versão futura (para a ampliação adicional de
+  variedade de linguagem); o encerramento da TASK-057 em si é uma decisão
+  de aceite explícita do usuário, não uma nova funcionalidade.
+- **Justificativa:** o usuário autorizou explicitamente encerrar a TASK-057
+  nesse estado ("dá a task 57 como encerrada... qualquer coisa na v2 a
+  gente testa mais tipos de linguagens"). O prompt do `IntentInterpreter`
+  foi refinado e validado com sucesso para os quatro `IntentKind` via
+  provedores reais (`ADMIN/DEV`: Gemini premium e Groq; `USER`: Gemini
+  gratuito para 3 dos 4 tipos), a suíte automatizada está aprovada, e a
+  ferramenta de validação (`--profile admin`, TASK-059) já reduziu bastante
+  o risco de regressão futura sem depender da cota escassa do `USER`. Não
+  há indício de defeito conhecido no `unknown` — a lacuna é só de cobertura
+  de confirmação real, não de comportamento incorreto observado.
+- **Próxima ação:** `docs/tasks/TASK-057.md` marcada como concluída;
+  registrar em `docs/BACKLOG.md` a ampliação futura de variedade de
+  linguagem/gírias do `IntentInterpreter` para a V2.
+
 ### DEC-016 — Criar a TASK-059 para avaliar o Groq como fallback de cota do AIProviderManager
 
 - **Data:** 2026-08-08
