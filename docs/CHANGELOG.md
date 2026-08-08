@@ -1,5 +1,25 @@
 # Changelog
 
+## 2026-08-08 — TASK-039: comparação completa e ordenada de ofertas
+
+- Criado `compare_offers_for_mission`, com posições `1..N` apenas para ofertas
+  elegíveis e evidências inelegíveis sem posição, sempre depois do ranking.
+- Extraída `rank_eligible_evidence` como regra única para TASK-038 e TASK-039;
+  por invariância, a posição 1 da comparação é exatamente a recomendação para
+  o mesmo conjunto de dados.
+- Elegíveis usam menor custo total, observação mais recente e UUID. Inelegíveis
+  são estabilizadas por loja, produto e UUID e nunca são ordenadas por preço.
+- Frete desconhecido mantém `amount`, expõe `total_amount=None` e o motivo
+  `shipping_unknown`; moedas incompatíveis, indisponibilidade e ausência da
+  moeda da missão também permanecem inelegíveis e explicadas.
+- Ausência de oferta elegível retorna `insufficient_data`, sem persistência,
+  API, Telegram, IA, compra ou ação financeira.
+- Validação real no PostgreSQL 18 confirmou a invariância TASK-038/TASK-039,
+  ranking consecutivo, histórico, total indisponível e rollback sem resíduos.
+- Pipeline completo aprovado em Python 3.14.6: 444 testes, 94,81% de cobertura,
+  Ruff, Alembic com head único e Docker Compose válidos. Nenhuma dependência ou
+  migration nova foi necessária.
+
 ## 2026-08-08 — TASK-038: recomendação determinística por missão
 
 - Corrigido o escopo genérico da TASK-038 (`DEC-026`) e preservadas as

@@ -15,6 +15,7 @@ from app.purchase import (
     RecommendationReason,
     RecommendationResult,
     RecommendationStatus,
+    compare_offers_for_mission,
     recommend_for_mission,
 )
 from app.stores.models import Seller, Store, StoreSourceType
@@ -132,6 +133,12 @@ def _recommend(rows, *, currency: str | None = "BRL") -> RecommendationResult:
     mission, criteria = _mission(currency=currency)
     session = _SessionStub((mission, criteria), rows)
     return recommend_for_mission(session, mission.id)  # type: ignore[arg-type]
+
+
+def _compare(rows, *, currency: str | None = "BRL"):
+    mission, criteria = _mission(currency=currency)
+    session = _SessionStub((mission, criteria), rows)
+    return compare_offers_for_mission(session, mission.id)  # type: ignore[arg-type]
 
 
 def test_recommendation_selects_lowest_determinable_total_and_keeps_evidence() -> None:
@@ -295,3 +302,69 @@ def test_recommendation_result_enforces_consistent_terminal_shape() -> None:
             reason=None,
             evidence=(),
         )
+
+
+def test_comparison_position_one_is_the_same_recommendation_for_same_data() -> None:
+    older = _row(1, total="100", observed_at=NOW - timedelta(minutes=1))
+    lower = _row(2, total="90", observed_at=NOW)
+    same_total_newer = _row(3, total="100", observed_at=NOW)
+    unknown_shipping = _row(4, total="50", shipping=None)
+    rows = [older, lower, same_total_newer, unknown_shipping]
+
+    recommendation = _recommend(rows)
+    comparison = _compare(rows)
+
+    assert recommendation.recommendation is not None
+    assert comparison.recommendation_offer_id == recommendation.recommendation.offer_id
+    assert comparison.items[0].offer_id == recommendation.recommendation.offer_id
+    assert [item.position for item in comparison.items] == [1, 2, 3, None]
+    assert [item.total_amount for item in comparison.items[:3]] == [
+        Decimal("90"),
+        Decimal("100"),
+        Decimal("100"),
+    ]
+
+
+def test_comparison_never_exposes_unknown_shipping_as_total() -> None:
+    unknown_shipping = _row(1, total="50", shipping=None)
+
+    comparison = _compare([unknown_shipping])
+
+    item = comparison.items[0]
+    assert comparison.status is RecommendationStatus.INSUFFICIENT_DATA
+    assert comparison.reason is RecommendationReason.NO_DETERMINABLE_TOTALS
+    assert item.amount == Decimal("50")
+    assert item.shipping_amount is None
+    assert item.total_amount is None
+    assert item.position is None
+    assert item.exclusions == (RecommendationExclusion.SHIPPING_UNKNOWN,)
+
+
+def test_ineligible_comparison_order_never_uses_price() -> None:
+    store_two_cheapest = _row(2, total="1", shipping=None)
+    store_one_expensive = _row(1, total="9999", shipping=None)
+
+    comparison = _compare([store_two_cheapest, store_one_expensive])
+
+    assert [item.store_code for item in comparison.items] == ["store_1", "store_2"]
+    assert all(item.position is None for item in comparison.items)
+    assert all(item.total_amount is None for item in comparison.items)
+
+
+def test_comparison_keeps_all_ineligible_reasons_without_ranking() -> None:
+    unavailable = _row(
+        1,
+        total="80",
+        availability=Availability.UNAVAILABLE,
+    )
+    wrong_currency = _row(2, total="70", currency="USD")
+
+    comparison = _compare([wrong_currency, unavailable])
+
+    assert comparison.status is RecommendationStatus.INSUFFICIENT_DATA
+    assert comparison.recommendation_offer_id is None
+    assert all(not item.eligible and item.position is None for item in comparison.items)
+    assert {item.exclusions for item in comparison.items} == {
+        (RecommendationExclusion.UNAVAILABLE,),
+        (RecommendationExclusion.CURRENCY_MISMATCH,),
+    }

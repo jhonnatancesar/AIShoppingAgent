@@ -12,12 +12,12 @@ TASK-054 (preparar release), que ainda está pendente.
 
 Atualizar este documento sempre que uma TASK relevante para produção for
 concluída ou revisada. Snapshot gerado em **2026-08-08**, logo após a
-conclusão da TASK-038.
+conclusão da TASK-039.
 
 ## Resumo executivo
 
-**Não está pronto para produção.** 48 das 62 tarefas planejadas estão
-concluídas, mas as 14 pendentes cobrem exatamente as áreas que separam
+**Não está pronto para produção.** 49 das 62 tarefas planejadas estão
+concluídas, mas as 13 pendentes cobrem exatamente as áreas que separam
 "funciona quando eu valido manualmente" de "está seguro para um usuário
 real depender disso": autenticação, autorização, segredos, observabilidade,
 resiliência, recomendação/compra e — mais importante — não existe hoje nenhum
@@ -32,7 +32,7 @@ mecanismo que dispare a coleta de preços sozinho. Uma missão criada fica
 | 2 | Usuário autorizado cria e consulta missão pelo Telegram | ⚠️ Parcial | Fluxo real validado ponta a ponta (TASK-035/058/060), mas "autorizado" hoje só significa `telegram_user_id` resolvido — não há autenticação (TASK-046/061) nem autorização por papel aplicada de fato (TASK-047) |
 | 3 | Sistema pesquisa todas as fontes selecionadas, normaliza e preserva histórico | ⚠️ Parcial | Store Providers (TASK-055) e normalização (TASK-025) existem e funcionam isoladamente, mas **nada os aciona automaticamente** — não existe worker/scheduler lendo `mission_schedules`, nem serviço que insira `PriceObservation` real em produção (confirmado durante a TASK-043) |
 | 4 | Condição de preço produz evento e notificação rastreáveis | ⚠️ Parcial | Avaliação (TASK-027), publicação (TASK-043), consumo (TASK-044) e notificação Telegram (TASK-036) funcionam e foram validados realmente; ainda não existe fluxo de coleta que invoque automaticamente avaliação/publicação em produção |
-| 5 | Recomendação/comparação básica com evidências históricas | ⚠️ Parcial | TASK-038 recomenda uma oferta com regras monetárias seguras e histórico identificável; a comparação completa e ordenada da TASK-039 permanece pendente |
+| 5 | Recomendação/comparação básica com evidências históricas | ✅ Atendido | TASK-038 recomenda uma oferta com regras monetárias seguras e histórico identificável; TASK-039 compara as mesmas evidências, mantém a posição 1 invariável e não inventa total para frete desconhecido |
 | 6 | Todo uso de IA passa pelo AI Provider Manager | ✅ Atendido | Invariante reforçada e validada em todas as tarefas de IA (TASK-028 a TASK-032, TASK-057 a TASK-060) |
 | 7 | Fluxos críticos com testes de integração e ponta a ponta | ❌ Faltando | TASK-052 (integração) e TASK-053 (e2e) pendentes; validação real hoje é manual/pontual por TASK, sem suíte permanente |
 | 8 | Documentação operacional, segurança mínima e checklist de release concluídos | ❌ Faltando | TASK-048 (segredos), TASK-050 (privacidade), TASK-051 (documentação operacional) e TASK-054 (release) pendentes |
@@ -74,14 +74,14 @@ Além dos critérios formais do MVP:
 | Missões e coleta | TASK-019 a TASK-026 | 8/8 | — |
 | Alertas de preço | TASK-027 | 1/1 | — |
 | Gerenciador de IA e Telegram | TASK-028 a TASK-037 | 10/10 | — |
-| Compra e eventos | TASK-038 a TASK-041, TASK-043 a TASK-045 | 3/7 | TASK-039 a TASK-041, TASK-045 |
+| Compra e eventos | TASK-038 a TASK-041, TASK-043 a TASK-045 | 4/7 | TASK-040, TASK-041, TASK-045 |
 | Catálogo de eventos | TASK-042 | 1/1 | — |
 | Segurança e entrega | TASK-046 a TASK-054 | 0/9 | TASK-046 a TASK-054 |
 | Store Providers e identidade | TASK-055, TASK-056 | 2/2 | — |
 | Robustez, confirmação e IA (V1.2 antecipado) | TASK-057 a TASK-060 | 4/4 | — |
 | Autenticação real (V1.2) | TASK-061 | 0/1 | TASK-061 |
 
-**Total: 48 concluídas, 14 pendentes.**
+**Total: 49 concluídas, 13 pendentes.**
 
 ## Recomendação
 
@@ -90,6 +90,6 @@ seguro. Colocar um usuário real dependendo do sistema hoje não é — os
 maiores riscos são a ausência de coleta automática (a missão nunca
 "funciona sozinha") e a ausência de autenticação/autorização reais. A
 ordem mais natural para fechar essas lacunas segue o próprio
-`docs/ROADMAP.md`: TASK-039 a TASK-041 → TASK-045 → fase de
+`docs/ROADMAP.md`: TASK-040 e TASK-041 → TASK-045 → fase de
 Segurança e entrega (TASK-046 a TASK-054), com a TASK-061 podendo entrar
 antes ou depois dependendo de quando a V1.2 for retomada.

@@ -25,6 +25,21 @@ Após a classificação, registrar a decisão neste arquivo e atualizar a docume
 - **Justificativa:** impacto avaliado e motivo da classificação.
 - **Próxima ação:** documento a atualizar, TASK a criar quando aplicável, ou ação de não implementação.
 
+### DEC-027 — Compartilhar elegibilidade e ordenação entre recomendação e comparação
+
+- **Data:** 2026-08-08
+- **Ideia:** fazer a TASK-039 comparar todas as evidências da TASK-038 sem criar
+  uma segunda interpretação de elegibilidade ou uma ordenação divergente.
+- **Classificação:** Implementar agora.
+- **Justificativa:** uma única função ordena as ofertas elegíveis por total,
+  recência e UUID tanto para a recomendação quanto para a comparação. Assim, a
+  posição 1 é invariavelmente a recomendação da TASK-038. Inelegíveis não têm
+  posição, ficam depois das elegíveis e são estabilizadas sem usar preço. Frete
+  desconhecido conserva o preço do produto, mas mantém o total indisponível e
+  informa `shipping_unknown`; nenhuma comparação parcial é inventada.
+- **Próxima ação:** TASK-039 concluída e validada no PostgreSQL real; a próxima
+  tarefa executável é a TASK-040.
+
 ### DEC-026 — Restringir recomendação ao menor custo total determinável na moeda da missão
 
 - **Data:** 2026-08-08

@@ -81,15 +81,7 @@ def recommend_for_mission(session: Session, mission_id: UUID) -> RecommendationR
             evidence=evidence,
         )
 
-    eligible = tuple(item for item in evidence if item.eligible)
-    recommendation = min(
-        eligible,
-        key=lambda item: (
-            item.total_amount,
-            -item.observed_at.timestamp(),
-            str(item.offer_id),
-        ),
-    )
+    recommendation = rank_eligible_evidence(evidence)[0]
     return RecommendationResult(
         mission_id=mission_id,
         status=RecommendationStatus.RECOMMENDED,
@@ -97,6 +89,22 @@ def recommend_for_mission(session: Session, mission_id: UUID) -> RecommendationR
         recommendation=recommendation,
         reason=None,
         evidence=evidence,
+    )
+
+
+def rank_eligible_evidence(
+    evidence: Sequence[OfferRecommendationEvidence],
+) -> tuple[OfferRecommendationEvidence, ...]:
+    """Aplica a única ordem permitida para recomendação e comparação."""
+    return tuple(
+        sorted(
+            (item for item in evidence if item.eligible),
+            key=lambda item: (
+                item.total_amount,
+                -item.observed_at.timestamp(),
+                str(item.offer_id),
+            ),
+        )
     )
 
 

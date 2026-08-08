@@ -20,7 +20,8 @@ de domínio nem uma fila externa; API e worker compartilham código, migrações
 banco e são implantados juntos pelo Docker Compose, inclusive em Linux
 headless/Ubuntu Server.
 
-A TASK-038 adicionou `app.purchase` como módulo somente leitura. Ele consulta
-missões, fontes, coletas e histórico já persistidos e produz uma recomendação
-determinística sem IA, novo processo ou nova tabela. Comparação completa,
-confirmação e trilha permanecem nas TASKs 039 a 041.
+As TASKs 038 e 039 adicionaram `app.purchase` como módulo somente leitura. Ele
+consulta missões, fontes, coletas e histórico já persistidos e produz uma
+recomendação e uma comparação determinísticas sem IA, novo processo ou nova
+tabela. Os dois fluxos compartilham a mesma regra de elegibilidade e ordenação;
+confirmação e trilha permanecem nas TASKs 040 e 041.

@@ -21,7 +21,7 @@
 | Segurança e entrega | TASK-046 a TASK-054 | Observabilidade, segurança e lançamento |
 | Expansão de fontes (futuro) | Tarefas a definir | Mercado Livre, Shopee, AliExpress e outras fontes futuras |
 
-As TASKs 000 a 038, as TASKs 042 a 044 e as TASKs 055 a 060 estão
+As TASKs 000 a 039, as TASKs 042 a 044 e as TASKs 055 a 060 estão
 concluídas. O preflight
 da TASK-036 revelou dependências reais não satisfeitas (pipeline de eventos
 persistidos/publicados e `chat_id` do Telegram, nenhum dos dois existente
@@ -34,8 +34,10 @@ preferências independentes para quedas e preço-alvo, com `skipped` terminal,
 e foi validada contra PostgreSQL e Telegram reais. A TASK-038 (`DEC-026`)
 implementou a recomendação determinística por menor custo total conhecido na
 moeda da missão, com evidências históricas e vendedor opcional, validada no
-PostgreSQL real. A próxima tarefa executável é a TASK-039 (comparação completa
-de ofertas). A TASK-057 (`DEC-017`): validação real contra o
+PostgreSQL real. A TASK-039 (`DEC-027`) implementou a comparação completa das
+mesmas evidências, com posição 1 invariável em relação à recomendação e frete
+desconhecido sem total, também validada no PostgreSQL real. A próxima tarefa
+executável é a TASK-040 (confirmação explícita). A TASK-057 (`DEC-017`): validação real contra o
 `USER`/Gemini cobre 3 dos 4 `IntentKind`, e o usuário aceitou explicitamente
 encerrar nesse estado, adiando mais variedade de linguagem para a V2
 (`docs/tasks/TASK-057.md`, `docs/BACKLOG.md`). A TASK-058 (`DEC-015`):

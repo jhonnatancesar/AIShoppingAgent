@@ -1,8 +1,9 @@
 # Motor de Compra
 
-O módulo `app.purchase` inicia o fluxo de compra somente pela recomendação
-determinística da TASK-038. Ele é somente leitura: não persiste recomendação,
-não cria reserva, não abre checkout e não executa ação financeira.
+O módulo `app.purchase` inicia o fluxo de compra pela recomendação determinística
+da TASK-038 e pela comparação ordenada da TASK-039. Ele é somente leitura: não
+persiste recomendação ou comparação, não cria reserva, não abre checkout e não
+executa ação financeira.
 
 ## Fluxo de recomendação
 
@@ -28,11 +29,25 @@ preço, frete, total, moeda, disponibilidade, fulfillment e horários. O resumo
 histórico identifica a observação anterior comparável e o menor total comparável,
 além das contagens usadas.
 
+## Fluxo de comparação
+
+`compare_offers_for_mission(session, mission_id)` reutiliza integralmente o
+recorte, a elegibilidade, as exclusões e as evidências da recomendação. A única
+ordenação compartilhada (`rank_eligible_evidence`) garante que a posição 1 da
+comparação seja sempre a oferta recomendada pela TASK-038 para os mesmos dados.
+
+Somente ofertas elegíveis recebem posições consecutivas `1..N`: menor custo
+total, observação mais recente e UUID. As inelegíveis ficam depois, sem posição,
+e são estabilizadas por loja, produto e UUID — nunca por preço. Frete
+desconhecido preserva o preço do produto em `amount`, mas expõe
+`total_amount=None` e a exclusão `shipping_unknown`; ele jamais é apresentado
+como custo total. Se nenhuma oferta for elegível, o resultado é
+`insufficient_data` sem ranking.
+
 ## Fronteiras das próximas tarefas
 
-- TASK-039: comparação completa e ordenada das ofertas.
 - TASK-040: confirmação explícita antes de qualquer fluxo assistido de compra.
 - TASK-041: trilha persistente de compra.
 
-Nenhuma dessas responsabilidades é antecipada pela TASK-038. IA, Telegram, API
+Nenhuma dessas responsabilidades é antecipada pelas TASKs 038 e 039. IA, Telegram, API
 HTTP, eventos e notificações também permanecem fora deste módulo.

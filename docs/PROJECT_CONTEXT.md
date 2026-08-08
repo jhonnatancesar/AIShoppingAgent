@@ -104,7 +104,16 @@ frete nulo nunca é zero/grátis e não há conversão monetária. O menor total
 vence com desempate estável, enquanto evidências inelegíveis e vendedor
 opcional permanecem no resultado. Falta de candidata válida retorna
 `insufficient_data`. PostgreSQL real confirmou o fluxo e o rollback sem
-resíduos. A próxima tarefa executável é a TASK-039.
+resíduos.
+
+A TASK-039 (`DEC-027`) está **concluída**: `app.purchase` compara todas as
+evidências da TASK-038, atribui posições consecutivas somente às elegíveis e
+reutiliza a mesma ordenação da recomendação. Por isso, a posição 1 é
+invariavelmente a oferta recomendada para os mesmos dados. Inelegíveis ficam
+depois e nunca são ordenadas por preço; frete desconhecido mantém o preço do
+produto, mas seu total permanece `None` com exclusão explícita. PostgreSQL real
+confirmou o ranking, o histórico, `insufficient_data` e o rollback sem resíduos.
+A próxima tarefa executável é a TASK-040.
 
 A TASK-058 (`DEC-015`) está **concluída**: `create_mission` e
 `mission_command` não executam mais direto — ficam encenados em
@@ -243,6 +252,9 @@ reais observadas em produção.
 - Recomendação determinística e somente leitura por missão ativa
   (`app.purchase`, TASK-038), com menor custo total determinável na moeda do
   critério, evidências históricas identificáveis e vendedor opcional.
+- Comparação completa e somente leitura das mesmas evidências (`app.purchase`,
+  TASK-039), com ranking exclusivo das elegíveis e posição 1 invariável em
+  relação à recomendação.
 - Documentos de visão, arquitetura, dados, módulos-alvo, escopo do MVP, backlog, itens fora de escopo, governança de decisões e workflow permanente de execução.
 - ADRs, RFCs e 62 tarefas planejadas.
 
@@ -260,9 +272,8 @@ worker/scheduler de coleta, detecção de `mission.status_changed`/`collection.c
 `collection.failed`/`offer.availability_changed` (nenhuma TASK a atribui
 ainda), inserção real de `PriceObservation` num fluxo de coleta
 orquestrado, suíte permanente de testes ponta a ponta nem credenciais reais
-configuradas. Também não existem comparação completa e ordenada de ofertas
-(TASK-039), confirmação de compra (TASK-040), trilha de compra (TASK-041) nem
-qualquer execução financeira.
+configuradas. Também não existem confirmação de compra (TASK-040), trilha de
+compra (TASK-041) nem qualquer execução financeira.
 
 ## Invariantes
 
@@ -317,6 +328,9 @@ qualquer execução financeira.
   própria missão em fontes selecionadas. Frete desconhecido e moeda diferente
   tornam a oferta inelegível; `insufficient_data` substitui qualquer escolha
   parcial, e vendedor permanece evidência opcional (TASK-038).
+- Comparações reutilizam exatamente a elegibilidade, as evidências e a ordem da
+  recomendação. Apenas elegíveis recebem posição; a posição 1 coincide com a
+  recomendação e frete desconhecido nunca produz `total_amount` (TASK-039).
 - Módulos da aplicação acessam IA somente por `AIProviderManager`; USER usa apenas
   Gemini gratuito, sem fallback. ADMIN/DEV tenta Gemini premium, depois o Groq
   (opcional, TASK-059, só se configurado) e por fim o Gemini gratuito. OpenAI,

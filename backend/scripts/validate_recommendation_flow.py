@@ -1,4 +1,4 @@
-"""Valida a TASK-038 contra PostgreSQL real sem deixar dados persistidos."""
+"""Valida as TASKs 038 e 039 contra PostgreSQL real sem deixar dados persistidos."""
 
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -23,6 +23,7 @@ from app.purchase import (
     RecommendationExclusion,
     RecommendationReason,
     RecommendationStatus,
+    compare_offers_for_mission,
     recommend_for_mission,
 )
 from app.stores.models import Seller, Store
@@ -164,6 +165,36 @@ def validate() -> None:
         ):
             raise RuntimeError("historical evidence is not identifiable")
 
+        comparison = compare_offers_for_mission(session, mission.id)
+        if (
+            comparison.recommendation_offer_id != result.recommendation.offer_id
+            or comparison.items[0].offer_id != result.recommendation.offer_id
+            or comparison.items[0].position != 1
+        ):
+            raise RuntimeError("TASK-038 recommendation and TASK-039 rank diverged")
+        ranked_positions = tuple(
+            item.position for item in comparison.items if item.eligible
+        )
+        if ranked_positions != tuple(range(1, len(ranked_positions) + 1)):
+            raise RuntimeError("eligible comparison positions are not consecutive")
+        unknown_item = next(
+            item for item in comparison.items if item.offer_id == unknown_shipping.id
+        )
+        if (
+            unknown_item.amount != Decimal("2000")
+            or unknown_item.shipping_amount is not None
+            or unknown_item.total_amount is not None
+            or unknown_item.position is not None
+            or RecommendationExclusion.SHIPPING_UNKNOWN not in unknown_item.exclusions
+        ):
+            raise RuntimeError("unknown shipping was exposed as a total")
+        first_ineligible = next(
+            (index for index, item in enumerate(comparison.items) if not item.eligible),
+            len(comparison.items),
+        )
+        if any(item.eligible for item in comparison.items[first_ineligible:]):
+            raise RuntimeError("ineligible evidence was placed before ranked offers")
+
         insufficient = _mission(session, user, stores["pichau"])
         insufficient_offer = _offer(session, stores["pichau"], "only-unknown-shipping")
         insufficient_run = _run(session, insufficient, stores["pichau"], now)
@@ -183,13 +214,25 @@ def validate() -> None:
             is not RecommendationReason.NO_DETERMINABLE_TOTALS
         ):
             raise RuntimeError("unknown-only totals did not return insufficient_data")
+        insufficient_comparison = compare_offers_for_mission(session, insufficient.id)
+        if (
+            insufficient_comparison.status is not RecommendationStatus.INSUFFICIENT_DATA
+            or insufficient_comparison.reason
+            is not RecommendationReason.NO_DETERMINABLE_TOTALS
+            or any(item.position is not None for item in insufficient_comparison.items)
+            or any(
+                item.total_amount is not None for item in insufficient_comparison.items
+            )
+        ):
+            raise RuntimeError("insufficient comparison invented a ranking or total")
 
         print(
-            "TASK-038 PostgreSQL validation passed:",
+            "TASK-038/TASK-039 PostgreSQL validation passed:",
             {
                 "status": result.status.value,
                 "evidence_count": len(result.evidence),
                 "history_count": history.observation_count,
+                "ranked_count": len(ranked_positions),
                 "insufficient_reason": insufficient_result.reason.value,
             },
         )
