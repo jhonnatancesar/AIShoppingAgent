@@ -17,6 +17,10 @@ por senha exige desenho de segurança próprio (hashing, verificação,
 recuperação de conta), não é "dado não sensível" e não deve ser implementada
 apressadamente dentro de outro cadastro.
 
+Pela `DEC-033`, esta tarefa foi retirada da V1.2 e inserida no fluxo principal
+de segurança. Deve ser executada imediatamente depois da TASK-047 e antes da
+TASK-048.
+
 ## Escopo (a definir em detalhe na validação desta TASK)
 
 - Algoritmo de hashing de senha (ex.: Argon2/bcrypt), nunca texto puro.
@@ -34,4 +38,5 @@ apressadamente dentro de outro cadastro.
 
 ## Critério de aceite
 
-A definir na validação desta TASK, quando solicitada explicitamente.
+A definir na validação desta TASK. Ela se torna a próxima tarefa executável
+assim que a TASK-047 for concluída.

@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-08-08 — Workflow: TASK-061 depois da TASK-047
+
+- A TASK-061 deixou de pertencer à fila da V1.2 e passou a integrar o fluxo
+  principal de segurança.
+- A sequência obrigatória agora é `TASK-047 → TASK-061 → TASK-048`, sem
+  renumerar nenhuma tarefa.
+- Roadmap, checklist de release, contexto, índice de tarefas e V1.2 foram
+  sincronizados pela `DEC-033`.
+
 ## 2026-08-08 — TASK-046: autenticação mínima do canal Telegram
 
 - Separada a autenticação do transporte, por segredo em tempo constante, da

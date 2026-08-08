@@ -25,6 +25,19 @@ Após a classificação, registrar a decisão neste arquivo e atualizar a docume
 - **Justificativa:** impacto avaliado e motivo da classificação.
 - **Próxima ação:** documento a atualizar, TASK a criar quando aplicável, ou ação de não implementação.
 
+### DEC-033 — Executar a TASK-061 depois da TASK-047
+
+- **Data:** 2026-08-08
+- **Ideia:** retirar a autenticação real por usuário e senha da fila da V1.2 e
+  inseri-la no fluxo principal imediatamente depois da autorização.
+- **Classificação:** Implementar agora.
+- **Justificativa:** autorização por papel (TASK-047) fecha primeiro as ações
+  permitidas; em seguida, a TASK-061 estabelece credenciais, verificação e
+  recuperação antes das demais etapas de segurança e entrega. A ordem oficial
+  passa a ser `TASK-047 → TASK-061 → TASK-048`, sem renumerar identificadores.
+- **Próxima ação:** concluir a TASK-047; depois executar obrigatoriamente a
+  TASK-061 antes de iniciar a TASK-048.
+
 ### DEC-032 — Autenticar a identidade mínima do canal Telegram
 
 - **Data:** 2026-08-08
@@ -228,10 +241,15 @@ Após a classificação, registrar a decisão neste arquivo e atualizar a docume
 
 ### DEC-021 — Criar a fase V1.2 com uma lista priorizada de evoluções entre a V1 e a V2
 
+> **Atualização (DEC-033):** a TASK-061 foi retirada desta fase e inserida no
+> fluxo principal, imediatamente após a TASK-047. Os demais itens da V1.2
+> mantêm sua ordem relativa original.
+
 - **Data:** 2026-08-08
 - **Ideia:** o usuário pediu um documento próprio para uma fase "V1.2",
-  que sai depois da V1 e antes da V2, com ordem de execução definida:
-  TASK-061 primeiro (já registrada), seguida por: ajustar o cadastro para
+  que sai depois da V1 e antes da V2, com ordem de execução definida. A ordem
+  original começava pela TASK-061 (posição depois supersedida pela DEC-033),
+  seguida por: ajustar o cadastro para
   pedir e-mail visando notificações; enviar notificações por e-mail;
   pesquisa de cupons; e um painel administrativo web com acesso/edição
   direta ao banco, login de administrador, status/consumo da aplicação e
@@ -273,6 +291,9 @@ Após a classificação, registrar a decisão neste arquivo e atualizar a docume
 
 ### DEC-019 — Criar a TASK-061 para autenticação real por usuário e senha
 
+> **Atualização (DEC-033):** a tarefa deixou de aguardar a retomada da V1.2 e
+> passou a ser obrigatória depois da TASK-047 e antes da TASK-048.
+
 - **Data:** 2026-08-08
 - **Ideia:** ao detalhar os campos do cadastro inicial da TASK-060, o
   usuário pediu também uma senha para autenticar no bot (usuário + senha),
@@ -287,7 +308,8 @@ Após a classificação, registrar a decisão neste arquivo e atualizar a docume
   já é confiável para o canal atual. O usuário concordou em tirar isso da
   TASK-060 e tratar como TASK própria quando pedir.
 - **Próxima ação:** criada `docs/tasks/TASK-061.md` (stub, escopo a definir
-  na validação); aguarda solicitação explícita.
+  na validação); pela DEC-033, executá-la depois da TASK-047 e antes da
+  TASK-048.
 
 ### DEC-018 — Criar a TASK-060 para seleção de perfil de IA por papel, cadastro inicial e placeholder de upgrade
 

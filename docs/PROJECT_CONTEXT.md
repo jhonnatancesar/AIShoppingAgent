@@ -42,8 +42,9 @@ comando `/upgrade` existe e é visível no bot, mas responde apenas "em
 breve", sem nenhuma lógica real — placeholder deliberado para uma futura
 oferta de upgrade (`docs/OUT_OF_SCOPE.md`). A TASK-061 (`DEC-019`) foi
 registrada para autenticação real por usuário e senha, retirada do escopo
-da TASK-060 por exigir desenho de segurança próprio; ainda não
-implementada.
+da TASK-060 por exigir desenho de segurança próprio. A `DEC-033` também a
+retirou da V1.2: ainda não implementada, deve ser executada depois da TASK-047
+e antes da TASK-048.
 
 A TASK-043 (`DEC-022`) está **concluída**: o preflight da TASK-036 revelou
 duas dependências reais não satisfeitas — um pipeline de eventos
@@ -145,7 +146,8 @@ validações e precisa estar ativo antes de IA, domínio ou qualquer mutação.
 Recusas são terminais em `204` e registram somente motivo fechado. PostgreSQL
 18, API Docker e Telegram reais confirmaram primeiro contato, idempotência,
 inativo, ausência de efeitos e logs sanitizados. Login por senha continua na
-TASK-061 e autorização por papel na próxima tarefa executável, TASK-047.
+TASK-061. A próxima tarefa executável é a TASK-047, seguida obrigatoriamente
+pela TASK-061 e então pela TASK-048 (`DEC-033`).
 
 A TASK-058 (`DEC-015`) está **concluída**: `create_mission` e
 `mission_command` não executam mais direto — ficam encenados em

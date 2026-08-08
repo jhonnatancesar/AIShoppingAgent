@@ -16,9 +16,10 @@
 | Confirmação da intenção interpretada | TASK-058 | Devolve a intenção interpretada e pede confirmação antes de executar comandos de missão (`DEC-015`) |
 | Fallback de cota do AIProviderManager | TASK-059 | Avalia e, se aprovado, integra o Groq como fallback quando a cota do Gemini se esgotar (`DEC-016`) |
 | Perfil de IA por papel, cadastro e placeholder de upgrade | TASK-060 | Webhook escolhe o perfil de IA a partir de `User.role`, cadastro inicial não sensível e opção de upgrade visível porém inativa (`DEC-018`) |
-| Autenticação real por usuário e senha | TASK-061 | Hashing seguro, verificação e recuperação de conta, além da identidade do Telegram (`DEC-019`) |
 | Compra e eventos | TASK-038 a TASK-041 e TASK-043 a TASK-045 | Fluxos de compra, publicação, consumo e monitoramento |
-| Segurança e entrega | TASK-046 a TASK-054 | Segurança e lançamento |
+| Segurança — canal e autorização | TASK-046 e TASK-047 | Autenticação mínima do Telegram e autorização por papel |
+| Autenticação real por usuário e senha | TASK-061 | Executada depois da TASK-047: hashing seguro, verificação e recuperação de conta (`DEC-019`, `DEC-033`) |
+| Segurança e entrega — continuação | TASK-048 a TASK-054 | Segredos, resiliência, privacidade, documentação, testes e lançamento |
 | Expansão de fontes (futuro) | Tarefas a definir | Mercado Livre, Shopee, AliExpress e outras fontes futuras |
 
 As TASKs 000 a 046 e as TASKs 055 a 060 estão
@@ -44,7 +45,8 @@ idempotência e concorrência reais. A TASK-045 (`DEC-031`) adicionou métricas
 Prometheus, traces OTLP/Jaeger, correlação segura e health/readiness. A
 TASK-046 (`DEC-032`) passou a aceitar operações do Telegram somente após
 autenticar o transporte, validar o chat privado direto e resolver um usuário
-ativo. A próxima tarefa executável é a TASK-047 (autorização). A TASK-057 (`DEC-017`): validação real contra o
+ativo. A próxima tarefa executável é a TASK-047 (autorização); depois dela, a
+ordem obrigatória é TASK-061 e então TASK-048 (`DEC-033`). A TASK-057 (`DEC-017`): validação real contra o
 `USER`/Gemini cobre 3 dos 4 `IntentKind`, e o usuário aceitou explicitamente
 encerrar nesse estado, adiando mais variedade de linguagem para a V2
 (`docs/tasks/TASK-057.md`, `docs/BACKLOG.md`). A TASK-058 (`DEC-015`):
@@ -62,8 +64,9 @@ evento nem qualquer worker/consumidor. A TASK-044 (`DEC-023`): histórico
 append-only de tentativas e reivindicação concorrente com
 `FOR UPDATE SKIP LOCKED`, validada em PostgreSQL real; não inclui worker,
 backoff, dead-letter queue ou notificação em seu próprio escopo — o consumidor
-e a notificação foram adicionados depois pela TASK-036. A TASK-061 (`DEC-019`, autenticação
-real por usuário e senha) foi registrada e aguarda solicitação explícita.
+e a notificação foram adicionados depois pela TASK-036. A TASK-061 (`DEC-019`,
+autenticação real por usuário e senha) foi retirada da V1.2 e integrada ao
+fluxo principal depois da TASK-047 (`DEC-033`).
 As demais continuam pendentes e só podem ser iniciadas por solicitação
 explícita. A
 V1 pesquisa Pichau, Terabyte, Amazon e Kabum; Mercado Livre, Shopee e
@@ -77,4 +80,4 @@ documental, commit convencional, publicação automática da branch da TASK e
 atualização da `main` local. A `main` remota só é atualizada após solicitação
 explícita do usuário.
 
-O escopo obrigatório da V1 está em `docs/MVP.md`. Evoluções futuras devem ser registradas em `docs/BACKLOG.md`, e exclusões explícitas da V1 estão em `docs/OUT_OF_SCOPE.md`. Uma lista priorizada de evoluções para depois da V1 e antes da V2 está em `docs/V1_2.md` (`DEC-021`).
+O escopo obrigatório da V1 está em `docs/MVP.md`. Evoluções futuras devem ser registradas em `docs/BACKLOG.md`, e exclusões explícitas da V1 estão em `docs/OUT_OF_SCOPE.md`. Uma lista priorizada de evoluções para depois da V1 e antes da V2 está em `docs/V1_2.md` (`DEC-021`); a TASK-061 não faz mais parte dessa lista (`DEC-033`).

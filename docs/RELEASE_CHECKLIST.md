@@ -77,10 +77,10 @@ Além dos critérios formais do MVP:
 | Gerenciador de IA e Telegram | TASK-028 a TASK-037 | 10/10 | — |
 | Compra e eventos | TASK-038 a TASK-041, TASK-043 a TASK-045 | 7/7 | — |
 | Catálogo de eventos | TASK-042 | 1/1 | — |
-| Segurança e entrega | TASK-046 a TASK-054 | 1/9 | TASK-047 a TASK-054 |
+| Segurança — canal, autorização e autenticação real | TASK-046, TASK-047, TASK-061 | 1/3 | TASK-047, depois TASK-061 |
+| Segurança e entrega — continuação | TASK-048 a TASK-054 | 0/7 | TASK-048 a TASK-054 |
 | Store Providers e identidade | TASK-055, TASK-056 | 2/2 | — |
 | Robustez, confirmação e IA (V1.2 antecipado) | TASK-057 a TASK-060 | 4/4 | — |
-| Autenticação real (V1.2) | TASK-061 | 0/1 | TASK-061 |
 
 **Total: 53 concluídas, 9 pendentes.**
 
@@ -92,6 +92,5 @@ maiores riscos são a ausência de coleta automática (a missão nunca
 "funciona sozinha") e a ausência de autorização por papel e controles de
 segurança/release ainda pendentes. A
 ordem mais natural para fechar essas lacunas segue o próprio
-`docs/ROADMAP.md`: TASK-047 → demais tarefas de
-Segurança e entrega até a TASK-054, com a TASK-061 podendo entrar
-antes ou depois dependendo de quando a V1.2 for retomada.
+`docs/ROADMAP.md`: TASK-047 → TASK-061 → TASK-048 e demais tarefas de
+Segurança e entrega até a TASK-054.

@@ -8,5 +8,6 @@ deterministicamente (`DEC-026`), a TASK-039 compara as mesmas evidências
 persiste sua solicitação imutável e resolução append-only (`DEC-029`). A
 TASK-045 entrega observabilidade (`DEC-031`) e a TASK-046 fecha a autenticação
 mínima do canal Telegram (`DEC-032`). A próxima tarefa executável é a TASK-047
-(autorização). A TASK-061 (autenticação real
-por usuário e senha, `DEC-019`) foi registrada e aguarda solicitação explícita.
+(autorização). Depois dela, a TASK-061 (autenticação real por usuário e senha)
+deve ser executada antes da TASK-048 (`DEC-033`); ela não pertence mais à fila
+da V1.2.
