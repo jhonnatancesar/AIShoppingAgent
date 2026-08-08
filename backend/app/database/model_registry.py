@@ -12,6 +12,7 @@ from app.missions.models import (
 )
 from app.offers.models import Offer
 from app.products.models import Product
+from app.purchase.models import PurchaseConfirmation, PurchaseTrailEntry
 from app.stores.models import Seller, Store
 from app.users.models import User
 
@@ -31,4 +32,6 @@ REGISTERED_MODELS = (
     MissionSchedule,
     Event,
     EventConsumptionAttempt,
+    PurchaseConfirmation,
+    PurchaseTrailEntry,
 )

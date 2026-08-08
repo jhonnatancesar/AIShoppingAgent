@@ -60,6 +60,8 @@ class PurchaseConfirmationRequest:
     position: int
     product_id: UUID
     product_name: str
+    product_brand: str | None
+    product_model: str | None
     store_id: UUID
     store_code: str
     store_name: str
@@ -92,14 +94,16 @@ class PurchaseConfirmationRequest:
 
 @dataclass(frozen=True, slots=True)
 class PurchaseConfirmationResult:
-    """Resultado sem persistência, compra, checkout ou efeito financeiro."""
+    """Resultado sem compra, checkout ou efeito financeiro."""
 
     request: PurchaseConfirmationRequest
     decision: PurchaseConfirmationDecision
     status: PurchaseConfirmationStatus
     stale_reason: PurchaseConfirmationStaleReason | None
+    resolved_at: datetime
 
     def __post_init__(self) -> None:
+        _require_utc(self.resolved_at, "resolved_at")
         if not isinstance(self.decision, PurchaseConfirmationDecision):
             raise TypeError("decision must be a PurchaseConfirmationDecision")
         if self.status is PurchaseConfirmationStatus.CONFIRMED:
@@ -122,7 +126,7 @@ class PurchaseConfirmationResult:
             raise ValueError("stale result requires a reason")
 
 
-def request_purchase_confirmation(
+def _build_purchase_confirmation_request(
     session: Session,
     *,
     mission_id: UUID,
@@ -130,7 +134,7 @@ def request_purchase_confirmation(
     owner_user_id: UUID,
     now: datetime | None = None,
 ) -> PurchaseConfirmationRequest:
-    """Cria em memória uma solicitação para uma oferta atualmente elegível."""
+    """Monta uma solicitação para uma oferta atualmente elegível."""
     _require_mission_owner(session, mission_id, owner_user_id)
     comparison = compare_offers_for_mission(session, mission_id)
     selected = _eligible_offer(comparison.items, offer_id)
@@ -153,6 +157,8 @@ def request_purchase_confirmation(
         position=selected.position,
         product_id=selected.product_id,
         product_name=selected.product_name,
+        product_brand=selected.product_brand,
+        product_model=selected.product_model,
         store_id=selected.store_id,
         store_code=selected.store_code,
         store_name=selected.store_name,
@@ -171,7 +177,7 @@ def request_purchase_confirmation(
     )
 
 
-def resolve_purchase_confirmation(
+def _evaluate_purchase_confirmation(
     session: Session,
     request: PurchaseConfirmationRequest,
     *,
@@ -179,7 +185,7 @@ def resolve_purchase_confirmation(
     decision: PurchaseConfirmationDecision,
     now: datetime | None = None,
 ) -> PurchaseConfirmationResult:
-    """Resolve somente após validar identidade, validade e evidência corrente."""
+    """Avalia uma decisão sem persistir sua trilha."""
     if not isinstance(decision, PurchaseConfirmationDecision):
         raise TypeError("decision must be a PurchaseConfirmationDecision")
     if owner_user_id != request.owner_user_id:
@@ -188,18 +194,20 @@ def resolve_purchase_confirmation(
         )
 
     resolved_at = _utc_now(now)
-    if resolved_at >= request.expires_at:
-        return _stale_result(
-            request,
-            decision,
-            PurchaseConfirmationStaleReason.EXPIRED,
-        )
     if decision is PurchaseConfirmationDecision.CANCEL:
         return PurchaseConfirmationResult(
             request=request,
             decision=decision,
             status=PurchaseConfirmationStatus.CANCELLED,
             stale_reason=None,
+            resolved_at=resolved_at,
+        )
+    if resolved_at >= request.expires_at:
+        return _stale_result(
+            request,
+            decision,
+            PurchaseConfirmationStaleReason.EXPIRED,
+            resolved_at,
         )
 
     mission = session.get(Mission, request.mission_id)
@@ -208,6 +216,7 @@ def resolve_purchase_confirmation(
             request,
             decision,
             PurchaseConfirmationStaleReason.EVIDENCE_CHANGED,
+            resolved_at,
         )
     try:
         comparison = compare_offers_for_mission(session, request.mission_id)
@@ -216,6 +225,7 @@ def resolve_purchase_confirmation(
             request,
             decision,
             PurchaseConfirmationStaleReason.EVIDENCE_CHANGED,
+            resolved_at,
         )
     current = _eligible_offer(comparison.items, request.offer_id)
     if current is None or not _same_evidence(request, current):
@@ -223,12 +233,14 @@ def resolve_purchase_confirmation(
             request,
             decision,
             PurchaseConfirmationStaleReason.EVIDENCE_CHANGED,
+            resolved_at,
         )
     return PurchaseConfirmationResult(
         request=request,
         decision=decision,
         status=PurchaseConfirmationStatus.CONFIRMED,
         stale_reason=None,
+        resolved_at=resolved_at,
     )
 
 
@@ -259,12 +271,22 @@ def _same_evidence(
 ) -> bool:
     return (
         current.offer_id == request.offer_id
-        and current.observation_id == request.price_observation_id
+        and current.product_id == request.product_id
+        and current.product_name == request.product_name
+        and current.product_brand == request.product_brand
+        and current.product_model == request.product_model
+        and current.store_id == request.store_id
+        and current.store_code == request.store_code
+        and current.store_name == request.store_name
+        and current.seller_id == request.seller_id
+        and current.seller_name == request.seller_name
+        and current.url == request.url
         and current.availability is request.availability
         and current.currency == request.currency
         and current.amount == request.amount
         and current.shipping_amount == request.shipping_amount
         and current.total_amount == request.total_amount
+        and current.fulfillment == request.fulfillment
     )
 
 
@@ -272,12 +294,14 @@ def _stale_result(
     request: PurchaseConfirmationRequest,
     decision: PurchaseConfirmationDecision,
     reason: PurchaseConfirmationStaleReason,
+    resolved_at: datetime,
 ) -> PurchaseConfirmationResult:
     return PurchaseConfirmationResult(
         request=request,
         decision=decision,
         status=PurchaseConfirmationStatus.STALE,
         stale_reason=reason,
+        resolved_at=resolved_at,
     )
 
 

@@ -2,8 +2,8 @@
 
 O módulo `app.purchase` inicia o fluxo de compra pela recomendação determinística
 da TASK-038, pela comparação ordenada da TASK-039 e pela confirmação temporária
-da TASK-040. Ele não persiste esses resultados, não cria reserva, não abre
-checkout e não executa ação financeira.
+da TASK-040 e pela persistência append-only da TASK-041. Ele não cria reserva,
+não abre checkout e não executa ação financeira.
 
 ## Fluxo de recomendação
 
@@ -48,25 +48,27 @@ como custo total. Se nenhuma oferta for elegível, o resultado é
 
 `request_purchase_confirmation` aceita qualquer oferta elegível da comparação,
 mas somente para o proprietário da missão. A solicitação imutável registra a
-missão, o proprietário, a oferta e o `price_observation_id` exato, junto ao
-snapshot exibível de produto, loja, vendedor opcional, URL, preço, frete, total,
-moeda, disponibilidade e horário. `requested_at` e `expires_at` usam UTC e um
-TTL fixo de 15 minutos.
+missão, o proprietário, a oferta e o `price_observation_id` original, junto ao
+snapshot sanitizado de produto, loja, vendedor opcional, URL, preço, frete,
+total, moeda, disponibilidade e horário. `requested_at` e `expires_at` usam UTC
+e um TTL fixo de 15 minutos. A solicitação e a entrada `requested` são gravadas
+na mesma transação.
 
-`resolve_purchase_confirmation` aceita apenas `confirm` ou `cancel`. Uma decisão
-depois da expiração retorna `stale`. Antes de confirmar, o serviço recalcula a
-comparação e exige a mesma oferta, a mesma observação e os mesmos valores de
-disponibilidade, moeda, preço, frete e total. Nova observação — mesmo repetindo
-os valores — ou qualquer divergência torna a solicitação `stale` e exige outra.
-Cancelamento válido retorna `cancelled`; somente a revalidação integral produz
-`confirmed`.
+`resolve_purchase_confirmation` aceita apenas `confirm` ou `cancel`. Para
+`confirm`, proprietário e terminal existente são verificados primeiro; no
+limite `now >= expires_at`, o resultado é `stale/expired` sem recalcular a
+oferta. Dentro do TTL, o serviço exige que oferta, elegibilidade,
+disponibilidade, moeda, preço, frete, total e demais campos materiais continuem
+equivalentes. Uma observação mais nova com os mesmos dados continua válida; o
+UUID original permanece como proveniência. Divergência material produz
+`stale/evidence_changed`. `cancel` independe do TTL e da oferta corrente.
 
-Todos os resultados permanecem em memória. Não há compra, reserva, checkout,
-evento, auditoria ou proteção durável contra replay.
+`purchase_confirmations` mantém a solicitação imutável, sem status.
+`purchase_trail_entries` mantém no máximo uma `requested` e uma resolução
+terminal append-only. Repetições equivalentes são idempotentes; decisão
+conflitante falha. A corrida terminal usa SAVEPOINT e deixa o índice único
+parcial do PostgreSQL como autoridade final. Triggers bloqueiam `UPDATE` e
+`DELETE`, e todas as FKs históricas usam `RESTRICT`.
 
-## Fronteiras das próximas tarefas
-
-- TASK-041: trilha persistente de compra.
-
-Essa persistência não é antecipada pelas TASKs 038 a 040. IA, Telegram, API
-HTTP, eventos e notificações também permanecem fora deste módulo.
+Não há compra, reserva, checkout, evento ou auditoria. IA, Telegram, API HTTP e
+notificações também permanecem fora deste módulo.

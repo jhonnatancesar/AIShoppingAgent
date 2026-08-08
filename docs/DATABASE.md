@@ -30,6 +30,11 @@ erDiagram
     products ||--o{ offers : identifies
     collection_runs ||--o{ price_observations : produces
     offers ||--o{ price_observations : receives
+    missions ||--o{ purchase_confirmations : owns
+    users ||--o{ purchase_confirmations : requests
+    offers ||--o{ purchase_confirmations : confirms
+    price_observations ||--o{ purchase_confirmations : proves
+    purchase_confirmations ||--o{ purchase_trail_entries : records
     missions ||--o{ events : relates
     events ||--o{ event_consumption_attempts : attempted_by
     stores ||--o{ collection_runs : serves
@@ -275,6 +280,51 @@ Evidência imutável de preço e disponibilidade obtida em uma coleta.
 | `raw_evidence` | `jsonb` | Opcional; evidência sanitizada necessária à rastreabilidade. |
 
 Cada coleta válida adiciona uma linha. Não há `updated_at`, operação de atualização nem unicidade que descarte observações repetidas. Correções futuras devem ser anexadas e auditadas, nunca sobrescrever a evidência original.
+
+### `purchase_confirmations`
+
+Solicitação imutável de confirmação e snapshot sanitizado da evidência exibida.
+
+| Coluna | Tipo | Regra |
+| --- | --- | --- |
+| `id` | `uuid` | PK e `confirmation_id` exposto pelo domínio. |
+| `mission_id` | `uuid` | FK `RESTRICT` para a missão. |
+| `owner_user_id` | `uuid` | FK `RESTRICT` para o proprietário. |
+| `offer_id` | `uuid` | FK `RESTRICT` para a oferta escolhida. |
+| `price_observation_id` | `uuid` | FK `RESTRICT` para a observação original, nunca substituída. |
+| `product_id`, `store_id`, `seller_id` | `uuid` | Identidade relacional; vendedor é opcional. |
+| `position`, `url` | `integer`, `text` | Posição e URL apresentadas. |
+| `amount`, `shipping_amount`, `total_amount` | `numeric(19,4)` | Valores não negativos e total exato. |
+| `currency` | `char(3)` | Moeda ISO 4217 da confirmação. |
+| `availability`, `fulfillment`, `observed_at` | tipos da oferta | Evidência original relevante. |
+| `evidence_snapshot` | `jsonb` | Objeto sanitizado com nomes e identificadores exibidos. |
+| `requested_at`, `expires_at` | `timestamptz` | UTC e diferença exata de 15 minutos. |
+| `recorded_at` | `timestamptz` | Definido exclusivamente pelo PostgreSQL. |
+
+Não existe coluna de status. Trigger rejeita `UPDATE` e `DELETE`. A identidade
+composta é referenciada pela trilha para impedir que seus campos relacionais
+divirjam da solicitação.
+
+### `purchase_trail_entries`
+
+Histórico append-only da criação e resolução da confirmação.
+
+| Coluna | Tipo | Regra |
+| --- | --- | --- |
+| `id` | `uuid` | Chave primária. |
+| `confirmation_id` | `uuid` | FK real `RESTRICT` para `purchase_confirmations`. |
+| `mission_id`, `owner_user_id`, `offer_id`, `price_observation_id` | `uuid` | FKs `RESTRICT` e FK composta para a mesma identidade da confirmação. |
+| `entry_type` | enum | `requested`, `confirmed`, `cancelled` ou `stale`. |
+| `decision` | enum | `confirm`, `cancel` ou nulo somente em `requested`. |
+| `stale_reason` | enum | `expired`, `evidence_changed` ou nulo conforme a matriz. |
+| `resolved_at` | `timestamptz` | Nulo em `requested`; obrigatório em terminal. |
+| `recorded_at` | `timestamptz` | Definido exclusivamente pelo PostgreSQL. |
+
+Índices únicos parciais limitam cada confirmação a no máximo uma `requested` e
+um terminal. O serviço cria confirmação + `requested` atomicamente e insere o
+terminal em SAVEPOINT; somente a violação identificada do índice terminal é
+convertida em idempotência/conflito de domínio. Trigger bloqueia alteração e
+remoção. `confirmed` registra consentimento, nunca compra executada.
 
 ### `events`
 

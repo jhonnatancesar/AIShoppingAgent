@@ -23,9 +23,10 @@ from app.purchase import (
     RecommendationExclusion,
     RecommendationReason,
     RecommendationStatus,
-    request_purchase_confirmation,
-    resolve_purchase_confirmation,
 )
+
+request_purchase_confirmation = confirmation_module._build_purchase_confirmation_request
+resolve_purchase_confirmation = confirmation_module._evaluate_purchase_confirmation
 
 NOW = datetime(2026, 8, 8, 15, 0, tzinfo=UTC)
 MISSION_ID = UUID(int=1)
@@ -235,16 +236,7 @@ def test_cancellation_is_terminal_without_revalidating_evidence(monkeypatch) -> 
     assert result.stale_reason is None
 
 
-@pytest.mark.parametrize(
-    ("decision", "resolved_at"),
-    [
-        (PurchaseConfirmationDecision.CONFIRM, NOW + PURCHASE_CONFIRMATION_TTL),
-        (PurchaseConfirmationDecision.CANCEL, NOW + timedelta(minutes=16)),
-    ],
-)
-def test_expired_request_is_always_stale(
-    monkeypatch, decision: PurchaseConfirmationDecision, resolved_at: datetime
-) -> None:
+def test_expired_confirm_is_stale_without_recalculating(monkeypatch) -> None:
     item = _eligible_item(1, position=1)
     request = _request(monkeypatch, item)
     monkeypatch.setattr(
@@ -257,24 +249,44 @@ def test_expired_request_is_always_stale(
         _Session(),
         request,
         owner_user_id=OWNER_ID,
-        decision=decision,
-        now=resolved_at,
+        decision=PurchaseConfirmationDecision.CONFIRM,
+        now=NOW + PURCHASE_CONFIRMATION_TTL,
     )
 
     assert result.status is PurchaseConfirmationStatus.STALE
     assert result.stale_reason is PurchaseConfirmationStaleReason.EXPIRED
 
 
+def test_expired_request_can_still_be_cancelled(monkeypatch) -> None:
+    item = _eligible_item(1, position=1)
+    request = _request(monkeypatch, item)
+    monkeypatch.setattr(
+        confirmation_module,
+        "compare_offers_for_mission",
+        lambda session, mission_id: pytest.fail("cancel must not recalculate"),
+    )
+
+    result = resolve_purchase_confirmation(
+        _Session(),
+        request,
+        owner_user_id=OWNER_ID,
+        decision=PurchaseConfirmationDecision.CANCEL,
+        now=NOW + timedelta(minutes=16),
+    )
+
+    assert result.status is PurchaseConfirmationStatus.CANCELLED
+    assert result.stale_reason is None
+
+
 @pytest.mark.parametrize(
     "changed_item",
     [
-        replace(_eligible_item(1, position=1), observation_id=UUID(int=9001)),
         replace(_eligible_item(1, position=1), amount=Decimal("99")),
         replace(_eligible_item(1, position=1), shipping_amount=Decimal("11")),
         replace(_eligible_item(1, position=1), total_amount=Decimal("111")),
         replace(_eligible_item(1, position=1), currency="USD"),
     ],
-    ids=["observation", "amount", "shipping", "total", "currency"],
+    ids=["amount", "shipping", "total", "currency"],
 )
 def test_changed_evidence_is_stale(monkeypatch, changed_item) -> None:
     original = _eligible_item(1, position=1)
@@ -295,6 +307,35 @@ def test_changed_evidence_is_stale(monkeypatch, changed_item) -> None:
 
     assert result.status is PurchaseConfirmationStatus.STALE
     assert result.stale_reason is PurchaseConfirmationStaleReason.EVIDENCE_CHANGED
+
+
+def test_new_observation_with_equivalent_material_evidence_remains_valid(
+    monkeypatch,
+) -> None:
+    original = _eligible_item(1, position=1)
+    request = _request(monkeypatch, original)
+    newer = replace(
+        original,
+        observation_id=UUID(int=9001),
+        observed_at=NOW + timedelta(seconds=30),
+        recorded_at=NOW + timedelta(seconds=31),
+    )
+    monkeypatch.setattr(
+        confirmation_module,
+        "compare_offers_for_mission",
+        lambda session, mission_id: _comparison(newer),
+    )
+
+    result = resolve_purchase_confirmation(
+        _Session(),
+        request,
+        owner_user_id=OWNER_ID,
+        decision=PurchaseConfirmationDecision.CONFIRM,
+        now=NOW + timedelta(minutes=1),
+    )
+
+    assert result.status is PurchaseConfirmationStatus.CONFIRMED
+    assert result.request.price_observation_id == original.observation_id
 
 
 def test_offer_that_becomes_unavailable_is_stale(monkeypatch) -> None:

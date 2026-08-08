@@ -16,8 +16,6 @@ from app.purchase.confirmation import (
     PurchaseConfirmationResult,
     PurchaseConfirmationStaleReason,
     PurchaseConfirmationStatus,
-    request_purchase_confirmation,
-    resolve_purchase_confirmation,
 )
 from app.purchase.contracts import (
     HistoricalPriceEvidence,
@@ -34,6 +32,15 @@ from app.purchase.service import (
     rank_eligible_evidence,
     recommend_for_mission,
 )
+from app.purchase.trail import (
+    PurchaseConfirmationConflictError,
+    PurchaseConfirmationNotFoundError,
+    get_purchase_terminal_entry,
+    list_purchase_trail_entries,
+    recover_purchase_confirmation,
+    request_purchase_confirmation,
+    resolve_purchase_confirmation,
+)
 
 __all__ = [
     "HistoricalPriceEvidence",
@@ -46,8 +53,10 @@ __all__ = [
     "OfferNotEligibleForConfirmationError",
     "OfferRecommendationEvidence",
     "PURCHASE_CONFIRMATION_TTL",
+    "PurchaseConfirmationConflictError",
     "PurchaseConfirmationDecision",
     "PurchaseConfirmationError",
+    "PurchaseConfirmationNotFoundError",
     "PurchaseConfirmationRequest",
     "PurchaseConfirmationResult",
     "PurchaseConfirmationStaleReason",
@@ -58,8 +67,11 @@ __all__ = [
     "RecommendationResult",
     "RecommendationStatus",
     "compare_offers_for_mission",
+    "get_purchase_terminal_entry",
+    "list_purchase_trail_entries",
     "rank_eligible_evidence",
     "recommend_for_mission",
+    "recover_purchase_confirmation",
     "request_purchase_confirmation",
     "resolve_purchase_confirmation",
 ]

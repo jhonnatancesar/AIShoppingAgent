@@ -1,5 +1,31 @@
 # Changelog
 
+## 2026-08-08 — TASK-041: confirmação persistente e trilha append-only
+
+- Adicionadas `purchase_confirmations` para a solicitação imutável e
+  `purchase_trail_entries` para o histórico append-only, sem duplicar status
+  mutável e sem executar compra ou ação financeira.
+- A revisão `20260808_0007` cria FKs `RESTRICT`, identidade composta,
+  constraints monetárias e da matriz de resolução, índices únicos parciais
+  para no máximo uma `requested` e um terminal, além de triggers contra
+  `UPDATE` e `DELETE`.
+- A criação pública grava confirmação e `requested` na mesma transação. A
+  recuperação após reinício reconstrói o snapshot original, e a consulta da
+  trilha mantém ordenação determinística.
+- Corrigida a semântica da TASK-040: a observação original permanece como
+  proveniência, mas uma observação mais nova materialmente equivalente não
+  causa `stale`; `cancel` independe de TTL e da oferta corrente.
+- `confirm` verifica primeiro proprietário/terminal, depois expiração e somente
+  dentro do TTL recalcula a evidência. Expiração vence mudança de evidência.
+- A inserção terminal usa SAVEPOINT e trata exclusivamente a violação do índice
+  terminal: decisão equivalente retorna o vencedor; decisão diferente gera
+  conflito. Outros `IntegrityError` continuam propagando.
+- PostgreSQL 18 isolado aprovou `upgrade → downgrade → upgrade`, metadata,
+  atomicidade, imutabilidade, FKs, recuperação, expiração, equivalência,
+  alteração material e concorrência real idêntica/conflitante.
+- Pipeline completo aprovado em Python 3.14.6: 461 testes, 92,78% de cobertura,
+  Ruff e Alembic com head único. Nenhuma dependência nova foi necessária.
+
 ## 2026-08-08 — TASK-040: confirmação temporária vinculada à evidência exata
 
 - Criado `app.purchase.confirmation` com solicitações imutáveis para qualquer
@@ -8,13 +34,13 @@
   `owner_user_id` ao snapshot completo e possui TTL fixo de 15 minutos em UTC.
 - A resolução aceita somente `confirm` e `cancel`. Solicitação expirada retorna
   `stale`; outro usuário não pode solicitar nem resolver a confirmação.
-- Antes de produzir `confirmed`, a comparação da TASK-039 é recalculada e a
-  oferta precisa continuar elegível com a mesma observação, disponibilidade,
-  moeda, preço, frete e total. Até uma nova observação com valores idênticos
-  invalida a identidade anterior.
-- `cancel` válido retorna `cancelled`. Nenhum resultado persiste, compra,
-  reserva, abre checkout, publica evento ou cria auditoria; a trilha durável
-  permanece exclusiva da TASK-041.
+- Antes de produzir `confirmed`, a comparação da TASK-039 é recalculada. A
+  TASK-041 refinou essa regra para equivalência material, preservando a
+  observação original como proveniência sem invalidar uma nova observação
+  idêntica.
+- A TASK-041 também integrou persistência e definiu `cancel` como independente
+  do TTL. Nenhuma confirmação compra, reserva, abre checkout, publica evento ou
+  cria auditoria.
 - Validação real no PostgreSQL 18 confirmou confirmação, cancelamento,
   expiração, mudança de evidência, bloqueio de proprietário e oferta inelegível,
   com rollback sem resíduos.

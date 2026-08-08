@@ -25,7 +25,23 @@ Após a classificação, registrar a decisão neste arquivo e atualizar a docume
 - **Justificativa:** impacto avaliado e motivo da classificação.
 - **Próxima ação:** documento a atualizar, TASK a criar quando aplicável, ou ação de não implementação.
 
-### DEC-028 — Vincular confirmação temporária à observação exata e fazê-la expirar
+### DEC-029 — Separar solicitação imutável da trilha append-only de confirmação
+
+- **Data:** 2026-08-08
+- **Ideia:** persistir a confirmação da TASK-040 sem transformá-la em máquina
+  de estados e resolver concorrência pelo PostgreSQL.
+- **Classificação:** Implementar agora.
+- **Justificativa:** `purchase_confirmations` preserva a evidência original e
+  `purchase_trail_entries` registra `requested` e no máximo um terminal. O
+  índice único parcial é a autoridade concorrente; o serviço usa SAVEPOINT e
+  distingue pelo nome somente essa violação. Uma observação nova idêntica não
+  invalida a proveniência, `cancel` independe de TTL e, em `confirm`, expiração
+  precede revalidação. Isso garante recuperação e idempotência sem status
+  mutável, compra, evento ou auditoria duplicada.
+- **Próxima ação:** TASK-041 concluída e validada no PostgreSQL 18 real; a
+  próxima tarefa executável é a TASK-045.
+
+### DEC-028 — Vincular confirmação temporária à evidência original e fazê-la expirar
 
 - **Data:** 2026-08-08
 - **Ideia:** fechar a TASK-040 como uma confirmação explícita, temporária e
@@ -35,11 +51,12 @@ Após a classificação, registrar a decisão neste arquivo e atualizar a docume
   uma evidência diferente que por acaso repetisse os mesmos números. A
   solicitação guarda missão, oferta, observação e proprietário, além do snapshot
   completo, e expira após 15 minutos em UTC. A resolução recalcula a comparação
-  e exige a mesma identidade e os mesmos campos relevantes; expiração, nova
-  observação ou divergência produz `stale`. Isso cria o guard de domínio sem
-  antecipar persistência, evento, auditoria, interface ou ação financeira.
-- **Próxima ação:** TASK-040 concluída e validada no PostgreSQL real; a trilha
-  durável e a próxima tarefa executável permanecem na TASK-041.
+  e exige os mesmos campos materiais relevantes. A TASK-041 refinou a regra:
+  novo UUID de observação com conteúdo equivalente continua válido, enquanto a
+  observação original permanece como proveniência; expiração ou divergência
+  material produz `stale`.
+- **Próxima ação:** TASK-040 concluída; persistência e concorrência foram
+  integradas pela TASK-041 (`DEC-029`).
 
 ### DEC-027 — Compartilhar elegibilidade e ordenação entre recomendação e comparação
 

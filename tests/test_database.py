@@ -72,4 +72,6 @@ def test_metadata_contains_only_implemented_tables() -> None:
         "price_observations",
         "events",
         "event_consumption_attempts",
+        "purchase_confirmations",
+        "purchase_trail_entries",
     }

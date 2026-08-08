@@ -222,28 +222,42 @@ def validate() -> None:
             raise RuntimeError("confirmation request is not bound to exact evidence")
         confirmed = resolve_purchase_confirmation(
             session,
-            confirmation_request,
+            confirmation_request.confirmation_id,
             owner_user_id=user.id,
             decision=PurchaseConfirmationDecision.CONFIRM,
             now=now + timedelta(minutes=1),
         )
         if confirmed.status is not PurchaseConfirmationStatus.CONFIRMED:
             raise RuntimeError("unchanged evidence was not confirmed")
+        cancelled_request = request_purchase_confirmation(
+            session,
+            mission_id=mission.id,
+            offer_id=recommended.id,
+            owner_user_id=user.id,
+            now=now,
+        )
         cancelled = resolve_purchase_confirmation(
             session,
-            confirmation_request,
+            cancelled_request.confirmation_id,
             owner_user_id=user.id,
             decision=PurchaseConfirmationDecision.CANCEL,
             now=now + timedelta(minutes=2),
         )
         if cancelled.status is not PurchaseConfirmationStatus.CANCELLED:
             raise RuntimeError("explicit cancellation was not preserved")
+        expired_request = request_purchase_confirmation(
+            session,
+            mission_id=mission.id,
+            offer_id=recommended.id,
+            owner_user_id=user.id,
+            now=now,
+        )
         expired = resolve_purchase_confirmation(
             session,
-            confirmation_request,
+            expired_request.confirmation_id,
             owner_user_id=user.id,
             decision=PurchaseConfirmationDecision.CONFIRM,
-            now=confirmation_request.expires_at,
+            now=expired_request.expires_at,
         )
         if (
             expired.status is not PurchaseConfirmationStatus.STALE
@@ -253,7 +267,7 @@ def validate() -> None:
         try:
             resolve_purchase_confirmation(
                 session,
-                confirmation_request,
+                confirmation_request.confirmation_id,
                 owner_user_id=uuid4(),
                 decision=PurchaseConfirmationDecision.CONFIRM,
                 now=now + timedelta(minutes=1),
@@ -275,6 +289,13 @@ def validate() -> None:
         else:
             raise RuntimeError("ineligible offer received a confirmation request")
 
+        equivalent_request = request_purchase_confirmation(
+            session,
+            mission_id=mission.id,
+            offer_id=recommended.id,
+            owner_user_id=user.id,
+            now=now + timedelta(minutes=2),
+        )
         newer_same_values = _observation(
             session,
             recommended,
@@ -284,19 +305,15 @@ def validate() -> None:
             observed_at=now + timedelta(minutes=3),
         )
         session.flush()
-        stale = resolve_purchase_confirmation(
+        equivalent = resolve_purchase_confirmation(
             session,
-            confirmation_request,
+            equivalent_request.confirmation_id,
             owner_user_id=user.id,
             decision=PurchaseConfirmationDecision.CONFIRM,
             now=now + timedelta(minutes=4),
         )
-        if (
-            stale.status is not PurchaseConfirmationStatus.STALE
-            or stale.stale_reason
-            is not PurchaseConfirmationStaleReason.EVIDENCE_CHANGED
-        ):
-            raise RuntimeError("new exact evidence did not invalidate confirmation")
+        if equivalent.status is not PurchaseConfirmationStatus.CONFIRMED:
+            raise RuntimeError("equivalent newer evidence invalidated confirmation")
         refreshed_request = request_purchase_confirmation(
             session,
             mission_id=mission.id,
@@ -347,7 +364,7 @@ def validate() -> None:
                 "ranked_count": len(ranked_positions),
                 "confirmation_status": confirmed.status.value,
                 "expired_status": expired.status.value,
-                "changed_evidence_status": stale.status.value,
+                "equivalent_evidence_status": equivalent.status.value,
                 "insufficient_reason": insufficient_result.reason.value,
             },
         )

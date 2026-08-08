@@ -21,7 +21,7 @@
 | Segurança e entrega | TASK-046 a TASK-054 | Observabilidade, segurança e lançamento |
 | Expansão de fontes (futuro) | Tarefas a definir | Mercado Livre, Shopee, AliExpress e outras fontes futuras |
 
-As TASKs 000 a 040, as TASKs 042 a 044 e as TASKs 055 a 060 estão
+As TASKs 000 a 044 e as TASKs 055 a 060 estão
 concluídas. O preflight
 da TASK-036 revelou dependências reais não satisfeitas (pipeline de eventos
 persistidos/publicados e `chat_id` do Telegram, nenhum dos dois existente
@@ -38,8 +38,10 @@ PostgreSQL real. A TASK-039 (`DEC-027`) implementou a comparação completa das
 mesmas evidências, com posição 1 invariável em relação à recomendação e frete
 desconhecido sem total, também validada no PostgreSQL real. A TASK-040
 (`DEC-028`) implementou confirmação temporária com TTL, proprietário e
-observação exata, revalidada no PostgreSQL real. A próxima tarefa executável é
-a TASK-041 (trilha persistente de compra). A TASK-057 (`DEC-017`): validação real contra o
+observação original, revalidada no PostgreSQL real. A TASK-041 (`DEC-029`)
+persistiu a solicitação imutável e sua trilha append-only, com recuperação,
+idempotência e concorrência reais. A próxima tarefa executável é a TASK-045
+(observabilidade). A TASK-057 (`DEC-017`): validação real contra o
 `USER`/Gemini cobre 3 dos 4 `IntentKind`, e o usuário aceitou explicitamente
 encerrar nesse estado, adiando mais variedade de linguagem para a V2
 (`docs/tasks/TASK-057.md`, `docs/BACKLOG.md`). A TASK-058 (`DEC-015`):

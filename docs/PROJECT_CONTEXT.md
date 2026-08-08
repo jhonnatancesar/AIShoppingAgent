@@ -116,13 +116,16 @@ confirmou o ranking, o histórico, `insufficient_data` e o rollback sem resíduo
 
 A TASK-040 (`DEC-028`) está **concluída**: qualquer oferta elegível pode gerar
 uma confirmação temporária para o proprietário da missão. A solicitação guarda
-missão, oferta, observação exata e proprietário, expõe o snapshot completo e
-expira após 15 minutos em UTC. `confirm` recalcula a comparação e exige a mesma
-identidade, disponibilidade, moeda, preço, frete e total; expiração ou mudança
-produz `stale`, inclusive quando uma nova observação repete os mesmos valores.
-`cancel` dentro da validade produz `cancelled`. PostgreSQL real confirmou o
-fluxo e o rollback sem resíduos. Não há persistência nem ação financeira; a
-próxima tarefa executável é a TASK-041.
+missão, oferta, observação original e proprietário, expõe o snapshot completo e
+expira após 15 minutos em UTC. A TASK-041 (`DEC-029`) integrou essa confirmação
+à persistência: solicitação imutável e `requested` são atômicas; resoluções são
+append-only, idempotentes e protegidas contra corrida pelo PostgreSQL.
+`confirm` expirado produz `stale/expired` antes de qualquer recálculo; dentro do
+TTL, somente mudança material produz `stale/evidence_changed`, portanto uma
+observação nova equivalente continua válida. `cancel` independe do TTL. A
+validação PostgreSQL 18 cobriu recuperação, constraints, triggers, FKs e
+concorrência real. Não há ação financeira; a próxima tarefa executável é a
+TASK-045.
 
 A TASK-058 (`DEC-015`) está **concluída**: `create_mission` e
 `mission_command` não executam mais direto — ficam encenados em
@@ -264,9 +267,10 @@ reais observadas em produção.
 - Comparação completa e somente leitura das mesmas evidências (`app.purchase`,
   TASK-039), com ranking exclusivo das elegíveis e posição 1 invariável em
   relação à recomendação.
-- Confirmação explícita, temporária e somente em memória (`app.purchase`,
-  TASK-040), vinculada ao proprietário e à observação exata, com TTL e
-  revalidação integral antes de `confirmed`.
+- Confirmação explícita com TTL (`app.purchase`, TASK-040) e persistência
+  imutável/append-only (`purchase_confirmations` e `purchase_trail_entries`,
+  TASK-041), vinculada ao proprietário e à observação original, com
+  revalidação material, recuperação e idempotência concorrente.
 - Documentos de visão, arquitetura, dados, módulos-alvo, escopo do MVP, backlog, itens fora de escopo, governança de decisões e workflow permanente de execução.
 - ADRs, RFCs e 62 tarefas planejadas.
 
@@ -274,8 +278,9 @@ reais observadas em produção.
 
 Além de `users`, `products`, `stores`, `sellers`, `offers`, `audit_entries`,
 `missions`, `mission_criteria`, `mission_sources`, `mission_transitions`,
-`mission_schedules`, `collection_runs`, `price_observations`, `events` e
-`event_consumption_attempts`, não
+`mission_schedules`, `collection_runs`, `price_observations`, `events`,
+`event_consumption_attempts`, `purchase_confirmations` e
+`purchase_trail_entries`, não
 há outras tabelas de domínio implementadas. Também não existem autenticação real (senha, token, OAuth — TASK-061),
 autorização por papel de fato aplicada além da seleção de perfil de IA,
 teclado interativo de seleção de fontes, mudança real de plano/perfil pelo próprio usuário (o
@@ -284,8 +289,8 @@ worker/scheduler de coleta, detecção de `mission.status_changed`/`collection.c
 `collection.failed`/`offer.availability_changed` (nenhuma TASK a atribui
 ainda), inserção real de `PriceObservation` num fluxo de coleta
 orquestrado, suíte permanente de testes ponta a ponta nem credenciais reais
-configuradas. Também não existem trilha persistente de compra (TASK-041) nem
-qualquer execução financeira.
+configuradas. Também não existe qualquer execução financeira; confirmação
+persistente significa somente consentimento registrado.
 
 ## Invariantes
 
@@ -343,9 +348,11 @@ qualquer execução financeira.
 - Comparações reutilizam exatamente a elegibilidade, as evidências e a ordem da
   recomendação. Apenas elegíveis recebem posição; a posição 1 coincide com a
   recomendação e frete desconhecido nunca produz `total_amount` (TASK-039).
-- Confirmações são temporárias, pertencem ao dono da missão e vinculam a
-  observação exata; expiração ou mudança relevante produz `stale`. Elas não
-  persistem nem autorizam ação financeira por si mesmas (TASK-040).
+- Confirmações pertencem ao dono da missão, preservam a observação original e
+  expiram em 15 minutos. Nova observação equivalente continua válida; mudança
+  material ou `confirm` expirado produz `stale`, enquanto `cancel` independe do
+  TTL. Solicitação e trilha são imutáveis/append-only, idempotentes e protegidas
+  por índice único terminal, sem autorizar ação financeira (TASKs 040 e 041).
 - Módulos da aplicação acessam IA somente por `AIProviderManager`; USER usa apenas
   Gemini gratuito, sem fallback. ADMIN/DEV tenta Gemini premium, depois o Groq
   (opcional, TASK-059, só se configurado) e por fim o Gemini gratuito. OpenAI,

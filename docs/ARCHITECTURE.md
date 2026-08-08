@@ -20,9 +20,11 @@ de domínio nem uma fila externa; API e worker compartilham código, migrações
 banco e são implantados juntos pelo Docker Compose, inclusive em Linux
 headless/Ubuntu Server.
 
-As TASKs 038 a 040 adicionaram `app.purchase` como módulo determinístico. Ele
+As TASKs 038 a 041 adicionaram `app.purchase` como módulo determinístico. Ele
 consulta missões, fontes, coletas e histórico já persistidos, produz recomendação
-e comparação e cria uma confirmação temporária vinculada à observação exata.
-Não usa IA, processo novo ou tabela nova. Elegibilidade e ordenação são
-compartilhadas; a confirmação revalida a evidência e expira em 15 minutos. A
-trilha durável permanece exclusivamente na TASK-041.
+e comparação e cria uma confirmação vinculada à evidência apresentada. Não usa
+IA nem processo novo. Elegibilidade e ordenação são compartilhadas; a
+confirmação expira em 15 minutos, preserva a observação original como
+proveniência e revalida os dados materiais correntes. A TASK-041 persiste a
+solicitação imutável e sua resolução append-only no PostgreSQL, sem status
+mutável nem qualquer ação financeira.

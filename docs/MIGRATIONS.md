@@ -89,11 +89,16 @@ Regras permanentes:
   e substitui o índice de sucessos pelo índice terminal (`succeeded` ou
   `skipped`). O downgrade é seguro enquanto não houver tentativas `skipped`;
   se houver, ele interrompe em vez de reclassificar ou apagar histórico.
+- `20260808_0007`: cria `purchase_confirmations` e
+  `purchase_trail_entries`, enums da matriz de resolução, FKs `RESTRICT`,
+  identidade composta, índices únicos parciais para `requested` e terminal e
+  triggers de imutabilidade. `recorded_at` é definido pelo PostgreSQL; o
+  downgrade remove somente as estruturas da TASK-041.
 
 O downgrade de `20260802_0009` não apaga ofertas para forçar compatibilidade. Se
 existirem ofertas de vendedores diferentes com a mesma identidade antiga, elas
 devem ser migradas de forma explícita antes da reversão; a recriação dos índices
 anteriores falhará em vez de descartar histórico silenciosamente.
 
-Novas tabelas ou colunas serão introduzidas pelas TASKs futuras conforme suas
-dependências explícitas.
+Novas tabelas ou colunas adicionais serão introduzidas pelas TASKs futuras
+conforme suas dependências explícitas.
