@@ -124,8 +124,19 @@ append-only, idempotentes e protegidas contra corrida pelo PostgreSQL.
 TTL, somente mudança material produz `stale/evidence_changed`, portanto uma
 observação nova equivalente continua válida. `cancel` independe do TTL. A
 validação PostgreSQL 18 cobriu recuperação, constraints, triggers, FKs e
-concorrência real. Não há ação financeira; a próxima tarefa executável é a
-TASK-045.
+concorrência real. Não há ação financeira.
+
+A TASK-045 (`DEC-031`) está **concluída**: API e worker expõem métricas de
+cardinalidade limitada para scrape direto do Prometheus; traces sanitizados
+seguem por OTLP/HTTP ao Collector e Jaeger. Logs JSON correlacionam
+`request_id`, `trace_id` e `span_id`; UUID externo inválido é substituído e não
+tem semântica de segurança. `/health` é liveness sem banco, `/ready` consulta o
+PostgreSQL com timeout e não depende da observabilidade. `/metrics` e `/health`
+não geram traces; SQL exporta somente sistema e operação, sem statement,
+parâmetros, DSN ou resultados. Compose headless inclui Collector, Prometheus,
+Jaeger e regras que somente detectam estado, sem Alertmanager. A validação
+real cobriu falha/recuperação, canários e regra em `firing`. A próxima tarefa
+executável é a TASK-046.
 
 A TASK-058 (`DEC-015`) está **concluída**: `create_mission` e
 `mission_command` não executam mais direto — ficam encenados em

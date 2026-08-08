@@ -26,6 +26,10 @@ def test_settings_use_safe_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.database_host == "localhost"
     assert settings.database_port == 5432
     assert settings.database_password is None
+    assert settings.observability_enabled is False
+    assert settings.trace_sample_ratio == 1.0
+    assert settings.readiness_timeout_seconds == 1.0
+    assert settings.worker_metrics_port == 9464
 
 
 def test_settings_read_prefixed_environment(monkeypatch: pytest.MonkeyPatch) -> None:

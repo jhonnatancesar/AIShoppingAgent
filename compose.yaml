@@ -19,6 +19,10 @@ services:
       AISHOPPING_DATABASE_NAME: ${POSTGRES_DB:-aishoppingagent}
       AISHOPPING_DATABASE_USER: ${POSTGRES_USER:-aishoppingagent}
       AISHOPPING_DATABASE_PASSWORD: ${POSTGRES_PASSWORD:?define POSTGRES_PASSWORD in the root .env file}
+      AISHOPPING_OBSERVABILITY_ENABLED: "true"
+      AISHOPPING_OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://otel-collector:4318/v1/traces
+      AISHOPPING_TRACE_SAMPLE_RATIO: ${AISHOPPING_TRACE_SAMPLE_RATIO:-1.0}
+      AISHOPPING_READINESS_TIMEOUT_SECONDS: ${AISHOPPING_READINESS_TIMEOUT_SECONDS:-1.0}
     ports:
       - "${API_PORT:-8000}:8000"
     depends_on:
@@ -29,7 +33,7 @@ services:
         - CMD
         - python
         - -c
-        - "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=2)"
+        - "import urllib.request; urllib.request.urlopen('http://localhost:8000/ready', timeout=2)"
       interval: 5s
       timeout: 3s
       retries: 10
@@ -51,11 +55,27 @@ services:
       AISHOPPING_DATABASE_NAME: ${POSTGRES_DB:-aishoppingagent}
       AISHOPPING_DATABASE_USER: ${POSTGRES_USER:-aishoppingagent}
       AISHOPPING_DATABASE_PASSWORD: ${POSTGRES_PASSWORD:?define POSTGRES_PASSWORD in the root .env file}
+      AISHOPPING_OBSERVABILITY_ENABLED: "true"
+      AISHOPPING_OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://otel-collector:4318/v1/traces
+      AISHOPPING_TRACE_SAMPLE_RATIO: ${AISHOPPING_TRACE_SAMPLE_RATIO:-1.0}
+      AISHOPPING_WORKER_METRICS_PORT: 9464
     command: ["python", "-m", "app.telegram.worker"]
+    expose:
+      - "9464"
     depends_on:
       database:
         condition: service_healthy
     restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://localhost:9464/metrics', timeout=2)"
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
 
   database:
     image: postgres:18-alpine
@@ -74,5 +94,49 @@ services:
       retries: 10
       start_period: 10s
 
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.157.0
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    volumes:
+      - ./observability/otel-collector.yaml:/etc/otelcol-contrib/config.yaml:ro
+    depends_on:
+      jaeger:
+        condition: service_started
+    ports:
+      - "127.0.0.1:${OTEL_HEALTH_PORT:-13133}:13133"
+
+  prometheus:
+    image: prom/prometheus:v3.12.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./observability/alert-rules.yml:/etc/prometheus/alert-rules.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9090/-/healthy"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  jaeger:
+    image: jaegertracing/jaeger:2.20.0
+    ports:
+      - "${JAEGER_UI_PORT:-16686}:16686"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:16686/api/services"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
 volumes:
   postgres_data:
+  prometheus_data:

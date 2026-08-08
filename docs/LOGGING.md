@@ -10,6 +10,8 @@ Todo evento contém:
 - `level`: nível textual do evento;
 - `logger`: origem lógica;
 - `message`: código estável do evento.
+- `service` e `environment`;
+- `request_id`, `trace_id` e `span_id` quando houver contexto ativo.
 
 Contextos adicionais são incluídos como campos no mesmo objeto. Exceções registradas com `logger.exception` acrescentam o campo `exception`.
 
@@ -18,11 +20,19 @@ Contextos adicionais são incluídos como campos no mesmo objeto. Exceções reg
 Requisições concluídas usam `message` igual a `http_request_completed` e incluem:
 
 - `http_method`;
-- `http_path`;
+- `http_route` normalizada;
 - `http_status_code`;
 - `duration_ms`.
 
-Falhas usam `http_request_failed`, preservam método, caminho e duração e incluem a exceção formatada. Query strings, corpos, cabeçalhos, tokens, senhas e credenciais não são registrados.
+Falhas usam `http_request_failed` e preservam apenas método, rota e duração,
+sem mensagem de exceção potencialmente sensível. O access log bruto do
+Uvicorn fica desativado. Query strings, corpos, cabeçalhos, tokens, senhas e
+credenciais não são registrados.
+
+`X-Request-ID` externo só é aceito dentro do limite de tamanho e como UUID
+válido; os demais valores são substituídos. Esse identificador serve apenas
+para correlação observacional e nunca para identidade, autenticação,
+autorização, idempotência ou chave de domínio.
 
 ## Tentativas de IA
 
@@ -56,4 +66,5 @@ docker compose logs --follow api
 docker compose logs --follow telegram_notifier
 ```
 
-Métricas, tracing, correlação distribuída, retenção e envio para serviços externos não pertencem a esta etapa e serão tratados nas tarefas específicas de observabilidade e operação.
+Métricas e tracing estão documentados em `docs/OBSERVABILITY.md`. Retenção
+e envio externo de logs continuam fora desta etapa.

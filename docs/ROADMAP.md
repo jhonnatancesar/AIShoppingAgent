@@ -18,10 +18,10 @@
 | Perfil de IA por papel, cadastro e placeholder de upgrade | TASK-060 | Webhook escolhe o perfil de IA a partir de `User.role`, cadastro inicial não sensível e opção de upgrade visível porém inativa (`DEC-018`) |
 | Autenticação real por usuário e senha | TASK-061 | Hashing seguro, verificação e recuperação de conta, além da identidade do Telegram (`DEC-019`) |
 | Compra e eventos | TASK-038 a TASK-041 e TASK-043 a TASK-045 | Fluxos de compra, publicação, consumo e monitoramento |
-| Segurança e entrega | TASK-046 a TASK-054 | Observabilidade, segurança e lançamento |
+| Segurança e entrega | TASK-046 a TASK-054 | Segurança e lançamento |
 | Expansão de fontes (futuro) | Tarefas a definir | Mercado Livre, Shopee, AliExpress e outras fontes futuras |
 
-As TASKs 000 a 044 e as TASKs 055 a 060 estão
+As TASKs 000 a 045 e as TASKs 055 a 060 estão
 concluídas. O preflight
 da TASK-036 revelou dependências reais não satisfeitas (pipeline de eventos
 persistidos/publicados e `chat_id` do Telegram, nenhum dos dois existente
@@ -40,8 +40,9 @@ desconhecido sem total, também validada no PostgreSQL real. A TASK-040
 (`DEC-028`) implementou confirmação temporária com TTL, proprietário e
 observação original, revalidada no PostgreSQL real. A TASK-041 (`DEC-029`)
 persistiu a solicitação imutável e sua trilha append-only, com recuperação,
-idempotência e concorrência reais. A próxima tarefa executável é a TASK-045
-(observabilidade). A TASK-057 (`DEC-017`): validação real contra o
+idempotência e concorrência reais. A TASK-045 (`DEC-031`) adicionou métricas
+Prometheus, traces OTLP/Jaeger, correlação segura e health/readiness. A próxima
+tarefa executável é a TASK-046 (autenticação). A TASK-057 (`DEC-017`): validação real contra o
 `USER`/Gemini cobre 3 dos 4 `IntentKind`, e o usuário aceitou explicitamente
 encerrar nesse estado, adiando mais variedade de linguagem para a V2
 (`docs/tasks/TASK-057.md`, `docs/BACKLOG.md`). A TASK-058 (`DEC-015`):

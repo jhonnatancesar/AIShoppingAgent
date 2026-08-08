@@ -110,8 +110,8 @@ Nunca iniciar automaticamente a próxima TASK. Encerrar apresentando resumo da i
 
 ## Estado atual
 
-TASKs 000 a 044 e TASK-055 a TASK-060 concluídas. A confirmação persistente e
-sua trilha append-only foram validadas contra PostgreSQL 18 real (`DEC-029`),
-inclusive recuperação, imutabilidade, idempotência e concorrência terminal. A
-próxima tarefa executável é a TASK-045. A TASK-061 foi registrada (`DEC-019`) e
+TASKs 000 a 045 e TASK-055 a TASK-060 concluídas. A observabilidade da
+TASK-045 (`DEC-031`) foi validada com PostgreSQL, API, worker, Collector,
+Prometheus e Jaeger reais, incluindo falha/recuperação e privacidade. A
+próxima tarefa executável é a TASK-046. A TASK-061 foi registrada (`DEC-019`) e
 aguarda solicitação explícita.

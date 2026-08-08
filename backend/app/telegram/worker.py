@@ -3,10 +3,20 @@
 import argparse
 import asyncio
 import logging
+from time import perf_counter
+
+from opentelemetry import trace
+from opentelemetry.trace import SpanKind
 
 from app.core.config import Settings
 from app.core.logging import configure_logging
 from app.database.session import create_database_engine, create_session_factory
+from app.observability.metrics import (
+    mark_worker_started,
+    observe_worker_batch,
+    start_worker_metrics_server,
+)
+from app.observability.tracing import configure_tracing
 from app.telegram.notifications import process_telegram_notifications
 
 logger = logging.getLogger("app.telegram.worker")
@@ -40,12 +50,30 @@ async def run_worker(
     session_factory = create_session_factory(engine)
     try:
         while True:
-            with session_factory.begin() as session:
-                result = await process_telegram_notifications(
-                    session,
-                    bot_token=settings.telegram_bot_token,
-                    limit=limit,
-                )
+            started_at = perf_counter()
+            tracer = trace.get_tracer("app.telegram.worker")
+            with tracer.start_as_current_span(
+                "telegram notification batch",
+                kind=SpanKind.CONSUMER,
+                attributes={"worker.name": "telegram_notifier"},
+                record_exception=False,
+                set_status_on_exception=False,
+            ):
+                with session_factory.begin() as session:
+                    result = await process_telegram_notifications(
+                        session,
+                        bot_token=settings.telegram_bot_token,
+                        limit=limit,
+                    )
+            observe_worker_batch(
+                "telegram_notifier",
+                started_at=started_at,
+                outcomes={
+                    "succeeded": result.succeeded,
+                    "failed": result.failed,
+                    "skipped": result.skipped,
+                },
+            )
             logger.log(
                 logging.INFO if result.claimed else logging.DEBUG,
                 "telegram_notification_batch",
@@ -70,7 +98,15 @@ def main() -> None:
     parser.add_argument("--batch-size", type=int)
     arguments = parser.parse_args()
     settings = Settings()
-    configure_logging(settings.log_level)
+    configure_logging(
+        settings.log_level,
+        service_name="aishoppingagent-telegram-notifier",
+        environment=settings.environment,
+    )
+    configure_tracing(settings, service_name="aishoppingagent-telegram-notifier")
+    if settings.observability_enabled:
+        start_worker_metrics_server(settings.worker_metrics_port)
+        mark_worker_started("telegram_notifier")
     asyncio.run(
         run_worker(
             settings,

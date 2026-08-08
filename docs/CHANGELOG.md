@@ -1,5 +1,22 @@
 # Changelog
 
+## 2026-08-08 — TASK-045: observabilidade sanitizada e independente
+
+- Adicionados logs JSON correlacionados, UUID seguro de requisição, métricas
+  Prometheus de cardinalidade limitada e tracing sanitizado para API, worker e
+  PostgreSQL.
+- `/health` permanece liveness sem banco; o novo `/ready` executa `SELECT 1`
+  com timeout curto e retorna `503` quando o PostgreSQL está indisponível.
+- `/metrics` saiu do OpenAPI; `/metrics` e `/health` não geram spans, enquanto
+  `/ready` e rotas funcionais continuam observáveis.
+- Compose passou a incluir OpenTelemetry Collector 0.157.0, Prometheus 3.12.0
+  e Jaeger 2.20.0, com scrape direto, OTLP para traces e regras sem Alertmanager.
+- PostgreSQL, API, worker e stack de observabilidade reais aprovaram
+  falha/recuperação, scrape, traces, correlação, canários e alerta
+  `AIShoppingWorkerUnavailable` em `firing` e depois `inactive`.
+- Pipeline completo aprovado em Python 3.14.6: 477 testes, 92,23% de cobertura,
+  Ruff e Docker Compose válidos.
+
 ## 2026-08-08 — Workflow Git: branch automática e main remota controlada
 
 - Atualizado o workflow permanente (`DEC-030`): após concluir uma TASK, sua

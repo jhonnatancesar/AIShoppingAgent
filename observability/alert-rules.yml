@@ -1,0 +1,50 @@
+groups:
+  - name: aishoppingagent
+    rules:
+      - alert: AIShoppingApiUnavailable
+        expr: up{job="aishopping-api"} == 0
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: API indisponível para scrape
+
+      - alert: AIShoppingWorkerUnavailable
+        expr: up{job="aishopping-worker"} == 0
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: Worker indisponível para scrape
+
+      - alert: AIShoppingHttpErrorRateHigh
+        expr: |
+          sum(rate(aishopping_http_requests_total{status_class="5xx"}[5m]))
+            /
+          sum(rate(aishopping_http_requests_total[5m])) > 0.05
+          and sum(rate(aishopping_http_requests_total[5m])) > 0.1
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: Taxa de erros HTTP elevada
+
+      - alert: AIShoppingHttpLatencyHigh
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le) (rate(aishopping_http_request_duration_seconds_bucket[5m]))
+          ) > 2
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: Latência HTTP p95 elevada
+
+      - alert: AIShoppingWorkerFailures
+        expr: increase(aishopping_worker_events_total{outcome="failed"}[5m]) > 0
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: Worker registrou falhas de processamento

@@ -12,3 +12,5 @@ def test_openapi_exposes_application_metadata() -> None:
         "version": "0.1.0",
         "description": "Agente inteligente de compras.",
     }
+    assert "/metrics" not in schema["paths"]
+    assert "/ready" in schema["paths"]

@@ -39,6 +39,13 @@ class Settings(BaseSettings):
     telegram_webhook_secret: SecretStr | None = None
     telegram_notification_poll_seconds: float = Field(default=5.0, gt=0, le=3600)
     telegram_notification_batch_size: int = Field(default=50, ge=1, le=1000)
+    observability_enabled: bool = False
+    otel_exporter_otlp_traces_endpoint: str = Field(
+        default="http://localhost:4318/v1/traces", min_length=1
+    )
+    trace_sample_ratio: float = Field(default=1.0, ge=0, le=1)
+    readiness_timeout_seconds: float = Field(default=1.0, gt=0, le=10)
+    worker_metrics_port: int = Field(default=9464, ge=1, le=65535)
 
 
 @lru_cache

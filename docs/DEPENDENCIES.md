@@ -26,7 +26,12 @@ A fonte de verdade para dependências Python é `backend/requirements.txt`:
 - `fastapi>=0.115,<1.0`
 - `google-genai>=2.16,<3.0`
 - `httpx>=0.28,<1.0`
+- `opentelemetry-api>=1.44,<2.0`
+- `opentelemetry-exporter-otlp-proto-http>=1.44,<2.0`
+- `opentelemetry-instrumentation-fastapi>=0.65b0,<1.0`
+- `opentelemetry-sdk>=1.44,<2.0`
 - `playwright>=1.62,<2.0`
+- `prometheus-client>=0.23,<1.0`
 - `SQLAlchemy>=2.0,<2.1`
 - `alembic>=1.18,<2.0`
 - `psycopg[binary]>=3.3,<4.0`
@@ -68,6 +73,12 @@ intervalo e o tamanho do lote são configuráveis por
 API e `telegram_notifier` carregam `backend/.env` quando presente; as variáveis
 de conexão ao banco continuam explicitamente sobrescritas para o serviço
 `database`.
+
+A TASK-045 validou OpenTelemetry 1.44.0/instrumentation 0.65b0 e
+`prometheus-client` 0.26.0. O Compose usa imagens oficiais explicitamente
+versionadas: OpenTelemetry Collector Contrib 0.157.0, Prometheus 3.12.0 e
+Jaeger 2.20.0. Métricas são coletadas por scrape direto; somente traces usam
+OTLP/HTTP. Nenhuma credencial adicional é necessária no ambiente local.
 
 As versões validadas na TASK-011 foram SQLAlchemy 2.0.51, Alembic 1.18.5 e Psycopg 3.3.4. O extra binário do Psycopg evita exigir uma instalação separada de `libpq` e possui suporte validado a Python 3.14 e PostgreSQL 18.
 

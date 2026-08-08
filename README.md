@@ -27,8 +27,9 @@ docker compose up --build
 ```
 
 A API ficará disponível em `http://localhost:8000`, o PostgreSQL em
-`localhost:5432` e o serviço `telegram_notifier` consumirá continuamente os
-alertas de preço. Para encerrar os contêineres sem apagar o volume do banco,
+`localhost:5432`, o Prometheus em `http://localhost:9090` e o Jaeger em
+`http://localhost:16686`. O serviço `telegram_notifier` consumirá continuamente
+os alertas de preço. Para encerrar os contêineres sem apagar o volume do banco,
 execute `docker compose down`.
 
 No Telegram, `/preferencias` consulta as notificações. Use
@@ -42,6 +43,12 @@ Com a API em execução, verifique sua vivacidade em `http://localhost:8000/heal
 ```json
 {"status":"ok"}
 ```
+
+`/health` não consulta dependências. Use `/ready` para verificar o PostgreSQL
+real (`200` com `{"status":"ready"}` ou `503` com
+`{"status":"not_ready"}`). `/metrics` é operacional e não aparece no
+OpenAPI. A arquitetura, as regras de privacidade e a distinção entre estado
+Prometheus e notificação externa estão em `docs/OBSERVABILITY.md`.
 
 ## Qualidade de código
 

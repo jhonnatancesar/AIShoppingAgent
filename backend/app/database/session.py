@@ -29,9 +29,26 @@ def build_database_url(settings: Settings | None = None) -> URL:
     )
 
 
-def create_database_engine(settings: Settings | None = None) -> Engine:
+def create_database_engine(
+    settings: Settings | None = None,
+    *,
+    connect_timeout_seconds: float | None = None,
+) -> Engine:
     """Cria o engine síncrono compartilhável pela aplicação."""
-    return create_engine(build_database_url(settings), pool_pre_ping=True)
+    current_settings = settings or get_settings()
+    connect_args = {}
+    if connect_timeout_seconds is not None:
+        connect_args["connect_timeout"] = max(1, int(connect_timeout_seconds))
+    engine = create_engine(
+        build_database_url(current_settings),
+        pool_pre_ping=True,
+        connect_args=connect_args,
+    )
+    if current_settings.observability_enabled:
+        from app.observability.tracing import instrument_sqlalchemy_engine
+
+        instrument_sqlalchemy_engine(engine)
+    return engine
 
 
 def create_session_factory(engine: Engine) -> sessionmaker[Session]:

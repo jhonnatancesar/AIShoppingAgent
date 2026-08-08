@@ -25,6 +25,20 @@ Após a classificação, registrar a decisão neste arquivo e atualizar a docume
 - **Justificativa:** impacto avaliado e motivo da classificação.
 - **Próxima ação:** documento a atualizar, TASK a criar quando aplicável, ou ação de não implementação.
 
+### DEC-031 — Separar métricas, traces e disponibilidade funcional
+
+- **Data:** 2026-08-08
+- **Ideia:** entregar observabilidade sem transformar o stack operacional em
+  dependência da API nem duplicar métricas por OTLP.
+- **Classificação:** Implementar agora.
+- **Justificativa:** Prometheus faz scrape direto de API/worker; somente traces
+  seguem pelo Collector ao Jaeger. Rotas e labels usam catálogos limitados,
+  SQL omite valores, e `/health`/`ready` separam processo de dependência
+  funcional. Regras Prometheus representam detecção de estado, não envio de
+  notificação sem Alertmanager.
+- **Próxima ação:** TASK-045 concluída; a próxima tarefa executável é a
+  TASK-046.
+
 ### DEC-030 — Publicar branch da TASK e atualizar apenas a main local
 
 - **Data:** 2026-08-08

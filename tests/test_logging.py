@@ -8,11 +8,12 @@ from unittest.mock import Mock
 import pytest
 from app.core import request_logging
 from app.core.logging import JsonFormatter
+from app.observability.context import MAX_EXTERNAL_REQUEST_ID_LENGTH
 from starlette.requests import Request
 from starlette.responses import Response
 
 
-def make_request() -> Request:
+def make_request(headers: list[tuple[bytes, bytes]] | None = None) -> Request:
     """Cria uma requisição ASGI mínima para testes do middleware."""
     return Request(
         {
@@ -23,7 +24,7 @@ def make_request() -> Request:
             "path": "/health",
             "raw_path": b"/health",
             "query_string": b"secret=not-logged",
-            "headers": [],
+            "headers": headers or [],
             "client": ("test", 123),
             "server": ("test", 80),
             "root_path": "",
@@ -44,6 +45,8 @@ def test_json_formatter_includes_context_without_private_fields() -> None:
     )
     record.http_method = "GET"
     record._private = "hidden"
+    record.authorization_header = "Bearer secret-canary"
+    record.request_id = "spoofed"
 
     payload = json.loads(JsonFormatter().format(record))
 
@@ -52,6 +55,8 @@ def test_json_formatter_includes_context_without_private_fields() -> None:
     assert payload["message"] == "event_completed"
     assert payload["http_method"] == "GET"
     assert "_private" not in payload
+    assert "authorization_header" not in payload
+    assert "request_id" not in payload
 
 
 def test_request_log_records_safe_http_context(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -67,16 +72,17 @@ def test_request_log_records_safe_http_context(monkeypatch: pytest.MonkeyPatch) 
 
     assert response.status_code == 204
     assert context["http_method"] == "GET"
-    assert context["http_path"] == "/health"
+    assert context["http_route"] == "unmatched"
     assert context["http_status_code"] == 204
     assert context["duration_ms"] >= 0
     assert "secret" not in str(context)
+    assert response.headers["X-Request-ID"]
 
 
 def test_request_log_records_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     """Falhas devem gerar evento estruturado e continuar propagadas."""
-    exception = Mock()
-    monkeypatch.setattr(request_logging.logger, "exception", exception)
+    error = Mock()
+    monkeypatch.setattr(request_logging.logger, "error", error)
 
     async def fail(_: Request) -> Response:
         raise RuntimeError("failure")
@@ -84,7 +90,37 @@ def test_request_log_records_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(RuntimeError, match="failure"):
         asyncio.run(request_logging.log_request(make_request(), fail))
 
-    context = exception.call_args.kwargs["extra"]
+    context = error.call_args.kwargs["extra"]
     assert context["http_method"] == "GET"
-    assert context["http_path"] == "/health"
+    assert context["http_route"] == "unmatched"
     assert context["duration_ms"] >= 0
+
+
+def test_request_id_accepts_only_valid_short_uuid() -> None:
+    accepted = "ef820a1e-c466-42af-9e76-18ee2f1f75fd"
+
+    async def respond(_: Request) -> Response:
+        return Response(status_code=200)
+
+    valid_response = asyncio.run(
+        request_logging.log_request(
+            make_request([(b"x-request-id", accepted.encode())]), respond
+        )
+    )
+    invalid_response = asyncio.run(
+        request_logging.log_request(
+            make_request([(b"x-request-id", b"not-a-uuid")]), respond
+        )
+    )
+    oversized_response = asyncio.run(
+        request_logging.log_request(
+            make_request(
+                [(b"x-request-id", b"a" * (MAX_EXTERNAL_REQUEST_ID_LENGTH + 1))]
+            ),
+            respond,
+        )
+    )
+
+    assert valid_response.headers["X-Request-ID"] == accepted
+    assert invalid_response.headers["X-Request-ID"] != "not-a-uuid"
+    assert oversized_response.headers["X-Request-ID"] != "a" * 65
