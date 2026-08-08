@@ -61,6 +61,9 @@ dos outros cinco tipos de evento do catálogo (mudança de estado de missão,
 conclusão/falha de coleta, mudança de disponibilidade) segue sem nenhum
 ponto de integração, porque nenhuma TASK a atribui ainda. A próxima tarefa
 executável é a TASK-044 (consumo); a TASK-036 só será retomada depois dela.
+Uma revisão posterior reforçou que o `aggregate_id` persistido deve coincidir
+com o identificador do agregado dentro do payload tipado, rejeitando divergências
+antes de adicionar o evento à sessão.
 
 A TASK-058 (`DEC-015`) está **concluída**: `create_mission` e
 `mission_command` não executam mais direto — ficam encenados em

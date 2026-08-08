@@ -59,6 +59,12 @@ detecção ainda.
 - Deliberadamente sem importar `app.alerts` em `app.events` — o serviço é
   genérico; quem tiver um `PriceAlertCandidate` desempacota seus campos na
   chamada.
+- Correção posterior: `publish_event` rejeita qualquer `aggregate_id` que não
+  coincida com o identificador do agregado no payload (`mission_id`,
+  `collection_run_id` ou `offer_id`), evitando correlação persistente incorreta.
+  Validada contra PostgreSQL real com rejeição antes do `INSERT`, sucesso para
+  identidade coerente e rollback sem resíduos; pipeline completo aprovado com
+  379 testes e 95,34% de cobertura.
 
 ## Fora de escopo
 

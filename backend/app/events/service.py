@@ -28,6 +28,13 @@ class EventPublicationError(ValueError):
     """Indica evento inválido para publicação."""
 
 
+_AGGREGATE_ID_FIELDS = {
+    AggregateType.MISSION: "mission_id",
+    AggregateType.COLLECTION_RUN: "collection_run_id",
+    AggregateType.OFFER: "offer_id",
+}
+
+
 def publish_event(
     session: Session,
     *,
@@ -46,6 +53,11 @@ def publish_event(
     if spec.aggregate_type is not aggregate_type:
         raise EventPublicationError(
             f"{event_type} requires aggregate_type {spec.aggregate_type}"
+        )
+    payload_aggregate_id = getattr(payload, _AGGREGATE_ID_FIELDS[spec.aggregate_type])
+    if aggregate_id != payload_aggregate_id:
+        raise EventPublicationError(
+            "aggregate_id must match the aggregate identifier in payload"
         )
 
     event = Event(

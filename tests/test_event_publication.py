@@ -161,6 +161,67 @@ def test_publish_event_rejects_aggregate_type_mismatch() -> None:
     session.flush.assert_not_called()
 
 
+@pytest.mark.parametrize(
+    ("aggregate_type", "payload"),
+    [
+        (
+            AggregateType.MISSION,
+            MissionStatusChangedPayload(
+                mission_id=uuid4(),
+                transition_id=uuid4(),
+                from_status=MissionStatus.DRAFT,
+                to_status=MissionStatus.ACTIVE,
+                state_version=1,
+            ),
+        ),
+        (
+            AggregateType.COLLECTION_RUN,
+            CollectionCompletedPayload(
+                collection_run_id=uuid4(),
+                store_id=uuid4(),
+                mission_id=None,
+                observation_count=1,
+            ),
+        ),
+        (
+            AggregateType.OFFER,
+            PriceDecreasedPayload(
+                offer_id=uuid4(),
+                observation_id=uuid4(),
+                previous_observation_id=uuid4(),
+                previous_total=Decimal("100"),
+                current_total=Decimal("90"),
+                currency="BRL",
+            ),
+        ),
+    ],
+)
+def test_publish_event_rejects_aggregate_id_mismatching_payload(
+    aggregate_type: AggregateType,
+    payload: (
+        MissionStatusChangedPayload | CollectionCompletedPayload | PriceDecreasedPayload
+    ),
+) -> None:
+    session = _session()
+
+    with pytest.raises(EventPublicationError, match="aggregate_id"):
+        publish_event(
+            session,
+            event_type={
+                AggregateType.MISSION: EventType.MISSION_STATUS_CHANGED_V1,
+                AggregateType.COLLECTION_RUN: EventType.COLLECTION_COMPLETED_V1,
+                AggregateType.OFFER: EventType.PRICE_DECREASED_V1,
+            }[aggregate_type],
+            aggregate_type=aggregate_type,
+            aggregate_id=uuid4(),
+            payload=payload,
+            occurred_at=NOW,
+        )
+
+    session.add.assert_not_called()
+    session.flush.assert_not_called()
+
+
 def test_publish_event_propagates_catalog_payload_mismatch() -> None:
     mismatched_payload = PriceTargetReachedPayload(
         mission_id=uuid4(),

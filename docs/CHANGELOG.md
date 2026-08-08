@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-08-08 — Correção da identidade agregada de eventos
+
+- `publish_event` agora rejeita `aggregate_id` diferente do identificador do
+  agregado presente no payload tipado (`mission_id`, `collection_run_id` ou
+  `offer_id`), impedindo eventos duráveis associados ao recurso errado.
+- Testes cobrem os três tipos de agregado e confirmam que nenhuma linha é
+  adicionada nem ocorre `flush` quando as identidades divergem.
+- Validação real no PostgreSQL confirmou a rejeição antes do `INSERT`, aceitou
+  o evento coerente e deixou o banco sem resíduos após rollback. Pipeline local
+  completo aprovado: 379 testes e 95,34% de cobertura.
+
 ## 2026-08-08 — TASK-043: publicação durável de eventos
 
 - `backend/migrations/versions/20260808_0003_create_events.py` (novo): cria
