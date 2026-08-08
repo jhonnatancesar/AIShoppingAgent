@@ -54,7 +54,40 @@ _SYSTEM_PROMPT = (
     '"kind": "unknown" sempre que a mensagem não corresponder com segurança '
     "a nenhuma dessas opções. Nunca invente um comando, fonte, valor ou "
     "moeda que não esteja claramente presente na mensagem; nesse caso, "
-    "prefira null ou uma lista vazia."
+    "prefira null ou uma lista vazia.\n\n"
+    "O usuário escreve como fala: erros de digitação, abreviações, gírias "
+    "regionais, falta de acentuação ou de pontuação e qualquer ordem das "
+    "informações na frase nunca impedem a classificação. Interprete o "
+    "sentido da mensagem, não sua forma exata ou uma ordem fixa de palavras. "
+    "Nunca exija que o usuário siga um padrão de escrita; classifique "
+    '"unknown" apenas quando o sentido da mensagem, e não apenas sua forma, '
+    "for realmente ambíguo ou fora do domínio de compras.\n\n"
+    "Exemplos de mensagens reais e a resposta esperada, apenas para ilustrar "
+    "o padrão — generalize o critério, nunca copie um exemplo literalmente:\n\n"
+    'Mensagem: "eu qria uma rtx 4060 ate uns 2500 pila na kabum, bora"\n'
+    'Resposta: {"kind": "create_mission", "command": null, "parameters": '
+    '{"search_query": "rtx 4060", "target_amount": "2500.00", '
+    '"target_currency": "BRL", "sources": ["kabum"], "mission_reference": null}}\n\n'
+    'Mensagem: "ate 3000 reais me acha um notebook gamer, comeca a procurar ai"\n'
+    'Resposta: {"kind": "create_mission", "command": null, "parameters": '
+    '{"search_query": "notebook gamer", "target_amount": "3000.00", '
+    '"target_currency": "BRL", "sources": [], "mission_reference": null}}\n\n'
+    'Mensagem: "e ai cade minha missao do notebook, achou algo?"\n'
+    'Resposta: {"kind": "query_mission", "command": null, "parameters": '
+    '{"search_query": null, "target_amount": null, "target_currency": null, '
+    '"sources": [], "mission_reference": "notebook"}}\n\n'
+    'Mensagem: "pausa ai a missao do teclado mecanico pfvr"\n'
+    'Resposta: {"kind": "mission_command", "command": "pause", "parameters": '
+    '{"search_query": null, "target_amount": null, "target_currency": null, '
+    '"sources": [], "mission_reference": "teclado mecanico"}}\n\n'
+    'Mensagem: "cancela essa busca do monitor curvo, nao quero mais nao"\n'
+    'Resposta: {"kind": "mission_command", "command": "cancel", "parameters": '
+    '{"search_query": null, "target_amount": null, "target_currency": null, '
+    '"sources": [], "mission_reference": "monitor curvo"}}\n\n'
+    'Mensagem: "bom dia, tudo certo?"\n'
+    'Resposta: {"kind": "unknown", "command": null, "parameters": '
+    '{"search_query": null, "target_amount": null, "target_currency": null, '
+    '"sources": [], "mission_reference": null}}'
 )
 
 

@@ -1,5 +1,34 @@
 # Changelog
 
+## 2026-08-08 — TASK-057 (parcial) e TASK-058 (registro)
+
+- Registrada `DEC-015` e criada `docs/tasks/TASK-058.md`: confirmar a
+  intenção interpretada e pedir aprovação explícita do usuário antes de
+  executar qualquer comando de missão. Pedido do usuário durante a execução
+  da TASK-057, fora do escopo dela (altera o despacho do webhook das TASKs
+  033–035); registrada como nova TASK do MVP, não implementada.
+- Refinado o prompt de sistema de `backend/app/intent/interpreter.py`
+  (TASK-032/057): orientação explícita de robustez a erros de digitação,
+  gírias regionais, falta de acentuação/pontuação e ordem livre das
+  informações na frase, mais exemplos few-shot cobrindo os quatro
+  `IntentKind`, sem alterar o vocabulário fechado do contrato.
+- Ampliado `backend/scripts/validate_intent_interpreter.py` para rodar um
+  conjunto padrão de 19 mensagens diversas cobrindo os quatro `IntentKind`,
+  com pacing entre chamadas e retry com backoff respeitando
+  `quota_reset_at` quando informado pelo provedor.
+- Atualizado `tests/test_intent_interpreter.py` com verificação de que o
+  prompt de sistema contém a orientação de robustez. `scripts\check.cmd`
+  completo aprovado em Python 3.14.6: 299 testes, 94,73% de cobertura.
+- **Impedimento registrado** (`docs/tasks/TASK-057.md`): a validação manual
+  real contra o Gemini ficou incompleta — apenas 3 das 19 mensagens
+  (`create_mission`) foram validadas antes de a cota gratuita do perfil
+  `USER` se esgotar, sem `quota_reset_at` informado. Rotear a validação pelo
+  Gemini premium ou por outro provedor (ex.: a chave Anthropic presente em
+  `backend/.env`) foi descartado por violar o guardrail de acesso exclusivo
+  via `AIProviderManager` no perfil `USER`. TASK-057 permanece em execução
+  até a validação real cobrir `query_mission`, `mission_command` e
+  `unknown`.
+
 ## 2026-08-08 — TASK-035
 
 - Semeada a migração `20260807_0002` com as quatro lojas selecionáveis da

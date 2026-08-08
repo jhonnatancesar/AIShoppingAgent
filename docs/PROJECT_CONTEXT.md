@@ -15,7 +15,14 @@ conversa, validado em PostgreSQL 18 real. A TASK-035 ("Criar comandos de
 missão") fechou o loop: o webhook agora cria, consulta e comanda missões de
 verdade a partir do `Intent`, respondendo ao Telegram, validado de ponta a
 ponta contra PostgreSQL, Gemini e Telegram reais. A próxima tarefa executável
-é a TASK-036.
+é a TASK-036. A TASK-057 (robustez do `IntentInterpreter` para escrita
+informal) está em execução: prompt refinado, validação manual ampliada para
+19 mensagens e suíte automatizada aprovados, mas a validação real contra o
+Gemini ficou parcial (3 de 19 mensagens) por esgotamento da cota gratuita do
+perfil `USER`, sem horário de reset informado — retomar quando a cota
+voltar (`docs/tasks/TASK-057.md`). A TASK-058 foi registrada (`DEC-015`):
+confirmar a intenção interpretada com o usuário antes de executar comandos
+de missão, ainda não implementada.
 
 ## O que existe
 
@@ -70,6 +77,10 @@ ponta contra PostgreSQL, Gemini e Telegram reais. A próxima tarefa executável
   traduz mensagens livres em `Intent` estruturado via `AIProviderManager`
   (perfil `USER`), reaproveitando `MissionCommand` e os campos existentes de
   `MissionCriteria`, com parsing estrito e fallback seguro para `unknown`.
+  Prompt de sistema refinado (TASK-057) com orientação explícita de
+  robustez a escrita informal, gírias, erros de digitação e ordem livre das
+  informações, sem alterar o vocabulário fechado; validação real completa
+  contra o Gemini ainda pendente.
 - Fronteira de entrada do canal Telegram (`TelegramMessage`,
   `TelegramIntentAdapter`) que traduz uma mensagem bruta do Telegram em um
   `Intent`, reaproveitando exclusivamente o `IntentInterpreter`.

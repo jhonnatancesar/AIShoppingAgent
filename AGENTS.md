@@ -104,4 +104,4 @@ Nunca iniciar automaticamente a próxima TASK. Encerrar apresentando resumo da i
 
 ## Estado atual
 
-TASKs 000 a 035, TASK-042, TASK-055 e TASK-056 concluídas. A próxima tarefa executável é a TASK-036.
+TASKs 000 a 035, TASK-042, TASK-055 e TASK-056 concluídas. A próxima tarefa executável é a TASK-036. A TASK-057 está em execução, pausada por esgotamento da cota gratuita do Gemini durante a validação real (ver impedimento em `docs/tasks/TASK-057.md`). A TASK-058 foi registrada (`DEC-015`) e aguarda solicitação explícita.

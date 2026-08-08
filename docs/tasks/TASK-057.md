@@ -1,6 +1,6 @@
 # TASK-057 — Melhorar a robustez da interpretação de intenção
 
-Status: Pendente
+Status: Em execução — pausada por impedimento de cota, validação real parcial
 
 ## Objetivo
 
@@ -46,3 +46,31 @@ Um conjunto ampliado de mensagens reais, incluindo variações de escrita
 informal, é validado contra o Gemini real com uma taxa de classificação
 correta satisfatória para os quatro valores de `IntentKind`, sem invenção de
 campo fora do vocabulário fechado. Testes automatizados aprovados.
+
+## Impedimento conhecido (2026-08-08)
+
+O prompt de sistema de `backend/app/intent/interpreter.py` foi refinado com
+orientação explícita de robustez a escrita informal e exemplos few-shot
+cobrindo os quatro `IntentKind`. O script `validate_intent_interpreter.py`
+foi ampliado para 19 mensagens diversas (informal, gírias, erros de
+digitação, ordens de frase variadas) cobrindo os quatro valores, com pacing
+e retry respeitando `quota_reset_at`. `tests/test_intent_interpreter.py` foi
+atualizado. `scripts\check.cmd` completo aprovado: 299 testes, 94,73% de
+cobertura.
+
+A validação real contra o Gemini ficou **incompleta**: apenas 3 das 19
+mensagens (todas `create_mission`) foram validadas com sucesso antes da cota
+gratuita do perfil `USER` se esgotar; as tentativas seguintes falharam com
+`AIProviderQuotaExceeded` mesmo após esperas de até 60s em 5 tentativas,
+sempre com `quota_reset_at` desconhecido (prazo de reset não informado pelo
+provedor). Rotear a validação pelo Gemini premium ou por outro provedor (ex.:
+a chave Anthropic presente em `backend/.env`) foi descartado por violar o
+guardrail permanente do projeto: IA só é acessada via `AIProviderManager`, e
+o perfil `USER` usa exclusivamente Gemini gratuito — testar com outro
+provedor não validaria o comportamento real de produção.
+
+**Próxima ação:** retomar a validação manual real (`python
+backend/scripts/validate_intent_interpreter.py`) quando a cota gratuita do
+Gemini for reposta, cobrindo as mensagens de `query_mission`,
+`mission_command` e `unknown` ainda não validadas, antes de marcar esta TASK
+como concluída.

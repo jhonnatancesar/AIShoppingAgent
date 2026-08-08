@@ -27,6 +27,28 @@ Após a classificação, registrar a decisão neste arquivo e atualizar a docume
 
 ## Registros
 
+### DEC-015 — Criar a TASK-058 para confirmação da intenção interpretada antes da execução
+
+- **Data:** 2026-08-08
+- **Ideia:** ao pedir a execução da TASK-057, o usuário pediu também que a IA
+  devolva o texto interpretado da intenção e peça confirmação explícita de
+  que é aquilo que a pessoa quer, antes de criar, consultar ou comandar
+  qualquer missão.
+- **Classificação:** Nova TASK do MVP
+- **Justificativa:** é uma mudança de comportamento no fluxo de despacho do
+  webhook (resposta síncrona ao comando do usuário), explicitamente fora do
+  escopo da TASK-057 (`docs/tasks/TASK-057.md`, seção "Fora de escopo": "Não
+  altera `app.telegram`... TASKs 033 a 035") e não coberta pela TASK-036
+  (notificações proativas de alerta) nem pela TASK-037 (preferências).
+  Confirmação de intenção antes de agir é uma decisão de domínio nova e
+  não-trivial — mesmo padrão que justificou TASK própria para a identidade
+  do Telegram (`DEC-011`) — não um refinamento mecânico que caiba em outra
+  TASK já registrada. O usuário optou explicitamente por executar apenas a
+  TASK-057 agora e registrar esta ideia para decisão futura, sem
+  implementá-la agora.
+- **Próxima ação:** criada `docs/tasks/TASK-058.md`, registrada no roadmap;
+  aguarda solicitação explícita para ser executada.
+
 ### DEC-014 — Criar a TASK-057 para melhorar a robustez da interpretação de intenção
 
 - **Data:** 2026-08-08

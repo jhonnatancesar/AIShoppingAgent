@@ -13,13 +13,17 @@
 | IA e interação | TASK-028 a TASK-037 | Gerenciador de IA e Telegram |
 | Identidade do usuário no Telegram | TASK-056 | Vincula um `User` interno a uma pessoa do Telegram (`telegram_user_id`), pré-requisito da TASK-035 |
 | Robustez da interpretação de intenção | TASK-057 | Refina o `IntentInterpreter` (TASK-032) para diferentes formas de escrita, sem alterar seu vocabulário |
+| Confirmação da intenção interpretada | TASK-058 | Devolve a intenção interpretada e pede confirmação antes de executar comandos de missão (`DEC-015`) |
 | Compra e eventos | TASK-038 a TASK-041 e TASK-043 a TASK-045 | Fluxos de compra, publicação, consumo e monitoramento |
 | Segurança e entrega | TASK-046 a TASK-054 | Observabilidade, segurança e lançamento |
 | Expansão de fontes (futuro) | Tarefas a definir | Mercado Livre, Shopee, AliExpress e outras fontes futuras |
 
 As TASKs 000 a 035, a TASK-042, a TASK-055 e a TASK-056 estão concluídas. A
-próxima tarefa executável é a TASK-036. As demais continuam pendentes e só
-podem ser iniciadas por solicitação explícita. A V1 pesquisa Pichau,
+próxima tarefa executável é a TASK-036. A TASK-057 está em execução, pausada
+por esgotamento da cota gratuita do Gemini durante a validação real
+(`docs/tasks/TASK-057.md`). A TASK-058 foi registrada (`DEC-015`) e aguarda
+solicitação explícita. As demais continuam pendentes e só podem ser
+iniciadas por solicitação explícita. A V1 pesquisa Pichau,
 Terabyte, Amazon e Kabum; Mercado Livre, Shopee e AliExpress permanecem
 futuras.
 

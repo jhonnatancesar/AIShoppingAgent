@@ -12,7 +12,7 @@ from app.intent import (
     IntentKind,
     parse_intent_response,
 )
-from app.intent.interpreter import PURPOSE
+from app.intent.interpreter import _SYSTEM_PROMPT, PURPOSE
 from app.missions.models import MissionCommand
 from app.users.models import UserRole
 
@@ -135,6 +135,12 @@ async def test_interpret_parses_every_existing_mission_command(
 
     assert intent.kind is IntentKind.MISSION_COMMAND
     assert intent.command is command
+
+
+def test_system_prompt_instructs_robustness_to_informal_writing() -> None:
+    assert "gírias" in _SYSTEM_PROMPT
+    assert "ordem das" in _SYSTEM_PROMPT
+    assert "erros de digitação" in _SYSTEM_PROMPT
 
 
 @pytest.mark.anyio
