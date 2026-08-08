@@ -1,42 +1,58 @@
 # TASK-061 — Autenticação real por usuário e senha
 
-Status: Pendente
+Status: Concluída
 
 ## Objetivo
 
-Permitir que um usuário se autentique no bot por usuário e senha, para
-confirmar sua identidade além do `telegram_user_id` já resolvido pela
-TASK-056 — por exemplo, para vincular a mesma conta a um futuro canal além
-do Telegram.
+Acrescentar um fator de conhecimento ao Telegram privado já autenticado,
+mantendo credenciais reutilizáveis no futuro sem aceitar senha no chat.
 
-## Contexto
+## Escopo implementado
 
-Registrada em `DEC-019` a partir de um pedido do usuário ao detalhar os
-campos do cadastro inicial da TASK-060. Retirada de lá porque autenticação
-por senha exige desenho de segurança próprio (hashing, verificação,
-recuperação de conta), não é "dado não sensível" e não deve ser implementada
-apressadamente dentro de outro cadastro.
+- `/senha`, `/entrar`, `/sair` e `/recuperar`;
+- senha digitada exclusivamente no formulário HTTPS, nunca no Telegram;
+- token aleatório de 256 bits, armazenado somente como SHA-256, uso único e
+  TTL absoluto de 10 minutos;
+- identidade e ação derivadas exclusivamente do token persistido;
+- Argon2id com salt individual, `m=19456`, `t=2`, `p=1`, rehash oportunista,
+  15 a 128 caracteres, Unicode NFC, espaços e blocklist;
+- sessão persistente vinculada a `user_id + telegram_user_id`, TTL absoluto de
+  12 horas, sem renovação, refresh token ou JWT;
+- logout imediato; troca e recuperação revogam todas as sessões;
+- login: 5 falhas em 15 minutos geram cooldown de 15 minutos;
+- token: no máximo 5 tentativas inválidas;
+- links comuns: 5 emissões por 15 minutos; recuperação: 3 por hora e
+  intervalo mínimo de 5 minutos;
+- recuperação somente pela identidade privada do Telegram já vinculada;
+- comandos funcionais exigem sessão; `/start`, `/ajuda`, `/cadastro`, `/senha`,
+  `/entrar` e `/recuperar` permanecem acessíveis após TASK-046/047.
 
-Pela `DEC-033`, esta tarefa foi retirada da V1.2 e inserida no fluxo principal
-de segurança. Deve ser executada imediatamente depois da TASK-047 e antes da
-TASK-048.
+## Persistência
 
-## Escopo (a definir em detalhe na validação desta TASK)
-
-- Algoritmo de hashing de senha (ex.: Argon2/bcrypt), nunca texto puro.
-- Fluxo de definição/alteração de senha.
-- Fluxo de verificação (como o usuário se autentica pelo Telegram usando
-  usuário+senha, já que a identidade do Telegram já é conhecida).
-- Recuperação de conta / redefinição de senha.
-- Motivo concreto de negócio para exigir isso além do `telegram_user_id`
-  (ex.: preparar um canal futuro fora do Telegram).
+A migration `20260808_0008` cria `user_credentials`, `user_auth_sessions` e
+`credential_action_tokens`, com FKs RESTRICT, `timestamptz`, hash único do
+token e índices de lookup/expiração. Senha, token bruto e hash de senha nunca
+são copiados para Telegram, logs, traces, métricas ou `audit_entries`.
 
 ## Fora de escopo
 
-- Não é a TASK-060 (perfil de IA por papel, cadastro não sensível,
-  placeholder de upgrade).
+JWT, refresh token, OAuth, MFA, recuperação por e-mail, troca de identidade do
+Telegram, integração de outro canal, mudança de papel e funcionalidades
+comerciais da V2.
 
-## Critério de aceite
+## Validação
 
-A definir na validação desta TASK. Ela se torna a próxima tarefa executável
-assim que a TASK-047 for concluída.
+- 553 testes em Python 3.14.6, 92,51% de cobertura e Ruff aprovado;
+- migration upgrade, downgrade e novo upgrade no PostgreSQL 18 real;
+- banco isolado confirmou consumo concorrente do mesmo token com exatamente um
+  sucesso, replay terminal, TTLs, recuperação após nova conexão, logout,
+  troca/recuperação e rate limiting persistente;
+- API e worker Docker saudáveis; formulário validado em navegador e por HTTPS
+  público, com CSP, `no-store`, senha oculta e mensagens genéricas;
+- Bot API real autenticada e menu real atualizado com nove comandos;
+- canários ausentes de logs, métricas, traces e auditoria;
+- a simulação de update com identidade pessoal pelo túnel não foi realizada,
+  pois a fronteira de execução bloqueou o envio desses dados; a integração
+  do webhook permanece coberta por testes e a Bot API foi validada diretamente.
+
+Próxima tarefa executável: TASK-048.

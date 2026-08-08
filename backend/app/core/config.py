@@ -46,6 +46,7 @@ class Settings(BaseSettings):
     trace_sample_ratio: float = Field(default=1.0, ge=0, le=1)
     readiness_timeout_seconds: float = Field(default=1.0, gt=0, le=10)
     worker_metrics_port: int = Field(default=9464, ge=1, le=65535)
+    auth_public_base_url: str = Field(default="http://localhost:8000", min_length=1)
 
 
 @lru_cache

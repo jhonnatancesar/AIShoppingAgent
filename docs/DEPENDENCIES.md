@@ -31,6 +31,7 @@ O Python usado deve ser a instalação oficial da máquina, identificada pelo ca
 A fonte de verdade para dependências Python é `backend/requirements.txt`:
 
 - `fastapi>=0.115,<1.0`
+- `argon2-cffi>=25.1,<26.0`
 - `google-genai>=2.16,<3.0`
 - `httpx>=0.28,<1.0`
 - `opentelemetry-api>=1.44,<2.0`
@@ -67,13 +68,18 @@ O webhook do Telegram (TASK-034) não usa SDK — chama a Bot API diretamente co
 `urllib` da biblioteca padrão. Exige `AISHOPPING_TELEGRAM_BOT_TOKEN` (criado via
 `@BotFather` no Telegram, usado por `backend/scripts/register_telegram_webhook.py`
 e por `backend/scripts/register_telegram_commands.py`, que registra os
-  comandos `/cadastro`, `/upgrade` (TASK-060) e `/preferencias` (TASK-037) no
-  menu do bot) e
+  nove comandos no menu, incluindo `/senha`, `/entrar`, `/sair` e `/recuperar`
+  (TASK-061)) e
 `AISHOPPING_TELEGRAM_WEBHOOK_SECRET` (valor aleatório local, gerado com
 `secrets.token_urlsafe`, usado para autenticar as requisições recebidas). A
 TASK-046 compara esse segredo em tempo constante antes de confiar na identidade
 privada da pessoa. Ambos
 ficam apenas em `backend/.env`, nunca versionados.
+
+`argon2-cffi` 25.1.0 implementa Argon2id para a TASK-061 e foi validado no
+Python 3.14.6 oficial da máquina e na imagem Linux `python:3.14-slim`.
+`AISHOPPING_AUTH_PUBLIC_BASE_URL` define a origem do formulário e precisa ser
+HTTPS fora de localhost.
 
 A TASK-036 reutiliza o mesmo token no processo `app.telegram.worker`. O
 intervalo e o tamanho do lote são configuráveis por

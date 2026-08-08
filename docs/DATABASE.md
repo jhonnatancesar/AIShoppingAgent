@@ -403,6 +403,10 @@ em `docs/AUDIT.md`.
 - `events (aggregate_type, aggregate_id, occurred_at, id)` e `events (mission_id, occurred_at, id)`.
 - `event_consumption_attempts (consumer_name, event_id)` parcial para tentativas terminais (`succeeded` ou `skipped`).
 - `audit_entries (resource_type, resource_id, created_at, id)` e `audit_entries (actor_id, created_at)` quando `actor_id` não for nulo.
+- `user_auth_sessions (user_id, telegram_user_id, expires_at)` parcial para
+  sessões ainda não revogadas.
+- `credential_action_tokens (user_id, action, created_at)` para rate limiting,
+  além de expiração e unicidade do hash do token.
 
 Índices adicionais devem ser justificados por consultas reais; não serão antecipados.
 
@@ -412,7 +416,9 @@ em `docs/AUDIT.md`.
 - Códigos de moeda devem conter três letras ASCII maiúsculas. URLs e textos obrigatórios não aceitam valores vazios após normalização.
 - Resultados históricos usam ordenação composta por horário e `id`, evitando ambiguidade quando dois registros tiverem o mesmo instante.
 - `updated_at` não é evidência de domínio; transições, preços, eventos, tentativas de consumo e auditoria possuem seus próprios horários imutáveis.
-- O modelo não armazena credenciais, tokens, conteúdo integral de páginas ou dados pessoais desnecessários.
+- Credenciais da TASK-061 ficam somente em `user_credentials`; senha nunca é
+  reversível. `credential_action_tokens` guarda somente SHA-256 de tokens
+  aleatórios e `user_auth_sessions` guarda estado temporal/revogação.
 - Migrações, metadata ORM, sessões e conexão foram configuradas na TASK-011.
   Todas as entidades previstas até `collection_runs` e `price_observations` já
   foram implementadas, além de `events` (TASK-043) e

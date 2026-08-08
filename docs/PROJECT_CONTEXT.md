@@ -40,11 +40,8 @@ persistidos em `users` (revisão `20260808_0001`), sem passar pelo
 `IntentInterpreter`; validado de ponta a ponta contra o Telegram real. Um
 comando `/upgrade` existe e é visível no bot, mas responde apenas "em
 breve", sem nenhuma lógica real — placeholder deliberado para uma futura
-oferta de upgrade (`docs/OUT_OF_SCOPE.md`). A TASK-061 (`DEC-019`) foi
-registrada para autenticação real por usuário e senha, retirada do escopo
-da TASK-060 por exigir desenho de segurança próprio. A `DEC-033` também a
-retirou da V1.2: ainda não implementada, deve ser executada depois da TASK-047
-e antes da TASK-048.
+oferta de upgrade (`docs/OUT_OF_SCOPE.md`). A autenticação por senha foi
+separada na TASK-061 e depois concluída com desenho próprio (`DEC-035`).
 
 A TASK-043 (`DEC-022`) está **concluída**: o preflight da TASK-036 revelou
 duas dependências reais não satisfeitas — um pipeline de eventos
@@ -145,8 +142,8 @@ autenticando o transporte em tempo constante; somente depois a aplicação aceit
 validações e precisa estar ativo antes de IA, domínio ou qualquer mutação.
 Recusas são terminais em `204` e registram somente motivo fechado. PostgreSQL
 18, API Docker e Telegram reais confirmaram primeiro contato, idempotência,
-inativo, ausência de efeitos e logs sanitizados. Login por senha continua na
-TASK-061.
+inativo, ausência de efeitos e logs sanitizados. A TASK-061 preserva essa
+fronteira e acrescenta sessão por senha depois dela.
 
 A TASK-047 (`DEC-034`) está **concluída**: `app.authorization` aplica uma
 matriz fail-closed com papel único e herança `USER ⊂ ADMIN ⊂ DEV` depois da
@@ -157,8 +154,16 @@ própria consulta. Recusas encerram em `204`, sem efeito funcional, e geram
 somente `authorization.denied` sanitizado. O proprietário ativo, previamente o
 único ADMIN, foi promovido para DEV por UUID explicitamente verificado em uma
 operação one-shot com `user.role_changed` auditado, sem migration ou lógica de
-startup. PostgreSQL 18, API Docker e Telegram reais confirmaram o fluxo. A
-próxima tarefa executável é a TASK-061 e depois a TASK-048 (`DEC-033`).
+startup. PostgreSQL 18, API Docker e Telegram reais confirmaram o fluxo.
+
+A TASK-061 (`DEC-035`) está **concluída**: Argon2id protege credenciais;
+tokens descartáveis de 10 minutos ligam servidor, usuário, Telegram e ação;
+sessões persistentes duram 12 horas sem renovação. `/senha`, `/entrar`,
+`/sair` e `/recuperar` usam formulário HTTPS e nunca recebem senha no chat.
+Troca/recuperação revogam sessões, e limites persistentes protegem login,
+token e recuperação. PostgreSQL 18, concorrência, API/worker Docker, navegador,
+HTTPS público e Bot API reais foram validados; canários permaneceram ausentes
+da telemetria e auditoria. A próxima tarefa executável é a TASK-048.
 
 A TASK-058 (`DEC-015`) está **concluída**: `create_mission` e
 `mission_command` não executam mais direto — ficam encenados em
@@ -316,10 +321,10 @@ reais observadas em produção.
 Além de `users`, `products`, `stores`, `sellers`, `offers`, `audit_entries`,
 `missions`, `mission_criteria`, `mission_sources`, `mission_transitions`,
 `mission_schedules`, `collection_runs`, `price_observations`, `events`,
-`event_consumption_attempts`, `purchase_confirmations` e
-`purchase_trail_entries`, não
-há outras tabelas de domínio implementadas. Também não existem autenticação real (senha, token, OAuth — TASK-061),
-autorização por papel de fato aplicada além da seleção de perfil de IA,
+`event_consumption_attempts`, `purchase_confirmations`,
+`purchase_trail_entries`, `user_credentials`, `user_auth_sessions` e
+`credential_action_tokens`, não há outras tabelas implementadas. Não existem
+OAuth, MFA, refresh token, recuperação por e-mail ou outro canal,
 teclado interativo de seleção de fontes, mudança real de plano/perfil pelo próprio usuário (o
 `/upgrade` da TASK-060 é só um placeholder inativo), APIs de negócio,
 worker/scheduler de coleta, detecção de `mission.status_changed`/`collection.completed`/

@@ -23,6 +23,14 @@ from app.ai_provider import (
     build_admin_dev_ai_provider_manager,
     build_user_ai_provider_manager,
 )
+from app.authentication.models import CredentialAction
+from app.authentication.service import (
+    AuthenticationError,
+    AuthenticationRateLimited,
+    has_active_session,
+    issue_action_link,
+    logout,
+)
 from app.authorization import (
     AuthorizationDenied,
     Permission,
@@ -91,6 +99,16 @@ _UNKNOWN_REPLY = (
 _CADASTRO_COMMAND = "/cadastro"
 _UPGRADE_COMMAND = "/upgrade"
 _UPGRADE_REPLY = "🔒 Mudar de usuário/perfil — em breve."
+_START_COMMAND = "/start"
+_HELP_COMMAND = "/ajuda"
+_PASSWORD_COMMAND = "/senha"
+_LOGIN_COMMAND = "/entrar"
+_LOGOUT_COMMAND = "/sair"
+_RECOVERY_COMMAND = "/recuperar"
+_SESSION_REQUIRED_REPLY = (
+    "Sua sessão por senha não está ativa. Use /entrar. "
+    "Se ainda não criou uma senha, use /senha."
+)
 
 
 class MissionIntentError(ValueError):
@@ -215,7 +233,11 @@ async def receive_telegram_webhook(
             return Response(status_code=status.HTTP_204_NO_CONTENT)
         try:
             reply = await _handle_message(
-                message, user=user, adapters=adapters, session=session
+                message,
+                user=user,
+                adapters=adapters,
+                session=session,
+                auth_public_base_url=settings.auth_public_base_url,
             )
         except AuthorizationDenied as error:
             _log_authorization_denial(error, user)
@@ -234,24 +256,46 @@ async def _handle_message(
     user: User,
     adapters: dict[UserRole, TelegramIntentAdapter],
     session: Session,
+    auth_public_base_url: str,
 ) -> str | None:
     lowered = message.text.strip().lower()
+    if lowered in {_START_COMMAND, _HELP_COMMAND}:
+        return (
+            "Eu acompanho suas missões de compra. Use /cadastro para completar "
+            "seu perfil, /senha para criar sua senha e /entrar para autenticar."
+        )
     if lowered == _CADASTRO_COMMAND:
         authorize(session, user, Permission.PROFILE_MANAGE)
         return start_registration(user)
-    if lowered == _UPGRADE_COMMAND:
+    if lowered in {_PASSWORD_COMMAND, _LOGIN_COMMAND, _RECOVERY_COMMAND}:
         authorize(session, user, Permission.PROFILE_MANAGE)
-        return _UPGRADE_REPLY
-    if lowered == PREFERENCES_COMMAND or lowered.startswith(f"{PREFERENCES_COMMAND} "):
-        authorize(session, user, Permission.NOTIFICATION_PREFERENCES_MANAGE)
-        return handle_preferences_command(user, lowered)
+        return _authentication_link_reply(
+            lowered,
+            user=user,
+            session=session,
+            public_base_url=auth_public_base_url,
+        )
     if user.registration_step is not None:
         authorize(session, user, Permission.PROFILE_MANAGE)
         try:
             return advance_registration(user, answer=message.text)
         except RegistrationError as error:
             return str(error)
-
+    if user.telegram_user_id is None or not has_active_session(
+        session,
+        user_id=user.id,
+        telegram_user_id=user.telegram_user_id,
+    ):
+        return _SESSION_REQUIRED_REPLY
+    if lowered == _LOGOUT_COMMAND:
+        logout(session, user=user)
+        return "Sessão encerrada. Use /entrar quando quiser acessar novamente."
+    if lowered == _UPGRADE_COMMAND:
+        authorize(session, user, Permission.PROFILE_MANAGE)
+        return _UPGRADE_REPLY
+    if lowered == PREFERENCES_COMMAND or lowered.startswith(f"{PREFERENCES_COMMAND} "):
+        authorize(session, user, Permission.NOTIFICATION_PREFERENCES_MANAGE)
+        return handle_preferences_command(user, lowered)
     if user.pending_intent is not None:
         return await _resolve_pending_intent(
             message, adapters=adapters, session=session, user=user
@@ -279,6 +323,50 @@ async def _handle_message(
             },
         )
         return str(error)
+
+
+def _authentication_link_reply(
+    command: str,
+    *,
+    user: User,
+    session: Session,
+    public_base_url: str,
+) -> str:
+    if not user.username:
+        return "Complete primeiro seu nome de usuário com /cadastro."
+    action = {
+        _LOGIN_COMMAND: CredentialAction.LOGIN,
+        _RECOVERY_COMMAND: CredentialAction.RECOVER_PASSWORD,
+    }.get(command)
+    if action is None:
+        from app.authentication.models import UserCredential
+
+        action = (
+            CredentialAction.CHANGE_PASSWORD
+            if session.get(UserCredential, user.id) is not None
+            else CredentialAction.SET_PASSWORD
+        )
+    try:
+        issued = issue_action_link(
+            session,
+            user=user,
+            action=action,
+            public_base_url=public_base_url,
+        )
+    except AuthenticationRateLimited:
+        return "Muitas solicitações. Tente novamente mais tarde."
+    except AuthenticationError:
+        return "Não foi possível gerar o link. Verifique seu cadastro."
+    labels = {
+        CredentialAction.LOGIN: "Entrar",
+        CredentialAction.SET_PASSWORD: "Criar senha",
+        CredentialAction.CHANGE_PASSWORD: "Alterar senha",
+        CredentialAction.RECOVER_PASSWORD: "Recuperar senha",
+    }
+    return (
+        f"{labels[action]}: {issued.url}\n\n"
+        "O link é pessoal, de uso único e expira em 10 minutos."
+    )
 
 
 async def _resolve_pending_intent(

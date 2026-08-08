@@ -22,7 +22,7 @@
 | Segurança e entrega — continuação | TASK-048 a TASK-054 | Segredos, resiliência, privacidade, documentação, testes e lançamento |
 | Expansão de fontes (futuro) | Tarefas a definir | Mercado Livre, Shopee, AliExpress e outras fontes futuras |
 
-As TASKs 000 a 047 e as TASKs 055 a 060 estão
+As TASKs 000 a 047 e as TASKs 055 a 061 estão
 concluídas. O preflight
 da TASK-036 revelou dependências reais não satisfeitas (pipeline de eventos
 persistidos/publicados e `chat_id` do Telegram, nenhum dos dois existente
@@ -46,8 +46,10 @@ Prometheus, traces OTLP/Jaeger, correlação segura e health/readiness. A
 TASK-046 (`DEC-032`) passou a aceitar operações do Telegram somente após
 autenticar o transporte, validar o chat privado direto e resolver um usuário
 ativo. A TASK-047 (`DEC-034`) aplicou autorização fail-closed com papel único,
-herança `USER ⊂ ADMIN ⊂ DEV` e ownership obrigatório. A próxima tarefa
-executável é a TASK-061 e então a TASK-048 (`DEC-033`). A TASK-057 (`DEC-017`): validação real contra o
+herança `USER ⊂ ADMIN ⊂ DEV` e ownership obrigatório. A TASK-061
+(`DEC-035`) acrescentou Argon2id, tokens de 10 minutos, sessões absolutas de
+12 horas e recuperação pelo Telegram vinculado. A próxima tarefa executável
+é a TASK-048. A TASK-057 (`DEC-017`): validação real contra o
 `USER`/Gemini cobre 3 dos 4 `IntentKind`, e o usuário aceitou explicitamente
 encerrar nesse estado, adiando mais variedade de linguagem para a V2
 (`docs/tasks/TASK-057.md`, `docs/BACKLOG.md`). A TASK-058 (`DEC-015`):

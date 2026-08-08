@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-08-08 — TASK-061: autenticação real por senha
+
+- Criadas credenciais Argon2id, sessões persistentes de 12 horas e tokens
+  descartáveis de 10 minutos na migration `20260808_0008`.
+- `/senha`, `/entrar`, `/sair` e `/recuperar` usam formulário HTTPS; identidade,
+  ação e papel nunca vêm do navegador.
+- Troca e recuperação revogam sessões; login, tokens e emissão de recuperação
+  possuem limites persistentes sem bloqueio permanente.
+- Comandos funcionais agora exigem sessão, preservando onboarding e recuperação
+  depois das fronteiras de Telegram e RBAC.
+- PostgreSQL 18 confirmou migration reversível, replay e concorrência real;
+  API/worker, HTTPS, navegador e Bot API reais foram validados.
+- Pipeline aprovado com 553 testes e 92,51% de cobertura; canários não
+  apareceram em logs, métricas, traces nem auditoria.
+
 ## 2026-08-08 — TASK-047: autorização por papel único e ownership
 
 - Criada política RBAC fail-closed em `app.authorization`, com herança estrita

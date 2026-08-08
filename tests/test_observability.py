@@ -137,7 +137,10 @@ def test_unknown_worker_outcome_is_rejected() -> None:
         )
 
 
-@pytest.mark.parametrize("path", ["/metrics", "/health", "/health/"])
+@pytest.mark.parametrize(
+    "path",
+    ["/metrics", "/health", "/health/", "/auth", "/auth/actions"],
+)
 def test_operational_noise_is_excluded_from_tracing(
     span_exporter: InMemorySpanExporter, path: str
 ) -> None:

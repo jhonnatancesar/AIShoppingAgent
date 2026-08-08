@@ -14,8 +14,10 @@ As interfaces HTTP seguem `docs/API_CONVENTIONS.md`. Endpoints de negócio serã
 No webhook Telegram, a confiança possui duas camadas: o segredo compartilhado
 autentica o transporte e, somente depois, a TASK-046 aceita a pessoa em chat
 privado direto (`chat.id == message.from.id`) quando o `User` interno está
-ativo. Login por senha/sessão e autorização por papel permanecem separados nas
-TASKs 061 e 047, respectivamente (`adr/ADR-009-autenticacao-minima-telegram.md`).
+ativo. A TASK-047 aplica RBAC/ownership e a TASK-061 exige uma sessão por senha
+para operações funcionais. Credenciais, sessões e tokens formam um módulo
+separado (`app.authentication`); o formulário nunca define identidade
+(`adr/ADR-009-autenticacao-minima-telegram.md`, `docs/AUTHENTICATION.md`).
 
 Aplicação e servidor emitem logs JSON em `stdout` conforme `docs/LOGGING.md`.
 A TASK-045 separa os sinais operacionais: Prometheus coleta métricas

@@ -4,7 +4,13 @@ from app.core.config import get_settings
 from app.telegram.bot_api import call_bot_api
 
 _COMMANDS = [
+    {"command": "start", "description": "Iniciar o bot"},
+    {"command": "ajuda", "description": "Ver ajuda"},
     {"command": "cadastro", "description": "Cadastrar dados básicos do seu perfil"},
+    {"command": "senha", "description": "Criar ou alterar sua senha"},
+    {"command": "entrar", "description": "Autenticar por senha"},
+    {"command": "sair", "description": "Encerrar a sessão autenticada"},
+    {"command": "recuperar", "description": "Recuperar sua senha"},
     {"command": "preferencias", "description": "Configurar notificações"},
     {"command": "upgrade", "description": "Mudar de perfil (em breve)"},
 ]

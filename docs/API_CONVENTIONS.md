@@ -73,4 +73,11 @@ O schema em `/openapi.json` é a representação executável do contrato. Altera
 
 `GET /health` é operacional, não versionado, não consulta dependências externas e responde `200 OK` com `{"status":"ok"}`.
 
-`POST /telegram/webhook` (`docs/TELEGRAM_ADAPTER.md`, `docs/MISSION_COMMANDS.md`) é o segundo endpoint existente e o primeiro autenticado: também operacional e fora de `/api/v1` (recebe um callback de integração externa, não um recurso de negócio). Autentica o transporte por segredo compartilhado no cabeçalho `X-Telegram-Bot-Api-Secret-Token`, usando `401` no envelope padrão quando ele não confere. Depois, a TASK-046 aceita identidade de usuário somente em chat privado direto e para `User` ativo; recusas dessa segunda camada retornam `204` sem efeitos nem retry e usam log sanitizado. Erro conhecido de domínio/validação também termina em `204`; falha inesperada continua subindo como `500`. Paginação, login genérico por usuário/senha (TASK-061) e um handler global de erros continuam pendentes das tarefas que introduzirem essas necessidades.
+`POST /telegram/webhook` (`docs/TELEGRAM_ADAPTER.md`, `docs/MISSION_COMMANDS.md`) recebe o callback externo e autentica o transporte por segredo. A TASK-046 aceita somente pessoa ativa em chat privado; a TASK-047 autoriza; a TASK-061 exige sessão por senha antes dos comandos funcionais.
+
+`GET /auth` serve o formulário seguro fora do OpenAPI. O token permanece no
+fragmento do navegador. `POST /auth/actions` aceita somente token e campos de
+senha; identidade e ação são resolvidas no servidor. As respostas de falha são
+genéricas, exceto orientação da política ao definir senha. Detalhes estão em
+`docs/AUTHENTICATION.md`. Paginação e handler global de erros continuam
+pendentes das tarefas que introduzirem essas necessidades.

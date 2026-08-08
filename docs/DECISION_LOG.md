@@ -25,6 +25,20 @@ Após a classificação, registrar a decisão neste arquivo e atualizar a docume
 - **Justificativa:** impacto avaliado e motivo da classificação.
 - **Próxima ação:** documento a atualizar, TASK a criar quando aplicável, ou ação de não implementação.
 
+### DEC-035 — Autenticar por senha sem expor segredo ao Telegram
+
+- **Data:** 2026-08-08
+- **Ideia:** usar links HTTPS descartáveis para criar, verificar, alterar e
+  recuperar senha, mantendo sessões persistentes com TTL absoluto.
+- **Classificação:** Implementar agora.
+- **Justificativa:** o chat de bot não é um canal apropriado para receber senha.
+  Um token aleatório, armazenado somente como hash e vinculado no servidor a
+  usuário, Telegram e ação, permite abrir um formulário HTTPS sem confiar em
+  identidade enviada pelo navegador. Argon2id, rate limiting persistente,
+  transações atômicas e revogação fecham o escopo da V1 sem JWT/OAuth/MFA.
+- **Próxima ação:** TASK-061 concluída; executar a TASK-048. Outro canal,
+  recuperação por e-mail e autenticação multifator permanecem futuros.
+
 ### DEC-034 — Autorizar a V1 com papel único e ownership obrigatório
 
 - **Data:** 2026-08-08

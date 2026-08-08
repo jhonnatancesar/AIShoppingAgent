@@ -2,8 +2,8 @@
 
 `User` é a identidade interna mínima do sistema. A TASK-046 usa essa entidade
 depois de autenticar o transporte e validar a identidade privada do Telegram;
-a TASK-047 aplica então autorização por papel e ownership. Isso não implementa
-senha ou sessão.
+a TASK-047 aplica autorização por papel e ownership; a TASK-061 vincula
+credencial e sessão em tabelas separadas.
 
 ## Campos
 
@@ -60,10 +60,10 @@ fechado. O papel `PLUS`, planos e múltiplos papéis permanecem fora do MVP.
 - `is_active=false` representa desativação lógica e, desde a TASK-046, bloqueia
   toda operação recebida pelo Telegram antes de IA, domínio ou mutação; não
   exclui a conta e não substitui login por senha.
-- Não são armazenadas senhas, tokens nem credenciais de autenticação real
-  (TASK-061, `DEC-019`, ainda não implementada). O e-mail deixou de fazer
-  parte dessa lista a partir da TASK-060 (`DEC-020`): é dado pessoal comum
-  de cadastro, não uma credencial.
+- A TASK-061 armazena somente hash Argon2id em `user_credentials`, hash SHA-256
+  dos tokens temporários e sessões revogáveis; nenhum segredo bruto pertence
+  a `users`. O e-mail continua sendo dado pessoal não verificado e não pode
+  recuperar conta.
 - Não existem endpoints, repositórios genéricos de CRUD ou usuário inicial automático.
 - Todo usuário criado automaticamente pelo Telegram recebe `USER`. Nenhum
   fluxo público aceita papel por payload, texto, comando ou cadastro; não há
@@ -71,8 +71,8 @@ fechado. O papel `PLUS`, planos e múltiplos papéis permanecem fora do MVP.
 - Exclusão e anonimização serão definidas pelas tarefas de segurança e privacidade, preservando referências históricas.
 - `telegram_user_id` (TASK-056) é confiado pela TASK-046 somente após validar
   o segredo do webhook, chat privado e igualdade entre chat e remetente. Isso
-  não implementa login, senha, OAuth ou sessão — esses itens permanecem na
-  TASK-061. A resolução get-or-create
+  não implementa sozinha login ou senha; a TASK-061 acrescenta a camada de
+  sessão posteriormente. A resolução get-or-create
   (`app.users.service.get_or_create_telegram_user`) não autentica sozinha e não
   conhece missões nem qualquer outra lógica de domínio.
 - O papel (`role`) determina qual perfil de IA uma interação real usa

@@ -6,8 +6,8 @@ A fronteira de entrada que traduz uma mensagem bruta do Telegram em uma
 intenção estruturada está definida em `docs/TELEGRAM_ADAPTER.md`.
 Notificações proativas de alertas foram implementadas na TASK-036. A TASK-046
 autentica minimamente a identidade do canal: somente mensagens privadas da
-própria pessoa e contas internas ativas podem operar. Usuário/senha, sessões,
-MFA e recuperação continuam reservados à TASK-061.
+própria pessoa e contas internas ativas podem operar. A TASK-061 acrescenta
+senha e sessão persistente por formulário HTTPS; MFA permanece futuro.
 
 ## Fronteira de autorização (TASK-047)
 
@@ -33,7 +33,7 @@ preferências, resposta e atualização do destino.
 Essas recusas devolvem `204`, portanto são terminais para a entrega, e registram
 somente `non_private_chat`, `identity_mismatch` ou `inactive_user`, sem IDs,
 texto ou payload. O segredo do webhook autentica o Telegram, não o usuário
-final; login por senha permanece separado na TASK-061.
+final; a sessão por senha da TASK-061 é uma camada posterior e independente.
 
 ## Notificações proativas (TASK-036)
 
@@ -49,7 +49,8 @@ tentadas novamente. Detalhes operacionais estão em
 
 ## Comandos dedicados
 
-Três comandos são reconhecidos diretamente pelo webhook, antes de qualquer
+Nove comandos são registrados no menu. Os comandos de autenticação e perfil
+são reconhecidos diretamente pelo webhook, antes de qualquer
 interpretação por IA — não passam pelo vocabulário fechado do
 `IntentInterpreter`:
 
@@ -62,6 +63,15 @@ interpretação por IA — não passam pelo vocabulário fechado do
 - `/preferencias` (TASK-037): consulta as notificações e aceita
   `quedas ativar|desativar` ou `alvo ativar|desativar`. Não altera cadastro,
   e-mail, autenticação ou fontes e não usa botões.
+- `/senha`, `/entrar`, `/sair` e `/recuperar` (TASK-061): emitem link HTTPS,
+  estabelecem/revogam sessão ou recuperam a senha sem receber segredo no chat.
+  Detalhes em `docs/AUTHENTICATION.md`.
+- `/start` e `/ajuda`: orientação de onboarding e autenticação.
+
+Sem sessão por senha, permanecem disponíveis `/start`, `/ajuda`, `/cadastro`,
+`/senha`, `/entrar` e `/recuperar`, sempre depois das TASKs 046/047. Missões,
+preferências, IA, recomendações, comparações, confirmações, trilha,
+`/upgrade` e demais efeitos funcionais exigem sessão válida.
 
 As preferências começam ativadas. Um alerta bloqueado é consumido como
 `skipped`, sem retry nem reenvio retroativo. A entrega continua restrita ao

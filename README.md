@@ -42,8 +42,10 @@ Operações de usuário pelo bot são aceitas somente no chat privado direto da
 própria pessoa e para uma conta interna ativa. Depois da autenticação, a
 política `USER ⊂ ADMIN ⊂ DEV` autoriza a operação sem remover o isolamento por
 proprietário. Papel inválido ou recurso alheio falha fechado e termina sem
-resposta funcional. Grupos, supergrupos e canais são ignorados; login por
-usuário/senha ainda pertence à TASK-061. Consulte `docs/AUTHORIZATION.md`.
+resposta funcional. Grupos, supergrupos e canais são ignorados. A TASK-061
+acrescenta `/senha`, `/entrar`, `/sair` e `/recuperar`: senhas só entram no
+formulário HTTPS e comandos funcionais exigem sessão absoluta de 12 horas.
+Consulte `docs/AUTHORIZATION.md` e `docs/AUTHENTICATION.md`.
 
 Com a API em execução, verifique sua vivacidade em `http://localhost:8000/health`. A resposta esperada é:
 

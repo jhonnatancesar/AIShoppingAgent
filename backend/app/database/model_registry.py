@@ -1,6 +1,11 @@
 """Registro central dos modelos carregados pela metadata e pelo Alembic."""
 
 from app.audit.models import AuditEntry
+from app.authentication.models import (
+    CredentialActionToken,
+    UserAuthSession,
+    UserCredential,
+)
 from app.collection.models import CollectionRun, PriceObservation
 from app.events.models import Event, EventConsumptionAttempt
 from app.missions.models import (
@@ -34,4 +39,7 @@ REGISTERED_MODELS = (
     EventConsumptionAttempt,
     PurchaseConfirmation,
     PurchaseTrailEntry,
+    UserCredential,
+    UserAuthSession,
+    CredentialActionToken,
 )

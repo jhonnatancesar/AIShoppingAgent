@@ -1142,3 +1142,130 @@ async def test_private_webhook_message_remembers_notification_chat(
 
     assert response.status_code == 204
     assert fake_user.telegram_chat_id == 222
+
+
+@pytest.mark.anyio
+async def test_start_remains_available_without_password_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_user = _fake_user()
+    _patch_user(monkeypatch, fake_user)
+    sends = _patch_send_message(monkeypatch)
+    monkeypatch.setattr("app.telegram.router.has_active_session", lambda *a, **k: False)
+    adapter = _FakeAdapter(_intent(kind=IntentKind.UNKNOWN))
+
+    response = await receive_telegram_webhook(
+        update=_update(
+            message=_TelegramIncomingMessage(
+                text="/start",
+                date=1754586000,
+                chat=_TelegramChat(id=222, type=TelegramChatType.PRIVATE),
+                from_=_TelegramSender(id=222, first_name="Fulano"),
+            )
+        ),
+        x_telegram_bot_api_secret_token="correct-secret",
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        settings=_settings(),
+        session=MagicMock(),
+    )
+
+    assert response.status_code == 204
+    assert "/entrar" in sends[0][1]
+    assert adapter.calls == []
+
+
+@pytest.mark.anyio
+async def test_sensitive_message_is_blocked_without_password_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_user = _fake_user()
+    _patch_user(monkeypatch, fake_user)
+    sends = _patch_send_message(monkeypatch)
+    monkeypatch.setattr("app.telegram.router.has_active_session", lambda *a, **k: False)
+    adapter = _FakeAdapter(_intent())
+
+    await receive_telegram_webhook(
+        update=_update(),
+        x_telegram_bot_api_secret_token="correct-secret",
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        settings=_settings(),
+        session=MagicMock(),
+    )
+
+    assert "sessão por senha" in sends[0][1]
+    assert adapter.calls == []
+
+
+@pytest.mark.anyio
+async def test_login_command_issues_server_bound_link(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_user = _fake_user()
+    fake_user.username = "cliente"
+    _patch_user(monkeypatch, fake_user)
+    sends = _patch_send_message(monkeypatch)
+    calls: list[dict] = []
+
+    def issue(*args: object, **kwargs: object) -> SimpleNamespace:
+        calls.append(kwargs)
+        return SimpleNamespace(
+            url="https://auth.example.test/auth#login:opaque",
+            expires_at=datetime.now(UTC),
+        )
+
+    monkeypatch.setattr("app.telegram.router.issue_action_link", issue)
+    adapter = _FakeAdapter(_intent(kind=IntentKind.UNKNOWN))
+
+    await receive_telegram_webhook(
+        update=_update(
+            message=_TelegramIncomingMessage(
+                text="/entrar",
+                date=1754586000,
+                chat=_TelegramChat(id=222, type=TelegramChatType.PRIVATE),
+                from_=_TelegramSender(id=222, first_name="Fulano"),
+            )
+        ),
+        x_telegram_bot_api_secret_token="correct-secret",
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        settings=_settings(auth_public_base_url="https://auth.example.test"),
+        session=MagicMock(),
+    )
+
+    assert calls[0]["user"] is fake_user
+    assert calls[0]["action"].value == "login"
+    assert "#login:opaque" in sends[0][1]
+    assert adapter.calls == []
+
+
+@pytest.mark.anyio
+async def test_logout_revokes_active_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_user = _fake_user()
+    _patch_user(monkeypatch, fake_user)
+    sends = _patch_send_message(monkeypatch)
+    monkeypatch.setattr("app.telegram.router.has_active_session", lambda *a, **k: True)
+    logout_calls: list[object] = []
+    monkeypatch.setattr(
+        "app.telegram.router.logout",
+        lambda session, *, user: logout_calls.append(user),
+    )
+    adapter = _FakeAdapter(_intent(kind=IntentKind.UNKNOWN))
+
+    await receive_telegram_webhook(
+        update=_update(
+            message=_TelegramIncomingMessage(
+                text="/sair",
+                date=1754586000,
+                chat=_TelegramChat(id=222, type=TelegramChatType.PRIVATE),
+                from_=_TelegramSender(id=222, first_name="Fulano"),
+            )
+        ),
+        x_telegram_bot_api_secret_token="correct-secret",
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        settings=_settings(),
+        session=MagicMock(),
+    )
+
+    assert logout_calls == [fake_user]
+    assert "Sessão encerrada" in sends[0][1]

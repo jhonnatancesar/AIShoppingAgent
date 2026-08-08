@@ -14,3 +14,5 @@ def test_openapi_exposes_application_metadata() -> None:
     }
     assert "/metrics" not in schema["paths"]
     assert "/ready" in schema["paths"]
+    assert "/auth" not in schema["paths"]
+    assert "/auth/actions" in schema["paths"]

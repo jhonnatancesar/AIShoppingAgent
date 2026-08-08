@@ -2,6 +2,7 @@
 
 from fastapi import FastAPI
 
+from .authentication.router import router as authentication_router
 from .core.config import get_settings
 from .core.logging import configure_logging
 from .core.request_logging import log_request
@@ -26,4 +27,5 @@ app = FastAPI(
 app.middleware("http")(log_request)
 app.include_router(health_router)
 app.include_router(metrics_router)
+app.include_router(authentication_router)
 app.include_router(telegram_router)

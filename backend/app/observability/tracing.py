@@ -20,7 +20,7 @@ from starlette.requests import Request
 
 from app.core.config import Settings
 
-TRACE_EXCLUDED_PATH_PATTERN = re.compile(r"^/(?:metrics|health)/?$")
+TRACE_EXCLUDED_PATH_PATTERN = re.compile(r"^/(?:metrics|health|auth(?:/actions)?)/?$")
 _SQL_OPERATION_PATTERN = re.compile(r"^\s*(?:/\*.*?\*/\s*)*([A-Za-z]+)", re.DOTALL)
 _SQL_OPERATIONS = frozenset({"SELECT", "INSERT", "UPDATE", "DELETE"})
 _INSTRUMENTED_ENGINES: weakref.WeakSet[Engine] = weakref.WeakSet()
