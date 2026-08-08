@@ -27,6 +27,24 @@ Após a classificação, registrar a decisão neste arquivo e atualizar a docume
 
 ## Registros
 
+### DEC-014 — Criar a TASK-057 para melhorar a robustez da interpretação de intenção
+
+- **Data:** 2026-08-08
+- **Ideia:** durante a validação manual real da TASK-035, uma mensagem real
+  do usuário foi classificada como `unknown` quando, na avaliação do
+  usuário, deveria ter sido reconhecida — o `IntentInterpreter` (TASK-032)
+  precisa ficar mais robusto para diferentes formas de escrita.
+- **Classificação:** Nova TASK do MVP
+- **Justificativa:** o usuário pediu explicitamente o registro como próxima
+  tarefa, não a correção imediata. O `IntentInterpreter` já foi validado
+  contra o Gemini real nas TASKs 032, 034 e 035 para as mensagens testadas;
+  isso é um refinamento de qualidade de classificação, não um defeito
+  estrutural, e não deve ser implementado sem uma TASK própria — alterar o
+  prompt de sistema durante a validação da TASK-035 misturaria escopos e
+  arriscaria regressão sem a validação dedicada que a mudança merece.
+- **Próxima ação:** criada `docs/tasks/TASK-057.md`, registrada no roadmap;
+  aguarda solicitação explícita para ser executada.
+
 ### DEC-013 — Distinguir erro conhecido de falha inesperada no despacho de missão do webhook
 
 - **Data:** 2026-08-08
