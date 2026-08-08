@@ -1,5 +1,42 @@
 # Changelog
 
+## 2026-08-08 — TASK-035
+
+- Semeada a migração `20260807_0002` com as quatro lojas selecionáveis da
+  V1 (`pichau`, `terabyte`, `amazon`, `kabum`), necessárias para
+  `MissionSource.store_id`.
+- Criada `backend/app/database/dependency.py` (`get_session`), a primeira
+  dependência FastAPI de sessão de banco por requisição do projeto: comita
+  no sucesso, desfaz em qualquer exceção, sempre fecha a sessão.
+- Criadas `list_missions_for_user`, `find_missions_by_reference` e
+  `resolve_mission_for_command` (`backend/app/missions/query.py`) para
+  resolver uma missão a partir de texto livre, já que a V1 não expõe
+  identificador de missão ao usuário.
+- Criado `create_mission_from_criteria` (`backend/app/missions/service.py`):
+  cria `Mission` + `MissionCriteria` + `MissionSource` e ativa
+  imediatamente. Quando o `Intent` não especifica fonte nenhuma, usa
+  automaticamente as quatro fontes da V1 — toda `CREATE_MISSION` válida sai
+  `active`, nunca `draft`.
+- Criado `backend/app/telegram/bot_api.py` (`call_bot_api`, `send_message`),
+  reaproveitado pelo script de registro do webhook para eliminar duplicação.
+- `POST /telegram/webhook` agora resolve a identidade do usuário (TASK-056),
+  despacha por `IntentKind` (criar, consultar, comandar, desconhecido) e
+  responde ao Telegram. Definido o limite explícito entre erro conhecido de
+  domínio/validação (`204` com explicação) e falha inesperada, incluindo
+  `IntegrityError` residual não tratada no serviço apropriado (`500`, nunca
+  mascarada) — `DEC-012`, `DEC-013`.
+- Aprovado `scripts\check.cmd` completo em Python 3.14.6: 298 testes, 94,73%
+  de cobertura.
+- Validado de ponta a ponta contra PostgreSQL 18, o Gemini e o Telegram
+  reais: criação com fonte explícita e sem fonte nenhuma (fonte-padrão
+  confirmada), consulta, comando (pausar) e mensagem não reconhecida — todos
+  com resposta real recebida no Telegram e o estado correspondente
+  confirmado em `missions`, `mission_criteria`, `mission_sources` e
+  `mission_transitions`.
+- Ajustada a resposta de intenção não reconhecida para lista com marcadores
+  em vez de um parágrafo único, a partir de feedback real de legibilidade
+  durante a validação manual.
+
 ## 2026-08-07 — TASK-056
 
 - Descoberto, ao preparar a TASK-035, que persistir uma missão via Telegram

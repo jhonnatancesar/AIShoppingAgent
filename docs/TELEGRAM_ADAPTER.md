@@ -41,11 +41,20 @@ atualização. `500` fica reservado a falhas internas verdadeiramente inesperada
 consulta (`--action info`) e remove (`--action delete`) o webhook na Bot API real,
 usado durante a validação manual com um túnel HTTPS local (`cloudflared`).
 
+## Comandos de missão e resposta (TASK-035)
+
+A partir da TASK-035, a rota também resolve a identidade do usuário
+(`get_or_create_telegram_user`, TASK-056), executa a ação de missão
+correspondente ao `Intent` (criar, consultar ou comandar) e responde ao
+Telegram com `backend/app/telegram/bot_api.py` (`send_message`, via
+`asyncio.to_thread`, sem bloquear o loop de eventos e sem SDK novo). O
+despacho por `IntentKind`, a resolução de missão por texto e o limite entre
+`204` e `500` estão detalhados em `docs/MISSION_COMMANDS.md`.
+
 ## Limites
 
-Este módulo não usa nenhum SDK do Telegram, não define comandos ou teclado, não
-envia notificações e não resolve preferências de usuário — e o webhook não
-decide nem executa nenhuma ação de missão a partir do `Intent`, apenas o
-descarta após registrá-lo. Essas responsabilidades pertencem, respectivamente, à
-TASK-035 (comandos de missão), TASK-036 (notificações) e TASK-037 (preferências
-de usuário).
+Este módulo não usa nenhum SDK do Telegram, não define teclado interativo e
+não envia notificações proativas orientadas a evento nem resolve preferências
+de usuário. Essas responsabilidades pertencem, respectivamente, a uma
+evolução futura, à TASK-036 (notificações) e à TASK-037 (preferências de
+usuário).

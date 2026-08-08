@@ -73,6 +73,7 @@ Regras permanentes:
 - `20260802_0011`: cria execuções persistentes de coleta.
 - `20260802_0012`: cria observações imutáveis de preço.
 - `20260807_0001`: adiciona `telegram_user_id` (opcional, único) a `users` — identifica exclusivamente a pessoa no Telegram, nunca a conversa (`chat_id` não é persistido).
+- `20260807_0002`: semeia as quatro lojas selecionáveis da V1 (`pichau`, `terabyte`, `amazon`, `kabum`), conforme `docs/MARKETPLACE_SOURCES.md`, necessárias para `MissionSource.store_id`. O downgrade remove exatamente essas quatro linhas por código, nunca um `DELETE` genérico.
 
 O downgrade de `20260802_0009` não apaga ofertas para forçar compatibilidade. Se
 existirem ofertas de vendedores diferentes com a mesma identidade antiga, elas

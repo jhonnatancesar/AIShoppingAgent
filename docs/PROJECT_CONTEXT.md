@@ -12,8 +12,10 @@ validado de ponta a ponta contra o Telegram e o Gemini reais. A TASK-056
 resolveu o pré-requisito de identidade que pausava a TASK-035 (`DEC-011`):
 `User.telegram_user_id`, exclusivamente a pessoa do Telegram, nunca a
 conversa, validado em PostgreSQL 18 real. A TASK-035 ("Criar comandos de
-missão") segue pendente e só será retomada por solicitação explícita; a
-próxima tarefa executável é a TASK-035.
+missão") fechou o loop: o webhook agora cria, consulta e comanda missões de
+verdade a partir do `Intent`, respondendo ao Telegram, validado de ponta a
+ponta contra PostgreSQL, Gemini e Telegram reais. A próxima tarefa executável
+é a TASK-036.
 
 ## O que existe
 
@@ -72,15 +74,21 @@ próxima tarefa executável é a TASK-035.
   `TelegramIntentAdapter`) que traduz uma mensagem bruta do Telegram em um
   `Intent`, reaproveitando exclusivamente o `IntentInterpreter`.
 - Webhook real `POST /telegram/webhook`, autenticado por segredo compartilhado,
-  que recebe atualizações do Telegram, traduz mensagens de texto em `Intent` e
-  responde `204` mesmo quando a interpretação por IA falha, sem executar ação
-  de missão nem responder ao usuário; script manual de registro contra a Bot
-  API real.
+  que recebe atualizações do Telegram, traduz mensagens de texto em `Intent`,
+  script manual de registro contra a Bot API real.
 - Resolução get-or-create de identidade (`get_or_create_telegram_user`) que
   vincula `User.telegram_user_id` — exclusivamente a pessoa do Telegram,
   nunca a conversa — de forma determinística e idempotente, protegida contra
-  corrida de criação concorrente por `SAVEPOINT`, sem autenticação real nem
-  lógica de missão.
+  corrida de criação concorrente por `SAVEPOINT`, sem autenticação real.
+- Despacho de comandos de missão pelo webhook: cria, consulta e comanda
+  missões a partir do `Intent`, com resposta síncrona ao Telegram
+  (`send_message`); toda `CREATE_MISSION` válida sai `active`, usando as
+  quatro fontes-padrão da V1 quando o `Intent` não especifica nenhuma; erro
+  conhecido de domínio responde `204` com explicação, falha inesperada sobe
+  como `500`, nunca mascarada. Primeira dependência FastAPI de sessão de
+  banco por requisição (`get_session`).
+- Seed das quatro lojas selecionáveis da V1 (Pichau, Terabyte, Amazon,
+  Kabum) em `stores`, necessário para `MissionSource`.
 - Documentos de visão, arquitetura, dados, módulos-alvo, escopo do MVP, backlog, itens fora de escopo, governança de decisões e workflow permanente de execução.
 - ADRs, RFCs e 57 tarefas planejadas.
 
@@ -90,8 +98,10 @@ Além de `users`, `products`, `stores`, `sellers`, `offers`, `audit_entries`,
 `missions`, `mission_criteria`, `mission_sources`, `mission_transitions`,
 `mission_schedules`, `collection_runs` e `price_observations`, não há outras
 tabelas de domínio implementadas. Também não existem autenticação, autorização,
-persistência de `chat_id` do Telegram, APIs de negócio, worker, suíte
-permanente de testes ponta a ponta nem credenciais reais configuradas.
+persistência de `chat_id` do Telegram, teclado interativo de seleção de
+fontes, notificações proativas, preferências de usuário, APIs de negócio,
+worker, suíte permanente de testes ponta a ponta nem credenciais reais
+configuradas.
 
 ## Invariantes
 

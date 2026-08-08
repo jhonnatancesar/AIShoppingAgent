@@ -27,6 +27,54 @@ Após a classificação, registrar a decisão neste arquivo e atualizar a docume
 
 ## Registros
 
+### DEC-013 — Distinguir erro conhecido de falha inesperada no despacho de missão do webhook
+
+- **Data:** 2026-08-08
+- **Ideia:** ao capturar exceções no despacho de `Intent` por comando de
+  missão (TASK-035), a rota do webhook só deve tratar como resposta
+  controlada (`204` + mensagem ao usuário) os erros **esperados e conhecidos**
+  de domínio/validação. Qualquer falha inesperada — incluindo `IntegrityError`
+  residual não tratada no serviço apropriado — não deve ser mascarada.
+- **Classificação:** Implementar agora
+- **Justificativa:** decisão do usuário ao revisar o plano da TASK-035: uma
+  captura genérica de exceções esconderia bugs reais atrás de um `204`
+  aparentemente saudável. A única corrida esperada com `IntegrityError`
+  continua isolada dentro de `get_or_create_telegram_user` (TASK-056, via
+  `SAVEPOINT`); tudo o mais que chegar até a rota como `IntegrityError` é
+  inesperado e deve subir como `500`. A lista de exceções conhecidas é
+  fechada e explícita: `MissionNotFoundError`, `MissionVersionConflictError`,
+  `InvalidMissionTransitionError`, `MissionTransitionConditionError`,
+  `MissionReferenceError` e `MissionIntentError`.
+- **Próxima ação:** nenhuma; documentado em `docs/MISSION_COMMANDS.md` e
+  implementado em `backend/app/telegram/router.py`
+  (`_KNOWN_DISPATCH_ERRORS`).
+
+### DEC-012 — Fechar o escopo da TASK-035 (comandos de missão via Telegram)
+
+- **Data:** 2026-08-08
+- **Ideia:** `docs/tasks/TASK-035.md` só trazia uma frase de escopo real
+  (seleção de fontes). Quatro decisões precisaram ser fechadas antes de
+  implementar: (1) sem teclado interativo agora — as fontes vêm do que o
+  `IntentInterpreter` já extrai do texto livre; (2) a TASK-035 envia uma
+  resposta síncrona mínima ao Telegram, e não a TASK-036; (3) o seed das
+  quatro lojas da V1 entra nesta TASK, por ser dado de referência fixo já
+  definido em `docs/MARKETPLACE_SOURCES.md`; (4) quando o `Intent` de criação
+  não especifica nenhuma fonte, a missão usa automaticamente as quatro
+  fontes da V1 e sai `active` — nunca fica em `draft` por falta de fonte.
+- **Classificação:** Implementar agora
+- **Justificativa:** `docs/MVP.md` exige que "um usuário autorizado consegue
+  criar e consultar uma missão pelo canal Telegram" — sem resposta síncrona,
+  "consultar" não tem como funcionar para o usuário. `TASK-036` continua
+  reservada a notificações proativas orientadas a evento (alertas de preço,
+  TASK-027/042-044), não a essa resposta ao próprio comando do usuário. O
+  seed de lojas é dado de referência fixo, sem decisão de domínio nova,
+  diferente do que justificou uma TASK própria para a identidade do Telegram
+  (`DEC-011`). Toda `CREATE_MISSION` válida sair `active` evita o estado
+  intermediário "criada mas inerte" que uma missão em `draft` sem fonte
+  representaria.
+- **Próxima ação:** nenhuma; documentado em `docs/MISSION_COMMANDS.md` e
+  `docs/tasks/TASK-035.md`.
+
 ### DEC-011 — Criar a TASK-056 para vincular identidade do usuário ao Telegram antes da TASK-035
 
 - **Data:** 2026-08-07
