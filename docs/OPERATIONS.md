@@ -9,11 +9,11 @@ estratégia completa de disaster recovery.
 
 Antes de disponibilizar a instância a usuários, considere estes bloqueios:
 
-- o `collection_worker` da TASK-062 executa as coletas automaticamente, mas a
-  validação E2E externa completa da TASK-053 ainda precisa comprovar a cadeia
-  até a entrega ao usuário;
-- há suíte permanente de integração PostgreSQL da TASK-052, mas a suíte E2E
-  externa da TASK-053 ainda não existe;
+- o `collection_worker` da TASK-062 executa as coletas automaticamente; a
+  TASK-053 comprovou a cadeia completa até a entrega ao usuário (`PASS` em
+  2026-08-09, quatro fontes reais, Telegram real);
+- há suíte permanente de integração PostgreSQL da TASK-052 e suíte E2E
+  reproduzível/externa da TASK-053, ambas aprovadas;
 - não há release final da TASK-054, CI/CD ou deploy automático;
 - não há domínio, TLS ou reverse proxy permanentes;
 - Prometheus apenas avalia regras. Sem Alertmanager, não existe entrega externa

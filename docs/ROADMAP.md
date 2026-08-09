@@ -24,7 +24,7 @@
 | Testes E2E e lançamento | TASK-053 e TASK-054 | Validação ponta a ponta do fluxo real e preparação da release |
 | Expansão de fontes (futuro) | Tarefas a definir | Mercado Livre, Shopee, AliExpress e outras fontes futuras |
 
-As TASKs 000 a 052 e as TASKs 055 a 062 estão
+As TASKs 000 a 053 e as TASKs 055 a 062 estão
 concluídas. O preflight
 da TASK-036 revelou dependências reais não satisfeitas (pipeline de eventos
 persistidos/publicados e `chat_id` do Telegram, nenhum dos dois existente
@@ -63,11 +63,12 @@ e validou backup/restauração manual sem alegar disaster recovery. A TASK-052
 descartável, agora obrigatória no pipeline. O preflight da TASK-053 confirmou
 que não existia processo ligando agendas, providers, observações e eventos; a
 TASK-062 foi criada como requisito funcional do MVP (`DEC-041`) e concluiu a
-orquestração automática. A TASK-053 executou a suíte reproduzível e o Telegram
-real, mas permanece `BLOCKED_EXTERNAL` porque frete não pôde ser determinado
-sem login nos marketplaces; ela não está aprovada. A TASK-054 permanece
-bloqueada e não há próxima TASK executável até resolver ou reclassificar essa
-dependência externa. A
+orquestração automática. A TASK-053 refez a suíte reproduzível e o E2E
+externo depois da disponibilidade por card, do DEC-045, do DEC-046 e do
+DEC-047, obteve `PASS` nos dois modos em 2026-08-09 e foi encerrada com
+aprovação explícita do usuário; a falha isolada da Pichau no E2E externo é
+uma condição externa observada, não um bug interno pendente. A TASK-054 é a
+próxima TASK executável do roadmap, mas não foi iniciada automaticamente. A
 TASK-057 (`DEC-017`): validação real contra o
 `USER`/Gemini cobre 3 dos 4 `IntentKind`, e o usuário aceitou explicitamente
 encerrar nesse estado, adiando mais variedade de linguagem para a V2

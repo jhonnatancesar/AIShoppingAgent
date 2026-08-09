@@ -11,16 +11,16 @@ mantido como snapshot vivo enquanto o MVP avança, não o artefato final da
 TASK-054 (preparar release), que ainda está pendente.
 
 Atualizar este documento sempre que uma TASK relevante para produção for
-concluída ou revisada. Snapshot revisado em **2026-08-09**, após o preflight da
-TASK-062 concluir a orquestração automática antes da TASK-053.
+concluída ou revisada. Snapshot revisado em **2026-08-09**, após a TASK-053
+obter `PASS` no E2E reproduzível e no E2E externo (quatro fontes reais,
+Telegram real) e ser encerrada com aprovação explícita do usuário.
 
 ## Resumo executivo
 
-**Não está pronto para produção.** 61 das 63 tarefas planejadas estão
-concluídas, mas as 2 pendentes cobrem áreas que separam
-"funciona quando eu valido manualmente" de "está seguro para um usuário
-real depender disso": testes E2E externos e release. A coleta automática já
-existe, mas ainda precisa ser comprovada ponta a ponta até a entrega ao usuário.
+**Ainda não está pronto para produção — falta só a release.** 62 das 63
+tarefas planejadas estão concluídas; a única pendente é a TASK-054
+(preparar release MVP). A coleta automática (TASK-062) e a prova E2E
+completa até a entrega ao usuário (TASK-053, `PASS`) já estão comprovadas.
 
 ## Critérios objetivos do MVP (`docs/MVP.md`) — status real
 
@@ -29,10 +29,10 @@ existe, mas ainda precisa ser comprovada ponta a ponta até a entrega ao usuári
 | 1 | Ambiente local sobe de forma documentada e reproduzível | ✅ Atendido | Docker Compose, `docs/DEPENDENCIES.md`, `scripts\check.cmd` |
 | 2 | Usuário autorizado cria e consulta missão pelo Telegram | ✅ Atendido | TASK-046 autentica transporte/identidade; TASK-047 aplica RBAC/ownership; TASK-061 exige sessão por senha com Argon2id, TTL e recuperação segura |
 | 3 | Sistema pesquisa todas as fontes selecionadas, normaliza e preserva histórico | ✅ Atendido | TASK-062 agenda e executa automaticamente as fontes selecionadas, persiste observações append-only e isola falhas por loja |
-| 4 | Condição de preço produz evento e notificação rastreáveis | ⚠️ Parcial | TASK-062 produz observações/eventos automaticamente e o notifier existe; a TASK-053 deve comprovar a cadeia externa até o usuário |
+| 4 | Condição de preço produz evento e notificação rastreáveis | ✅ Atendido | TASK-062 produz observações/eventos automaticamente; TASK-053 comprovou a cadeia externa até o usuário (11 eventos reais, 11 notificações Telegram `succeeded`, 0 duplicadas) |
 | 5 | Recomendação/comparação básica com evidências históricas | ✅ Atendido | TASK-038 recomenda uma oferta com regras monetárias seguras e histórico identificável; TASK-039 compara as mesmas evidências, mantém a posição 1 invariável e não inventa total para frete desconhecido |
 | 6 | Todo uso de IA passa pelo AI Provider Manager | ✅ Atendido | Invariante reforçada e validada em todas as tarefas de IA (TASK-028 a TASK-032, TASK-057 a TASK-060) |
-| 7 | Fluxos críticos com testes de integração e ponta a ponta | ⚠️ Bloqueado externamente | Integração e E2E reproduzível passaram; autenticação passou no Telegram real, mas as ofertas externas ficaram `BLOCKED_EXTERNAL` porque o frete não é determinável sem login nos marketplaces |
+| 7 | Fluxos críticos com testes de integração e ponta a ponta | ✅ Atendido | Integração, E2E reproduzível e E2E externo aprovados (`PASS`, 2026-08-09); quatro fontes reais, Telegram real, Pichau isolada por instabilidade externa sem contaminar as demais |
 | 8 | Documentação operacional, segurança mínima e checklist de release concluídos | ⚠️ Parcial | TASK-051 entregou runbook, binds privados e restauração validada; o checklist/release final da TASK-054 permanece pendente |
 
 ## Bloqueios adicionais para rodar em produção de verdade
@@ -41,7 +41,7 @@ Além dos critérios formais do MVP:
 
 - **Coleta automática implementada**: TASK-062 consome `mission_schedules`,
   executa as fontes selecionadas, persiste histórico e publica eventos. A
-  TASK-053 ainda precisa validar externamente a entrega completa ao usuário.
+  TASK-053 validou externamente a entrega completa ao usuário (`PASS`).
 - **Autenticação real aplicada**: TASK-061 usa Argon2id, tokens descartáveis,
   sessão absoluta de 12 horas e recuperação pelo Telegram vinculado. MFA,
   e-mail verificado e outro canal permanecem futuros.
@@ -68,9 +68,9 @@ Além dos critérios formais do MVP:
   scheduler, CI/CD ou release.
 - **Integração permanente disponível** (TASK-052): migrations, persistência,
   concorrência e fluxos críticos rodam em PostgreSQL 18.4 descartável e isolado
-  como etapa obrigatória do pipeline; E2E externo continua na TASK-053.
+  como etapa obrigatória do pipeline; E2E externo (TASK-053) aprovado.
 - **Produtor e notifier desacoplados**: TASK-062 publica no event log e a
-  TASK-036 consome os alertas; a prova E2E conjunta permanece na TASK-053.
+  TASK-036 consome os alertas; a prova E2E conjunta (TASK-053) aprovada.
 - **Ambiente de validação é manual e efêmero**: a API roda no Docker Compose,
   mas o túnel `cloudflared` é recriado a cada sessão
   e o webhook do Telegram é reregistrado manualmente — não há deploy
@@ -89,17 +89,16 @@ Além dos critérios formais do MVP:
 | Compra e eventos | TASK-038 a TASK-041, TASK-043 a TASK-045 | 7/7 | — |
 | Catálogo de eventos | TASK-042 | 1/1 | — |
 | Segurança — canal, autorização e autenticação real | TASK-046, TASK-047, TASK-061 | 3/3 | — |
-| Segurança e entrega — continuação | TASK-048 a TASK-054 | 5/7 | TASK-053 e TASK-054 |
+| Segurança e entrega — continuação | TASK-048 a TASK-054 | 6/7 | TASK-054 |
 | Orquestração automática do fluxo principal | TASK-062 | 1/1 | — |
 | Store Providers e identidade | TASK-055, TASK-056 | 2/2 | — |
 | Robustez, confirmação e IA (V1.2 antecipado) | TASK-057 a TASK-060 | 4/4 | — |
 
-**Total: 61 concluídas, 2 pendentes.**
+**Total: 62 concluídas, 1 pendente.**
 
 ## Recomendação
 
 Continuar validando manualmente por sessão (como já vem sendo feito) é
-seguro. Colocar um usuário real dependendo do sistema hoje não é — os
-maiores riscos são a ausência da prova E2E externa completa e da release. A
-ordem mais natural para fechar essas lacunas segue o próprio
-`docs/ROADMAP.md`: TASK-053 e TASK-054.
+seguro. Colocar um usuário real dependendo do sistema hoje ainda não é — a
+prova E2E externa completa já foi obtida (TASK-053, `PASS`), mas falta a
+release (TASK-054), próxima e única TASK pendente do roadmap.

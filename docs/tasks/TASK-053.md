@@ -1,6 +1,6 @@
 # TASK-053 — Criar testes ponta a ponta
 
-Status: E2E externo `PASS` em 2026-08-09 (ver "E2E externo final refeito" abaixo); aguardando aprovação explícita do usuário para encerramento.
+Status: **Concluída** em 2026-08-09 — E2E reproduzível e E2E externo aprovados (`PASS`), fechamento confirmado explicitamente pelo usuário (ver "E2E externo final refeito" e "Encerramento" abaixo).
 
 Dependência obrigatória: TASK-062 concluída. O E2E exercita o fluxo real da
 aplicação e não monta manualmente a sequência agenda → coleta → persistência
@@ -52,22 +52,45 @@ Ausência de evidência elegível por comportamento de terceiro é
 `BLOCKED_EXTERNAL`, nunca sucesso. Antes de atribuir `FAIL_INTERNO`, o
 diagnóstico deve demonstrar que a falha pertence ao sistema.
 
-## Critérios de aceite
+## Critérios de aceite — status final (2026-08-09)
 
-- a missão nasce do webhook autenticado, passa pela interpretação e pela
-  confirmação pública existente;
-- a agenda é reivindicada pelo worker, sem chamada manual da cadeia interna;
-- quatro fontes selecionadas geram runs terminais independentes;
-- ao menos uma observação externa elegível (preço real disponível na moeda
-  do critério, frete opcional) produz alerta de alvo e entrega Telegram pela
-  cadeia normal;
-- replay da mesma update/execução não repete efeitos;
-- o mesmo evento possui no máximo um consumo terminal por consumidor;
-- restart não reprocessa trabalho concluído, mas nova coleta legítima pode
-  acrescentar nova observação histórica;
-- preferência desativada produz `skipped` terminal e não reenvia ao reativar;
-- ownership, privacidade da telemetria e diagnósticos sanitizados permanecem;
-- pipeline completo, revisão, documentação e workflow Git aprovados.
+- [x] a missão nasce do webhook autenticado, passa pela interpretação e pela
+  confirmação pública existente — confirmado no E2E externo real (missão
+  "Logitech g pro 2" criada e confirmada pelo usuário via Telegram real) e
+  no E2E reproduzível;
+- [x] a agenda é reivindicada pelo worker, sem chamada manual da cadeia
+  interna — `collection_worker` real processou a agenda sozinho (poll de
+  15s), sem `once=True`/chamada direta no modo externo;
+- [x] quatro fontes selecionadas geram runs terminais independentes — 3
+  `succeeded` (Amazon, Terabyte, Kabum) + 1 `failed` (Pichau), todos
+  terminais e independentes;
+- [x] ao menos uma observação externa elegível produz alerta de alvo e
+  entrega Telegram pela cadeia normal — 41 observações elegíveis, 11
+  eventos `price.target_reached.v1`, 11 notificações Telegram reais
+  `succeeded`;
+- [x] replay da mesma update/execução não repete efeitos — validado no E2E
+  reproduzível (restart sem duplicação de runs/observações/consumo);
+- [x] o mesmo evento possui no máximo um consumo terminal por consumidor —
+  0 consumos duplicados no E2E externo (11 eventos, 11 consumos
+  `succeeded`) e validado explicitamente no E2E reproduzível;
+- [x] restart não reprocessa trabalho concluído, mas nova coleta legítima
+  pode acrescentar nova observação histórica — validado no E2E
+  reproduzível;
+- [x] preferência desativada produz `skipped` terminal e não reenvia ao
+  reativar — validado no E2E reproduzível (missão "e2e skipped");
+- [x] ownership, privacidade da telemetria e diagnósticos sanitizados
+  permanecem — validado no E2E reproduzível (log final sem título de
+  missão nem Telegram ID) e mantido no E2E externo;
+- [x] pipeline completo, revisão, documentação e workflow Git aprovados —
+  `scripts\check.ps1`: 723 testes rápidos, 90,43% de cobertura, 13
+  integrações PostgreSQL reais, migration head `20260809_0003`.
+
+Todos os critérios de aceite estão atendidos. A falha isolada da Pichau no
+E2E externo (instabilidade externa confirmada, não `403/429`) não invalida
+nenhum critério: gerou run terminal independente, não foi mascarada como
+sucesso, não derrubou as outras três fontes e não acionou o backoff
+persistente do DEC-047 indevidamente — o sistema degradou exatamente como
+projetado.
 
 ## Fora do escopo
 
@@ -230,4 +253,26 @@ insistir contra o bloqueio: as outras três fontes produziram evidência
 elegível real, geraram eventos reais e o Telegram real confirmou entrega sem
 duplicação. Nenhuma observação/evento foi inserido manualmente; nenhum
 provider foi contornado; nenhum CAPTCHA/bloqueio foi burlado.
+
+## Encerramento
+
+Aprovado explicitamente pelo usuário em 2026-08-09, com o resultado acima
+aceito nestes termos:
+
+- Amazon, Terabyte e Kabum: `succeeded`;
+- Pichau: falha externa isolada (`provider_unavailable`/`circuit_open`),
+  tratada corretamente sem contaminar as demais fontes nem o backoff
+  persistente do DEC-047 — **condição externa observada, não um bug interno
+  pendente**; nenhuma ação de código é devida por isso;
+- 11 eventos `price.target_reached.v1`, 11 consumos Telegram `succeeded`, 0
+  duplicados;
+- cadeia real executada do webhook ao Telegram sem nenhuma chamada manual
+  interna;
+- pipeline oficial completo aprovado (723 testes rápidos, 90,43% de
+  cobertura, 13 integrações PostgreSQL reais);
+- E2E reproduzível aprovado (2/2);
+- E2E externo aprovado (`PASS`).
+
+Todos os critérios de aceite atendidos (seção acima). TASK-053 **concluída**.
+TASK-054 não foi iniciada.
 

@@ -110,7 +110,7 @@ Nunca iniciar automaticamente a próxima TASK. Encerrar apresentando resumo da i
 
 ## Estado atual
 
-TASKs 000 a 052 e TASK-055 a TASK-062 concluídas. A observabilidade da
+TASKs 000 a 053 e TASK-055 a TASK-062 concluídas. A observabilidade da
 TASK-045 (`DEC-031`) foi validada com PostgreSQL, API, worker, Collector,
 Prometheus e Jaeger reais, incluindo falha/recuperação e privacidade. A
 TASK-046 autentica a identidade mínima do canal Telegram (`DEC-032`). A
@@ -132,6 +132,7 @@ por card, do DEC-045 (alertas por `amount`), do DEC-046 (intervalo/stagger) e
 do DEC-047 (backoff persistente por fonte): ambos aprovados, com o E2E
 externo classificado `PASS` em 2026-08-09 (quatro fontes reais, Pichau falhou
 por instabilidade externa isolada sem virar `FAIL_INTERNO`, Telegram real
-confirmou entrega sem duplicação). A TASK-053 continua sem fechamento
-formal — aguarda aprovação explícita do usuário. A TASK-054 não deve começar
-automaticamente até essa aprovação.
+confirmou entrega sem duplicação). A TASK-053 está **concluída**, com
+fechamento aprovado explicitamente pelo usuário; a condição externa da
+Pichau fica registrada como observação de terceiro, não como bug interno
+pendente. A TASK-054 é a próxima TASK do roadmap, mas não foi iniciada.

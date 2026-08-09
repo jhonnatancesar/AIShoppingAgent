@@ -2,7 +2,7 @@
 
 Cada arquivo descreve uma unidade de trabalho. Antes de executar uma tarefa, leia os documentos obrigatórios definidos em `AGENTS.md`.
 
-As TASKs 000 a 052 e as TASKs 055 a 062 estão concluídas. A TASK-038 recomenda
+As TASKs 000 a 053 e as TASKs 055 a 062 estão concluídas. A TASK-038 recomenda
 deterministicamente (`DEC-026`), a TASK-039 compara as mesmas evidências
 (`DEC-027`), a TASK-040 define a confirmação com TTL (`DEC-028`) e a TASK-041
 persiste sua solicitação imutável e resolução append-only (`DEC-029`). A
@@ -17,8 +17,9 @@ fecha privacidade técnica com retenções limitadas e desidentificação fail-c
 backup/restauração manual validada (`DEC-039`). A TASK-052 mantém a suíte
 PostgreSQL real, isolada e obrigatória do pipeline (`DEC-040`). A TASK-062 fecha
 a lacuna entre agenda, providers, histórico e event log (`DEC-041`). A
-TASK-053 obteve `PASS` no E2E reproduzível (2/2) e no E2E externo com as
+A TASK-053 obteve `PASS` no E2E reproduzível (2/2) e no E2E externo com as
 quatro fontes reais e Telegram real (2026-08-09), depois da disponibilidade
-por card, do DEC-045, do DEC-046 e do DEC-047. Ainda assim, ela **não está
-formalmente encerrada** — aguarda aprovação explícita do usuário. A TASK-054
-não deve começar automaticamente até essa aprovação.
+por card, do DEC-045, do DEC-046 e do DEC-047, e foi encerrada com aprovação
+explícita do usuário. A falha isolada da Pichau no E2E externo é uma
+condição externa observada, não um bug interno pendente. A TASK-054 é a
+próxima TASK do roadmap; não foi iniciada.

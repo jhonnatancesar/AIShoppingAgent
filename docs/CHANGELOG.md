@@ -20,8 +20,10 @@
   acionar o backoff persistente do `DEC-047`. 58 observações, 41 elegíveis,
   11 eventos de alvo, 11 notificações Telegram reais entregues sem
   duplicação.
-- TASK-053 aguarda aprovação explícita do usuário para encerramento; TASK-054
-  não iniciada.
+- TASK-053 **concluída**, com fechamento aprovado explicitamente pelo
+  usuário; a falha isolada da Pichau fica registrada como condição externa
+  observada, não como bug interno pendente. TASK-054 é a próxima TASK do
+  roadmap, mas não foi iniciada.
 
 ## 2026-08-09 — TASK-053: E2E implementado, validação externa bloqueada
 

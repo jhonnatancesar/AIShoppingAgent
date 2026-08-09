@@ -249,9 +249,10 @@ notificações Telegram reais entregues sem duplicação; Amazon e Terabyte
 100% `AVAILABLE`, Kabum resolveu 3 ofertas via fallback seletivo (top K=3),
 Pichau falhou por instabilidade externa isolada (não um `403/429`
 confirmado) sem virar `FAIL_INTERNO` e sem acionar o backoff persistente do
-DEC-047. Ainda assim, a TASK-053 **não está formalmente encerrada**: aguarda
-aprovação explícita do usuário. A TASK-054 não deve começar automaticamente
-até essa aprovação.
+DEC-047. A TASK-053 está **concluída**, com fechamento aprovado
+explicitamente pelo usuário em 2026-08-09; a condição externa da Pichau
+permanece registrada como observação de terceiro, não como bug interno
+pendente. A TASK-054 é a próxima TASK do roadmap, mas não foi iniciada.
 
 A TASK-058 (`DEC-015`) está **concluída**: `create_mission` e
 `mission_command` não executam mais direto — ficam encenados em
