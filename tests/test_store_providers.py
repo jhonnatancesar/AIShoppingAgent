@@ -457,6 +457,103 @@ def test_fallback_isolates_failure_and_still_resolves_next_candidate(
     assert resolved["https://x/ok"] == "Disponível"
 
 
+def test_fallback_stops_entire_cycle_on_blocked_status(monkeypatch) -> None:
+    goto_calls: list[str] = []
+
+    class Response:
+        def __init__(self, status):
+            self.status = status
+
+    class First:
+        async def wait_for(self, **kwargs):
+            return None
+
+    class Locator:
+        first = First()
+
+    offers = (
+        RawCollectedOffer(
+            source_code="fk3",
+            url="https://x/cheapest",
+            title="A",
+            collected_at=NOW,
+            raw_price="R$ 5,00",
+            raw_currency="BRL",
+            raw_availability=None,
+        ),
+        RawCollectedOffer(
+            source_code="fk3",
+            url="https://x/second",
+            title="B",
+            collected_at=NOW,
+            raw_price="R$ 10,00",
+            raw_currency="BRL",
+            raw_availability=None,
+        ),
+        RawCollectedOffer(
+            source_code="fk3",
+            url="https://x/third",
+            title="C",
+            collected_at=NOW,
+            raw_price="R$ 15,00",
+            raw_currency="BRL",
+            raw_availability=None,
+        ),
+    )
+
+    class Page:
+        async def goto(self, url, **kwargs):
+            goto_calls.append(url)
+            if url.endswith("/cheapest"):
+                return Response(403)
+            return Response(200)
+
+        def locator(self, selector):
+            return Locator()
+
+    class Session:
+        def __init__(self, settings):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def new_page(self):
+            return Page()
+
+    class BlockedFallbackProvider(PlaywrightStoreProvider):
+        source_code = "fk3"
+        result_selector = ".offer"
+
+        def build_url(self, query):
+            return "https://example.test/search"
+
+        async def extract(self, page, collected_at):
+            return offers
+
+        async def resolve_product_availability(self, page):
+            return "Disponível"
+
+    monkeypatch.setattr("app.collection.providers.base.BrowserSession", Session)
+    request = CollectionRequest(uuid4(), "fk3", "GPU", NOW)
+    provider = BlockedFallbackProvider(
+        clock=lambda: NOW, availability_fallback_max_candidates=3
+    )
+
+    result = asyncio.run(provider.collect(request))
+
+    # 403 no primeiro candidato (o mais barato) encerra o ciclo: os outros
+    # dois candidatos nunca são abertos, mesmo estando dentro do top-K.
+    assert goto_calls == ["https://example.test/search", "https://x/cheapest"]
+    resolved = {offer.url: offer.raw_availability for offer in result.offers}
+    assert resolved["https://x/cheapest"] is None
+    assert resolved["https://x/second"] is None
+    assert resolved["https://x/third"] is None
+
+
 def test_fallback_skips_navigation_when_provider_has_no_product_page_hook(
     monkeypatch,
 ) -> None:

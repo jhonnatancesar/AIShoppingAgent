@@ -35,6 +35,7 @@ from app.observability.metrics import observe_resilience_event
 
 Clock = Callable[[], datetime]
 _HAS_DIGIT = re.compile(r"\d")
+_BLOCKED_STATUSES = frozenset({401, 403, 429})
 
 
 class PlaywrightStoreProvider:
@@ -135,7 +136,7 @@ class PlaywrightStoreProvider:
                 raise ProviderNavigationError(
                     self.source_code, response.status if response else None
                 )
-            if response.status in {401, 403, 429}:
+            if response.status in _BLOCKED_STATUSES:
                 raise ProviderBlockedError(self.source_code, response.status)
             try:
                 await page.locator(self.result_selector).first.wait_for(
@@ -156,8 +157,11 @@ class PlaywrightStoreProvider:
 
         AVAILABLE/UNAVAILABLE já resolvidos no card nunca chegam aqui
         (`raw_availability` já preenchido). Candidatos sem preço válido não
-        entram no ranking; falha ao abrir um candidato nunca derruba os
-        seguintes nem o resultado já obtido no card.
+        entram no ranking; falha isolada (timeout, navegação) em um
+        candidato nunca derruba os seguintes nem o resultado já obtido no
+        card. Um 401/403/429 é tratado como sinal de bloqueio/challenge da
+        própria fonte: encerra o fallback do ciclo inteiro sem tentar mais
+        candidatos, para não insistir contra uma proteção anti-bot ativa.
         """
         if self._availability_fallback_max_candidates == 0:
             return offers
@@ -175,7 +179,12 @@ class PlaywrightStoreProvider:
         resolved: dict[str, str] = {}
         for offer in candidates:
             try:
-                await page.goto(offer.url, wait_until="domcontentloaded")
+                response = await page.goto(offer.url, wait_until="domcontentloaded")
+            except Exception:
+                continue
+            if response is not None and response.status in _BLOCKED_STATUSES:
+                break
+            try:
                 evidence = await self.resolve_product_availability(page)
             except Exception:
                 evidence = None
