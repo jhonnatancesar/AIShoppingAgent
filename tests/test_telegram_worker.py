@@ -52,12 +52,24 @@ async def test_worker_once_processes_and_commits_one_batch(
         calls.append((active_session, limit))
         return TelegramNotificationBatch(claimed=1, succeeded=1, failed=0, skipped=0)
 
+    async def _process_auth(*args: object, **kwargs: object):
+        return TelegramNotificationBatch(0, 0, 0, 0)
+
     monkeypatch.setattr("app.telegram.worker.process_telegram_notifications", _process)
+    monkeypatch.setattr(
+        "app.telegram.worker.process_telegram_authentication_notifications",
+        _process_auth,
+    )
+    publish = MagicMock()
+    monkeypatch.setattr(
+        "app.telegram.worker.publish_due_authentication_notifications", publish
+    )
 
     await run_worker(settings, once=True)
 
     assert calls == [(session, 25)]
-    transaction.__exit__.assert_called_once()
+    assert transaction.__exit__.call_count == 3
+    publish.assert_called_once_with(session, limit=25)
     engine.dispose.assert_called_once()
 
 
@@ -97,6 +109,17 @@ async def test_worker_rolls_back_then_backs_off_outside_failed_transaction(
             raise asyncio.CancelledError
 
     monkeypatch.setattr("app.telegram.worker.process_telegram_notifications", process)
+
+    async def process_auth(*args: object, **kwargs: object):
+        return TelegramNotificationBatch(0, 0, 0, 0)
+
+    monkeypatch.setattr(
+        "app.telegram.worker.process_telegram_authentication_notifications",
+        process_auth,
+    )
+    monkeypatch.setattr(
+        "app.telegram.worker.publish_due_authentication_notifications", MagicMock()
+    )
     monkeypatch.setattr("app.telegram.worker.asyncio.sleep", sleep)
 
     with pytest.raises(asyncio.CancelledError):
@@ -104,5 +127,5 @@ async def test_worker_rolls_back_then_backs_off_outside_failed_transaction(
 
     assert calls == 2
     assert sleeps[0] == settings.worker_failure_backoff_seconds
-    assert transaction.__exit__.call_count == 2
+    assert transaction.__exit__.call_count == 5
     engine.dispose.assert_called_once()

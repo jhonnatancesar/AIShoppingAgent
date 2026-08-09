@@ -18,6 +18,8 @@ Este documento impede aumento de escopo durante o desenvolvimento da primeira ve
 
 ## IA e planos comerciais
 
+- Negociação automática de orçamento ausente e pesquisa de média de mercado
+  para sugerir valor na V1; essa conversa foi reservada à V1.2 (`DEC-044`).
 - Plano PLUS.
 - Planos FREE/PLUS/PRO, assinatura e entitlements.
 - Múltiplos papéis, `user_roles` e gestão administrativa de papéis na V1.

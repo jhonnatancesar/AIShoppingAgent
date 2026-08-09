@@ -26,3 +26,10 @@ limite de `numeric(19,4)` ou conflito de moeda geram
 
 Persistência pertence à TASK-026 e observações históricas à TASK-015.
 Comparações, alertas e agregações derivam do histórico; não devem destruí-lo.
+
+Esta semântica de persistência (`total_amount` = item + frete conhecido) não
+define a base dos alertas de monitoramento da V1: o avaliador de alertas
+(`docs/PRICE_ALERTS.md`, `DEC-045`) compara sempre `amount`, nunca
+`total_amount`, para nunca misturar bases diferentes entre observações.
+`app.purchase` (custo final/compra) é quem efetivamente usa a semântica de
+`total_amount` descrita aqui, exigindo frete conhecido para afirmar um total.

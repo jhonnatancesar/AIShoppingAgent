@@ -9,7 +9,7 @@ missão.
 - `id`: UUID gerado pela aplicação;
 - `mission_id`: missão obrigatória e única, protegida por `RESTRICT`;
 - `search_query`: texto de busca obrigatório e não vazio;
-- `target_amount`: total-alvo opcional em `numeric(19,4)`, nunca negativo e comparado ao preço com frete conhecido;
+- `target_amount`: preço-alvo opcional em `numeric(19,4)`, nunca negativo. Na V1 (`DEC-045`), representa o preço-alvo do **produto** (`PriceObservation.amount`) para fins de monitoramento/alerta — não exige frete conhecido e não afirma custo final entregue; custo final com frete continua exclusivo de `app.purchase`;
 - `target_currency`: código ISO 4217 opcional em `char(3)`;
 - `created_at` e `updated_at`: timestamps obrigatórios em UTC.
 

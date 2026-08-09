@@ -110,6 +110,11 @@ def test_metric_dimensions_are_closed_and_sanitized() -> None:
         in SUPPORTED_EVENT_TYPES
     )
     assert normalized_event_type("future.dynamic.event") == "other"
+    assert {
+        "authentication.completed.v1",
+        "authentication.session_expiring.v1",
+        "authentication.session_expired.v1",
+    } <= SUPPORTED_EVENT_TYPES
     assert normalized_route(_request("/items/secret-canary")) == "/items/{item_id}"
 
     observe_http_request(

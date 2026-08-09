@@ -91,7 +91,10 @@ fechado. O papel `PLUS`, planos e múltiplos papéis permanecem fora do MVP.
   `favorite_stores` e `preferred_categories` em passos sequenciais,
   guardando o passo pendente em `registration_step`; ele intercepta a
   próxima mensagem do usuário diretamente, sem passar pelo
-  `IntentInterpreter`. O comando `/upgrade` existe e é visível no menu do
+  `IntentInterpreter`. As lojas são apresentadas como `1` Kabum, `2` Pichau,
+  `3` Terabyte, `4` Amazon e `5` Todas; combinações usam números separados por
+  vírgula. Ao terminar, o mesmo fluxo emite o link HTTPS para criar a senha e
+  orienta o login, sem receber a senha pelo chat. O comando `/upgrade` existe e é visível no menu do
   bot, mas responde apenas que a função está "em breve" — nenhuma lógica
   real de mudança de plano/perfil está implementada
   (`docs/OUT_OF_SCOPE.md`).

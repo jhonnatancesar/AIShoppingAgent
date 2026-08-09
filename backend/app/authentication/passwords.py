@@ -6,12 +6,15 @@ from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
 from argon2.low_level import Type
 
-MIN_PASSWORD_LENGTH = 15
+MIN_PASSWORD_LENGTH = 8
 MAX_PASSWORD_LENGTH = 128
 
 # Baseline local e determinística da V1. A comparação é do segredo inteiro.
 _COMMON_PASSWORDS = frozenset(
     {
+        "12345678",
+        "123456789",
+        "1234567890",
         "123456789012345",
         "1234567890123456",
         "12345678901234567890",
@@ -19,8 +22,12 @@ _COMMON_PASSWORDS = frozenset(
         "adminadminadmin",
         "iloveyouiloveyou",
         "letmeinletmeinletmein",
+        "password",
         "passwordpassword",
+        "qwerty123",
+        "qwertyui",
         "qwertyuiopasdfgh",
+        "senha123",
         "senha123senha123",
         "senha muito fraca",
         "welcome123welcome",
@@ -49,7 +56,7 @@ def normalize_password(password: str) -> str:
 def validate_password(password: str, *, username: str | None = None) -> str:
     normalized = normalize_password(password)
     if len(normalized) < MIN_PASSWORD_LENGTH:
-        raise PasswordPolicyError("A senha precisa ter pelo menos 15 caracteres.")
+        raise PasswordPolicyError("A senha precisa ter pelo menos 8 caracteres.")
     if len(normalized) > MAX_PASSWORD_LENGTH:
         raise PasswordPolicyError("A senha pode ter no máximo 128 caracteres.")
     comparable = normalized.casefold()

@@ -30,6 +30,7 @@ from app.authentication.service import (
     logout,
     token_digest,
 )
+from app.events import Event
 from app.users.models import User, UserRole
 
 NOW = datetime(2026, 8, 8, 15, 0, tzinfo=UTC)
@@ -158,6 +159,7 @@ def test_login_consumes_token_and_creates_absolute_session() -> None:
     session.execute.side_effect = [
         _result(optional=token),
         _result(optional=credential),
+        MagicMock(),
     ]
 
     action = complete_action(
@@ -170,11 +172,14 @@ def test_login_consumes_token_and_creates_absolute_session() -> None:
 
     added = [call.args[0] for call in session.add.call_args_list]
     auth_session = next(value for value in added if isinstance(value, UserAuthSession))
+    event = next(value for value in added if isinstance(value, Event))
     assert action is CredentialAction.LOGIN
     assert token.consumed_at == NOW
     assert auth_session.user_id == user.id
     assert auth_session.telegram_user_id == 778899
     assert auth_session.expires_at == NOW + SESSION_TTL
+    assert event.event_type == "authentication.completed.v1"
+    assert event.payload == {"user_id": str(user.id), "action": "login"}
     assert credential.failed_login_attempts == 0
     assert credential.login_window_started_at is None
 

@@ -6,6 +6,13 @@ from app.core.config import get_settings
 from app.telegram.bot_api import call_bot_api
 
 
+def _require_success(operation: str, response: dict) -> dict:
+    if response.get("ok") is not True:
+        code = response.get("error_code", "unknown")
+        raise SystemExit(f"Telegram {operation} failed with error_code={code}")
+    return response
+
+
 def set_webhook(url: str) -> None:
     settings = get_settings()
     if settings.telegram_bot_token is None:
@@ -14,10 +21,13 @@ def set_webhook(url: str) -> None:
         raise SystemExit("AISHOPPING_TELEGRAM_WEBHOOK_SECRET is required")
     secret = settings.telegram_webhook_secret.get_secret_value()
     print(
-        call_bot_api(
+        _require_success(
             "setWebhook",
-            {"url": url, "secret_token": secret},
-            bot_token=settings.telegram_bot_token,
+            call_bot_api(
+                "setWebhook",
+                {"url": url, "secret_token": secret},
+                bot_token=settings.telegram_bot_token,
+            ),
         )
     )
 
@@ -26,14 +36,24 @@ def delete_webhook() -> None:
     settings = get_settings()
     if settings.telegram_bot_token is None:
         raise SystemExit("AISHOPPING_TELEGRAM_BOT_TOKEN is required")
-    print(call_bot_api("deleteWebhook", bot_token=settings.telegram_bot_token))
+    print(
+        _require_success(
+            "deleteWebhook",
+            call_bot_api("deleteWebhook", bot_token=settings.telegram_bot_token),
+        )
+    )
 
 
 def webhook_info() -> None:
     settings = get_settings()
     if settings.telegram_bot_token is None:
         raise SystemExit("AISHOPPING_TELEGRAM_BOT_TOKEN is required")
-    print(call_bot_api("getWebhookInfo", bot_token=settings.telegram_bot_token))
+    print(
+        _require_success(
+            "getWebhookInfo",
+            call_bot_api("getWebhookInfo", bot_token=settings.telegram_bot_token),
+        )
+    )
 
 
 def main() -> None:

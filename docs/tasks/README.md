@@ -16,5 +16,8 @@ fecha privacidade técnica com retenções limitadas e desidentificação fail-c
 (`DEC-038`). A TASK-051 consolida o runbook operacional, binds privados e
 backup/restauração manual validada (`DEC-039`). A TASK-052 mantém a suíte
 PostgreSQL real, isolada e obrigatória do pipeline (`DEC-040`). A TASK-062 fecha
-a lacuna entre agenda, providers, histórico e event log (`DEC-041`). A próxima
-tarefa executável é a TASK-053.
+a lacuna entre agenda, providers, histórico e event log (`DEC-041`). A
+TASK-053 possui suíte reproduzível e autenticação Telegram real aprovadas, mas
+permanece `BLOCKED_EXTERNAL` pela ausência de frete determinável sem login nos
+marketplaces. Ela não está concluída; a TASK-054 continua bloqueada e não
+existe próxima TASK executável até decisão sobre essa dependência.

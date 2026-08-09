@@ -27,6 +27,13 @@ from app.observability.tracing import configure_tracing
 logger = logging.getLogger("app.collection.worker")
 
 
+# Pichau e Terabyte exigem Chromium headed (via Xvfb) para não serem
+# bloqueadas por proteção anti-bot; Amazon e Kabum toleram headless.
+# Mesma distinção de backend/scripts/validate_store_providers.py e
+# docs/PLAYWRIGHT.md (TASK-055) — o worker de produção não a herdava.
+_HEADED_SOURCES = frozenset({"pichau", "terabyte"})
+
+
 def build_collection_adapter(settings: Settings) -> CollectionAdapter:
     retry_policy = RetryPolicy(
         max_attempts=settings.safe_retry_max_attempts,
@@ -34,16 +41,18 @@ def build_collection_adapter(settings: Settings) -> CollectionAdapter:
         max_delay_seconds=settings.retry_max_delay_seconds,
         retry_after_cap_seconds=settings.retry_after_cap_seconds,
     )
-    browser = BrowserSettings(
-        headless=True,
-        action_timeout_ms=max(1, int(settings.external_http_timeout_seconds * 1000)),
-        navigation_timeout_ms=max(
-            1, int(settings.external_http_timeout_seconds * 1000)
-        ),
-    )
+    action_timeout_ms = max(1, int(settings.external_http_timeout_seconds * 1000))
+
+    def _browser_settings(headless: bool) -> BrowserSettings:
+        return BrowserSettings(
+            headless=headless,
+            action_timeout_ms=action_timeout_ms,
+            navigation_timeout_ms=action_timeout_ms,
+        )
+
     return CollectionAdapter(
         provider_type(
-            browser,
+            _browser_settings(provider_type.source_code not in _HEADED_SOURCES),
             retry_policy=retry_policy,
             circuit_failure_threshold=settings.circuit_failure_threshold,
             circuit_open_seconds=settings.circuit_open_seconds,

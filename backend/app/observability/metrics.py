@@ -28,6 +28,9 @@ SUPPORTED_EVENT_TYPES = frozenset(
     {
         "price.decreased.v1",
         "price.target_reached.v1",
+        "authentication.completed.v1",
+        "authentication.session_expiring.v1",
+        "authentication.session_expired.v1",
     }
 )
 

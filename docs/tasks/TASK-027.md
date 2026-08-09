@@ -9,10 +9,12 @@ Avaliar observações históricas e produzir candidatos tipados de alerta de pre
 ## Escopo
 
 - Detectar queda de preço na mesma oferta e moeda.
-- Detectar a entrada no total-alvo de uma missão ativa sem repetição contínua.
+- Detectar a entrada no preço-alvo de uma missão ativa sem repetição contínua.
 - Ignorar disponibilidade não confirmada e comparações entre moedas distintas.
-- Ignorar custo total quando o frete for desconhecido; frete nulo nunca é zero
-  nem grátis e não pode produzir queda/atingimento de alvo total.
+- V1 (`DEC-045`): comparar sempre `amount` (preço do produto), nunca
+  `total_amount` — frete desconhecido não bloqueia alerta e frete nulo nunca
+  é zero nem grátis; custo final com frete continua exclusivo de
+  `app.purchase`.
 - Não persistir, publicar, consumir ou notificar eventos.
 
 ## Ordem e dependências

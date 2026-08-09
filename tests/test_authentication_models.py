@@ -54,6 +54,12 @@ def test_sessions_enforce_absolute_ttl_and_permanent_revocation() -> None:
     assert any(
         index.name == "ix_user_auth_sessions_active_lookup" for index in table.indexes
     )
+    assert table.c.expiry_warning_event_published.server_default is not None
+    assert table.c.expiry_event_published.server_default is not None
+    assert any(
+        index.name == "ix_user_auth_sessions_expiry_notifications"
+        for index in table.indexes
+    )
 
 
 def test_action_tokens_are_hashed_unique_and_terminal_once() -> None:

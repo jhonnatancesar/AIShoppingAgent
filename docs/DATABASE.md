@@ -432,7 +432,8 @@ em `docs/AUDIT.md`.
   `(user_id, recorded_at)` parcial para a janela de updates aceitos.
 - `audit_entries (resource_type, resource_id, created_at, id)` e `audit_entries (actor_id, created_at)` quando `actor_id` não for nulo.
 - `user_auth_sessions (user_id, telegram_user_id, expires_at)` parcial para
-  sessões ainda não revogadas.
+  sessões ainda não revogadas, e `expires_at` parcial para avisos de expiração
+  ainda não publicados.
 - `credential_action_tokens (user_id, action, created_at)` para rate limiting,
   além de expiração e unicidade do hash do token.
 
@@ -446,7 +447,10 @@ em `docs/AUDIT.md`.
 - `updated_at` não é evidência de domínio; transições, preços, eventos, tentativas de consumo e auditoria possuem seus próprios horários imutáveis.
 - Credenciais da TASK-061 ficam somente em `user_credentials`; senha nunca é
   reversível. `credential_action_tokens` guarda somente SHA-256 de tokens
-  aleatórios e `user_auth_sessions` guarda estado temporal/revogação.
+  aleatórios e `user_auth_sessions` guarda estado temporal/revogação. A revisão
+  `20260809_0002` acrescenta marcadores idempotentes de publicação do aviso
+  prévio e da expiração; linhas anteriores são marcadas na migration para não
+  produzir mensagens retroativas.
 - Migrações, metadata ORM, sessões e conexão foram configuradas na TASK-011.
   Todas as entidades previstas até `collection_runs` e `price_observations` já
   foram implementadas, além de `events` (TASK-043),

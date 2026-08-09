@@ -38,6 +38,10 @@ worker, outcome e os catálogos fechados `component`/`event` de resiliência.
 valores desconhecidos viram `other`. IDs, URL, texto livre e mensagens de
 exceção nunca viram labels.
 
+A allowlist fechada atual contém os dois eventos de preço e os três eventos de
+autenticação da V1. A inclusão desses nomes não adiciona IDs de usuário/sessão
+às métricas; tipos futuros continuam agrupados em `other` até revisão explícita.
+
 Traces HTTP omitem URL, query, headers e payload. Spans PostgreSQL expõem
 somente sistema e operação fechada; statement, bind parameters, literais, DSN,
 credenciais e resultados não são exportados. Logs não usam o access log bruto

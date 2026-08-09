@@ -3,6 +3,8 @@
 from app.events.catalog import (
     EVENT_CATALOG,
     AggregateType,
+    AuthenticationCompletedPayload,
+    AuthenticationSessionPayload,
     AvailabilityChangedPayload,
     CollectionCompletedPayload,
     CollectionFailedPayload,
@@ -27,6 +29,8 @@ from app.events.service import EventPublicationError, publish_event
 __all__ = [
     "EVENT_CATALOG",
     "AggregateType",
+    "AuthenticationCompletedPayload",
+    "AuthenticationSessionPayload",
     "AvailabilityChangedPayload",
     "CollectionCompletedPayload",
     "CollectionFailedPayload",

@@ -33,7 +33,7 @@ CASES = (
     ),
     (
         AmazonProvider,
-        '<div data-component-type="s-search-result" data-asin="B0123"><h2><a href="https://www.amazon.com.br/dp/B0123">GPU Amazon</a></h2><span class="a-price"><span class="a-offscreen">R$ 2.199,90</span></span><span>Prime e frete grátis</span></div>',
+        '<div data-component-type="s-search-result" data-asin="B0123"><h2><a href="https://www.amazon.com.br/dp/B0123">GPU Amazon</a></h2><span class="a-price"><span class="a-offscreen">R$ 2.199,90</span></span><span>Prime e Entrega GRÁTIS</span><button>Adicionar ao carrinho</button></div>',
         "B0123",
     ),
     (
@@ -59,6 +59,47 @@ def test_extracts_sanitized_store_card(provider_type, html, external_id) -> None
     assert offers[0].raw_price.startswith("R$")
     assert offers[0].raw_currency == "BRL"
     assert offers[0].evidence["card_text"]
+
+
+def test_amazon_uses_only_explicit_shipping_and_availability_evidence() -> None:
+    html = (
+        '<div data-component-type="s-search-result" data-asin="B0E2E">'
+        '<h2><a href="https://www.amazon.com.br/dp/B0E2E">Produto</a></h2>'
+        '<span class="a-price"><span class="a-offscreen">R$ 99,90</span></span>'
+        "<span>Entrega GRÁTIS</span><button>Adicionar ao carrinho</button></div>"
+    )
+
+    async def scenario():
+        async with BrowserSession() as session:
+            page = await session.new_page()
+            await page.set_content(html)
+            return await AmazonProvider().extract(page, NOW)
+
+    offer = asyncio.run(scenario())[0]
+
+    assert offer.raw_shipping == "Frete grátis"
+    assert offer.raw_availability == "Disponível"
+
+
+def test_amazon_does_not_flatten_login_or_first_order_shipping_condition() -> None:
+    html = (
+        '<div data-component-type="s-search-result" data-asin="B0COND">'
+        '<h2><a href="https://www.amazon.com.br/dp/B0COND">Produto</a></h2>'
+        '<span class="a-price"><span class="a-offscreen">R$ 99,90</span></span>'
+        "<span>Entrega GRÁTIS no seu primeiro pedido</span>"
+        "<button>Adicionar ao carrinho</button></div>"
+    )
+
+    async def scenario():
+        async with BrowserSession() as session:
+            page = await session.new_page()
+            await page.set_content(html)
+            return await AmazonProvider().extract(page, NOW)
+
+    offer = asyncio.run(scenario())[0]
+
+    assert offer.raw_shipping is None
+    assert offer.raw_availability == "Disponível"
 
 
 def test_builds_encoded_source_urls() -> None:

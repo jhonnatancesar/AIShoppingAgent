@@ -35,7 +35,10 @@ _COMMAND_VERBS: dict[MissionCommand, str] = {
     MissionCommand.EXPIRE: "expirar",
 }
 
-_CONFIRMATION_SUFFIX = 'Responda "sim" para confirmar ou "não" para cancelar.'
+_CONFIRMATION_SUFFIX = (
+    'Responda "1" para confirmar ou "2" para cancelar (também aceito '
+    '"sim"/"não").'
+)
 
 _SYSTEM_PROMPT = (
     "Você classifica se uma resposta curta do usuário confirma ou cancela "
@@ -46,11 +49,13 @@ _SYSTEM_PROMPT = (
     '{"answer": "confirm" | "cancel" | "unclear"}\n\n'
     'Use "confirm" quando a pessoa concorda, aprova ou confirma, mesmo com '
     "erros de português, gírias, abreviações ou frases informais (ex.: "
-    '"sim", "pode ser", "bora", "isso mesmo", "é isso msm", "confirmado"). '
-    'Use "cancel" quando a pessoa recusa, nega ou desiste (ex.: "não", '
-    '"nao quero", "deixa pra la", "cancela", "esquece"). Use "unclear" '
-    "sempre que a resposta não expressar claramente nem confirmação nem "
-    "cancelamento."
+    '"sim", "pode ser", "bora", "isso mesmo", "é isso msm", "confirmado", '
+    '"1", "1 - sim"). Use "cancel" quando a pessoa recusa, nega ou desiste '
+    '(ex.: "não", "nao quero", "deixa pra la", "cancela", "esquece", "2", '
+    '"2 - não"). A pergunta sempre oferece "1" para confirmar e "2" para '
+    'cancelar, então um número isolado deve ser classificado por essa '
+    'correspondência. Use "unclear" sempre que a resposta não expressar '
+    "claramente nem confirmação nem cancelamento."
 )
 
 
@@ -141,7 +146,7 @@ def describe_create_mission(payload: dict[str, Any]) -> str:
     if sources:
         parts.append(f"em: {', '.join(sources)}")
     else:
-        parts.append("nas quatro lojas padrão da V1")
+        parts.append("em todas as lojas disponíveis")
     return f"Posso {' '.join(parts)}? {_CONFIRMATION_SUFFIX}"
 
 

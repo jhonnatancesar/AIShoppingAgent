@@ -1,17 +1,20 @@
 """Testes do consumidor proativo de alertas Telegram (TASK-036)."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock
 from uuid import uuid4
 
 import pytest
+from app.authentication.models import CredentialAction, UserAuthSession
 from app.events import ConsumptionOutcome, Event
 from app.missions.models import Mission, MissionStatus
 from app.telegram.bot_api import TelegramBotAPIError
 from app.telegram.contracts import TelegramChatType, TelegramMessage
 from app.telegram.notifications import (
+    TELEGRAM_AUTH_NOTIFICATION_CONSUMER,
     TELEGRAM_NOTIFICATION_CONSUMER,
     TelegramNotificationError,
+    process_telegram_authentication_notifications,
     process_telegram_notifications,
     remember_private_notification_chat,
 )
@@ -282,3 +285,191 @@ async def test_process_records_invalid_payload_as_permanent_dead_letter(
 
     assert result.dead_lettered == 1
     assert session.add.call_args.args[0].failure_code == "notification_payload_invalid"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("action", "expected"),
+    [
+        (CredentialAction.SET_PASSWORD, "Senha criada"),
+        (CredentialAction.LOGIN, "Login realizado"),
+        (CredentialAction.CHANGE_PASSWORD, "Senha alterada"),
+        (CredentialAction.RECOVER_PASSWORD, "Senha recuperada"),
+    ],
+)
+async def test_authentication_completion_is_sent_despite_price_preferences(
+    monkeypatch: pytest.MonkeyPatch,
+    action: CredentialAction,
+    expected: str,
+) -> None:
+    user = _user(notify_price_decreases=False, notify_target_reached=False)
+    event = Event(
+        id=uuid4(),
+        event_type="authentication.completed.v1",
+        aggregate_type="user",
+        aggregate_id=user.id,
+        mission_id=None,
+        payload={"user_id": str(user.id), "action": action.value},
+        occurred_at=NOW,
+        recorded_at=NOW,
+    )
+    session = MagicMock()
+    session.get.return_value = user
+    monkeypatch.setattr(
+        "app.telegram.notifications.claim_unconsumed_events",
+        lambda *args, **kwargs: [event],
+    )
+    sent: list[str] = []
+
+    async def _send(chat_id: int, text: str, **kwargs: object) -> None:
+        sent.append(text)
+
+    monkeypatch.setattr("app.telegram.notifications.send_message", _send)
+
+    result = await process_telegram_authentication_notifications(
+        session, bot_token=SecretStr("token")
+    )
+
+    assert result.succeeded == 1
+    assert expected in sent[0]
+    attempt = session.add.call_args.args[0]
+    assert attempt.consumer_name == TELEGRAM_AUTH_NOTIFICATION_CONSUMER
+    assert attempt.outcome is ConsumptionOutcome.SUCCEEDED
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("event_type", "expected"),
+    [
+        ("authentication.session_expiring.v1", "expira em breve"),
+        ("authentication.session_expired.v1", "sessão expirou"),
+    ],
+)
+async def test_session_lifecycle_message_uses_exact_persisted_session(
+    monkeypatch: pytest.MonkeyPatch, event_type: str, expected: str
+) -> None:
+    user = _user()
+    expires_at = (
+        datetime(2030, 8, 9, 18, 30, tzinfo=UTC)
+        if event_type == "authentication.session_expiring.v1"
+        else NOW - timedelta(minutes=1)
+    )
+    auth_session = UserAuthSession(
+        id=uuid4(),
+        user_id=user.id,
+        telegram_user_id=123,
+        authenticated_at=expires_at - timedelta(hours=12),
+        expires_at=expires_at,
+        revoked_at=None,
+    )
+    event = Event(
+        id=uuid4(),
+        event_type=event_type,
+        aggregate_type="auth_session",
+        aggregate_id=auth_session.id,
+        mission_id=None,
+        payload={
+            "session_id": str(auth_session.id),
+            "user_id": str(user.id),
+            "expires_at": expires_at.isoformat(),
+        },
+        occurred_at=NOW,
+        recorded_at=NOW,
+    )
+    session = MagicMock()
+    session.get.side_effect = [auth_session, user]
+    monkeypatch.setattr(
+        "app.telegram.notifications.claim_unconsumed_events",
+        lambda *args, **kwargs: [event],
+    )
+    sent: list[str] = []
+
+    async def _send(chat_id: int, text: str, **kwargs: object) -> None:
+        sent.append(text)
+
+    monkeypatch.setattr("app.telegram.notifications.send_message", _send)
+
+    result = await process_telegram_authentication_notifications(
+        session, bot_token=SecretStr("token")
+    )
+
+    assert result.succeeded == 1
+    assert expected in sent[0]
+
+
+@pytest.mark.anyio
+async def test_revoked_session_warning_is_terminal_skipped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user = _user()
+    expires_at = datetime(2030, 8, 9, 18, 30, tzinfo=UTC)
+    auth_session = UserAuthSession(
+        id=uuid4(),
+        user_id=user.id,
+        telegram_user_id=123,
+        authenticated_at=expires_at - timedelta(hours=12),
+        expires_at=expires_at,
+        revoked_at=NOW,
+    )
+    event = Event(
+        id=uuid4(),
+        event_type="authentication.session_expiring.v1",
+        aggregate_type="auth_session",
+        aggregate_id=auth_session.id,
+        payload={
+            "session_id": str(auth_session.id),
+            "user_id": str(user.id),
+            "expires_at": expires_at.isoformat(),
+        },
+        occurred_at=NOW,
+        recorded_at=NOW,
+    )
+    session = MagicMock()
+    session.get.return_value = auth_session
+    monkeypatch.setattr(
+        "app.telegram.notifications.claim_unconsumed_events",
+        lambda *args, **kwargs: [event],
+    )
+    send = MagicMock()
+    monkeypatch.setattr("app.telegram.notifications.send_message", send)
+
+    result = await process_telegram_authentication_notifications(
+        session, bot_token=SecretStr("token")
+    )
+
+    assert result.skipped == 1
+    send.assert_not_called()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("payload", [{"action": "unknown"}, {"action": "login"}])
+async def test_authentication_event_fails_closed_for_invalid_identity_or_action(
+    monkeypatch: pytest.MonkeyPatch, payload: dict[str, str]
+) -> None:
+    user = _user()
+    event_payload = {"user_id": str(user.id), **payload}
+    event = Event(
+        id=uuid4(),
+        event_type="authentication.completed.v1",
+        aggregate_type="user",
+        aggregate_id=user.id,
+        payload=event_payload,
+        occurred_at=NOW,
+        recorded_at=NOW,
+    )
+    session = MagicMock()
+    session.get.return_value = user if payload["action"] == "unknown" else None
+    monkeypatch.setattr(
+        "app.telegram.notifications.claim_unconsumed_events",
+        lambda *args, **kwargs: [event],
+    )
+
+    result = await process_telegram_authentication_notifications(
+        session, bot_token=SecretStr("token")
+    )
+
+    assert result.dead_lettered == 1
+    assert session.add.call_args.args[0].failure_code in {
+        "notification_payload_invalid",
+        "notification_recipient_missing",
+    }

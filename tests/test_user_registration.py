@@ -109,6 +109,37 @@ def test_advance_registration_parses_known_favorite_stores() -> None:
     assert user.registration_step == "preferred_categories"
 
 
+def test_registration_prompt_offers_numbered_stores_and_all_option() -> None:
+    user = _user()
+    user.registration_step = "email"
+
+    prompt = advance_registration(user, answer="pular")
+
+    assert "1 - Kabum" in prompt
+    assert "4 - Amazon" in prompt
+    assert "5 - Todas" in prompt
+
+
+@pytest.mark.parametrize(
+    ("answer", "expected"),
+    [
+        ("1,2", ["kabum", "pichau"]),
+        ("2, 4", ["amazon", "pichau"]),
+        ("5", ["amazon", "kabum", "pichau", "terabyte"]),
+        ("todas", ["amazon", "kabum", "pichau", "terabyte"]),
+    ],
+)
+def test_advance_registration_parses_numbered_stores(
+    answer: str, expected: list[str]
+) -> None:
+    user = _user()
+    user.registration_step = "favorite_stores"
+
+    advance_registration(user, answer=answer)
+
+    assert user.favorite_stores == expected
+
+
 def test_advance_registration_rejects_favorite_stores_with_no_known_match() -> None:
     user = _user()
     user.registration_step = "favorite_stores"
@@ -136,7 +167,8 @@ def test_advance_registration_parses_preferred_categories_and_completes() -> Non
 
     assert user.preferred_categories == ["games", "moveis", "livros"]
     assert user.registration_step is None
-    assert "concluído" in completion.lower()
+    assert "confirmado" in completion.lower()
+    assert "senha" in completion.lower()
 
 
 def test_advance_registration_rejects_too_many_categories() -> None:

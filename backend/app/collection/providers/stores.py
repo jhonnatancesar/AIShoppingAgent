@@ -52,7 +52,7 @@ class AmazonProvider(PlaywrightStoreProvider):
         self, page: Page, collected_at: datetime
     ) -> tuple[RawCollectedOffer, ...]:
         rows = await page.locator(self.result_selector).evaluate_all(
-            """cards => cards.map(card => { const link = card.querySelector('h2 a, a.a-link-normal.s-no-outline'); const text = card.innerText || ''; return {url: link?.href, title: card.querySelector('h2')?.textContent, price: card.querySelector('.a-price .a-offscreen')?.textContent, external_id: card.dataset.asin, seller: card.querySelector('[aria-label^="Vendido por"]')?.textContent, shipping: /frete grátis/i.test(text) ? 'Frete grátis' : null, availability: /temporariamente fora de estoque/i.test(text) ? 'Temporariamente fora de estoque' : null, fulfillment: /prime/i.test(text) ? 'Prime' : null, evidence: text}; })"""
+            """cards => cards.map(card => { const link = card.querySelector('h2 a, a.a-link-normal.s-no-outline'); const text = card.innerText || ''; const unavailable = /temporariamente fora de estoque|indisponível/i.test(text); const freeShipping = /(?:frete|entrega)\\s+gr[aá]tis/i.test(text) && !/primeiro pedido|com (?:o )?prime|assine (?:o )?prime/i.test(text); return {url: link?.href, title: card.querySelector('h2')?.textContent, price: card.querySelector('.a-price .a-offscreen')?.textContent, external_id: card.dataset.asin, seller: card.querySelector('[aria-label^="Vendido por"]')?.textContent, shipping: freeShipping ? 'Frete grátis' : null, availability: unavailable ? 'Temporariamente fora de estoque' : /adicionar ao carrinho/i.test(text) ? 'Disponível' : null, fulfillment: /prime/i.test(text) ? 'Prime' : null, evidence: text}; })"""
         )
         return self.offers_from_rows(rows, collected_at)
 

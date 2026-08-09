@@ -61,9 +61,13 @@ runbook do Ubuntu Server, tornou as portas administrativas privadas por padrão
 e validou backup/restauração manual sem alegar disaster recovery. A TASK-052
 (`DEC-040`) criou a suíte permanente e fail-closed em PostgreSQL 18.4
 descartável, agora obrigatória no pipeline. O preflight da TASK-053 confirmou
-que não existe processo ligando agendas, providers, observações e eventos; a
+que não existia processo ligando agendas, providers, observações e eventos; a
 TASK-062 foi criada como requisito funcional do MVP (`DEC-041`) e concluiu a
-orquestração automática. A TASK-053 é a próxima executável. A
+orquestração automática. A TASK-053 executou a suíte reproduzível e o Telegram
+real, mas permanece `BLOCKED_EXTERNAL` porque frete não pôde ser determinado
+sem login nos marketplaces; ela não está aprovada. A TASK-054 permanece
+bloqueada e não há próxima TASK executável até resolver ou reclassificar essa
+dependência externa. A
 TASK-057 (`DEC-017`): validação real contra o
 `USER`/Gemini cobre 3 dos 4 `IntentKind`, e o usuário aceitou explicitamente
 encerrar nesse estado, adiando mais variedade de linguagem para a V2

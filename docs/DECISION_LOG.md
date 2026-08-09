@@ -25,6 +25,120 @@ Após a classificação, registrar a decisão neste arquivo e atualizar a docume
 - **Justificativa:** impacto avaliado e motivo da classificação.
 - **Próxima ação:** documento a atualizar, TASK a criar quando aplicável, ou ação de não implementação.
 
+### DEC-045 — Alertas da V1 monitoram `amount` (preço do produto), não `total_amount`; frete deixa de bloquear a TASK-053
+
+- **Data:** 2026-08-09
+- **Ideia:** a TASK-053 ficou `BLOCKED_EXTERNAL` porque as quatro lojas
+  reais nunca revelam frete sem login no marketplace, e
+  `evaluate_price_alerts` (TASK-027) rejeitava qualquer observação com
+  `shipping_amount is None`. Decisão de produto do usuário: na V1,
+  monitoramento/alertas de preço não exigem frete nem login em loja — só o
+  preço do produto (`PriceObservation.amount`). Frete/parcelamento
+  precisos ficam para depois: V1.2 (só ADMIN/DEV, com sessão autenticada
+  nas lojas) e V2 (usuários comuns, com desenho de credenciais/sessões
+  isoladas próprio).
+- **Classificação:** Implementar agora (correção de escopo dos alertas e
+  do critério de elegibilidade externa da TASK-053); Versão futura (itens
+  de V1.2/V2 registrados abaixo).
+- **Justificativa técnica:** a primeira proposta desta correção pretendia
+  continuar comparando `total_amount` (que hoje é `amount +
+  COALESCE(shipping_amount, 0)`). O usuário apontou que isso é errado:
+  quando o frete muda de conhecido para desconhecido (ou vice-versa) entre
+  duas observações da mesma oferta, `total_amount` mistura bases
+  diferentes e pode gerar alerta falso. Exemplo concreto: observação
+  anterior `amount=2000, shipping=100 → total=2100`; observação atual
+  `amount=2050, shipping=None → total=2050`. Comparar `total_amount`
+  diria "caiu" (2050 < 2100) quando o preço do produto na verdade **subiu**
+  (2000 → 2050). Por isso a série de monitoramento da V1 compara sempre
+  `amount` (produto vs. produto), nunca `total_amount` — em nenhuma das
+  duas pontas da comparação (observação atual nem anterior), e a mesma
+  base é usada tanto na decisão quanto no payload do evento publicado
+  (`previous_total`/`current_total`/`target_total` recebem o valor de
+  `amount`, não de `total_amount`, para os alertas da V1 — nomes de campo
+  do catálogo não mudam, só a origem do valor). `total_amount` continua
+  existindo, sendo persistido normalmente e sendo a base de custo final
+  usada por `app.purchase` (recomendação/comparação/confirmação,
+  TASK-038 a TASK-041), que **não muda** — frete desconhecido continua
+  tornando uma oferta inelegível para afirmar custo total ali. A
+  separação fica explícita: **alertas V1 = `amount`; custo
+  final/compra = `amount + shipping` conhecido.** O critério de
+  elegibilidade externa da TASK-053
+  (`backend/scripts/validate_external_e2e.py`) deixa de exigir
+  `shipping_amount is not None`, exigindo só disponibilidade válida e
+  moeda compatível. Frete nunca é fabricado nem tratado como zero/grátis
+  quando desconhecido — só deixou de ser exigido para o monitoramento de
+  preço da V1.
+- **V1.2 registrada** (`docs/V1_2.md`, item 4): "Consulta autenticada de
+  frete e parcelamento para ADMIN/DEV" — só o proprietário do sistema
+  inicialmente, usando sessão autenticada nas lojas (Pichau, Terabyte,
+  Amazon, Kabum conforme suporte real) para obter frete/parcelamento reais,
+  com carrinho apenas quando necessário e CEP configurado. Regras de
+  segurança já registradas para quando a TASK for desenhada: credenciais
+  nunca em prompt de IA/logs/traces/métricas/auditoria, sem senha em texto
+  puro, sessão restrita ao provider, nenhuma conta compartilhada com
+  `USER` comum, login/carrinho nunca autorizam compra sozinhos.
+- **V2 registrada** (`docs/BACKLOG.md`): "Frete e parcelamento
+  autenticados por usuário" — mesma capacidade da V1.2, aberta a usuários
+  comuns, exigindo desenho próprio de credenciais/sessões isoladas por
+  usuário, autorização e ciclo de vida de sessão.
+- **Próxima ação:** `backend/app/alerts/evaluator.py` e
+  `backend/scripts/validate_external_e2e.py` corrigidos; documentação
+  sincronizada (`docs/PRICE_ALERTS.md`, `docs/tasks/TASK-027.md`,
+  `docs/MISSION_CRITERIA.md`, `docs/E2E_TESTS.md`,
+  `docs/tasks/TASK-053.md`, `docs/PRICE_ENGINE.md`); reexecutar a
+  TASK-053 (pipeline, E2E reproduzível, E2E externo real) e atualizar seu
+  resultado real, sem presumir sucesso antes de rodar. TASK-054 continua
+  aguardando a conclusão real da TASK-053.
+
+### DEC-042 — Corrigir onboarding descoberto pelo E2E
+
+- **Data:** 2026-08-09
+- **Ideia:** tornar a seleção de lojas do `/cadastro` numerada, emitir o link
+  inicial de senha ao concluir o cadastro e reduzir o mínimo da senha para oito
+  caracteres sem impor regras artificiais de composição.
+- **Classificação:** Implementar agora.
+- **Justificativa:** o E2E real da TASK-053 demonstrou que texto livre sem IA
+  induzia o usuário a um formato não explicado e que separar `/senha` deixava o
+  onboarding incompleto. O fluxo continua determinístico e não recebe senha no
+  Telegram. O mínimo de oito é uma escolha de usabilidade da V1 protegida por
+  Telegram privado, Argon2id, blocklist, limites e cooldown; não é apresentado
+  como conformidade ou MFA formal, que continuam futuros. Verificação de
+  e-mail permanece V2.
+- **Próxima ação:** concluir as correções dentro da TASK-053 e repetir os dois
+  modos E2E antes de fechar a tarefa.
+
+### DEC-043 — Confirmar operações de autenticação no chat
+
+- **Data:** 2026-08-09
+- **Ideia:** registrar no chat privado do Telegram as conclusões de criação,
+  alteração e recuperação de senha e de login, além de avisar uma única vez
+  antes da expiração e quando a sessão expirar.
+- **Classificação:** Implementar agora.
+- **Justificativa:** a senha continua restrita à página HTTPS, mas o retorno
+  durável no mesmo chat em que a operação foi iniciada torna o estado de
+  autenticação observável para a pessoa e cria um histórico operacional no
+  Telegram. Eventos persistentes, consumo idempotente e marcadores atômicos
+  por sessão evitam perda e duplicidade após restart, sem transformar
+  preferências de alertas de preço em preferências de segurança.
+- **Próxima ação:** implementar e validar dentro da TASK-053, incluindo
+  PostgreSQL e Telegram reais.
+
+### DEC-044 — Negociar orçamento ausente e sugerir referência na V1.2
+
+- **Data:** 2026-08-09
+- **Ideia:** quando o pedido de missão não trouxer valor, perguntar primeiro se
+  a pessoa possui um orçamento; na ausência dele, consultar histórico e, se
+  necessário, fontes externas para sugerir uma média de itens/marcas de menor
+  preço antes da criação.
+- **Classificação:** Versão futura.
+- **Justificativa:** o fluxo exige contrato conversacional novo, critério de
+  qualidade para amostra e marcas comparáveis, consulta externa adicional e
+  regras para evidência insuficiente. O usuário reservou expressamente essa
+  evolução à V1.2; introduzi-la durante o fechamento E2E da V1 ampliaria o MVP.
+- **Próxima ação:** manter no backlog da V1.2 e criar especificação/TASK
+  própria antes de implementar. A V1 não deve afirmar genericamente que usará
+  “quatro lojas padrão” como substituto dessa conversa.
+
 ### DEC-040 — Isolar integração real por banco descartável
 
 - **Data:** 2026-08-08

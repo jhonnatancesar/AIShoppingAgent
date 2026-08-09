@@ -44,7 +44,7 @@ def test_password_unicode_is_nfc_and_spaces_are_preserved() -> None:
 @pytest.mark.parametrize(
     ("password", "message"),
     [
-        ("curta demais", "pelo menos 15"),
+        ("curta", "pelo menos 8"),
         ("x" * (MAX_PASSWORD_LENGTH + 1), "no máximo 128"),
         ("passwordpassword", "comum ou previsível"),
         ("aishoppingagent", "comum ou previsível"),
@@ -58,6 +58,10 @@ def test_password_policy_rejects_invalid_values(password: str, message: str) -> 
 def test_password_policy_blocks_username_derivative() -> None:
     with pytest.raises(PasswordPolicyError, match="comum"):
         validate_password("cliente01cliente01", username="cliente01")
+
+
+def test_password_policy_accepts_eight_characters_without_composition_rules() -> None:
+    assert validate_password("fraseboa") == "fraseboa"
 
 
 def test_hash_is_marked_for_rehash_when_parameters_change() -> None:

@@ -3,12 +3,15 @@
 import logging
 import random
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
+from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from pydantic import SecretStr
 from sqlalchemy.orm import Session
 
+from app.authentication.models import CredentialAction, UserAuthSession
 from app.database.time import utc_now
 from app.events import (
     ConsumptionOutcome,
@@ -33,10 +36,17 @@ from app.users.models import User
 logger = logging.getLogger("app.telegram.notifications")
 
 TELEGRAM_NOTIFICATION_CONSUMER = "telegram_price_alerts_v1"
+TELEGRAM_AUTH_NOTIFICATION_CONSUMER = "telegram_auth_notifications_v1"
 _NOTIFICATION_EVENT_TYPES = (
     EventType.PRICE_DECREASED_V1.value,
     EventType.PRICE_TARGET_REACHED_V1.value,
 )
+_AUTHENTICATION_EVENT_TYPES = (
+    EventType.AUTHENTICATION_COMPLETED_V1.value,
+    EventType.AUTHENTICATION_SESSION_EXPIRING_V1.value,
+    EventType.AUTHENTICATION_SESSION_EXPIRED_V1.value,
+)
+_BRAZIL_TIMEZONE = ZoneInfo("America/Sao_Paulo")
 
 
 class TelegramNotificationError(ValueError):
@@ -83,13 +93,15 @@ async def process_telegram_notifications(
     retry_after_cap_seconds: float = 30.0,
     circuit_failure_threshold: int = 5,
     circuit_open_seconds: float = 30.0,
+    _consumer_name: str = TELEGRAM_NOTIFICATION_CONSUMER,
+    _event_types: tuple[str, ...] = _NOTIFICATION_EVENT_TYPES,
 ) -> TelegramNotificationBatch:
     """Entrega um lote mantendo locks e tentativas na transação do chamador."""
     events = claim_unconsumed_events(
         session,
-        consumer_name=TELEGRAM_NOTIFICATION_CONSUMER,
+        consumer_name=_consumer_name,
         limit=limit,
-        event_types=_NOTIFICATION_EVENT_TYPES,
+        event_types=_event_types,
         max_attempts=max_attempts,
     )
     succeeded = 0
@@ -137,7 +149,7 @@ async def process_telegram_notifications(
             failures = count_failed_attempts(
                 session,
                 event_id=event.id,
-                consumer_name=TELEGRAM_NOTIFICATION_CONSUMER,
+                consumer_name=_consumer_name,
             )
             if permanent or failures + 1 >= max_attempts:
                 outcome = ConsumptionOutcome.DEAD_LETTERED
@@ -155,7 +167,7 @@ async def process_telegram_notifications(
         record_consumption_attempt(
             session,
             event=event,
-            consumer_name=TELEGRAM_NOTIFICATION_CONSUMER,
+            consumer_name=_consumer_name,
             outcome=outcome,
             attempted_at=attempted_at,
             failure_code=failure_code,
@@ -185,7 +197,35 @@ async def process_telegram_notifications(
     )
 
 
+async def process_telegram_authentication_notifications(
+    session: Session,
+    *,
+    bot_token: SecretStr,
+    limit: int = 50,
+    **kwargs: object,
+) -> TelegramNotificationBatch:
+    """Entrega confirmações e avisos de autenticação em consumidor próprio."""
+    return await process_telegram_notifications(
+        session,
+        bot_token=bot_token,
+        limit=limit,
+        _consumer_name=TELEGRAM_AUTH_NOTIFICATION_CONSUMER,
+        _event_types=_AUTHENTICATION_EVENT_TYPES,
+        **kwargs,
+    )
+
+
 def _prepare_notification(session: Session, event: Event) -> tuple[int, str]:
+    try:
+        event_type = EventType(event.event_type)
+    except ValueError:
+        raise TelegramNotificationError("notification_payload_invalid") from None
+    if event_type in {
+        EventType.AUTHENTICATION_COMPLETED_V1,
+        EventType.AUTHENTICATION_SESSION_EXPIRING_V1,
+        EventType.AUTHENTICATION_SESSION_EXPIRED_V1,
+    }:
+        return _prepare_authentication_notification(session, event, event_type)
     if event.mission_id is None:
         raise TelegramNotificationError("notification_mission_missing")
     mission = session.get(Mission, event.mission_id)
@@ -205,6 +245,98 @@ def _prepare_notification(session: Session, event: Event) -> tuple[int, str]:
             "notification_recipient_inactive", permanent=False
         )
     return user.telegram_chat_id, _render_alert(event, mission.title)
+
+
+def _prepare_authentication_notification(
+    session: Session, event: Event, event_type: EventType
+) -> tuple[int, str]:
+    payload = event.payload
+    if not isinstance(payload, dict) or event.mission_id is not None:
+        raise TelegramNotificationError("notification_payload_invalid")
+    user_id = _required_uuid(payload, "user_id")
+    auth_session: UserAuthSession | None = None
+    if event_type is EventType.AUTHENTICATION_COMPLETED_V1:
+        if event.aggregate_type != "user" or event.aggregate_id != user_id:
+            raise TelegramNotificationError("notification_payload_invalid")
+    else:
+        session_id = _required_uuid(payload, "session_id")
+        if event.aggregate_type != "auth_session" or event.aggregate_id != session_id:
+            raise TelegramNotificationError("notification_payload_invalid")
+        auth_session = session.get(UserAuthSession, session_id)
+        if auth_session is None or auth_session.user_id != user_id:
+            raise TelegramNotificationError("notification_payload_invalid")
+        expires_at = _required_datetime(payload, "expires_at")
+        if auth_session.expires_at != expires_at:
+            raise TelegramNotificationError("notification_payload_invalid")
+        if (
+            event_type is EventType.AUTHENTICATION_SESSION_EXPIRING_V1
+            and event.occurred_at >= expires_at
+        ) or (
+            event_type is EventType.AUTHENTICATION_SESSION_EXPIRED_V1
+            and event.occurred_at < expires_at
+        ):
+            raise TelegramNotificationError("notification_payload_invalid")
+        if auth_session.revoked_at is not None:
+            raise TelegramNotificationSkipped
+        if (
+            event_type is EventType.AUTHENTICATION_SESSION_EXPIRING_V1
+            and auth_session.expires_at <= utc_now()
+        ):
+            raise TelegramNotificationSkipped
+    user = session.get(User, user_id)
+    if user is None:
+        raise TelegramNotificationError("notification_recipient_missing")
+    if (
+        auth_session is not None
+        and user.telegram_user_id != auth_session.telegram_user_id
+    ):
+        raise TelegramNotificationError("notification_payload_invalid")
+    if user.telegram_chat_id is None:
+        raise TelegramNotificationError(
+            "notification_recipient_missing", permanent=False
+        )
+    if not user.is_active:
+        raise TelegramNotificationError(
+            "notification_recipient_inactive", permanent=False
+        )
+    return user.telegram_chat_id, _render_authentication_message(event_type, payload)
+
+
+def _render_authentication_message(
+    event_type: EventType, payload: dict[str, object]
+) -> str:
+    if event_type is EventType.AUTHENTICATION_COMPLETED_V1:
+        try:
+            action = CredentialAction(_required_text(payload, "action"))
+        except ValueError:
+            raise TelegramNotificationError("notification_payload_invalid") from None
+        return {
+            CredentialAction.SET_PASSWORD: (
+                "✅ Senha criada com sucesso.\nAgora use /entrar para fazer login."
+            ),
+            CredentialAction.LOGIN: (
+                "✅ Login realizado com sucesso.\nSua sessão ficará ativa por 12 horas."
+            ),
+            CredentialAction.CHANGE_PASSWORD: (
+                "✅ Senha alterada com sucesso.\n"
+                "As sessões anteriores foram encerradas. Use /entrar novamente."
+            ),
+            CredentialAction.RECOVER_PASSWORD: (
+                "✅ Senha recuperada com sucesso.\n"
+                "As sessões anteriores foram encerradas. Use /entrar novamente."
+            ),
+        }[action]
+    expires_at = _required_datetime(payload, "expires_at")
+    if event_type is EventType.AUTHENTICATION_SESSION_EXPIRING_V1:
+        local_expiry = expires_at.astimezone(_BRAZIL_TIMEZONE)
+        return (
+            "⏳ Sua sessão expira em breve, em "
+            f"{local_expiry:%d/%m/%Y às %H:%M} (horário de Brasília).\n"
+            "Depois da expiração, use /entrar para autenticar novamente."
+        )
+    if event_type is EventType.AUTHENTICATION_SESSION_EXPIRED_V1:
+        return "🔒 Sua sessão expirou. Use /entrar para autenticar novamente."
+    raise TelegramNotificationError("notification_payload_invalid")
 
 
 def _render_alert(event: Event, mission_title: str) -> str:
@@ -236,9 +368,26 @@ def _render_alert(event: Event, mission_title: str) -> str:
     raise TelegramNotificationError("notification_payload_invalid")
 
 
-def _required_text(payload: dict, field: str) -> str:
+def _required_text(payload: dict[str, object], field: str) -> str:
     value = payload.get(field)
     if not isinstance(value, str) or not value.strip():
+        raise TelegramNotificationError("notification_payload_invalid")
+    return value
+
+
+def _required_uuid(payload: dict[str, object], field: str) -> UUID:
+    try:
+        return UUID(_required_text(payload, field))
+    except ValueError:
+        raise TelegramNotificationError("notification_payload_invalid") from None
+
+
+def _required_datetime(payload: dict[str, object], field: str) -> datetime:
+    try:
+        value = datetime.fromisoformat(_required_text(payload, field))
+    except ValueError:
+        raise TelegramNotificationError("notification_payload_invalid") from None
+    if value.tzinfo is None or value.utcoffset() is None:
         raise TelegramNotificationError("notification_payload_invalid")
     return value
 

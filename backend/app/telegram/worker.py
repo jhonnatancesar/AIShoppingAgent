@@ -3,11 +3,16 @@
 import argparse
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 from time import perf_counter
 
 from opentelemetry import trace
 from opentelemetry.trace import SpanKind
+from sqlalchemy.orm import Session, sessionmaker
 
+from app.authentication.notifications import (
+    publish_due_authentication_notifications,
+)
 from app.core.config import Settings
 from app.core.logging import configure_logging
 from app.database.session import create_database_engine, create_session_factory
@@ -18,7 +23,11 @@ from app.observability.metrics import (
     start_worker_metrics_server,
 )
 from app.observability.tracing import configure_tracing
-from app.telegram.notifications import process_telegram_notifications
+from app.telegram.notifications import (
+    TelegramNotificationBatch,
+    process_telegram_authentication_notifications,
+    process_telegram_notifications,
+)
 
 logger = logging.getLogger("app.telegram.worker")
 
@@ -63,20 +72,20 @@ async def run_worker(
                     set_status_on_exception=False,
                 ):
                     with session_factory.begin() as session:
-                        result = await process_telegram_notifications(
-                            session,
-                            bot_token=settings.telegram_bot_token,
-                            limit=limit,
-                            max_attempts=settings.event_consumer_max_attempts,
-                            retry_base_seconds=settings.event_retry_base_seconds,
-                            retry_cap_seconds=settings.event_retry_cap_seconds,
-                            timeout_seconds=settings.external_http_timeout_seconds,
-                            retry_after_cap_seconds=settings.retry_after_cap_seconds,
-                            circuit_failure_threshold=(
-                                settings.circuit_failure_threshold
-                            ),
-                            circuit_open_seconds=settings.circuit_open_seconds,
-                        )
+                        publish_due_authentication_notifications(session, limit=limit)
+                    price_result = await _process_batch(
+                        session_factory,
+                        settings=settings,
+                        limit=limit,
+                        processor=process_telegram_notifications,
+                    )
+                    auth_result = await _process_batch(
+                        session_factory,
+                        settings=settings,
+                        limit=limit,
+                        processor=process_telegram_authentication_notifications,
+                    )
+                    result = _combine_batches(price_result, auth_result)
             except asyncio.CancelledError:
                 raise
             except Exception as error:
@@ -122,6 +131,40 @@ async def run_worker(
             await asyncio.sleep(interval)
     finally:
         engine.dispose()
+
+
+async def _process_batch(
+    session_factory: sessionmaker[Session],
+    *,
+    settings: Settings,
+    limit: int,
+    processor: Callable[..., Awaitable[TelegramNotificationBatch]],
+) -> TelegramNotificationBatch:
+    with session_factory.begin() as session:
+        return await processor(
+            session,
+            bot_token=settings.telegram_bot_token,
+            limit=limit,
+            max_attempts=settings.event_consumer_max_attempts,
+            retry_base_seconds=settings.event_retry_base_seconds,
+            retry_cap_seconds=settings.event_retry_cap_seconds,
+            timeout_seconds=settings.external_http_timeout_seconds,
+            retry_after_cap_seconds=settings.retry_after_cap_seconds,
+            circuit_failure_threshold=settings.circuit_failure_threshold,
+            circuit_open_seconds=settings.circuit_open_seconds,
+        )
+
+
+def _combine_batches(
+    first: TelegramNotificationBatch, second: TelegramNotificationBatch
+) -> TelegramNotificationBatch:
+    return TelegramNotificationBatch(
+        claimed=first.claimed + second.claimed,
+        succeeded=first.succeeded + second.succeeded,
+        failed=first.failed + second.failed,
+        skipped=first.skipped + second.skipped,
+        dead_lettered=first.dead_lettered + second.dead_lettered,
+    )
 
 
 def main() -> None:

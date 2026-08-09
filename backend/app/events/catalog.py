@@ -1,12 +1,14 @@
 """Catálogo fechado e versionado de eventos de domínio da V1."""
 
 from dataclasses import dataclass
+from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
 from re import fullmatch
 from types import MappingProxyType
 from uuid import UUID
 
+from app.authentication.models import CredentialAction
 from app.collection.normalization import Availability
 from app.missions.models import MissionStatus
 
@@ -19,6 +21,8 @@ class AggregateType(StrEnum):
     MISSION = "mission"
     COLLECTION_RUN = "collection_run"
     OFFER = "offer"
+    USER = "user"
+    AUTH_SESSION = "auth_session"
 
 
 class EventType(StrEnum):
@@ -28,6 +32,30 @@ class EventType(StrEnum):
     PRICE_DECREASED_V1 = "price.decreased.v1"
     PRICE_TARGET_REACHED_V1 = "price.target_reached.v1"
     AVAILABILITY_CHANGED_V1 = "offer.availability_changed.v1"
+    AUTHENTICATION_COMPLETED_V1 = "authentication.completed.v1"
+    AUTHENTICATION_SESSION_EXPIRING_V1 = "authentication.session_expiring.v1"
+    AUTHENTICATION_SESSION_EXPIRED_V1 = "authentication.session_expired.v1"
+
+
+@dataclass(frozen=True, slots=True)
+class AuthenticationCompletedPayload:
+    user_id: UUID
+    action: CredentialAction
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.action, CredentialAction):
+            raise EventCatalogError("action must use CredentialAction")
+
+
+@dataclass(frozen=True, slots=True)
+class AuthenticationSessionPayload:
+    session_id: UUID
+    user_id: UUID
+    expires_at: datetime
+
+    def __post_init__(self) -> None:
+        if self.expires_at.tzinfo is None or self.expires_at.utcoffset() is None:
+            raise EventCatalogError("expires_at must be timezone-aware")
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,6 +159,8 @@ type EventPayload = (
     | PriceDecreasedPayload
     | PriceTargetReachedPayload
     | AvailabilityChangedPayload
+    | AuthenticationCompletedPayload
+    | AuthenticationSessionPayload
 )
 
 
@@ -172,6 +202,21 @@ EVENT_CATALOG = MappingProxyType(
             EventType.AVAILABILITY_CHANGED_V1,
             AggregateType.OFFER,
             AvailabilityChangedPayload,
+        ),
+        EventType.AUTHENTICATION_COMPLETED_V1: EventSpec(
+            EventType.AUTHENTICATION_COMPLETED_V1,
+            AggregateType.USER,
+            AuthenticationCompletedPayload,
+        ),
+        EventType.AUTHENTICATION_SESSION_EXPIRING_V1: EventSpec(
+            EventType.AUTHENTICATION_SESSION_EXPIRING_V1,
+            AggregateType.AUTH_SESSION,
+            AuthenticationSessionPayload,
+        ),
+        EventType.AUTHENTICATION_SESSION_EXPIRED_V1: EventSpec(
+            EventType.AUTHENTICATION_SESSION_EXPIRED_V1,
+            AggregateType.AUTH_SESSION,
+            AuthenticationSessionPayload,
         ),
     }
 )

@@ -72,3 +72,18 @@ evento. Queda de preço e preço-alvo são independentes e começam ativados. Se
 opção estiver desativada, nenhuma chamada à Bot API ocorre e a tentativa é
 registrada como `skipped`, terminal e sem `failure_code`. Reativar a opção não
 torna eventos antigos elegíveis; somente eventos novos voltam ao fluxo normal.
+
+## Consumidor de autenticação
+
+`telegram_auth_notifications_v1` reivindica somente os três eventos
+`authentication.*` documentados no catálogo. Ele resolve o usuário ou a sessão
+exata, valida a identidade persistida e envia confirmações e avisos ao chat
+privado. Esse fluxo não consulta preferências de preço. Sessão revogada ou
+aviso prévio já vencido termina como `skipped`, sem retry; falhas de entrega
+seguem o mesmo contrato sanitizado de retry/dead letter do consumidor de
+preços.
+
+O worker publica eventos de expiração e os consome em transações separadas. A
+publicação usa `FOR UPDATE SKIP LOCKED` e dois marcadores booleanos na sessão,
+atualizados atomicamente com o evento, para impedir eventos duplicados em
+concorrência e após restart.

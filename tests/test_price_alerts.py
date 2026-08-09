@@ -39,6 +39,7 @@ def _observation(
     shipping: Decimal | None = Decimal("0"),
 ) -> PriceObservation:
     amount = Decimal(total)
+    total_amount = amount + (shipping if shipping is not None else Decimal("0"))
     return PriceObservation(
         id=uuid4(),
         offer_id=offer_id,
@@ -46,13 +47,14 @@ def _observation(
         amount=amount,
         shipping_amount=shipping,
         currency=currency,
-        total_amount=amount,
+        total_amount=total_amount,
         availability=availability,
         observed_at=observed_at,
     )
 
 
-def test_unknown_shipping_never_generates_total_based_alert() -> None:
+def test_unknown_shipping_does_not_block_monitoring() -> None:
+    """V1 (DEC-045): monitoramento de preço não exige frete conhecido."""
     mission = _mission()
     criteria = _criteria(mission)
     current = _observation(
@@ -62,7 +64,111 @@ def test_unknown_shipping_never_generates_total_based_alert() -> None:
         shipping=None,
     )
 
-    assert evaluate_price_alerts(mission, criteria, current) == ()
+    alerts = evaluate_price_alerts(mission, criteria, current)
+
+    assert len(alerts) == 1
+    assert alerts[0].event_type is EventType.PRICE_TARGET_REACHED_V1
+
+
+def test_alerts_compare_amount_regardless_of_shipping_availability_change() -> None:
+    """Anterior com frete conhecido, atual sem: decisão usa amount vs amount,
+    não total_amount (que mudaria de base e mascararia a subida real)."""
+    mission = _mission()
+    criteria = _criteria(mission, target=None, currency=None)
+    offer_id = uuid4()
+    now = datetime.now(UTC)
+    previous = _observation(
+        offer_id,
+        "2000.0000",
+        observed_at=now - timedelta(hours=1),
+        shipping=Decimal("100"),
+    )
+    current = _observation(offer_id, "2050.0000", observed_at=now, shipping=None)
+    assert previous.total_amount == Decimal("2100.0000")
+    assert current.total_amount == Decimal("2050.0000")
+
+    alerts = evaluate_price_alerts(mission, criteria, current, previous)
+
+    assert (
+        alerts == ()
+    )  # amount subiu (2000 -> 2050); total_amount cairia, mas não deve alertar
+
+
+def test_alerts_compare_amount_when_shipping_becomes_known() -> None:
+    """Anterior sem frete, atual com frete conhecido: continua amount vs amount."""
+    mission = _mission()
+    criteria = _criteria(mission, target=None, currency=None)
+    offer_id = uuid4()
+    now = datetime.now(UTC)
+    previous = _observation(
+        offer_id, "2000.0000", observed_at=now - timedelta(hours=1), shipping=None
+    )
+    current = _observation(
+        offer_id, "2050.0000", observed_at=now, shipping=Decimal("100")
+    )
+    assert current.total_amount == Decimal("2150.0000")
+
+    alerts = evaluate_price_alerts(mission, criteria, current, previous)
+
+    assert alerts == ()  # amount subiu (2000 -> 2050), mesmo com total_amount ambíguo
+
+
+def test_shipping_change_alone_never_generates_price_decreased() -> None:
+    """Frete muda, amount permanece igual: nunca é queda de preço na V1."""
+    mission = _mission()
+    criteria = _criteria(mission, target=None, currency=None)
+    offer_id = uuid4()
+    now = datetime.now(UTC)
+    previous = _observation(
+        offer_id,
+        "2000.0000",
+        observed_at=now - timedelta(hours=1),
+        shipping=Decimal("100"),
+    )
+    current = _observation(offer_id, "2000.0000", observed_at=now, shipping=None)
+
+    assert evaluate_price_alerts(mission, criteria, current, previous) == ()
+
+
+def test_amount_drop_with_unknown_shipping_emits_price_decreased() -> None:
+    """amount cai, frete desconhecido nos dois lados: gera price.decreased.v1."""
+    mission = _mission()
+    criteria = _criteria(mission, target=None, currency=None)
+    offer_id = uuid4()
+    now = datetime.now(UTC)
+    previous = _observation(
+        offer_id, "2000.0000", observed_at=now - timedelta(hours=1), shipping=None
+    )
+    current = _observation(offer_id, "1900.0000", observed_at=now, shipping=None)
+
+    alerts = evaluate_price_alerts(mission, criteria, current, previous)
+
+    assert tuple(alert.event_type for alert in alerts) == (
+        EventType.PRICE_DECREASED_V1,
+    )
+    payload = alerts[0].payload
+    assert isinstance(payload, PriceDecreasedPayload)
+    assert payload.previous_total == previous.amount == Decimal("2000.0000")
+    assert payload.current_total == current.amount == Decimal("1900.0000")
+
+
+def test_amount_at_target_with_unknown_shipping_emits_target_reached() -> None:
+    """amount <= target_amount com frete desconhecido: gera price.target_reached.v1."""
+    mission = _mission()
+    criteria = _criteria(mission, target=Decimal("2000.0000"), currency="BRL")
+    current = _observation(
+        uuid4(), "1900.0000", observed_at=datetime.now(UTC), shipping=None
+    )
+
+    alerts = evaluate_price_alerts(mission, criteria, current)
+
+    assert tuple(alert.event_type for alert in alerts) == (
+        EventType.PRICE_TARGET_REACHED_V1,
+    )
+    payload = alerts[0].payload
+    assert isinstance(payload, PriceTargetReachedPayload)
+    assert payload.target_total == Decimal("2000.0000")
+    assert payload.current_total == current.amount == Decimal("1900.0000")
 
 
 def test_price_drop_crossing_target_emits_two_catalog_events() -> None:

@@ -337,9 +337,18 @@ async def _handle_message(
     if user.registration_step is not None:
         authorize(session, user, Permission.PROFILE_MANAGE)
         try:
-            return advance_registration(user, answer=message.text)
+            registration_reply = advance_registration(user, answer=message.text)
         except RegistrationError as error:
             return str(error)
+        if user.registration_step is not None:
+            return registration_reply
+        password_reply = _authentication_link_reply(
+            _PASSWORD_COMMAND,
+            user=user,
+            session=session,
+            public_base_url=auth_public_base_url,
+        )
+        return f"{registration_reply}\n\n{password_reply}"
     if user.telegram_user_id is None or not has_active_session(
         session,
         user_id=user.id,

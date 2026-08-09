@@ -1044,6 +1044,13 @@ async def test_registration_full_flow_completes_and_clears_step(
     send_calls = _patch_send_message(monkeypatch)
     adapter = _FakeAdapter(_intent())
     adapters = _adapters(adapter)
+    monkeypatch.setattr(
+        "app.telegram.router.issue_action_link",
+        lambda *args, **kwargs: SimpleNamespace(
+            url="https://auth.example.test/auth#set_password:opaque",
+            expires_at=datetime.now(UTC),
+        ),
+    )
 
     answers = ["joaosilva", "pular", "pichau, kabum", "games, moveis"]
     text = "/cadastro"
@@ -1071,7 +1078,8 @@ async def test_registration_full_flow_completes_and_clears_step(
     assert fake_user.preferred_categories == ["games", "moveis"]
     assert fake_user.registration_step is None
     assert adapter.calls == []
-    assert "concluído" in send_calls[-1][1].lower()
+    assert "cadastro confirmado" in send_calls[-1][1].lower()
+    assert "#set_password:opaque" in send_calls[-1][1]
 
 
 @pytest.mark.anyio

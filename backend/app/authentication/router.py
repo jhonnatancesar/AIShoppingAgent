@@ -122,11 +122,12 @@ _AUTH_PAGE = """<!doctype html>
   <p>O link é descartável e expira em 10 minutos.</p>
   <form id="credential-form">
     <label for="password">Senha</label>
-    <input id="password" type="password" minlength="15" maxlength="128"
+    <input id="password" type="password" minlength="8" maxlength="128"
       autocomplete="current-password" required>
+    <small>Mínimo de 8 caracteres. Prefira uma frase longa e única.</small>
     <section id="confirmation-block">
       <label for="confirmation">Confirme a nova senha</label>
-      <input id="confirmation" type="password" minlength="15" maxlength="128"
+      <input id="confirmation" type="password" minlength="8" maxlength="128"
         autocomplete="new-password">
     </section>
     <button type="submit">Continuar</button>

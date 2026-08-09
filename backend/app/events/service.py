@@ -32,6 +32,8 @@ _AGGREGATE_ID_FIELDS = {
     AggregateType.MISSION: "mission_id",
     AggregateType.COLLECTION_RUN: "collection_run_id",
     AggregateType.OFFER: "offer_id",
+    AggregateType.USER: "user_id",
+    AggregateType.AUTH_SESSION: "session_id",
 }
 
 
@@ -90,6 +92,10 @@ def _serialize_value(value: Any) -> Any:
         return str(value)
     if isinstance(value, Enum):
         return value.value
+    if isinstance(value, datetime):
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise EventPublicationError("payload datetime must be timezone-aware")
+        return value.isoformat()
     if isinstance(value, (str, int, bool)) or value is None:
         return value
     raise EventPublicationError(f"unsupported payload value type: {type(value)!r}")

@@ -45,29 +45,38 @@ def evaluate_price_alerts(
     current: PriceObservation,
     previous: PriceObservation | None = None,
 ) -> tuple[PriceAlertCandidate, ...]:
-    """Avalia queda e cruzamento do alvo para uma nova observação persistida."""
+    """Avalia queda e cruzamento do alvo para uma nova observação persistida.
+
+    V1 (DEC-045): a série de monitoramento compara sempre `amount` (preço do
+    produto), nunca `total_amount`. `total_amount` mistura item e frete, e
+    quando o frete muda de conhecido para desconhecido (ou vice-versa) entre
+    duas observações, comparar `total_amount` gera alerta falso — ex.: item
+    sobe de R$2000 para R$2050 mas o frete conhecido de R$100 desaparece, e
+    total (2100 → 2050) pareceria uma queda. Custo final com frete continua
+    exclusivo de `app.purchase` (TASK-038/039), que não muda aqui.
+    """
     _validate_entities(mission, criteria, current, previous)
     if mission.status is not MissionStatus.ACTIVE:
         return ()
     if current.availability is not Availability.AVAILABLE:
-        return ()
-    if current.shipping_amount is None:
         return ()
 
     candidates: list[PriceAlertCandidate] = []
     if (
         previous is not None
         and previous.availability is Availability.AVAILABLE
-        and previous.shipping_amount is not None
         and previous.currency == current.currency
-        and current.total_amount < previous.total_amount
+        and current.amount < previous.amount
     ):
+        # Campos legados `*_total` do catálogo (DEC-045): para alertas da V1
+        # carregam o preço do produto (`amount`), não `total_amount`, para
+        # manter a mesma base usada na decisão acima. Não renomear os campos.
         payload = PriceDecreasedPayload(
             offer_id=current.offer_id,
             observation_id=current.id,
             previous_observation_id=previous.id,
-            previous_total=previous.total_amount,
-            current_total=current.total_amount,
+            previous_total=previous.amount,
+            current_total=current.amount,
             currency=current.currency,
         )
         candidates.append(
@@ -88,7 +97,7 @@ def evaluate_price_alerts(
             offer_id=current.offer_id,
             observation_id=current.id,
             target_total=target_amount,
-            current_total=current.total_amount,
+            current_total=current.amount,
             currency=current.currency,
         )
         candidates.append(
@@ -112,14 +121,13 @@ def _target_was_reached(
     currency = criteria.target_currency
     if target is None:
         return False
-    if currency != current.currency or current.total_amount > target:
+    if currency != current.currency or current.amount > target:
         return False
     return not (
         previous is not None
         and previous.availability is Availability.AVAILABLE
-        and previous.shipping_amount is not None
         and previous.currency == currency
-        and previous.total_amount <= target
+        and previous.amount <= target
     )
 
 

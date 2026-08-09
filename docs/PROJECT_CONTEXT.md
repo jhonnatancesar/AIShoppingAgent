@@ -237,6 +237,15 @@ Linux/Xvfb com as quatro lojas foram validados. A TASK-053 é a próxima.
 O pipeline oficial terminou com 638 testes rápidos, 90,04% de cobertura e 11
 integrações PostgreSQL reais.
 
+A TASK-053 está **bloqueada externamente**, não concluída. A suíte permanente
+E2E passou em PostgreSQL 18.4 e o Telegram real confirmou senha criada, login,
+aviso pré-expiração e expiração sem duplicação. No modo externo de ofertas, as
+quatro fontes executaram e gravaram 40 observações, mas nenhuma trouxe frete
+determinável sem autenticação no marketplace; o classificador retornou
+`BLOCKED_EXTERNAL/no_eligible_external_evidence`. Credenciais das lojas não
+pertencem à V1 e a ausência não pode ser mascarada como sucesso. A TASK-054
+permanece bloqueada até a TASK-053 obter validação externa elegível.
+
 A TASK-058 (`DEC-015`) está **concluída**: `create_mission` e
 `mission_command` não executam mais direto — ficam encenados em
 `User.pending_intent` e só executam após confirmação explícita, descrita em

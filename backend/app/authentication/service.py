@@ -24,6 +24,12 @@ from app.authentication.passwords import (
     validate_password,
     verify_password,
 )
+from app.events import (
+    AggregateType,
+    AuthenticationCompletedPayload,
+    EventType,
+    publish_event,
+)
 from app.users.models import User
 
 SESSION_TTL = timedelta(hours=12)
@@ -144,6 +150,14 @@ def complete_action(
             now=current,
         )
     token.consumed_at = current
+    publish_event(
+        session,
+        event_type=EventType.AUTHENTICATION_COMPLETED_V1,
+        aggregate_type=AggregateType.USER,
+        aggregate_id=user.id,
+        payload=AuthenticationCompletedPayload(user_id=user.id, action=token.action),
+        occurred_at=current,
+    )
     return token.action
 
 
@@ -199,6 +213,9 @@ def _complete_login(
     credential.login_locked_until = None
     if needs_rehash(credential.password_hash):
         credential.password_hash = hash_password(password)
+    # O bot possui uma única identidade autenticada por usuário/Telegram.
+    # Substituir a sessão anterior evita avisos contraditórios de expiração.
+    _revoke_sessions(session, user_id=user.id, now=now)
     session.add(
         UserAuthSession(
             user_id=user.id,

@@ -7,7 +7,9 @@ os comandos funcionais. Ownership continua obrigatório para todos os papéis.
 
 ## Fluxos
 
-- `/senha`: cria a primeira senha ou altera a existente;
+- ao concluir `/cadastro`, o bot emite automaticamente o link para criar a
+  primeira senha;
+- `/senha`: reemite o link inicial ou altera uma senha existente;
 - `/entrar`: emite link de login e cria sessão de 12 horas após verificação;
 - `/sair`: revoga imediatamente todas as sessões ativas daquele usuário;
 - `/recuperar`: redefine a senha usando exclusivamente o Telegram privado já
@@ -22,13 +24,35 @@ somente token e campos de senha. O payload rejeita campos extras. `user_id`,
 ## Senhas e sessões
 
 Argon2id usa `m=19456`, `t=2`, `p=1`, hash de 32 bytes e salt de 16 bytes.
-Senhas possuem 15 a 128 caracteres, são normalizadas em NFC, aceitam Unicode,
+Senhas possuem 8 a 128 caracteres, são normalizadas em NFC, aceitam Unicode,
 espaços, colagem e gerenciadores, não usam regras de composição e são
 comparadas com uma blocklist local de valores comuns/contextuais. Um login
 bem-sucedido refaz o hash quando os parâmetros mudam.
 
+O mínimo de oito é uma decisão de usabilidade da V1 combinada com Telegram
+privado, Argon2id, limites persistentes e cooldown. O projeto não declara essa
+combinação como MFA formal nem conformidade NIST; MFA independente permanece
+futuro. Não se exige maiúscula, número ou símbolo porque regras de composição
+produzem variações previsíveis; a interface recomenda uma frase longa e única.
+
 Sessões têm TTL absoluto de 12 horas. Consulta não altera `expires_at`.
-`revoked_at` nunca é limpo. Expiração e revogação falham fechadas.
+`revoked_at` nunca é limpo. Um novo login substitui qualquer sessão anterior
+da mesma conta. Expiração e revogação falham fechadas.
+
+Cada conclusão válida publica `authentication.completed.v1` na mesma
+transação da senha ou sessão. O consumidor `telegram_auth_notifications_v1`
+confirma no chat privado: senha criada, login realizado, senha alterada ou
+senha recuperada. `/sair` já confirma o encerramento na própria resposta do
+comando. Essas mensagens não contêm senha, token ou hash e não são afetadas
+pelas preferências de alertas de preço.
+
+O `telegram_notifier` verifica sessões com lock concorrente. Trinta minutos
+antes do vencimento publica `authentication.session_expiring.v1`; ao atingir o
+TTL publica `authentication.session_expired.v1` e orienta novo `/entrar`.
+Marcadores persistentes são atualizados na mesma transação do evento, portanto
+restart ou ciclos repetidos não recriam o aviso. Sessão revogada ou aviso que
+ficou obsoleto é consumido como `skipped`. A migration `20260809_0002` marca
+sessões preexistentes para não enviar histórico retroativo.
 
 ## Tokens e limites
 
@@ -54,7 +78,9 @@ logs, traces, métricas ou auditoria. As rotas `/auth` e `/auth/actions` são
 excluídas do tracing automático; métricas usam apenas rota normalizada.
 
 Action tokens expirados/resolvidos ficam elegíveis à limpeza manual após 24
-horas; sessões expiradas/revogadas, após 30 dias. Não há scheduler na V1. A
+horas; sessões expiradas/revogadas, após 30 dias. Não há scheduler de limpeza
+na V1; a inspeção de expiração pelo notifier serve somente para publicar os
+dois avisos. A
 desidentificação controlada remove credencial, tokens e sessões da conta em uma
 única transação, preservando somente auditoria sanitizada. Procedimentos e
 limitações estão em `docs/PRIVACY.md`.

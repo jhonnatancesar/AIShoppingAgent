@@ -95,7 +95,7 @@ try {
         python -m ruff format --check .
     }
     Invoke-Check "Testes e cobertura" {
-        python -m pytest -p no:cacheprovider --ignore=tests/integration --basetemp="$resolvedPipelineTemporary\pytest"
+        python -m pytest -p no:cacheprovider --ignore=tests/integration --ignore=tests/e2e --basetemp="$resolvedPipelineTemporary\pytest"
     }
     Invoke-Check "Grafo de migrações" {
         python -m alembic -c backend/alembic.ini heads

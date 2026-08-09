@@ -10,6 +10,7 @@ from app.database.base import Base
 from app.database.model_registry import REGISTERED_MODELS
 from app.events import (
     AggregateType,
+    AuthenticationSessionPayload,
     CollectionCompletedPayload,
     Event,
     EventCatalogError,
@@ -113,6 +114,21 @@ def test_publish_event_serializes_optional_none_field() -> None:
     )
 
     assert event.payload["mission_id"] is None
+
+
+def test_publish_event_serializes_aware_payload_datetime() -> None:
+    session_id = uuid4()
+    expires_at = datetime(2026, 8, 9, 22, 30, tzinfo=UTC)
+    event = publish_event(
+        _session(),
+        event_type=EventType.AUTHENTICATION_SESSION_EXPIRED_V1,
+        aggregate_type=AggregateType.AUTH_SESSION,
+        aggregate_id=session_id,
+        payload=AuthenticationSessionPayload(session_id, uuid4(), expires_at),
+        occurred_at=NOW,
+    )
+
+    assert event.payload["expires_at"] == expires_at.isoformat()
 
 
 def test_publish_event_rejects_naive_occurred_at() -> None:

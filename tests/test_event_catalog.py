@@ -1,12 +1,16 @@
+from datetime import UTC, datetime
 from decimal import Decimal
 from types import MappingProxyType
 from uuid import uuid4
 
 import pytest
+from app.authentication.models import CredentialAction
 from app.collection.normalization import Availability
 from app.events import (
     EVENT_CATALOG,
     AggregateType,
+    AuthenticationCompletedPayload,
+    AuthenticationSessionPayload,
     AvailabilityChangedPayload,
     CollectionCompletedPayload,
     CollectionFailedPayload,
@@ -41,6 +45,30 @@ def test_catalog_accepts_exact_payload_contract() -> None:
     spec = validate_event_payload(EventType.COLLECTION_COMPLETED_V1, payload)
 
     assert spec.payload_type is CollectionCompletedPayload
+
+
+def test_authentication_contracts_are_closed_and_require_aware_expiry() -> None:
+    user_id = uuid4()
+    completed = AuthenticationCompletedPayload(user_id, CredentialAction.LOGIN)
+    assert (
+        validate_event_payload(
+            EventType.AUTHENTICATION_COMPLETED_V1, completed
+        ).aggregate_type
+        is AggregateType.USER
+    )
+    with pytest.raises(EventCatalogError, match="CredentialAction"):
+        AuthenticationCompletedPayload(user_id, "login")  # type: ignore[arg-type]
+    with pytest.raises(EventCatalogError, match="timezone-aware"):
+        AuthenticationSessionPayload(uuid4(), user_id, datetime(2026, 8, 9, 12))
+    payload = AuthenticationSessionPayload(
+        uuid4(), user_id, datetime(2026, 8, 9, 12, tzinfo=UTC)
+    )
+    assert (
+        validate_event_payload(
+            EventType.AUTHENTICATION_SESSION_EXPIRING_V1, payload
+        ).aggregate_type
+        is AggregateType.AUTH_SESSION
+    )
 
 
 def test_catalog_rejects_unknown_event_and_wrong_payload() -> None:

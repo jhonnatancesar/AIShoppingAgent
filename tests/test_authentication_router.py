@@ -38,6 +38,8 @@ def test_form_keeps_token_in_fragment_and_sends_no_identity_fields() -> None:
     assert "user_id" not in body
     assert "telegram_user_id" not in body
     assert '"role":' not in body
+    assert 'minlength="8"' in body
+    assert "frase longa" in body
 
 
 def test_payload_rejects_browser_supplied_identity_or_action() -> None:

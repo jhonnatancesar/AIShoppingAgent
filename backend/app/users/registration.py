@@ -24,13 +24,26 @@ _SKIP_WORDS = frozenset({"pular", "pula", "skip", "nenhum", "nenhuma", "-"})
 _EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 _MAX_CATEGORIES = 20
 _MAX_CATEGORY_LENGTH = 64
+_NUMBERED_STORES = {
+    "1": "kabum",
+    "2": "pichau",
+    "3": "terabyte",
+    "4": "amazon",
+}
+_ALL_STORES = frozenset({"5", "todo", "todos", "toda", "todas"})
 
 _PROMPTS: Final[dict[str, str]] = {
     "username": "Vamos cadastrar você! Qual nome de usuário você quer usar?",
     "email": ('Certo! Agora seu e-mail (ou responda "pular" para deixar em branco).'),
     "favorite_stores": (
-        "Quais lojas você prefere entre pichau, terabyte, amazon e kabum? "
-        '(separe por vírgula, ou responda "pular")'
+        "Quais lojas você prefere?\n\n"
+        "1 - Kabum\n"
+        "2 - Pichau\n"
+        "3 - Terabyte\n"
+        "4 - Amazon\n"
+        "5 - Todas\n\n"
+        "Digite os números separados por vírgula (ex.: 1,2), use 5 para "
+        'todas ou responda "pular".'
     ),
     "preferred_categories": (
         "Por último: quais categorias você mais compra (ex.: games, móveis)? "
@@ -38,7 +51,7 @@ _PROMPTS: Final[dict[str, str]] = {
     ),
 }
 
-_COMPLETION_MESSAGE = "Cadastro concluído! Você já pode criar e consultar missões."
+_COMPLETION_MESSAGE = "Cadastro confirmado! Agora crie sua senha pelo link seguro."
 
 
 class RegistrationError(ValueError):
@@ -104,11 +117,17 @@ def _parse_stores(raw: str) -> list[str]:
     tokens = [
         token.strip().lower() for token in re.split(r"[,\s]+", raw) if token.strip()
     ]
-    stores = [token for token in tokens if token in MISSION_SOURCE_CODES]
+    if any(token in _ALL_STORES for token in tokens):
+        return sorted(MISSION_SOURCE_CODES)
+    stores = [
+        _NUMBERED_STORES.get(token, token)
+        for token in tokens
+        if _NUMBERED_STORES.get(token, token) in MISSION_SOURCE_CODES
+    ]
     if not stores:
         raise RegistrationError(
-            "Não reconheci nenhuma loja. Use pichau, terabyte, amazon ou kabum, "
-            'ou responda "pular".'
+            "Não reconheci nenhuma loja. Use 1, 2, 3 ou 4 separados por "
+            'vírgula; use 5 para todas ou responda "pular".'
         )
     return sorted(set(stores))
 

@@ -23,4 +23,5 @@ pythonpath = ["backend"]
 testpaths = ["tests"]
 markers = [
     "integration: requires the fail-closed disposable PostgreSQL runner",
+    "e2e: exercises the critical application chain in a disposable environment",
 ]

@@ -6,6 +6,7 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     CheckConstraint,
     DateTime,
     Enum,
@@ -91,6 +92,15 @@ class UserAuthSession(Base):
             "expires_at",
             postgresql_where="revoked_at IS NULL",
         ),
+        Index(
+            "ix_user_auth_sessions_expiry_notifications",
+            "expires_at",
+            postgresql_where=(
+                "revoked_at IS NULL AND "
+                "(expiry_warning_event_published = false OR "
+                "expiry_event_published = false)"
+            ),
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(
@@ -110,6 +120,12 @@ class UserAuthSession(Base):
     )
     revoked_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
+    )
+    expiry_warning_event_published: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    expiry_event_published: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
     )
     recorded_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

@@ -16,6 +16,17 @@ def test_build_adapter_registers_exactly_v1_sources() -> None:
     assert adapter.supported_sources == ("amazon", "kabum", "pichau", "terabyte")
 
 
+def test_build_adapter_uses_headed_only_for_pichau_and_terabyte() -> None:
+    """Pichau/Terabyte exigem headed (Xvfb) para não serem bloqueadas; ver
+    docs/PLAYWRIGHT.md e backend/scripts/validate_store_providers.py."""
+    adapter = build_collection_adapter(Settings(_env_file=None))
+
+    assert adapter._providers["pichau"].settings.headless is False
+    assert adapter._providers["terabyte"].settings.headless is False
+    assert adapter._providers["amazon"].settings.headless is True
+    assert adapter._providers["kabum"].settings.headless is True
+
+
 def test_collection_worker_is_an_allowlisted_metric_dimension() -> None:
     mark_worker_started("collection_orchestrator")
     observe_worker_failure("collection_orchestrator")

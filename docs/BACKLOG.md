@@ -10,6 +10,13 @@ Para cada item novo, registrar uma descrição curta, a motivação e eventuais 
 - Inclusão após a V1 de lojas ou marketplaces que não forem selecionados para a TASK-055.
 - Critérios de qualificação, confiabilidade e manutenção de Store Providers.
 - Evolução da normalização de vendedores, frete, impostos, prazo e políticas específicas além do necessário às fontes selecionadas.
+- **Frete e parcelamento autenticados por usuário** (`DEC-045`): depois que
+  a V1.2 disponibilizar consulta autenticada de frete/parcelamento somente
+  para ADMIN/DEV, a V2 poderá abrir essa mesma capacidade para usuários
+  comuns. Exige projeto próprio de credenciais/sessões isoladas por
+  usuário, autorização, proteção de dados e ciclo de vida das sessões,
+  além de regras específicas por marketplace — nada disso é antecipado na
+  V1 nem na V1.2.
 
 ## Canais e experiência do usuário
 
@@ -17,9 +24,16 @@ Para cada item novo, registrar uma descrição curta, a motivação e eventuais 
 - Integração com WhatsApp.
 - Aplicativo mobile.
 - Multi-idioma.
+- Confirmação/verificação de e-mail no onboarding da V2; o e-mail da V1
+  permanece opcional, não verificado e sem uso para recuperação.
 
 ## Inteligência e automação
 
+- Na V1.2, tratar missões sem valor informado com uma pergunta explícita de
+  orçamento. Se a pessoa não possuir um valor, consultar primeiro o histórico
+  elegível e depois fontes externas reais para propor uma referência de mercado
+  de itens/marcas mais baratos, com regras de evidência e dados insuficientes a
+  definir em TASK própria (`DEC-044`).
 - Ampliar ainda mais a robustez do `IntentInterpreter` (TASK-032/057) para
   novos tipos e estilos de linguagem informal além do conjunto já validado,
   com nova rodada de validação real (`DEC-017`).

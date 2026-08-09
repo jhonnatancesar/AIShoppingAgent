@@ -32,7 +32,7 @@ existe, mas ainda precisa ser comprovada ponta a ponta até a entrega ao usuári
 | 4 | Condição de preço produz evento e notificação rastreáveis | ⚠️ Parcial | TASK-062 produz observações/eventos automaticamente e o notifier existe; a TASK-053 deve comprovar a cadeia externa até o usuário |
 | 5 | Recomendação/comparação básica com evidências históricas | ✅ Atendido | TASK-038 recomenda uma oferta com regras monetárias seguras e histórico identificável; TASK-039 compara as mesmas evidências, mantém a posição 1 invariável e não inventa total para frete desconhecido |
 | 6 | Todo uso de IA passa pelo AI Provider Manager | ✅ Atendido | Invariante reforçada e validada em todas as tarefas de IA (TASK-028 a TASK-032, TASK-057 a TASK-060) |
-| 7 | Fluxos críticos com testes de integração e ponta a ponta | ⚠️ Parcial | TASK-052 mantém integração permanente em PostgreSQL real; TASK-053 (E2E externo) permanece pendente |
+| 7 | Fluxos críticos com testes de integração e ponta a ponta | ⚠️ Bloqueado externamente | Integração e E2E reproduzível passaram; autenticação passou no Telegram real, mas as ofertas externas ficaram `BLOCKED_EXTERNAL` porque o frete não é determinável sem login nos marketplaces |
 | 8 | Documentação operacional, segurança mínima e checklist de release concluídos | ⚠️ Parcial | TASK-051 entregou runbook, binds privados e restauração validada; o checklist/release final da TASK-054 permanece pendente |
 
 ## Bloqueios adicionais para rodar em produção de verdade

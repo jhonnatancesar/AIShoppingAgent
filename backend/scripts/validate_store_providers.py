@@ -33,7 +33,9 @@ def should_use_headed(
     return force_headed or (source in HEADED_SOURCES and not force_headless)
 
 
-async def validate(source: str, query: str, headed: bool) -> None:
+async def validate(
+    source: str, query: str, headed: bool, *, show_evidence: bool = False
+) -> None:
     provider = PROVIDERS[source](
         BrowserSettings(headless=not headed, navigation_timeout_ms=60_000),
         max_offers=3,
@@ -48,8 +50,12 @@ async def validate(source: str, query: str, headed: bool) -> None:
         print(
             f"- {offer.raw_offer.external_id}: {offer.raw_offer.title[:80]} | "
             f"item={offer.amount} shipping={offer.shipping_amount} "
-            f"total={offer.total_amount} {offer.currency}"
+            f"total={offer.total_amount} {offer.currency} "
+            f"availability={offer.availability.value}"
         )
+        if show_evidence:
+            card_text = str(offer.raw_offer.evidence.get("card_text", ""))
+            print("  evidence=" + " ".join(card_text.split())[:1000])
 
 
 def main() -> None:
@@ -59,11 +65,14 @@ def main() -> None:
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--headed", action="store_true")
     mode.add_argument("--headless", action="store_true")
+    parser.add_argument("--show-evidence", action="store_true")
     args = parser.parse_args()
     headed = should_use_headed(
         args.source, force_headed=args.headed, force_headless=args.headless
     )
-    asyncio.run(validate(args.source, args.query, headed))
+    asyncio.run(
+        validate(args.source, args.query, headed, show_evidence=args.show_evidence)
+    )
 
 
 if __name__ == "__main__":

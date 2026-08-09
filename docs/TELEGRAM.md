@@ -49,6 +49,14 @@ cego. Erros permanentes e tentativas esgotadas geram `dead_lettered`. Detalhes
 operacionais estão em
 `docs/EVENT_CONSUMPTION.md`.
 
+As confirmações de autenticação usam o consumidor independente
+`telegram_auth_notifications_v1`. Criação/alteração/recuperação de senha e
+login concluídos na página HTTPS deixam uma mensagem no chat; o worker também
+avisa uma vez antes de a sessão expirar e uma vez após a expiração, orientando
+`/entrar`. Preferências de preço não silenciam mensagens de autenticação. O
+conteúdo do chat funciona como histórico visível para a pessoa, enquanto
+eventos e tentativas append-only preservam o resultado operacional no banco.
+
 ## Replay e rate limit (TASK-049)
 
 Depois de autenticar transporte e identidade, o webhook persiste um recibo
@@ -67,8 +75,10 @@ interpretação por IA — não passam pelo vocabulário fechado do
 `IntentInterpreter`:
 
 - `/cadastro`: inicia (ou reinicia) o cadastro inicial não sensível, com
-  passos sequenciais (nome de usuário, e-mail, lojas favoritas,
-  preferências de categoria). Detalhes em `docs/USERS.md`.
+  passos sequenciais (nome de usuário, e-mail, lojas favoritas numeradas,
+  preferências de categoria). `5` seleciona todas; ao concluir, o bot emite o
+  link HTTPS para criar a senha e a página orienta usar `/entrar`. Detalhes em
+  `docs/USERS.md`.
 - `/upgrade`: existe e aparece no menu do bot, mas responde apenas que a
   função está "em breve" — nenhuma lógica real de mudança de plano ou
   perfil está implementada.

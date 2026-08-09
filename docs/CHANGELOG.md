@@ -1,5 +1,30 @@
 # Changelog
 
+## 2026-08-09 — TASK-053: E2E implementado, validação externa bloqueada
+
+- Criada suíte E2E reproduzível separada do pipeline rápido, usando webhook,
+  API, PostgreSQL 18.4, workers e consumo durável reais, com fronteiras
+  externas controladas. Dois cenários foram aprovados.
+- O onboarding passou a oferecer lojas numeradas, aceitar `5` para todas,
+  emitir automaticamente o link de senha e usar mínimo de oito caracteres sem
+  regra artificial de composição.
+- Criação/alteração/recuperação de senha e login agora geram confirmações no
+  chat privado. Sessões avisam uma vez antes do vencimento e uma vez ao expirar;
+  a revisão `20260809_0002` evita eventos retroativos/duplicados.
+- Telegram real confirmou exatamente dois envios de conclusão, um aviso prévio
+  e um de expiração; replay do worker manteve um único terminal por evento.
+- Quatro Store Providers reais produziram 40 observações. Como o frete depende
+  de login nos marketplaces, nenhuma evidência completa ficou elegível: o
+  resultado externo é `BLOCKED_EXTERNAL/no_eligible_external_evidence`, não
+  aprovação nem falha interna.
+- O classificador externo e o registrador de webhook foram corrigidos para
+  falhar de modo observável, sem fabricar observações ou eventos.
+- Pipeline oficial aprovado com Gitleaks, Ruff, 665 testes rápidos, 90,01% de
+  cobertura, 11 integrações PostgreSQL, Alembic head `20260809_0002` e Compose.
+- A conversa de orçamento ausente e sugestão de referência de mercado ficou
+  reservada à V1.2 (`DEC-044`). A TASK-054 não é liberada enquanto a validação
+  externa da TASK-053 permanecer bloqueada.
+
 ## 2026-08-09 — TASK-062: orquestração automática de coletas
 
 - Novas missões recebem agenda atômica e missões ativas antigas recebem

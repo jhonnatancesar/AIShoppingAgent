@@ -153,7 +153,8 @@ def test_stage_and_describe_create_mission_without_target_or_sources() -> None:
 
     description = describe_create_mission(payload)
     assert "ssd nvme" in description
-    assert "quatro lojas padrão" in description
+    assert "todas as lojas disponíveis" in description
+    assert "V1" not in description
 
 
 def test_stage_and_describe_mission_command() -> None:
