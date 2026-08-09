@@ -56,12 +56,16 @@ logger = logging.getLogger("app.collection.orchestration")
 
 V1_SOURCE_CODES = frozenset({"pichau", "terabyte", "amazon", "kabum"})
 _RUNNING_INDEX = "uq_collection_runs_running_mission_store"
-# DEC-046: só 401/403/429 confirmados acionam backoff persistente por
-# fonte. ProviderBlockedError também cobre seletor ausente/oferta vazia
-# com outro status (possível markup change, não bloqueio confirmado) —
-# esses casos permanecem sem backoff persistente, só o corte por
-# execução que já existe em app.collection.providers.base.
-_CONFIRMED_BLOCK_STATUSES = frozenset({401, 403, 429})
+# DEC-047: só 403/429 confirmados acionam backoff persistente por fonte
+# (bloqueio/rate-limit/challenge externo). 401 fica de fora de propósito:
+# normalmente representa autenticação/credencial/configuração, não
+# proteção anti-bot, e não deve crescer exponencialmente como se fosse
+# rate limit. ProviderBlockedError também cobre seletor ausente/oferta
+# vazia com outro status (possível markup change, não bloqueio
+# confirmado) — esses casos, e 401, permanecem sem backoff persistente,
+# só o corte por execução que já existe em app.collection.providers.base
+# (que continua tratando 401/403/429 como bloqueio da chamada em si).
+_CONFIRMED_BLOCK_STATUSES = frozenset({403, 429})
 _SOURCE_BACKOFF_CAP_MINUTES = 360
 _OFFER_IDENTITY_INDEXES = frozenset(
     {
@@ -579,11 +583,12 @@ def _publish_failure(
 
 
 def _is_confirmed_external_block(error: Exception) -> bool:
-    """Só 401/403/429 confirmados acionam backoff persistente (DEC-046).
+    """Só 403/429 confirmados acionam backoff persistente (DEC-047).
 
-    `ProviderBlockedError` também cobre seletor ausente/oferta vazia com
-    outro status (possível markup change, não bloqueio confirmado) — esse
-    caso ambíguo não conta.
+    401 fica de fora de propósito (autenticação/credencial/configuração,
+    não proteção anti-bot). `ProviderBlockedError` também cobre seletor
+    ausente/oferta vazia com outro status (possível markup change, não
+    bloqueio confirmado) — esse caso ambíguo também não conta.
     """
     return (
         isinstance(error, ProviderBlockedError)

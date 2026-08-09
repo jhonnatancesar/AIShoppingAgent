@@ -89,13 +89,17 @@ natural por `(mission_id, store_id)` — com duas colunas novas
 
 **Gatilho — só bloqueio externo confirmado.** `_is_confirmed_external_block`
 (`backend/app/collection/orchestration.py`) só considera
-`ProviderBlockedError` com `status` em `{401, 403, 429}`. O mesmo erro com
-outro status (seletor ausente/oferta vazia, possível mudança de markup, não
-bloqueio confirmado), timeout, erro de rede, erro de parsing/normalização,
-erro interno ou falha ao gravar o resultado **nunca** acionam este backoff —
-só o corte por execução que já existe em
-`app.collection.providers.base` (`401/403/429` interrompe o fallback de
-disponibilidade daquele ciclo, sem persistir nada).
+`ProviderBlockedError` com `status` em `{403, 429}`. **401 fica de fora de
+propósito**: normalmente representa autenticação/credencial/configuração,
+não proteção anti-bot, e não deve crescer exponencialmente como se fosse
+rate limit — a chamada em si ainda é tratada como bloqueio pelo
+`app.collection.providers.base` existente (`401/403/429` continuam
+interrompendo o fallback de disponibilidade daquele ciclo, sem persistir
+nada); só o backoff persistente por fonte exclui 401. O mesmo
+`ProviderBlockedError` com outro status (seletor ausente/oferta vazia,
+possível mudança de markup, não bloqueio confirmado), timeout, erro de
+rede, erro de parsing/normalização, erro interno ou falha ao gravar o
+resultado também **nunca** acionam este backoff persistente.
 
 **Fórmula** (`next_source_backoff`, `app/missions/schedule.py`), calculada
 sobre o `interval_minutes` da própria `MissionSchedule` da missão — nunca um
@@ -124,6 +128,15 @@ criado, nenhum erro é gerado, e a agenda da missão **permanece due**: ela é
 reexaminada no próximo poll (`collection_poll_seconds`, padrão 15s) em vez
 de esperar um intervalo inteiro, então uma fonte que se torna elegível logo
 após não fica presa até o próximo ciclo completo da missão.
+
+Isso significa que pode existir polling de uma agenda sem nenhuma fonte
+elegível durante todo o período de backoff daquela missão (no pior caso,
+até 6h com o teto atual) — uma consulta rápida ao banco a cada
+`collection_poll_seconds`, sem abrir Chromium nem chamar nenhuma fonte
+externa. Aceito para a V1: nenhuma arquitetura adicional foi criada só para
+evitar essas reavaliações. Pode ser otimizado no futuro (ex.: pular a
+missão até o menor `next_eligible_at` entre suas fontes) caso métricas
+mostrem necessidade real.
 
 **Reset.** No primeiro sucesso daquela mesma `(mission_id, store_id)`,
 `_reset_source_backoff` zera `consecutive_blocks` e `next_eligible_at`. Só a

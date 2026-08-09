@@ -29,15 +29,20 @@ Após a classificação, registrar a decisão neste arquivo e atualizar a docume
 
 - **Data:** 2026-08-09
 - **Ideia:** aprovar e implementar a modelagem mínima de backoff persistente
-  proposta em `DEC-046`, corrigida por uma restrição explícita do usuário:
-  o backoff não pode atrasar a missão inteira quando só uma das quatro
-  lojas selecionadas está bloqueada — cada `provider_blocked` confirmado
-  (401/403/429) deve afetar somente aquela fonte específica. `MissionSource`
+  proposta em `DEC-046`, corrigida por duas restrições explícitas do
+  usuário: (1) o backoff não pode atrasar a missão inteira quando só uma
+  das quatro lojas selecionadas está bloqueada — cada bloqueio confirmado
+  deve afetar somente aquela fonte específica; (2) o gatilho não pode
+  incluir 401 — só 403, 429 e challenge/CAPTCHA/proteção externa
+  confirmada contam, porque 401 normalmente representa
+  autenticação/credencial/configuração, não proteção anti-bot, e não deve
+  crescer exponencialmente como se fosse rate limit (a chamada ainda falha
+  normalmente; só o backoff persistente fica de fora). `MissionSource`
   (já a entidade `(mission_id, store_id)`) ganhou `next_eligible_at` e
   `consecutive_blocks` (migração `20260809_0003`); `claim_due_collections`
   passou a filtrar por fonte, sem tocar em `MissionSchedule.next_run_at`.
   O gatilho ficou restrito a bloqueio externo **confirmado** (status
-  401/403/429 do próprio `ProviderBlockedError`) — não dispara para
+  403/429 do próprio `ProviderBlockedError`) — não dispara para 401,
   timeout, erro de rede, erro de parsing, erro interno, nem para o mesmo
   `ProviderBlockedError` com status ambíguo (seletor ausente/oferta vazia,
   possível mudança de markup). A fórmula (`2**consecutive_blocks`,
@@ -56,10 +61,14 @@ Após a classificação, registrar a decisão neste arquivo e atualizar a docume
   não no próximo intervalo inteiro) sem precisar de nenhuma mudança de
   arquitetura — confirmado com teste de integração real
   (`test_all_sources_in_backoff_creates_no_run_and_schedule_stays_due`).
-  Distinguir bloqueio confirmado (401/403/429) de `ProviderBlockedError`
+  Distinguir bloqueio confirmado (403/429) de `ProviderBlockedError`
   ambíguo (mesma exceção, status diferente, já usada hoje também para
-  seletor ausente/oferta vazia) evita que um possível bug de mudança de
-  markup na loja seja tratado como se fosse proteção anti-bot confirmada.
+  seletor ausente/oferta vazia, e para 401) evita que um possível bug de
+  mudança de markup na loja — ou uma falha de autenticação/configuração —
+  seja tratado como se fosse proteção anti-bot confirmada. A chamada em si
+  continua tratada como bloqueio pelo `app.collection.providers.base`
+  existente (401/403/429 seguem interrompendo o fallback daquele ciclo);
+  só o backoff persistente por fonte ficou mais restrito.
 - **Próxima ação:** `docs/MISSION_SCHEDULES.md` atualizado com a modelagem
   final. Testes unitários (função pura de backoff, classificação de erro,
   wiring de `_record_failure`/`_persist_success`) e de integração real

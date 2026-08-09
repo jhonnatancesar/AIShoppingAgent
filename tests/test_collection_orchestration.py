@@ -80,9 +80,14 @@ def test_failure_codes_are_closed(error: Exception, code: str) -> None:
     [
         (ProviderBlockedError("pichau", 403), True),
         (ProviderBlockedError("pichau", 429), True),
-        (ProviderBlockedError("pichau", 401), True),
+        # 401 fica de fora de proposito (DEC-047): normalmente representa
+        # autenticacao/credencial/configuracao, nao protecao anti-bot, e
+        # nao deve crescer exponencialmente como se fosse rate limit. A
+        # chamada ainda falha normalmente (provider_blocked, circuito,
+        # corte de fallback) -- so o backoff persistente fica de fora.
+        (ProviderBlockedError("pichau", 401), False),
         # mesmo erro, mas status ambiguo (selector ausente/oferta vazia com
-        # HTTP 200): nao e bloqueio confirmado, DEC-046 nao aciona backoff.
+        # HTTP 200): nao e bloqueio confirmado, DEC-047 nao aciona backoff.
         (ProviderBlockedError("pichau", 200), False),
         (ProviderBlockedError("pichau", None), False),
         (ProviderCircuitOpenError("pichau"), False),
@@ -93,7 +98,7 @@ def test_failure_codes_are_closed(error: Exception, code: str) -> None:
         (RuntimeError("internal"), False),
     ],
 )
-def test_is_confirmed_external_block_only_matches_401_403_429(
+def test_is_confirmed_external_block_only_matches_403_429(
     error: Exception, confirmed: bool
 ) -> None:
     assert _is_confirmed_external_block(error) is confirmed
