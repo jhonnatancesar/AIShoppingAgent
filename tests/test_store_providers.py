@@ -619,6 +619,52 @@ async def _async_offers(offers):
     return offers
 
 
+def test_pichau_resolve_product_availability_branches() -> None:
+    async def evidence(html: str) -> str | None:
+        async with BrowserSession() as session:
+            page = await session.new_page()
+            await page.set_content(html)
+            return await PichauProvider().resolve_product_availability(page)
+
+    assert (
+        asyncio.run(evidence("<body>Produto Esgotado no momento</body>")) == "Esgotado"
+    )
+    assert (
+        asyncio.run(evidence("<body><button>Comprar</button></body>")) == "Disponível"
+    )
+    assert asyncio.run(evidence("<body>Sem nenhuma evidência clara</body>")) is None
+
+
+def test_terabyte_resolve_product_availability_branches() -> None:
+    async def evidence(html: str) -> str | None:
+        async with BrowserSession() as session:
+            page = await session.new_page()
+            await page.set_content(html)
+            return await TerabyteProvider().resolve_product_availability(page)
+
+    assert asyncio.run(evidence("<body>Produto Indisponível</body>")) == "Esgotado"
+    assert (
+        asyncio.run(evidence('<body><button class="tbt_cart">x</button></body>'))
+        == "Disponível"
+    )
+    assert asyncio.run(evidence("<body>Sem nenhuma evidência clara</body>")) is None
+
+
+def test_kabum_resolve_product_availability_branches() -> None:
+    async def evidence(html: str) -> str | None:
+        async with BrowserSession() as session:
+            page = await session.new_page()
+            await page.set_content(html)
+            return await KabumProvider().resolve_product_availability(page)
+
+    assert asyncio.run(evidence("<body>Produto esgotado</body>")) == "Esgotado"
+    assert asyncio.run(evidence("<body>Restam 3 Unid.</body>")) == "Disponível"
+    assert (
+        asyncio.run(evidence("<body><button>Comprar</button></body>")) == "Disponível"
+    )
+    assert asyncio.run(evidence("<body>Sem nenhuma evidência clara</body>")) is None
+
+
 def test_builds_encoded_source_urls() -> None:
     assert "RTX+5070" in AmazonProvider().build_url("RTX 5070")
     assert "RTX+5070" in PichauProvider().build_url("RTX 5070")
@@ -629,6 +675,245 @@ def test_builds_encoded_source_urls() -> None:
 def test_rejects_non_positive_limit() -> None:
     with pytest.raises(ValueError):
         KabumProvider(max_offers=0)
+
+
+def test_rejects_negative_availability_fallback_max_candidates() -> None:
+    with pytest.raises(ValueError):
+        KabumProvider(availability_fallback_max_candidates=-1)
+
+
+def test_rank_unknown_candidates_skips_invalid_amount() -> None:
+    provider = KabumProvider()
+    offers = (
+        RawCollectedOffer(
+            source_code="kabum",
+            url="https://x/bad-price",
+            title="Preço inválido",
+            collected_at=NOW,
+            raw_price="R$ abc123",
+            raw_currency="BRL",
+            raw_availability=None,
+        ),
+        RawCollectedOffer(
+            source_code="kabum",
+            url="https://x/good-price",
+            title="Preço válido",
+            collected_at=NOW,
+            raw_price="R$ 10,00",
+            raw_currency="BRL",
+            raw_availability=None,
+        ),
+    )
+
+    ranked = provider._rank_unknown_candidates(offers)
+
+    assert [offer.url for offer in ranked] == ["https://x/good-price"]
+
+
+def test_fallback_disabled_when_max_candidates_is_zero(monkeypatch) -> None:
+    goto_calls: list[str] = []
+
+    class Response:
+        status = 200
+
+    class First:
+        async def wait_for(self, **kwargs):
+            return None
+
+    class Locator:
+        first = First()
+
+    offers = (
+        RawCollectedOffer(
+            source_code="fk4",
+            url="https://x/only",
+            title="A",
+            collected_at=NOW,
+            raw_price="R$ 10,00",
+            raw_currency="BRL",
+            raw_availability=None,
+        ),
+    )
+
+    class Page:
+        async def goto(self, url, **kwargs):
+            goto_calls.append(url)
+            return Response()
+
+        def locator(self, selector):
+            return Locator()
+
+    class Session:
+        def __init__(self, settings):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def new_page(self):
+            return Page()
+
+    class ZeroKProvider(PlaywrightStoreProvider):
+        source_code = "fk4"
+        result_selector = ".offer"
+
+        def build_url(self, query):
+            return "https://example.test/search"
+
+        async def extract(self, page, collected_at):
+            return offers
+
+        async def resolve_product_availability(self, page):
+            return "Disponível"
+
+    monkeypatch.setattr("app.collection.providers.base.BrowserSession", Session)
+    request = CollectionRequest(uuid4(), "fk4", "GPU", NOW)
+    provider = ZeroKProvider(clock=lambda: NOW, availability_fallback_max_candidates=0)
+
+    result = asyncio.run(provider.collect(request))
+
+    assert goto_calls == ["https://example.test/search"]  # sem fallback
+    assert result.offers[0].raw_availability is None
+
+
+def test_fallback_noop_when_no_unknown_candidates(monkeypatch) -> None:
+    goto_calls: list[str] = []
+
+    class Response:
+        status = 200
+
+    class First:
+        async def wait_for(self, **kwargs):
+            return None
+
+    class Locator:
+        first = First()
+
+    # já resolvida no card (AVAILABLE): nao ha UNKNOWN candidato ao fallback
+    offers = (
+        RawCollectedOffer(
+            source_code="fk5",
+            url="https://x/resolved",
+            title="A",
+            collected_at=NOW,
+            raw_price="R$ 10,00",
+            raw_currency="BRL",
+            raw_availability="Disponível",
+        ),
+    )
+
+    class Page:
+        async def goto(self, url, **kwargs):
+            goto_calls.append(url)
+            return Response()
+
+        def locator(self, selector):
+            return Locator()
+
+    class Session:
+        def __init__(self, settings):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def new_page(self):
+            return Page()
+
+    class NoUnknownProvider(PlaywrightStoreProvider):
+        source_code = "fk5"
+        result_selector = ".offer"
+
+        def build_url(self, query):
+            return "https://example.test/search"
+
+        async def extract(self, page, collected_at):
+            return offers
+
+        async def resolve_product_availability(self, page):
+            return "Disponível"
+
+    monkeypatch.setattr("app.collection.providers.base.BrowserSession", Session)
+    request = CollectionRequest(uuid4(), "fk5", "GPU", NOW)
+    provider = NoUnknownProvider(clock=lambda: NOW)
+
+    result = asyncio.run(provider.collect(request))
+
+    assert goto_calls == ["https://example.test/search"]  # sem fallback
+    assert result.offers[0].raw_availability == "Disponível"
+
+
+def test_fallback_treats_resolve_product_availability_exception_as_unresolved(
+    monkeypatch,
+) -> None:
+    class Response:
+        status = 200
+
+    class First:
+        async def wait_for(self, **kwargs):
+            return None
+
+    class Locator:
+        first = First()
+
+    offers = (
+        RawCollectedOffer(
+            source_code="fk6",
+            url="https://x/candidate",
+            title="A",
+            collected_at=NOW,
+            raw_price="R$ 10,00",
+            raw_currency="BRL",
+            raw_availability=None,
+        ),
+    )
+
+    class Page:
+        async def goto(self, url, **kwargs):
+            return Response()
+
+        def locator(self, selector):
+            return Locator()
+
+    class Session:
+        def __init__(self, settings):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def new_page(self):
+            return Page()
+
+    class RaisingResolveProvider(PlaywrightStoreProvider):
+        source_code = "fk6"
+        result_selector = ".offer"
+
+        def build_url(self, query):
+            return "https://example.test/search"
+
+        async def extract(self, page, collected_at):
+            return offers
+
+        async def resolve_product_availability(self, page):
+            raise RuntimeError("evidencia inesperada quebrou a extracao")
+
+    monkeypatch.setattr("app.collection.providers.base.BrowserSession", Session)
+    request = CollectionRequest(uuid4(), "fk6", "GPU", NOW)
+    provider = RaisingResolveProvider(clock=lambda: NOW)
+
+    result = asyncio.run(provider.collect(request))
+
+    assert result.offers[0].raw_availability is None
 
 
 def test_uses_headed_only_for_protected_sources_by_default() -> None:

@@ -36,8 +36,7 @@ _COMMAND_VERBS: dict[MissionCommand, str] = {
 }
 
 _CONFIRMATION_SUFFIX = (
-    'Responda "1" para confirmar ou "2" para cancelar (também aceito '
-    '"sim"/"não").'
+    'Responda "1" para confirmar ou "2" para cancelar (também aceito "sim"/"não").'
 )
 
 _SYSTEM_PROMPT = (
@@ -53,7 +52,7 @@ _SYSTEM_PROMPT = (
     '"1", "1 - sim"). Use "cancel" quando a pessoa recusa, nega ou desiste '
     '(ex.: "não", "nao quero", "deixa pra la", "cancela", "esquece", "2", '
     '"2 - não"). A pergunta sempre oferece "1" para confirmar e "2" para '
-    'cancelar, então um número isolado deve ser classificado por essa '
+    "cancelar, então um número isolado deve ser classificado por essa "
     'correspondência. Use "unclear" sempre que a resposta não expressar '
     "claramente nem confirmação nem cancelamento."
 )

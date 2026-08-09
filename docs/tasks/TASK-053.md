@@ -109,3 +109,10 @@ diagnóstico deve demonstrar que a falha pertence ao sistema.
 - classificação externa atual: `BLOCKED_EXTERNAL` com motivo
   `no_eligible_external_evidence`, nunca convertida em sucesso ou falha interna.
 
+## Amazon — instabilidade sob concorrência (retomada 2026-08-09)
+
+A falha intermitente anteriormente observada na Amazon não foi reproduzida na
+validação representativa atual em Docker/Linux. O provider permaneceu sem
+alteração. Caso a falha reapareça, a investigação deve ser retomada com
+evidência capturada no momento da ocorrência.
+
