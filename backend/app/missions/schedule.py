@@ -1,5 +1,6 @@
 """Consulta e progressão da agenda recorrente de missões."""
 
+import random
 from datetime import datetime, timedelta
 
 from sqlalchemy import or_, select
@@ -35,6 +36,21 @@ def find_due_schedules(
         .with_for_update(skip_locked=True, of=MissionSchedule)
     )
     return list(session.scalars(statement))
+
+
+def staggered_next_run_at(base: datetime, *, max_stagger_seconds: int) -> datetime:
+    """Desloca `base` uma única vez, só na criação/backfill da agenda.
+
+    `advance_schedule` nunca chama isto: a cadência fixa é preservada nas
+    execuções seguintes, e uma agenda já persistida não é recalculada em
+    um restart do worker. O objetivo é só evitar que várias missões com o
+    mesmo intervalo fiquem sincronizadas no mesmo instante.
+    """
+    if max_stagger_seconds < 0:
+        raise ValueError("max_stagger_seconds deve ser não negativo.")
+    if max_stagger_seconds == 0:
+        return base
+    return base + timedelta(seconds=random.uniform(0, max_stagger_seconds))
 
 
 def advance_schedule(schedule: MissionSchedule, *, started_at: datetime) -> None:

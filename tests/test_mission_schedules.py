@@ -1,5 +1,6 @@
 """Testes do modelo e das regras de agenda de missões."""
 
+import random
 from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock
 from uuid import uuid4
@@ -8,7 +9,11 @@ import pytest
 from app.database.base import Base
 from app.database.model_registry import REGISTERED_MODELS
 from app.missions.models import MissionSchedule
-from app.missions.schedule import advance_schedule, find_due_schedules
+from app.missions.schedule import (
+    advance_schedule,
+    find_due_schedules,
+    staggered_next_run_at,
+)
 from sqlalchemy import CheckConstraint, ForeignKeyConstraint, Index, UniqueConstraint
 
 NOW = datetime(2026, 8, 2, 16, 0, tzinfo=UTC)
@@ -148,3 +153,26 @@ def test_advance_schedule_rejects_invalid_execution(
 ) -> None:
     with pytest.raises(ValueError):
         advance_schedule(schedule, started_at=started_at)
+
+
+def test_staggered_next_run_at_returns_base_unchanged_when_disabled() -> None:
+    assert staggered_next_run_at(NOW, max_stagger_seconds=0) == NOW
+
+
+def test_staggered_next_run_at_rejects_negative_window() -> None:
+    with pytest.raises(ValueError):
+        staggered_next_run_at(NOW, max_stagger_seconds=-1)
+
+
+def test_staggered_next_run_at_applies_offset_within_window(monkeypatch) -> None:
+    monkeypatch.setattr(random, "uniform", lambda a, b: 137.5)
+
+    result = staggered_next_run_at(NOW, max_stagger_seconds=300)
+
+    assert result == NOW + timedelta(seconds=137.5)
+
+
+def test_staggered_next_run_at_never_moves_before_base() -> None:
+    for _ in range(50):
+        result = staggered_next_run_at(NOW, max_stagger_seconds=300)
+        assert NOW <= result <= NOW + timedelta(seconds=300)

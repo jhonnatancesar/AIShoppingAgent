@@ -58,6 +58,7 @@ class Settings(BaseSettings):
     collection_poll_seconds: float = Field(default=15.0, gt=0, le=3600)
     collection_batch_size: int = Field(default=25, ge=1, le=1000)
     collection_schedule_interval_minutes: int = Field(default=60, ge=1, le=10080)
+    collection_schedule_stagger_seconds: int = Field(default=300, ge=0, le=3600)
     collection_stale_run_minutes: int = Field(default=10, ge=1, le=1440)
     collection_max_concurrency: int = Field(default=4, ge=1, le=4)
     max_request_body_bytes: int = Field(default=65_536, ge=1024, le=1_048_576)

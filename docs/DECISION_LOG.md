@@ -25,6 +25,59 @@ Após a classificação, registrar a decisão neste arquivo e atualizar a docume
 - **Justificativa:** impacto avaliado e motivo da classificação.
 - **Próxima ação:** documento a atualizar, TASK a criar quando aplicável, ou ação de não implementação.
 
+### DEC-046 — Intervalo de coleta configurável com stagger; 30 min é implantação temporária de 8 GB, alvo da V1 é 15 min
+
+- **Data:** 2026-08-09
+- **Ideia:** durante a auditoria de frequência de coleta pedida na retomada da
+  TASK-053, ficou confirmado que a V1 já usa um intervalo fixo e global
+  (`collection_schedule_interval_minutes`, `Settings`) para todas as
+  missões, sem jitter/stagger e sem backoff por bloqueio externo no nível
+  da agenda. O usuário decidiu, dado que o servidor de produção está
+  temporariamente com 8 GB de RAM (upgrade para 16 GB previsto): (1) usar
+  30 minutos como valor de implantação temporário, para reduzir o pico de
+  Chromium/RAM; (2) usar `AISHOPPING_COLLECTION_MAX_CONCURRENCY=2` (em vez
+  de 4) pelo mesmo motivo, sem remover a capacidade de voltar a 4; (3)
+  manter 15 minutos como alvo pretendido da V1 assim que o servidor tiver
+  16 GB; (4) adicionar stagger (deslocamento aleatório pequeno, só na
+  criação/backfill/reativação da agenda, nunca recalculado em restart)
+  para que missões com o mesmo intervalo não fiquem sincronizadas no
+  mesmo instante; (5) **rejeitar** a primeira proposta de backoff após
+  401/403/429 no nível da `MissionSchedule` inteira (uma loja bloqueada
+  atrasaria a consulta das outras três da mesma missão) — o backoff
+  persistente precisa ser por `(mission_id, source)`, com modelagem
+  mínima a ser apresentada e aprovada antes de qualquer migration.
+- **Classificação:** Implementar agora (intervalo temporário de 30 min,
+  `max_concurrency=2` temporário, stagger na criação/backfill); Nova TASK
+  do MVP ou complemento desta TASK, a definir (backoff persistente por
+  fonte, modelagem ainda pendente de aprovação).
+- **Justificativa técnica:** `MissionSchedule.interval_minutes` é uma
+  coluna gravada por linha, lida por `advance_schedule` — nunca por
+  leitura ao vivo de `Settings`. Trocar a env var de 30 para 15 no futuro
+  **não migra agendas já persistidas**: só afeta missões criadas/
+  recuperadas depois da troca. É preciso um `UPDATE` explícito (não uma
+  migration Alembic — não há mudança de schema) no momento do upgrade
+  para 16 GB, documentado como procedimento operacional em
+  `docs/OPERATIONS.md`, para evitar coexistência silenciosa de missões em
+  30 e 15 minutos. Também foi corrigida uma lacuna pré-existente: o
+  serviço `api` (onde `/cadastro`/criação de missão via Telegram roda) não
+  recebia `AISHOPPING_COLLECTION_SCHEDULE_INTERVAL_MINUTES` no
+  `compose.yaml`, então missões novas criadas pelo Telegram usariam
+  sempre o padrão de código (60 min) independentemente da env var
+  configurada para o `collection_worker`; agora as duas fontes de criação
+  de agenda (Telegram/`api` e backfill/`collection_worker`) leem a mesma
+  env var. `collection_max_concurrency` é puramente configuração de
+  runtime (não persistida): reduzir para 2 e voltar para 4 depois é
+  seguro e reversível só reiniciando o `collection_worker`. O backoff por
+  missão inteira foi rejeitado porque acopla a saúde de uma fonte à
+  frequência de coleta das outras três, prejudicando diretamente a
+  detecção rápida de promoções — objetivo central do produto.
+- **Próxima ação:** `docs/MISSION_SCHEDULES.md` e `docs/OPERATIONS.md`
+  atualizados com a distinção entre alvo da V1 (15 min) e implantação
+  temporária de 8 GB (30 min), e o procedimento de upgrade. Modelagem
+  mínima de backoff por `(mission_id, source)` a apresentar antes de
+  qualquer migration; TASK-053 continua sem fechamento até essa peça e as
+  demais pendências serem resolvidas.
+
 ### DEC-045 — Alertas da V1 monitoram `amount` (preço do produto), não `total_amount`; frete deixa de bloquear a TASK-053
 
 - **Data:** 2026-08-09

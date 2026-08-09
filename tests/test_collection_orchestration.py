@@ -92,6 +92,8 @@ def test_schedule_backfill_uses_conflict_safe_insert() -> None:
     session.flush.assert_called_once()
     with pytest.raises(ValueError, match="positive"):
         ensure_missing_schedules(session, interval_minutes=0)
+    with pytest.raises(ValueError, match="negative"):
+        ensure_missing_schedules(session, stagger_seconds=-1)
 
 
 def test_stale_runs_are_terminal_and_publish_failure(monkeypatch) -> None:
@@ -284,6 +286,7 @@ def test_orchestrator_batch_processes_success_and_failure(monkeypatch) -> None:
     "options",
     [
         {"schedule_interval_minutes": 0},
+        {"schedule_stagger_seconds": -1},
         {"stale_run_minutes": 0},
         {"max_concurrency": 0},
         {"max_concurrency": 5},
@@ -292,6 +295,36 @@ def test_orchestrator_batch_processes_success_and_failure(monkeypatch) -> None:
 def test_orchestrator_rejects_unsafe_limits(options: dict) -> None:
     with pytest.raises(ValueError):
         CollectionOrchestrator(MagicMock(), CollectionAdapter(), **options)
+
+
+def test_orchestrator_forwards_stagger_to_schedule_backfill(monkeypatch) -> None:
+    session_factory = MagicMock()
+    session_factory.begin.return_value = nullcontext(MagicMock())
+    captured: list[dict] = []
+
+    def _capture(*_args, **kwargs):
+        captured.append(kwargs)
+        return 0
+
+    monkeypatch.setattr(
+        "app.collection.orchestration.ensure_missing_schedules", _capture
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration.recover_stale_runs", lambda *_a, **_k: 0
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration.claim_due_collections", lambda *_a, **_k: ()
+    )
+    orchestrator = CollectionOrchestrator(
+        session_factory,
+        CollectionAdapter(),
+        schedule_interval_minutes=30,
+        schedule_stagger_seconds=300,
+    )
+
+    asyncio.run(orchestrator.run_batch(now=NOW))
+
+    assert captured == [{"now": NOW, "interval_minutes": 30, "stagger_seconds": 300}]
 
 
 def test_orchestrator_processes_one_source_successfully(monkeypatch) -> None:

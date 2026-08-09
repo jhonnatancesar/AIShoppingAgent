@@ -85,6 +85,7 @@ async def run_worker(
         session_factory,
         build_collection_adapter(settings),
         schedule_interval_minutes=settings.collection_schedule_interval_minutes,
+        schedule_stagger_seconds=settings.collection_schedule_stagger_seconds,
         stale_run_minutes=settings.collection_stale_run_minutes,
         max_concurrency=settings.collection_max_concurrency,
     )

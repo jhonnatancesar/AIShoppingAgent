@@ -42,7 +42,11 @@ from app.missions.models import (
     MissionSource,
     MissionStatus,
 )
-from app.missions.schedule import advance_schedule, find_due_schedules
+from app.missions.schedule import (
+    advance_schedule,
+    find_due_schedules,
+    staggered_next_run_at,
+)
 from app.offers.models import Offer
 from app.products.models import Product
 from app.stores.models import Seller, Store
@@ -85,11 +89,14 @@ def ensure_missing_schedules(
     *,
     now: datetime | None = None,
     interval_minutes: int = 60,
+    stagger_seconds: int = 0,
 ) -> int:
     """Cria apenas agendas ausentes de missões antigas ainda elegíveis."""
     effective_now = now or utc_now()
     if interval_minutes <= 0:
         raise ValueError("interval_minutes must be positive")
+    if stagger_seconds < 0:
+        raise ValueError("stagger_seconds must not be negative")
     eligible_missions = select(Mission.id).where(
         Mission.status == MissionStatus.ACTIVE,
         (Mission.expires_at.is_(None) | (Mission.expires_at > effective_now)),
@@ -109,7 +116,9 @@ def ensure_missing_schedules(
                 id=uuid4(),
                 mission_id=mission_id,
                 interval_minutes=interval_minutes,
-                next_run_at=effective_now,
+                next_run_at=staggered_next_run_at(
+                    effective_now, max_stagger_seconds=stagger_seconds
+                ),
                 is_enabled=True,
                 created_at=effective_now,
                 updated_at=effective_now,
@@ -228,11 +237,14 @@ class CollectionOrchestrator:
         *,
         normalizer: PriceNormalizer | None = None,
         schedule_interval_minutes: int = 60,
+        schedule_stagger_seconds: int = 0,
         stale_run_minutes: int = 10,
         max_concurrency: int = 4,
     ) -> None:
         if schedule_interval_minutes <= 0:
             raise ValueError("schedule_interval_minutes must be positive")
+        if schedule_stagger_seconds < 0:
+            raise ValueError("schedule_stagger_seconds must not be negative")
         if stale_run_minutes <= 0:
             raise ValueError("stale_run_minutes must be positive")
         if not 1 <= max_concurrency <= 4:
@@ -241,6 +253,7 @@ class CollectionOrchestrator:
         self._adapter = adapter
         self._normalizer = normalizer or PriceNormalizer()
         self._schedule_interval_minutes = schedule_interval_minutes
+        self._schedule_stagger_seconds = schedule_stagger_seconds
         self._stale_after = timedelta(minutes=stale_run_minutes)
         self._semaphore = asyncio.Semaphore(max_concurrency)
 
@@ -253,6 +266,7 @@ class CollectionOrchestrator:
                 session,
                 now=effective_now,
                 interval_minutes=self._schedule_interval_minutes,
+                stagger_seconds=self._schedule_stagger_seconds,
             )
             stale = recover_stale_runs(
                 session, now=effective_now, stale_after=self._stale_after

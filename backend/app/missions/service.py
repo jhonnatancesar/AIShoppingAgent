@@ -18,10 +18,12 @@ from app.missions.models import (
     MissionStatus,
     MissionTransition,
 )
+from app.missions.schedule import staggered_next_run_at
 from app.stores.models import Store
 
 _DEFAULT_V1_SOURCE_CODES = ("pichau", "terabyte", "amazon", "kabum")
 _DEFAULT_SCHEDULE_INTERVAL_MINUTES = 60
+_DEFAULT_SCHEDULE_STAGGER_SECONDS = 0
 """Fontes selecionáveis da V1 usadas quando o Intent não especifica nenhuma."""
 
 
@@ -159,6 +161,7 @@ def create_mission_from_criteria(
     source_codes: Sequence[str],
     requested_at: datetime,
     schedule_interval_minutes: int = _DEFAULT_SCHEDULE_INTERVAL_MINUTES,
+    schedule_stagger_seconds: int = _DEFAULT_SCHEDULE_STAGGER_SECONDS,
 ) -> tuple[Mission, tuple[str, ...]]:
     """Cria uma missão a partir de critérios e a ativa imediatamente.
 
@@ -224,7 +227,9 @@ def create_mission_from_criteria(
         MissionSchedule(
             mission_id=mission.id,
             interval_minutes=schedule_interval_minutes,
-            next_run_at=requested_at,
+            next_run_at=staggered_next_run_at(
+                requested_at, max_stagger_seconds=schedule_stagger_seconds
+            ),
             is_enabled=True,
             created_at=requested_at,
             updated_at=requested_at,

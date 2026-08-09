@@ -244,6 +244,35 @@ systemd do projeto.
 
 Não automatize essa sequência na V1 e não use `git pull` cego em produção.
 
+### Upgrade de 8 GB para 16 GB de RAM (transição de intervalo de coleta, `DEC-046`)
+
+A implantação atual usa `collection_schedule_interval_minutes=30` e
+`collection_max_concurrency=2` como configuração temporária enquanto o
+servidor tem 8 GB de RAM; o alvo pretendido da V1 é `15` e `4`,
+respectivamente, assim que o servidor tiver 16 GB. Trocar somente as env vars
+**não migra agendas já persistidas** (`docs/MISSION_SCHEDULES.md`): sem o
+passo 4 abaixo, missões antigas continuam em 30 minutos indefinidamente,
+coexistindo silenciosamente com missões novas em 15 minutos.
+
+1. confirme que o servidor já tem 16 GB de RAM disponíveis (não só alocados);
+2. atualize `AISHOPPING_COLLECTION_SCHEDULE_INTERVAL_MINUTES=15` no `.env` (a
+   mesma env var é lida por `api` e `collection_worker`);
+3. recrie os serviços com `docker compose up -d` (sem downtime de banco);
+4. execute explicitamente, uma única vez, a atualização das agendas já
+   existentes — **não** é uma migration Alembic, é uma atualização de dados:
+   ```sql
+   UPDATE mission_schedules SET interval_minutes = 15, updated_at = now()
+   WHERE interval_minutes <> 15;
+   ```
+5. só depois de validar CPU/RAM sob a nova cadência por um período de
+   observação, aumente `AISHOPPING_COLLECTION_MAX_CONCURRENCY` de `2` para
+   `4` e recrie `collection_worker`;
+6. registre a data e os valores finais em `docs/PROJECT_CONTEXT.md`.
+
+Backoff persistente por fonte após bloqueio externo (401/403/429) continua
+pendente de modelagem e aprovação (`DEC-046`, `docs/MISSION_SCHEDULES.md`) —
+não faz parte deste procedimento.
+
 ## Backup operacional manual
 
 O backup contém dados potencialmente pessoais. Crie um diretório privado,

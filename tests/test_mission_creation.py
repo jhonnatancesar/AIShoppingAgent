@@ -1,6 +1,6 @@
 """Testes da criação orquestrada de missões a partir de critérios."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from unittest.mock import MagicMock
 from uuid import uuid4
@@ -70,6 +70,30 @@ def test_create_mission_with_explicit_sources_activates_with_exactly_those() -> 
     assert schedule.mission_id == mission.id
     assert schedule.next_run_at == NOW
     assert schedule.interval_minutes == 60
+
+
+def test_create_mission_applies_schedule_stagger_when_configured() -> None:
+    stores = [_FakeStore("pichau"), _FakeStore("kabum")]
+    session = _session(stores)
+
+    mission, _ = create_mission_from_criteria(
+        session,
+        user_id=uuid4(),
+        search_query="notebook gamer",
+        target_amount=None,
+        target_currency=None,
+        source_codes=("pichau", "kabum"),
+        requested_at=NOW,
+        schedule_stagger_seconds=300,
+    )
+
+    schedule = next(
+        call.args[0]
+        for call in session.add.call_args_list
+        if isinstance(call.args[0], MissionSchedule)
+    )
+    assert schedule.mission_id == mission.id
+    assert NOW <= schedule.next_run_at <= NOW + timedelta(seconds=300)
 
 
 def test_create_mission_without_sources_uses_all_four_v1_sources() -> None:

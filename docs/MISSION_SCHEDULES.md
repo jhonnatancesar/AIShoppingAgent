@@ -39,3 +39,46 @@ manter row lock durante Playwright/HTTP. Novas missões recebem agenda atômica;
 missões ativas antigas recebem backfill idempotente, sem reativar agendas
 explicitamente desabilitadas. Runs abandonados são terminalizados após o TTL
 operacional e resultados tardios são descartados.
+
+## Intervalo: alvo da V1 vs. implantação temporária de 8 GB (`DEC-046`)
+
+`interval_minutes` vem sempre de `Settings.collection_schedule_interval_minutes`
+(`AISHOPPING_COLLECTION_SCHEDULE_INTERVAL_MINUTES`), configurável e idêntico
+para todas as missões — não há intervalo por missão em produção, embora a
+coluna suporte o valor por linha.
+
+- **Alvo pretendido da V1:** 15 minutos, assim que o servidor tiver 16 GB de
+  RAM.
+- **Implantação atual, temporária, com 8 GB de RAM:** 30 minutos, só para
+  reduzir o pico de Chromium/RAM até o upgrade. Não é decisão arquitetural
+  permanente.
+
+**Importante:** `advance_schedule` usa `schedule.interval_minutes`, o valor já
+gravado na linha do banco — nunca uma leitura ao vivo de `Settings`. Trocar a
+env var de 30 para 15 no futuro **não afeta agendas já persistidas**; só
+missões criadas ou recuperadas (backfill) depois da troca recebem o novo
+valor. O procedimento para migrar agendas existentes está em
+`docs/OPERATIONS.md`.
+
+## Stagger (distribuição entre missões)
+
+`staggered_next_run_at` aplica um deslocamento aleatório único, limitado por
+`Settings.collection_schedule_stagger_seconds`
+(`AISHOPPING_COLLECTION_SCHEDULE_STAGGER_SECONDS`, padrão 300s = 5 min), para
+que missões com o mesmo intervalo não fiquem sincronizadas no mesmo instante.
+Aplicado **somente** na criação (`create_mission_from_criteria`) e no backfill
+(`ensure_missing_schedules`) — nunca em `advance_schedule`, que preserva a
+cadência fixa nas execuções seguintes. Uma agenda já persistida nunca tem seu
+`next_run_at` recalculado por um restart do worker.
+
+## Backoff por bloqueio externo (pendente — `DEC-046`)
+
+Hoje, um resultado `provider_blocked` (401/403/429) não afeta `next_run_at`:
+`advance_schedule` sempre avança pelo intervalo fixo, independente do
+resultado. Um backoff persistente por fonte foi proposto e **rejeitado no
+nível da `MissionSchedule` inteira** (atrasaria as quatro lojas de uma missão
+por causa de uma só bloqueada). A modelagem mínima por `(mission_id, source)`
+ainda não foi aprovada nem implementada; até lá, o único comportamento
+existente é o corte do ciclo de fallback de disponibilidade em
+401/403/429 (`backend/app/collection/providers/base.py`), que é por
+execução, não persistente.
