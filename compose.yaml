@@ -6,9 +6,6 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    env_file:
-      - path: ./backend/.env
-        required: false
     environment:
       AISHOPPING_APP_NAME: ${AISHOPPING_APP_NAME:-AIShoppingAgent}
       AISHOPPING_DEBUG: ${AISHOPPING_DEBUG:-false}
@@ -18,7 +15,12 @@ services:
       AISHOPPING_DATABASE_PORT: 5432
       AISHOPPING_DATABASE_NAME: ${POSTGRES_DB:-aishoppingagent}
       AISHOPPING_DATABASE_USER: ${POSTGRES_USER:-aishoppingagent}
-      AISHOPPING_DATABASE_PASSWORD: ${POSTGRES_PASSWORD:?define POSTGRES_PASSWORD in the root .env file}
+      AISHOPPING_DATABASE_PASSWORD_FILE: /run/secrets/postgres_password
+      AISHOPPING_GEMINI_API_KEY_USER_FILE: /run/secrets/gemini_api_key_user
+      AISHOPPING_GEMINI_API_KEY_ADMIN_DEV_FILE: /run/secrets/gemini_api_key_admin_dev
+      AISHOPPING_GROQ_API_KEY_FILE: /run/secrets/groq_api_key
+      AISHOPPING_TELEGRAM_BOT_TOKEN_FILE: /run/secrets/telegram_bot_token
+      AISHOPPING_TELEGRAM_WEBHOOK_SECRET_FILE: /run/secrets/telegram_webhook_secret
       AISHOPPING_OBSERVABILITY_ENABLED: "true"
       AISHOPPING_OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://otel-collector:4318/v1/traces
       AISHOPPING_TRACE_SAMPLE_RATIO: ${AISHOPPING_TRACE_SAMPLE_RATIO:-1.0}
@@ -26,6 +28,13 @@ services:
       AISHOPPING_AUTH_PUBLIC_BASE_URL: ${AISHOPPING_AUTH_PUBLIC_BASE_URL:-http://localhost:8000}
     ports:
       - "${API_PORT:-8000}:8000"
+    secrets:
+      - postgres_password
+      - gemini_api_key_user
+      - gemini_api_key_admin_dev
+      - groq_api_key
+      - telegram_bot_token
+      - telegram_webhook_secret
     depends_on:
       database:
         condition: service_healthy
@@ -45,9 +54,6 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    env_file:
-      - path: ./backend/.env
-        required: false
     environment:
       AISHOPPING_ENVIRONMENT: ${AISHOPPING_ENVIRONMENT:-development}
       AISHOPPING_LOG_LEVEL: ${AISHOPPING_LOG_LEVEL:-INFO}
@@ -55,7 +61,8 @@ services:
       AISHOPPING_DATABASE_PORT: 5432
       AISHOPPING_DATABASE_NAME: ${POSTGRES_DB:-aishoppingagent}
       AISHOPPING_DATABASE_USER: ${POSTGRES_USER:-aishoppingagent}
-      AISHOPPING_DATABASE_PASSWORD: ${POSTGRES_PASSWORD:?define POSTGRES_PASSWORD in the root .env file}
+      AISHOPPING_DATABASE_PASSWORD_FILE: /run/secrets/postgres_password
+      AISHOPPING_TELEGRAM_BOT_TOKEN_FILE: /run/secrets/telegram_bot_token
       AISHOPPING_OBSERVABILITY_ENABLED: "true"
       AISHOPPING_OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://otel-collector:4318/v1/traces
       AISHOPPING_TRACE_SAMPLE_RATIO: ${AISHOPPING_TRACE_SAMPLE_RATIO:-1.0}
@@ -63,6 +70,9 @@ services:
     command: ["python", "-m", "app.telegram.worker"]
     expose:
       - "9464"
+    secrets:
+      - postgres_password
+      - telegram_bot_token
     depends_on:
       database:
         condition: service_healthy
@@ -83,11 +93,13 @@ services:
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-aishoppingagent}
       POSTGRES_USER: ${POSTGRES_USER:-aishoppingagent}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?define POSTGRES_PASSWORD in the root .env file}
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql
+    secrets:
+      - postgres_password
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
@@ -141,3 +153,17 @@ services:
 volumes:
   postgres_data:
   prometheus_data:
+
+secrets:
+  postgres_password:
+    file: ${AISHOPPING_SECRETS_DIR:-./.secrets}/postgres_password
+  gemini_api_key_user:
+    file: ${AISHOPPING_SECRETS_DIR:-./.secrets}/gemini_api_key_user
+  gemini_api_key_admin_dev:
+    file: ${AISHOPPING_SECRETS_DIR:-./.secrets}/gemini_api_key_admin_dev
+  groq_api_key:
+    file: ${AISHOPPING_SECRETS_DIR:-./.secrets}/groq_api_key
+  telegram_bot_token:
+    file: ${AISHOPPING_SECRETS_DIR:-./.secrets}/telegram_bot_token
+  telegram_webhook_secret:
+    file: ${AISHOPPING_SECRETS_DIR:-./.secrets}/telegram_webhook_secret

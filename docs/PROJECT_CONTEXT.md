@@ -163,7 +163,17 @@ sessões persistentes duram 12 horas sem renovação. `/senha`, `/entrar`,
 Troca/recuperação revogam sessões, e limites persistentes protegem login,
 token e recuperação. PostgreSQL 18, concorrência, API/worker Docker, navegador,
 HTTPS público e Bot API reais foram validados; canários permaneceram ausentes
-da telemetria e auditoria. A próxima tarefa executável é a TASK-048.
+da telemetria e auditoria.
+
+A TASK-048 (`DEC-036`) está **concluída**: produção aceita secrets somente por
+`*_FILE`; Compose monta `/run/secrets` com seis arquivos na API, dois no worker
+e um no PostgreSQL. Valor direto/conflitante/vazio falha fechado. API e worker
+executam como UID non-root; Gitleaks 8.29.1 fixado e verificado examina working
+tree, versão e histórico. Docker real isolado confirmou ausência de canários em
+inspect, imagem, filesystem, logs, métricas e Jaeger, e uma rotação PostgreSQL
+real rejeitou a senha antiga após recriar consumidores. A próxima tarefa
+executável é a TASK-049. O pipeline terminou com 573 testes e 92,53% de
+cobertura.
 
 A TASK-058 (`DEC-015`) está **concluída**: `create_mission` e
 `mission_command` não executam mais direto — ficam encenados em
@@ -189,7 +199,9 @@ reais observadas em produção.
 
 - Estrutura de diretórios do projeto.
 - Esqueleto mínimo da aplicação FastAPI em `backend/app/`, com dependências declaradas em `backend/requirements.txt`.
-- Gestão de configuração tipada em `backend/app/core/config.py`, com variáveis de ambiente, exemplo local e arquivo `.env` ignorado pelo Git.
+- Gestão de configuração tipada em `backend/app/core/config.py`; desenvolvimento
+  aceita `.env` ignorado ou secret file, enquanto produção exige `*_FILE` e
+  mounts mínimos em `/run/secrets`.
 - Inventário de dependências e procedimento de preparação de novas máquinas em `docs/DEPENDENCIES.md`.
 - Política de uso da versão estável mais recente do Python; Python 3.14.6 é a versão atualmente validada.
 - Ambiente Docker Compose com contêineres FastAPI e PostgreSQL 18, volume persistente e configuração local protegida.

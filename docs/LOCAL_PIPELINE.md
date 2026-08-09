@@ -11,7 +11,11 @@ python -m pip install -r backend/requirements-dev.txt
 python -m playwright install chromium
 ```
 
-Python, Docker Desktop e Docker Compose devem estar disponíveis no `PATH`, conforme `docs/DEPENDENCIES.md`. O Docker Engine não precisa estar ativo para validar o arquivo Compose.
+Python e Docker Compose devem estar disponíveis conforme
+`docs/DEPENDENCIES.md`. No Windows, o pipeline resolve também a instalação
+oficial por usuário do Docker Desktop quando o processo atual ainda não herdou
+o PATH persistente. O Docker Engine não precisa estar ativo para validar o
+arquivo Compose.
 
 ## Execução
 
@@ -31,11 +35,21 @@ O wrapper aplica `ExecutionPolicy Bypass` somente ao processo que executa o pipe
 
 O script interrompe na primeira falha e executa, nesta ordem:
 
-1. integridade das dependências com `pip check`;
-2. lint com Ruff;
-3. verificação de formatação com Ruff;
-4. testes e cobertura com Pytest, sem gravar cache local;
-5. validação do grafo de migrações Alembic;
-6. validação estrutural do Docker Compose.
+1. instalação do Gitleaks 8.29.1 com SHA-256 fixado e verificado;
+2. varredura do working tree, arquivos versionados e histórico Git;
+3. confirmação de detecção em repositório temporário com canário gerado;
+4. integridade das dependências com `pip check`;
+5. lint com Ruff;
+6. verificação de formatação com Ruff;
+7. testes e cobertura com Pytest, sem gravar cache local;
+8. validação do grafo de migrações Alembic;
+9. validação estrutural do Docker Compose com secret files temporários.
 
-Quando `POSTGRES_PASSWORD` não está definido, o script usa um valor temporário somente no processo para permitir a validação do Compose e o remove ao terminar. O pipeline não inicia contêineres, não altera dados, não faz commits e não acessa o repositório remoto.
+O primeiro uso do Gitleaks exige rede para baixar o release oficial. O binário
+verificado permanece em `.tools/`, ignorado. A varredura usa redação total,
+não grava relatórios e não imprime descobertas potencialmente sensíveis.
+
+O script cria seis secret files não reais em diretório temporário somente para
+validar o Compose e remove o diretório ao terminar. O pipeline não inicia
+contêineres, não altera dados, não faz commits e não acessa o repositório
+remoto.

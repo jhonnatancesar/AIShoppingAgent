@@ -10,6 +10,20 @@ htmlcov/
 # Local environment configuration
 .env
 backend/.env
+.env.*
+backend/.env.*
+!.env.example
+!backend/.env.example
+.secrets/
+secrets/
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Reproducible local tools
+.tools/
+.pipeline-tmp/
 
 # Local virtual environments
 backend/.venv/

@@ -70,3 +70,97 @@ def test_settings_reject_invalid_database_port(
 
     with pytest.raises(ValidationError):
         Settings(_env_file=None)
+
+
+def test_settings_load_secret_from_file(tmp_path) -> None:
+    secret_file = tmp_path / "database_password"
+    secret_file.write_text("file-secret-with-spaces  \n", encoding="utf-8")
+
+    settings = Settings(
+        database_password_file=secret_file,
+        _env_file=None,
+    )
+
+    assert settings.database_password is not None
+    assert settings.database_password.get_secret_value() == "file-secret-with-spaces  "
+
+
+@pytest.mark.parametrize("value", ["", "   ", "\n"])
+def test_settings_reject_empty_secret_file(tmp_path, value: str) -> None:
+    secret_file = tmp_path / "database_password"
+    secret_file.write_text(value, encoding="utf-8")
+
+    with pytest.raises(ValidationError, match="must not be empty"):
+        Settings(database_password_file=secret_file, _env_file=None)
+
+
+def test_settings_reject_multiline_secret_file(tmp_path) -> None:
+    secret_file = tmp_path / "database_password"
+    secret_file.write_text("first\nsecond\n", encoding="utf-8")
+
+    with pytest.raises(ValidationError, match="exactly one line"):
+        Settings(database_password_file=secret_file, _env_file=None)
+
+
+def test_settings_reject_missing_secret_file(tmp_path) -> None:
+    with pytest.raises(ValidationError, match="regular file"):
+        Settings(
+            database_password_file=tmp_path / "missing",
+            _env_file=None,
+        )
+
+
+def test_settings_reject_direct_and_file_secret_in_every_environment(tmp_path) -> None:
+    secret_file = tmp_path / "database_password"
+    secret_file.write_text("file-secret", encoding="utf-8")
+
+    with pytest.raises(ValidationError, match="cannot be configured together"):
+        Settings(
+            database_password="direct-secret",
+            database_password_file=secret_file,
+            _env_file=None,
+        )
+
+
+def test_settings_allow_direct_secret_in_development() -> None:
+    settings = Settings(database_password="development-secret", _env_file=None)
+
+    assert settings.database_password is not None
+    assert settings.database_password.get_secret_value() == "development-secret"
+
+
+def test_settings_reject_direct_secret_in_production() -> None:
+    with pytest.raises(ValidationError, match="must be provided through"):
+        Settings(
+            environment="production",
+            database_password="production-secret",
+            _env_file=None,
+        )
+
+
+def test_settings_load_secret_file_in_production(tmp_path) -> None:
+    secret_file = tmp_path / "database_password"
+    secret_file.write_text("production-file-secret\n", encoding="utf-8")
+
+    settings = Settings(
+        environment="production",
+        database_password_file=secret_file,
+        _env_file=None,
+    )
+
+    assert settings.database_password is not None
+    assert settings.database_password.get_secret_value() == "production-file-secret"
+
+
+def test_settings_reject_empty_direct_secret() -> None:
+    with pytest.raises(ValidationError, match="must not be empty"):
+        Settings(database_password="   ", _env_file=None)
+
+
+def test_settings_secret_repr_is_redacted(tmp_path) -> None:
+    secret_file = tmp_path / "telegram_bot_token"
+    secret_file.write_text("telegram-secret-canary", encoding="utf-8")
+
+    settings = Settings(telegram_bot_token_file=secret_file, _env_file=None)
+
+    assert "telegram-secret-canary" not in repr(settings)

@@ -1,5 +1,23 @@
 # Changelog
 
+## 2026-08-08 — TASK-048: secrets por arquivo e varredura reproduzível
+
+- Produção agora aceita credenciais somente por `*_FILE`; conflito com valor
+  direto, vazio, arquivo ausente ou multilinha falha fechado.
+- Compose monta seis secrets em `/run/secrets` com menor privilégio: API recebe
+  seis, worker dois e PostgreSQL um; valores não entram no ambiente.
+- API e worker executam como UID não-root, preservando Chromium headless/headed
+  e Xvfb no Linux.
+- Gitleaks 8.29.1 foi fixado com SHA-256 publicado para Windows/Linux x64 e
+  integrado ao pipeline para working tree, versão, histórico e canário.
+- Criado provisionamento interativo/migração local sem imprimir valores e
+  runbook de rotação segura, distinguindo volume PostgreSQL novo de existente.
+- Docker isolado confirmou canários ausentes de inspect, imagem, rootfs,
+  filesystem, logs, métricas e Jaeger; rotação real rejeitou a senha antiga e
+  aceitou a nova após recriar consumidores.
+- Pipeline aprovado com 573 testes, 92,53% de cobertura, Ruff, Alembic,
+  Gitleaks e Compose.
+
 ## 2026-08-08 — TASK-061: autenticação real por senha
 
 - Criadas credenciais Argon2id, sessões persistentes de 12 horas e tokens

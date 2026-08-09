@@ -33,6 +33,12 @@ de domínio nem uma fila externa; API e worker compartilham código, migrações
 banco e são implantados juntos pelo Docker Compose, inclusive em Linux
 headless/Ubuntu Server.
 
+A TASK-048 retira secrets do ambiente dos contêineres. Produção usa somente
+`*_FILE` apontando para mounts em `/run/secrets`, concedidos por serviço;
+conflito com valor direto falha fechado. API e worker executam como usuário
+non-root. O contrato e os limites operacionais estão em `docs/SECRETS.md` e
+`adr/ADR-011-secrets-por-arquivo.md`.
+
 As TASKs 038 a 041 adicionaram `app.purchase` como módulo determinístico. Ele
 consulta missões, fontes, coletas e histórico já persistidos, produz recomendação
 e comparação e cria uma confirmação vinculada à evidência apresentada. Não usa

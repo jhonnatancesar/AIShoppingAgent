@@ -14,17 +14,25 @@ Consulte `AGENTS.md` antes de executar tarefas e `docs/ROADMAP.md` para a sequê
 
 ## Ambiente local com Docker Compose
 
-Copie os exemplos de configuração, substitua a senha no `.env` da raiz e as
-credenciais Telegram em `backend/.env`, inicie o banco, aplique as migrações e
-então suba os serviços:
+Copie o exemplo de configuração não sensível e inicialize os secrets com
+entrada oculta. O Compose monta os valores em `/run/secrets`; não os coloque
+no `.env` usado pelos contêineres:
 
 ```powershell
 Copy-Item .env.example .env
-Copy-Item backend/.env.example backend/.env
+python -m backend.scripts.manage_secrets init
+python -m backend.scripts.manage_secrets check
 docker compose up -d database
 docker compose run --rm api python -m alembic -c alembic.ini upgrade head
 docker compose up --build
 ```
+
+Quem já possui valores em `.env` pode usar
+`python -m backend.scripts.manage_secrets migrate` sem imprimir nem apagar os
+arquivos de origem. Desenvolvimento Python fora do Docker ainda aceita
+`backend/.env`; produção aceita somente `*_FILE`. Consulte
+`docs/SECRETS.md`, especialmente antes de rotacionar a senha de um banco já
+inicializado.
 
 A API ficará disponível em `http://localhost:8000`, o PostgreSQL em
 `localhost:5432`, o Prometheus em `http://localhost:9090` e o Jaeger em
@@ -94,11 +102,14 @@ Execute todas as verificações obrigatórias com:
 .\scripts\check.cmd
 ```
 
-O detalhamento e os pré-requisitos estão em `docs/LOCAL_PIPELINE.md`.
+O pipeline também instala o Gitleaks 8.29.1 com checksum verificado, examina
+working tree, arquivos versionados e histórico, e valida um canário gerado em
+repositório temporário. O detalhamento está em `docs/LOCAL_PIPELINE.md`.
 
 ## Migrações
 
-Após configurar o `.env` e iniciar o PostgreSQL, aplique as migrações pelo ambiente reproduzível do Compose:
+Após configurar os secret files e iniciar o PostgreSQL, aplique as migrações
+pelo ambiente reproduzível do Compose:
 
 ```powershell
 docker compose run --rm api python -m alembic -c alembic.ini upgrade head

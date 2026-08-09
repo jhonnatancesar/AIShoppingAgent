@@ -10,6 +10,7 @@ Este documento é a referência de ambiente para qualquer nova máquina. Antes d
 | Python | Versão estável mais recente, atualmente Python 3.14.6, com `pip` | `python --version` e `python -m pip --version` |
 | Docker Desktop | Versão estável mais recente; Docker Engine 29.6.2 e Docker Compose 5.3.1 validados atualmente | `docker --version` e `docker compose version` |
 | cloudflared | Somente para desenvolvimento: expõe o webhook local com HTTPS público durante a validação real do canal Telegram; 2026.7.3 validado atualmente | `cloudflared --version` |
+| Gitleaks | 8.29.1, instalado pelo script do projeto após SHA-256 fixado | `python scripts/install_gitleaks.py` |
 
 PostgreSQL não exige instalação direta na máquina: o ambiente local usa a imagem oficial `postgres:18-alpine` por meio do Docker Compose.
 
@@ -52,8 +53,9 @@ ADMIN/DEV. A chamada ao Gemini exige uma chave por perfil —
 `AISHOPPING_GEMINI_API_KEY_ADMIN_DEV` para a cascata ADMIN/DEV (TASK-059),
 mantendo as cotas gratuitas completamente separadas entre usuários reais e
 validação/uso administrativo. O modelo padrão configurável é
-`gemini-3.6-flash`. As chaves ficam apenas no ambiente ou `.env` ignorado
-pelo Git.
+`gemini-3.6-flash`. Em desenvolvimento fora do Docker, as chaves podem ficar
+no ambiente ou `.env` ignorado. No Compose e em produção, ficam somente em
+arquivos montados por `/run/secrets`, conforme `docs/SECRETS.md`.
 
 `httpx` 0.28.1 (TASK-059) é usado por `GroqProvider` para chamar a API
 compatível com OpenAI do Groq (`/openai/v1/chat/completions`), fallback
@@ -61,8 +63,8 @@ opcional do perfil ADMIN/DEV entre o Gemini premium e o Gemini gratuito.
 Exige `AISHOPPING_GROQ_API_KEY`; o modelo padrão configurável é
 `AISHOPPING_GROQ_MODEL` (`llama-3.3-70b-versatile`). Sem a chave, o
 `AdminDevAIProviderManager` mantém o comportamento de dois níveis (Gemini
-premium → Gemini gratuito) já validado nas TASKs 029–031. A chave fica
-apenas em `backend/.env`, nunca versionada.
+premium → Gemini gratuito) já validado nas TASKs 029–031. A execução local
+fora do Docker pode usar `backend/.env`; Compose/produção usam secret file.
 
 O webhook do Telegram (TASK-034) não usa SDK — chama a Bot API diretamente com
 `urllib` da biblioteca padrão. Exige `AISHOPPING_TELEGRAM_BOT_TOKEN` (criado via
@@ -73,8 +75,9 @@ e por `backend/scripts/register_telegram_commands.py`, que registra os
 `AISHOPPING_TELEGRAM_WEBHOOK_SECRET` (valor aleatório local, gerado com
 `secrets.token_urlsafe`, usado para autenticar as requisições recebidas). A
 TASK-046 compara esse segredo em tempo constante antes de confiar na identidade
-privada da pessoa. Ambos
-ficam apenas em `backend/.env`, nunca versionados.
+privada da pessoa. Em Compose/produção, ambos são arquivos concedidos somente
+aos serviços autorizados; `backend/.env` permanece apenas para desenvolvimento
+Python fora do Docker.
 
 `argon2-cffi` 25.1.0 implementa Argon2id para a TASK-061 e foi validado no
 Python 3.14.6 oficial da máquina e na imagem Linux `python:3.14-slim`.
@@ -85,9 +88,9 @@ A TASK-036 reutiliza o mesmo token no processo `app.telegram.worker`. O
 intervalo e o tamanho do lote são configuráveis por
 `AISHOPPING_TELEGRAM_NOTIFICATION_POLL_SECONDS` (padrão 5) e
 `AISHOPPING_TELEGRAM_NOTIFICATION_BATCH_SIZE` (padrão 50). No Docker Compose,
-API e `telegram_notifier` carregam `backend/.env` quando presente; as variáveis
-de conexão ao banco continuam explicitamente sobrescritas para o serviço
-`database`.
+API e `telegram_notifier` não carregam `backend/.env`: recebem somente os
+secret files necessários. O worker recebe senha do banco e token do bot, mas
+não recebe chaves de IA nem segredo do webhook.
 
 A TASK-045 validou OpenTelemetry 1.44.0/instrumentation 0.65b0 e
 `prometheus-client` 0.26.0. O Compose usa imagens oficiais explicitamente
@@ -117,6 +120,10 @@ A fonte de verdade para ferramentas usadas somente no desenvolvimento é `backen
 - `pytest>=9.1,<10.0`
 - `pytest-cov>=7.1,<8.0`
 
+Gitleaks não é pacote Python. `scripts/install_gitleaks.py` fixa a versão
+8.29.1, confere o SHA-256 oficial para Windows/Linux x64 e instala o binário
+em `.tools/`, ignorado. O pipeline não usa `latest`.
+
 Após autorização para instalação, validar lint e formatação a partir da raiz:
 
 ```powershell
@@ -131,7 +138,13 @@ Após preparar as dependências, o comando recomendado para executar todas as ve
 
 ## Configuração local
 
-- Copiar `.env.example` para `.env`, definir uma senha local para o PostgreSQL e nunca versionar esse arquivo.
-- Copiar `backend/.env.example` para `backend/.env` quando for necessário configurar valores locais.
-- Nunca versionar `.env`, `backend/.env`, credenciais, ambientes virtuais, cache ou imagens Docker.
+- Copiar `.env.example` para `.env`; o Compose usa esse arquivo somente para
+  configuração não sensível.
+- Executar `python -m backend.scripts.manage_secrets init` em instalação nova,
+  ou `migrate` para copiar valores locais antigos sem imprimi-los; depois usar
+  `check`.
+- Copiar `backend/.env.example` para `backend/.env` somente quando for
+  necessário executar Python local fora do Docker.
+- Nunca versionar `.env`, `.secrets`, credenciais, chaves/certificados privados,
+  ambientes virtuais, cache, ferramentas baixadas ou imagens Docker.
 - Atualizar este documento e o arquivo de requisitos correspondente quando uma TASK introduzir uma dependência nova ou alterar uma versão suportada.

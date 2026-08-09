@@ -1,0 +1,16 @@
+title = "AIShoppingAgent working tree scan"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Local ignored secret stores and generated tooling are never commit candidates"
+paths = [
+  '''(^|[\\/])\.git([\\/]|$)''',
+  '''(^|[\\/])\.tools([\\/]|$)''',
+  '''(^|[\\/])\.secrets([\\/]|$)''',
+  '''(^|[\\/])secrets([\\/]|$)''',
+  '''(^|[\\/])\.env($|\.)''',
+  '''(^|[\\/])\.venv([\\/]|$)''',
+  '''(^|[\\/])__pycache__([\\/]|$)''',
+]

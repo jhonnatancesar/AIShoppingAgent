@@ -25,6 +25,21 @@ Após a classificação, registrar a decisão neste arquivo e atualizar a docume
 - **Justificativa:** impacto avaliado e motivo da classificação.
 - **Próxima ação:** documento a atualizar, TASK a criar quando aplicável, ou ação de não implementação.
 
+### DEC-036 — Usar secret files com fonte única e menor privilégio
+
+- **Data:** 2026-08-08
+- **Ideia:** retirar credenciais do ambiente dos contêineres e conceder a cada
+  serviço somente os arquivos de que necessita em `/run/secrets`.
+- **Classificação:** Implementar agora.
+- **Justificativa:** `.gitignore` evitava commit acidental dos `.env`, mas não
+  evitava exposição por `docker inspect`, excesso de acesso do worker ou falta
+  de detecção preventiva. `*_FILE` obrigatório em produção, conflito
+  fail-closed, execução non-root e Gitleaks fixado fecham o risco imediato sem
+  introduzir um cofre de V2. `POSTGRES_PASSWORD_FILE` inicializa volume novo,
+  mas banco existente exige `ALTER ROLE` e reinício coordenado dos consumidores.
+- **Próxima ação:** TASK-048 concluída; executar a TASK-049. Vault, cloud secret
+  manager e rotação automática permanecem fora da V1.
+
 ### DEC-035 — Autenticar por senha sem expor segredo ao Telegram
 
 - **Data:** 2026-08-08
