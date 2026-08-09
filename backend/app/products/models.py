@@ -28,6 +28,10 @@ class Product(Base):
             "model IS NULL OR btrim(model) <> ''",
             name="ck_products_model_not_blank",
         ),
+        CheckConstraint(
+            "display_name IS NULL OR btrim(display_name) <> ''",
+            name="ck_products_display_name_not_blank",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(
@@ -38,6 +42,7 @@ class Product(Base):
     name: Mapped[str] = mapped_column(String(300), nullable=False)
     brand: Mapped[str | None] = mapped_column(String(160), nullable=True)
     model: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    display_name: Mapped[str | None] = mapped_column(String(300), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

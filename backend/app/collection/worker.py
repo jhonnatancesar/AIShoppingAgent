@@ -8,6 +8,7 @@ from time import perf_counter
 from opentelemetry import trace
 from opentelemetry.trace import SpanKind
 
+from app.ai_provider import build_admin_dev_ai_provider_manager
 from app.collection.adapter import CollectionAdapter
 from app.collection.browser import BrowserSettings
 from app.collection.orchestration import CollectionOrchestrator
@@ -84,6 +85,7 @@ async def run_worker(
     orchestrator = CollectionOrchestrator(
         session_factory,
         build_collection_adapter(settings),
+        ai_manager=build_admin_dev_ai_provider_manager(settings),
         schedule_interval_minutes=settings.collection_schedule_interval_minutes,
         schedule_stagger_seconds=settings.collection_schedule_stagger_seconds,
         stale_run_minutes=settings.collection_stale_run_minutes,

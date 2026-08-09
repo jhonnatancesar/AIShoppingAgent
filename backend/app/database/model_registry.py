@@ -6,7 +6,11 @@ from app.authentication.models import (
     UserAuthSession,
     UserCredential,
 )
-from app.collection.models import CollectionRun, PriceObservation
+from app.collection.models import (
+    CollectionRun,
+    MissionOfferRelevance,
+    PriceObservation,
+)
 from app.events.models import Event, EventConsumptionAttempt
 from app.missions.models import (
     Mission,
@@ -25,6 +29,7 @@ from app.users.models import User
 REGISTERED_MODELS = (
     CollectionRun,
     PriceObservation,
+    MissionOfferRelevance,
     User,
     Product,
     Store,

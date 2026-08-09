@@ -22,6 +22,7 @@ from sqlalchemy.dialects.postgresql import UUID as PostgreSQLUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.collection.normalization import Availability
+from app.collection.relevance import OfferRelevance
 from app.database.base import Base
 from app.database.time import utc_now
 
@@ -165,3 +166,48 @@ class PriceObservation(Base):
         server_default=func.now(),
     )
     raw_evidence: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+
+
+class MissionOfferRelevance(Base):
+    """Correspondência classificada por IA entre uma missão e uma oferta.
+
+    Chave natural `(mission_id, offer_id)` (TASK-063): a mesma oferta pode
+    ser `MATCH` para uma missão e `NO_MATCH` para outra, então a
+    classificação nunca fica só em `Offer`/`Product`. Os insumos da
+    classificação (busca da missão, título bruto da oferta) são imutáveis
+    depois que a missão e a oferta existem — `MissionCriteria.search_query`
+    nunca é editado e o título bruto de uma oferta já criada nunca muda
+    (`Product.name`) — por isso uma linha aqui nunca precisa ser
+    reclassificada; ela só é criada quando ainda não existe.
+    """
+
+    __tablename__ = "mission_offer_relevance"
+    __table_args__ = (Index("ix_mission_offer_relevance_offer_id", "offer_id"),)
+
+    mission_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("missions.id", ondelete="RESTRICT"),
+        primary_key=True,
+    )
+    offer_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("offers.id", ondelete="RESTRICT"),
+        primary_key=True,
+    )
+    classification: Mapped[OfferRelevance] = mapped_column(
+        Enum(
+            OfferRelevance,
+            name="offer_relevance",
+            values_callable=lambda values: [v.value for v in values],
+        ),
+        nullable=False,
+    )
+    classified_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+        server_default=func.now(),
+    )

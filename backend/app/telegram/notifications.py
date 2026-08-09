@@ -23,6 +23,9 @@ from app.events import (
 )
 from app.missions.models import Mission
 from app.observability.metrics import observe_resilience_event
+from app.offers.models import Offer
+from app.products.models import Product
+from app.stores.models import Store
 from app.telegram.bot_api import (
     TelegramBotAPIError,
     TelegramDeliveryAmbiguous,
@@ -244,7 +247,34 @@ def _prepare_notification(session: Session, event: Event) -> tuple[int, str]:
         raise TelegramNotificationError(
             "notification_recipient_inactive", permanent=False
         )
-    return user.telegram_chat_id, _render_alert(event, mission.title)
+    offer, product, store = _resolve_offer_context(session, event)
+    return (
+        user.telegram_chat_id,
+        _render_alert(event, mission.title, offer, product, store),
+    )
+
+
+def _resolve_offer_context(
+    session: Session, event: Event
+) -> tuple[Offer, Product, Store]:
+    """Busca a oferta real do alerta a partir do `offer_id` do evento.
+
+    TASK-063: o alerta precisa representar o anúncio real (título, loja,
+    link), não a missão. Preço, moeda e disponibilidade continuam vindo só
+    do `payload` do evento -- esta função nunca os lê nem os altera.
+    """
+    payload = event.payload
+    if not isinstance(payload, dict):
+        raise TelegramNotificationError("notification_payload_invalid")
+    offer_id = _required_uuid(payload, "offer_id")
+    offer = session.get(Offer, offer_id)
+    if offer is None:
+        raise TelegramNotificationError("notification_payload_invalid")
+    product = session.get(Product, offer.product_id)
+    store = session.get(Store, offer.store_id)
+    if product is None or store is None:
+        raise TelegramNotificationError("notification_payload_invalid")
+    return offer, product, store
 
 
 def _prepare_authentication_notification(
@@ -339,10 +369,28 @@ def _render_authentication_message(
     raise TelegramNotificationError("notification_payload_invalid")
 
 
-def _render_alert(event: Event, mission_title: str) -> str:
+def _render_alert(
+    event: Event,
+    mission_title: str,
+    offer: Offer,
+    product: Product,
+    store: Store,
+) -> str:
+    """Monta a mensagem do alerta com dados reais da oferta.
+
+    TASK-063: nome do produto, loja e link vêm sempre do anúncio real
+    (`product`/`store`/`offer`); a missão aparece só como contexto
+    secundário. Preço, moeda e disponibilidade continuam vindo
+    exclusivamente do `payload` do evento -- nunca são inferidos aqui. O
+    template é sempre uma string fixa no código, nunca gerada por IA;
+    `product.display_name` (normalizado por IA, TASK-063) é usado quando
+    disponível, com `product.name` (título bruto) como alternativa segura
+    quando a normalização ainda não aconteceu ou falhou.
+    """
     payload = event.payload
     if not isinstance(payload, dict):
         raise TelegramNotificationError("notification_payload_invalid")
+    display_name = product.display_name or product.name
     try:
         event_type = EventType(event.event_type)
         currency = _currency(payload)
@@ -350,18 +398,28 @@ def _render_alert(event: Event, mission_title: str) -> str:
         if event_type is EventType.PRICE_DECREASED_V1:
             previous_total = _money(payload, "previous_total")
             return (
-                f'📉 O preço caiu na missão "{mission_title}".\n'
-                f"De {_format_money(previous_total, currency)} para "
-                f"{_format_money(current_total, currency)}."
+                "📉 QUEDA DE PREÇO\n\n"
+                f"{display_name}\n\n"
+                f"🏪 {store.name}\n"
+                f"💰 {_format_money(current_total, currency)} "
+                f"(antes: {_format_money(previous_total, currency)})\n"
+                f"🔎 Missão: {mission_title}\n\n"
+                "🔗 Ver anúncio\n"
+                f"{offer.url}"
             )
         if event_type is EventType.PRICE_TARGET_REACHED_V1:
             target_total = _money(payload, "target_total")
             if payload.get("mission_id") != str(event.mission_id):
                 raise TelegramNotificationError("notification_payload_invalid")
             return (
-                f'🎯 Preço-alvo atingido na missão "{mission_title}".\n'
-                f"Preço atual: {_format_money(current_total, currency)} "
-                f"(alvo: {_format_money(target_total, currency)})."
+                "🔥 PREÇO ENCONTRADO\n\n"
+                f"{display_name}\n\n"
+                f"🏪 {store.name}\n"
+                f"💰 {_format_money(current_total, currency)}\n"
+                f"🎯 Alvo: {_format_money(target_total, currency)}\n"
+                f"🔎 Missão: {mission_title}\n\n"
+                "🔗 Ver anúncio\n"
+                f"{offer.url}"
             )
     except InvalidOperation, TypeError, ValueError:
         raise TelegramNotificationError("notification_payload_invalid") from None

@@ -25,6 +25,8 @@ erDiagram
     missions ||--o| mission_criteria : defines
     missions ||--o{ mission_sources : selects
     stores ||--o{ mission_sources : selected_for
+    missions ||--o{ mission_offer_relevance : classifies
+    offers ||--o{ mission_offer_relevance : classified_for
     missions ||--o{ mission_transitions : records
     missions ||--o| mission_schedules : schedules
     missions ||--o{ collection_runs : triggers
@@ -136,6 +138,29 @@ Uma missão pode selecionar várias fontes, sem duplicá-las. Ativação e retom
 exigem ao menos uma seleção. A estrutura foi adicionada pela revisão
 `20260802_0009` para corrigir o escopo da TASK-020.
 
+### `mission_offer_relevance`
+
+Classificação por IA da correspondência entre uma missão e uma oferta
+coletada (TASK-063, `DEC-048`).
+
+| Coluna | Tipo | Regra |
+| --- | --- | --- |
+| `mission_id` | `uuid` | FK para `missions.id`, parte da PK, com `RESTRICT`. |
+| `offer_id` | `uuid` | FK para `offers.id`, parte da PK, com `RESTRICT`; indexada. |
+| `classification` | `offer_relevance` | `match`, `possible_match` ou `no_match`. |
+| `classified_at` | `timestamptz` | Obrigatório. |
+| `created_at` | `timestamptz` | Obrigatório. |
+
+Chave natural `(mission_id, offer_id)`: a mesma `Offer` pode ser `match` para
+uma missão e `no_match` para outra. Os insumos da classificação (busca da
+missão, título bruto da oferta) são imutáveis depois que ambas existem, então
+uma linha nunca é reclassificada — só criada quando ainda não existe, e só
+quando a IA devolve uma resposta válida (falha/resposta inválida não é
+persistida, para tentar de novo na próxima coleta). Só `match` habilita
+`evaluate_price_alerts` (`docs/PRICE_ALERTS.md`) para aquela observação;
+`possible_match`, `no_match` e ausência de classificação são todos
+conservadores (sem alerta). Adicionada pela revisão `20260809_0004`.
+
 ### `mission_transitions`
 
 Histórico imutável do ciclo de vida.
@@ -183,15 +208,20 @@ Identidade canônica de um produto, independente da loja.
 | Coluna | Tipo | Regra |
 | --- | --- | --- |
 | `id` | `uuid` | Chave primária. |
-| `name` | `varchar(300)` | Obrigatório. |
+| `name` | `varchar(300)` | Obrigatório; título bruto da primeira coleta daquela oferta, nunca reescrito. |
 | `brand` | `varchar(160)` | Opcional. |
 | `model` | `varchar(160)` | Opcional. |
+| `display_name` | `varchar(300)` | Opcional; título normalizado por IA para exibição (TASK-063), separado de `name`. |
 | `created_at` | `timestamptz` | Obrigatório. |
 | `updated_at` | `timestamptz` | Obrigatório. |
 
 Esta entidade foi implementada na TASK-013 pela revisão `20260802_0003`.
 Não há unicidade artificial apenas por nome nem mesclagem automática; a política
 conservadora de identidade e os limites funcionais estão em `docs/PRODUCTS.md`.
+`display_name` foi adicionado pela revisão `20260809_0004` (TASK-063):
+normalizado uma única vez via `AIProviderManager` a partir do título bruto,
+nunca substitui `name`, e fica `NULL` até a normalização ter sucesso — o
+notifier usa `name` como alternativa enquanto isso.
 
 ### `stores`
 
@@ -420,6 +450,7 @@ em `docs/AUDIT.md`.
 - `offers (product_id)`, `offers (store_id)` e `offers (seller_id)` além das unicidades definidas.
 - `sellers (store_id)` e unicidade parcial de `(store_id, external_id)`.
 - `mission_sources (store_id)` para localizar missões por fonte.
+- `mission_offer_relevance (offer_id)` para localizar classificações por oferta.
 - `mission_schedules (next_run_at, mission_id)` parcial para agendas habilitadas vencidas.
 - `collection_runs (mission_id, started_at desc)` e `collection_runs (store_id, started_at desc)`.
 - `price_observations (offer_id, observed_at desc, id)` para histórico de uma oferta.

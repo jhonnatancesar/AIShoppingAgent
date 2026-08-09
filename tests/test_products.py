@@ -16,6 +16,7 @@ def test_product_table_matches_data_contract() -> None:
         table.c.name,
         table.c.brand,
         table.c.model,
+        table.c.display_name,
         table.c.created_at,
         table.c.updated_at,
     ]
@@ -26,6 +27,8 @@ def test_product_table_matches_data_contract() -> None:
     assert table.c.brand.type.length == 160
     assert table.c.model.nullable is True
     assert table.c.model.type.length == 160
+    assert table.c.display_name.nullable is True
+    assert table.c.display_name.type.length == 300
     assert table.c.created_at.type.timezone is True
     assert table.c.updated_at.type.timezone is True
 
@@ -42,6 +45,7 @@ def test_product_table_rejects_blank_text_by_constraint() -> None:
         "ck_products_name_not_blank",
         "ck_products_brand_not_blank",
         "ck_products_model_not_blank",
+        "ck_products_display_name_not_blank",
     }
 
 
@@ -69,3 +73,16 @@ def test_product_accepts_optional_brand_and_model() -> None:
     assert product.name == "Notebook"
     assert product.brand is None
     assert product.model is None
+
+
+def test_product_display_name_is_optional_and_never_replaces_raw_name() -> None:
+    """TASK-063: título normalizado é separado do título bruto original."""
+    product = Product(name="Título bruto original")
+
+    assert product.display_name is None
+    assert product.name == "Título bruto original"
+
+    product.display_name = "Título normalizado"
+
+    assert product.name == "Título bruto original"
+    assert product.display_name == "Título normalizado"

@@ -8,6 +8,7 @@ from threading import Barrier
 from uuid import uuid4
 
 import pytest
+from app.ai_provider import AIResponse
 from app.collection.adapter import CollectionAdapter
 from app.collection.contracts import (
     CollectionRequest,
@@ -30,6 +31,28 @@ from app.users.models import User, UserRole
 from sqlalchemy import func, select
 
 pytestmark = pytest.mark.integration
+
+
+class _AlwaysMatchAIManager:
+    """AIProviderManager de teste (TASK-063): sempre MATCH + título fixo.
+
+    Fronteira de IA controlada, como toda fronteira externa nos testes de
+    integração desta suíte -- não chama nenhum provedor real.
+    """
+
+    async def generate(self, request):
+        content = (
+            '{"relevance": "match"}'
+            if request.purpose == "classify_offer_relevance"
+            else '{"display_title": "Synthetic GPU"}'
+        )
+        return AIResponse(
+            request_id=request.request_id,
+            provider="stub",
+            model="stub",
+            content=content,
+            finished_at=datetime.now(UTC),
+        )
 
 
 class _SuccessfulProvider:
@@ -127,6 +150,7 @@ def test_orchestrator_isolates_source_failure_and_publishes_real_events(
     orchestrator = CollectionOrchestrator(
         integration_database.sessions,
         CollectionAdapter((_SuccessfulProvider(), _FailingProvider())),
+        ai_manager=_AlwaysMatchAIManager(),
     )
 
     result = asyncio.run(orchestrator.run_batch(now=now))
@@ -168,6 +192,144 @@ def test_orchestrator_isolates_source_failure_and_publishes_real_events(
         assert failed.payload["failure_code"] == "provider_blocked"
 
     assert asyncio.run(orchestrator.run_batch(now=now)).claimed == 0
+
+
+class _FixedOfferProvider:
+    """Sempre devolve a mesma oferta real (mesmo `external_id`/URL).
+
+    Simula duas missões diferentes encontrando o mesmo anúncio de verdade
+    numa loja -- usado para provar que o estado de "alvo já atingido"
+    (TASK-063/DEC-048) não vaza de uma missão para outra só porque as duas
+    coletaram a mesma `Offer`.
+    """
+
+    source_code = "pichau"
+
+    async def collect(self, request: CollectionRequest) -> CollectionResult:
+        completed = request.requested_at.replace(microsecond=500000)
+        return CollectionResult(
+            self.source_code,
+            request.requested_at,
+            completed,
+            (
+                RawCollectedOffer(
+                    source_code=self.source_code,
+                    url="https://example.invalid/shared-task-063-offer",
+                    title="TASK-063 shared GPU",
+                    collected_at=completed,
+                    external_id="task063-shared-offer",
+                    raw_price="R$ 900,00",
+                    raw_currency="BRL",
+                    raw_shipping="Frete grátis",
+                    raw_availability="Em estoque",
+                    evidence={"card_text": "safe synthetic evidence"},
+                ),
+            ),
+        )
+
+
+def test_target_reached_state_does_not_leak_between_missions_sharing_an_offer(
+    integration_database,
+) -> None:
+    """DEC-048: duas missões que encontram a mesma `Offer` não interferem.
+
+    Antes da correção, `previous` era a última `PriceObservation` daquela
+    `Offer` em qualquer missão -- a segunda missão a coletar o mesmo anúncio
+    herdava o "alvo já atingido" da primeira e nunca gerava seu próprio
+    evento. Cada missão precisa avaliar cruzamento de alvo pela sua própria
+    história, mesmo compartilhando a `Offer`.
+    """
+    now = datetime.now(UTC).replace(microsecond=0)
+    with integration_database.sessions.begin() as session:
+        store = session.scalar(select(Store).where(Store.code == "pichau"))
+        assert store is not None
+        user = User(display_name="DEC-048 shared offer", role=UserRole.USER)
+        session.add(user)
+        session.flush()
+        mission_a = Mission(
+            user_id=user.id, title="mission a shared offer", status=MissionStatus.ACTIVE
+        )
+        mission_b = Mission(
+            user_id=user.id, title="mission b shared offer", status=MissionStatus.ACTIVE
+        )
+        session.add_all((mission_a, mission_b))
+        session.flush()
+        session.add_all(
+            (
+                MissionCriteria(
+                    mission_id=mission_a.id,
+                    search_query="TASK-063 shared GPU",
+                    target_amount=Decimal("2000"),
+                    target_currency="BRL",
+                ),
+                MissionSource(mission_id=mission_a.id, store_id=store.id),
+                # missao B so ganha MissionSource (e agenda) antes do ciclo 2,
+                # de proposito: ensure_missing_schedules so cria agenda para
+                # missao com fonte selecionada, entao a missao B fica fora do
+                # ciclo 1 (nao existe MissionSource dela ainda).
+                MissionCriteria(
+                    mission_id=mission_b.id,
+                    search_query="TASK-063 shared GPU",
+                    target_amount=Decimal("2000"),
+                    target_currency="BRL",
+                ),
+            )
+        )
+        mission_a_id, mission_b_id, store_id = mission_a.id, mission_b.id, store.id
+
+    orchestrator = CollectionOrchestrator(
+        integration_database.sessions,
+        CollectionAdapter((_FixedOfferProvider(),)),
+        ai_manager=_AlwaysMatchAIManager(),
+    )
+
+    def _target_events(mission_id):
+        with integration_database.sessions() as session:
+            return session.scalar(
+                select(func.count(Event.id)).where(
+                    Event.mission_id == mission_id,
+                    Event.event_type == EventType.PRICE_TARGET_REACHED_V1.value,
+                )
+            )
+
+    with integration_database.sessions.begin() as session:
+        session.add(
+            MissionSchedule(
+                mission_id=mission_a_id,
+                # intervalo bem longo de propósito: a missão A não deve
+                # ficar due de novo dentro da janela deste teste, para que
+                # o ciclo 2 prove isoladamente o comportamento da missão B.
+                interval_minutes=100_000,
+                next_run_at=now,
+                is_enabled=True,
+            )
+        )
+
+    # Ciclo 1: só a missão A está due -- primeira vez que a oferta é vista,
+    # ela cruza o alvo e gera seu próprio evento.
+    result_a = asyncio.run(orchestrator.run_batch(now=now))
+    assert (result_a.claimed, result_a.succeeded) == (1, 1)
+    assert _target_events(mission_a_id) == 1
+    assert _target_events(mission_b_id) == 0
+
+    # Ciclo 2: agora a missão B fica due e coleta a MESMA Offer pela
+    # primeira vez -- sem a correção, herdaria o "já atingido" da missão A
+    # e não geraria evento nenhum.
+    later = now + timedelta(minutes=90)
+    with integration_database.sessions.begin() as session:
+        session.add(MissionSource(mission_id=mission_b_id, store_id=store_id))
+        session.add(
+            MissionSchedule(
+                mission_id=mission_b_id,
+                interval_minutes=60,
+                next_run_at=later,
+                is_enabled=True,
+            )
+        )
+    result_b = asyncio.run(orchestrator.run_batch(now=later))
+    assert (result_b.claimed, result_b.succeeded) == (1, 1)
+    assert _target_events(mission_a_id) == 1  # intocado
+    assert _target_events(mission_b_id) == 1  # não suprimido pela missão A
 
 
 def test_concurrent_claimers_never_duplicate_a_source(integration_database) -> None:
@@ -272,6 +434,7 @@ def test_source_backoff_lifecycle_across_batches(integration_database) -> None:
     orchestrator = CollectionOrchestrator(
         integration_database.sessions,
         CollectionAdapter((_SuccessfulProvider(), _FailingProvider())),
+        ai_manager=_AlwaysMatchAIManager(),
     )
 
     # Ciclo 1: pichau sucede, kabum leva 403 confirmado -> 1o bloqueio.
@@ -337,6 +500,7 @@ def test_all_sources_in_backoff_creates_no_run_and_schedule_stays_due(
     orchestrator = CollectionOrchestrator(
         integration_database.sessions,
         CollectionAdapter((_SuccessfulProvider(), _FailingProvider())),
+        ai_manager=_AlwaysMatchAIManager(),
     )
 
     result = asyncio.run(orchestrator.run_batch(now=now))
@@ -398,6 +562,7 @@ def test_backfill_runs_old_active_mission_but_ignores_paused(
     orchestrator = CollectionOrchestrator(
         integration_database.sessions,
         CollectionAdapter((_EmptyProvider(),)),
+        ai_manager=_AlwaysMatchAIManager(),
     )
     result = asyncio.run(orchestrator.run_batch(now=now))
 

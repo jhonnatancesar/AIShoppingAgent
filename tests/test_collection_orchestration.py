@@ -5,10 +5,11 @@ from contextlib import nullcontext
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
+from app.ai_provider import AIProviderError, AIResponse
 from app.collection.adapter import CollectionAdapter
 from app.collection.contracts import CollectionResult, RawCollectedOffer
 from app.collection.errors import (
@@ -18,12 +19,13 @@ from app.collection.errors import (
     ProviderCircuitOpenError,
     ProviderNavigationError,
 )
-from app.collection.models import CollectionRunStatus
+from app.collection.models import CollectionRunStatus, MissionOfferRelevance
 from app.collection.normalization import PriceNormalizer
 from app.collection.orchestration import (
     ClaimedCollection,
     CollectionOrchestrator,
     _apply_source_backoff,
+    _ensure_display_name,
     _failure_code,
     _is_confirmed_external_block,
     _persist_success,
@@ -31,17 +33,44 @@ from app.collection.orchestration import (
     _record_failure,
     _reset_source_backoff,
     _resolve_offer,
+    _resolve_offer_relevance,
     _resolve_seller,
     _safe_source,
     claim_due_collections,
     ensure_missing_schedules,
     recover_stale_runs,
 )
+from app.collection.relevance import OfferRelevance
 from app.events import EventType
 from app.missions.models import Mission, MissionSchedule
+from app.products.models import Product
+from app.users.models import UserRole
 from sqlalchemy.exc import IntegrityError
 
 NOW = datetime(2026, 8, 9, 12, 0, tzinfo=UTC)
+
+
+class _StubAIManager:
+    """AIProviderManager de teste: respostas fixas por `purpose`, ou falha."""
+
+    def __init__(
+        self, responses: dict[str, str] | None = None, *, raises: bool = False
+    ) -> None:
+        self._responses = responses or {}
+        self._raises = raises
+        self.calls: list[str] = []
+
+    async def generate(self, request):
+        self.calls.append(request.purpose)
+        if self._raises:
+            raise AIProviderError("stub_failure", retryable=False)
+        return AIResponse(
+            request_id=request.request_id,
+            provider="stub",
+            model="stub",
+            content=self._responses.get(request.purpose, "{}"),
+            finished_at=datetime.now(UTC),
+        )
 
 
 def _raw(*, source: str = "pichau", external_id: str = "stable"):
@@ -244,13 +273,23 @@ def test_persist_success_deduplicates_and_publishes_events(monkeypatch) -> None:
         started_at=NOW,
     )
     mission = SimpleNamespace(id=mission_id)
-    criteria = SimpleNamespace(mission_id=mission_id)
+    criteria = SimpleNamespace(mission_id=mission_id, search_query="GPU")
     source = SimpleNamespace(consecutive_blocks=2, next_eligible_at=NOW)
+    relevance_row = SimpleNamespace(classification=OfferRelevance.MATCH)
+    product_row = SimpleNamespace(display_name="Título já normalizado")
     session = MagicMock()
     session.scalar.side_effect = [run, criteria, None]
-    session.get.side_effect = lambda model, _key: (
-        mission if model is Mission else source
-    )
+
+    def _get(model, _key):
+        if model is Mission:
+            return mission
+        if model is MissionOfferRelevance:
+            return relevance_row
+        if model is Product:
+            return product_row
+        return source
+
+    session.get.side_effect = _get
     result = CollectionResult(
         "pichau", NOW, NOW + timedelta(seconds=2), (_raw(), _raw())
     )
@@ -265,7 +304,7 @@ def test_persist_success_deduplicates_and_publishes_events(monkeypatch) -> None:
     finish = MagicMock()
     monkeypatch.setattr(
         "app.collection.orchestration._resolve_offer",
-        lambda *_args: SimpleNamespace(id=offer_id),
+        lambda *_args: SimpleNamespace(id=offer_id, product_id=uuid4()),
     )
     monkeypatch.setattr(
         "app.collection.orchestration.evaluate_price_alerts",
@@ -274,13 +313,197 @@ def test_persist_success_deduplicates_and_publishes_events(monkeypatch) -> None:
     monkeypatch.setattr("app.collection.orchestration.publish_event", publish)
     monkeypatch.setattr("app.collection.orchestration.finish_collection_run", finish)
     claim = ClaimedCollection(run_id, mission_id, store_id, "pichau", "GPU", NOW)
+    ai_manager = _StubAIManager()
 
-    assert _persist_success(session, claim, normalized) is True
+    outcome = asyncio.run(
+        _persist_success(session, claim, normalized, ai_manager, UserRole.ADMIN)
+    )
+
+    assert outcome is True
     assert session.add.call_count == 1
     assert publish.call_count == 2
     assert source.consecutive_blocks == 0
     assert source.next_eligible_at is None
     finish.assert_called_once()
+    # relevância e título já estavam em cache: nenhuma chamada de IA
+    assert ai_manager.calls == []
+
+
+def test_resolve_offer_relevance_uses_cache_without_calling_ai() -> None:
+    mission = SimpleNamespace(id=uuid4())
+    criteria = SimpleNamespace(search_query="GPU")
+    offer = SimpleNamespace(id=uuid4())
+    session = MagicMock()
+    session.get.return_value = SimpleNamespace(classification=OfferRelevance.NO_MATCH)
+    ai_manager = _StubAIManager()
+
+    classification = asyncio.run(
+        _resolve_offer_relevance(
+            session, mission, criteria, offer, "raw title", ai_manager, UserRole.ADMIN
+        )
+    )
+
+    assert classification is OfferRelevance.NO_MATCH
+    assert ai_manager.calls == []
+    session.add.assert_not_called()
+
+
+def test_resolve_offer_relevance_classifies_and_persists_when_missing() -> None:
+    mission = SimpleNamespace(id=uuid4())
+    criteria = SimpleNamespace(search_query="Logitech G Pro X Superlight 2")
+    offer = SimpleNamespace(id=uuid4())
+    session = MagicMock()
+    session.get.return_value = None
+    ai_manager = _StubAIManager({"classify_offer_relevance": '{"relevance": "match"}'})
+
+    classification = asyncio.run(
+        _resolve_offer_relevance(
+            session,
+            mission,
+            criteria,
+            offer,
+            "Logitech G PRO X Superlight 2 Preto",
+            ai_manager,
+            UserRole.ADMIN,
+        )
+    )
+
+    assert classification is OfferRelevance.MATCH
+    assert ai_manager.calls == ["classify_offer_relevance"]
+    added = session.add.call_args.args[0]
+    assert isinstance(added, MissionOfferRelevance)
+    assert added.mission_id == mission.id
+    assert added.offer_id == offer.id
+    assert added.classification is OfferRelevance.MATCH
+
+
+@pytest.mark.parametrize("ai_manager", [_StubAIManager(raises=True), _StubAIManager()])
+def test_resolve_offer_relevance_is_conservative_and_not_persisted_on_ai_failure(
+    ai_manager: _StubAIManager,
+) -> None:
+    """IA fora do ar ou resposta fora do contrato (`{}`): `None`, sem persistir."""
+    mission = SimpleNamespace(id=uuid4())
+    criteria = SimpleNamespace(search_query="mouse")
+    offer = SimpleNamespace(id=uuid4())
+    session = MagicMock()
+    session.get.return_value = None
+
+    classification = asyncio.run(
+        _resolve_offer_relevance(
+            session, mission, criteria, offer, "raw title", ai_manager, UserRole.ADMIN
+        )
+    )
+
+    assert classification is None
+    session.add.assert_not_called()
+
+
+def test_ensure_display_name_skips_when_already_set() -> None:
+    offer = SimpleNamespace(product_id=uuid4())
+    product = SimpleNamespace(display_name="Já normalizado")
+    session = MagicMock()
+    session.get.return_value = product
+    ai_manager = _StubAIManager()
+
+    asyncio.run(
+        _ensure_display_name(session, offer, "raw title", ai_manager, UserRole.ADMIN)
+    )
+
+    assert product.display_name == "Já normalizado"
+    assert ai_manager.calls == []
+
+
+def test_ensure_display_name_normalizes_once_when_missing() -> None:
+    offer = SimpleNamespace(product_id=uuid4())
+    product = SimpleNamespace(display_name=None)
+    session = MagicMock()
+    session.get.return_value = product
+    ai_manager = _StubAIManager(
+        {"normalize_offer_title": '{"display_title": "Logitech G Pro X Superlight 2"}'}
+    )
+
+    asyncio.run(
+        _ensure_display_name(
+            session,
+            offer,
+            "Mouse Gamer Logitech G PRO X Superlight 2 Lightspeed Wireless...",
+            ai_manager,
+            UserRole.ADMIN,
+        )
+    )
+
+    assert product.display_name == "Logitech G Pro X Superlight 2"
+
+
+def test_ensure_display_name_falls_back_safely_when_ai_fails() -> None:
+    offer = SimpleNamespace(product_id=uuid4())
+    product = SimpleNamespace(display_name=None)
+    session = MagicMock()
+    session.get.return_value = product
+    ai_manager = _StubAIManager(raises=True)
+
+    asyncio.run(
+        _ensure_display_name(session, offer, "raw title", ai_manager, UserRole.ADMIN)
+    )
+
+    # nunca inventa dado; o notifier usa o título bruto (Product.name)
+    # como alternativa enquanto display_name continuar None
+    assert product.display_name is None
+
+
+def test_persist_success_blocks_alert_when_relevance_is_no_match(
+    monkeypatch,
+) -> None:
+    mission_id, run_id, store_id, offer_id = uuid4(), uuid4(), uuid4(), uuid4()
+    run = SimpleNamespace(
+        id=run_id,
+        mission_id=mission_id,
+        store_id=store_id,
+        status=CollectionRunStatus.RUNNING,
+        started_at=NOW,
+    )
+    mission = SimpleNamespace(id=mission_id)
+    criteria = SimpleNamespace(mission_id=mission_id, search_query="GPU")
+    source = SimpleNamespace(consecutive_blocks=0, next_eligible_at=None)
+    product_row = SimpleNamespace(display_name="Já normalizado")
+    session = MagicMock()
+    session.scalar.side_effect = [run, criteria, None]
+
+    def _get(model, _key):
+        if model is Mission:
+            return mission
+        if model is MissionOfferRelevance:
+            return SimpleNamespace(classification=OfferRelevance.NO_MATCH)
+        if model is Product:
+            return product_row
+        return source
+
+    session.get.side_effect = _get
+    result = CollectionResult("pichau", NOW, NOW + timedelta(seconds=2), (_raw(),))
+    normalized = PriceNormalizer().normalize_result(result)
+    evaluate = MagicMock(return_value=())
+    publish = MagicMock()
+    monkeypatch.setattr(
+        "app.collection.orchestration._resolve_offer",
+        lambda *_args: SimpleNamespace(id=offer_id, product_id=uuid4()),
+    )
+    monkeypatch.setattr("app.collection.orchestration.evaluate_price_alerts", evaluate)
+    monkeypatch.setattr("app.collection.orchestration.publish_event", publish)
+    monkeypatch.setattr(
+        "app.collection.orchestration.finish_collection_run", MagicMock()
+    )
+    claim = ClaimedCollection(run_id, mission_id, store_id, "pichau", "GPU", NOW)
+
+    outcome = asyncio.run(
+        _persist_success(session, claim, normalized, _StubAIManager(), UserRole.ADMIN)
+    )
+
+    assert outcome is True
+    # NO_MATCH: evaluate_price_alerts nunca é chamado, só o evento de
+    # coleta concluída é publicado -- nenhum alerta de preço
+    evaluate.assert_not_called()
+    assert publish.call_count == 1
+    assert publish.call_args.kwargs["event_type"] is EventType.COLLECTION_COMPLETED_V1
 
 
 def test_record_failure_discards_late_result(monkeypatch) -> None:
@@ -409,7 +632,9 @@ def test_orchestrator_batch_processes_success_and_failure(monkeypatch) -> None:
         "app.collection.orchestration.claim_due_collections",
         lambda *_a, **_k: claims,
     )
-    orchestrator = CollectionOrchestrator(session_factory, CollectionAdapter())
+    orchestrator = CollectionOrchestrator(
+        session_factory, CollectionAdapter(), ai_manager=_StubAIManager()
+    )
 
     async def process(claim):
         return claim.source_code == "pichau"
@@ -431,7 +656,9 @@ def test_orchestrator_batch_processes_success_and_failure(monkeypatch) -> None:
 )
 def test_orchestrator_rejects_unsafe_limits(options: dict) -> None:
     with pytest.raises(ValueError):
-        CollectionOrchestrator(MagicMock(), CollectionAdapter(), **options)
+        CollectionOrchestrator(
+            MagicMock(), CollectionAdapter(), ai_manager=_StubAIManager(), **options
+        )
 
 
 def test_orchestrator_forwards_stagger_to_schedule_backfill(monkeypatch) -> None:
@@ -455,6 +682,7 @@ def test_orchestrator_forwards_stagger_to_schedule_backfill(monkeypatch) -> None
     orchestrator = CollectionOrchestrator(
         session_factory,
         CollectionAdapter(),
+        ai_manager=_StubAIManager(),
         schedule_interval_minutes=30,
         schedule_stagger_seconds=300,
     )
@@ -475,10 +703,10 @@ def test_orchestrator_processes_one_source_successfully(monkeypatch) -> None:
 
     session_factory = MagicMock()
     session_factory.begin.return_value = nullcontext(MagicMock())
-    persist = MagicMock(return_value=True)
+    persist = AsyncMock(return_value=True)
     monkeypatch.setattr("app.collection.orchestration._persist_success", persist)
     orchestrator = CollectionOrchestrator(
-        session_factory, CollectionAdapter((Provider(),))
+        session_factory, CollectionAdapter((Provider(),)), ai_manager=_StubAIManager()
     )
     claim = ClaimedCollection(uuid4(), uuid4(), uuid4(), "pichau", "GPU", NOW)
 
@@ -498,7 +726,7 @@ def test_orchestrator_isolates_provider_failure(monkeypatch) -> None:
     record = MagicMock(return_value=True)
     monkeypatch.setattr("app.collection.orchestration._record_failure", record)
     orchestrator = CollectionOrchestrator(
-        session_factory, CollectionAdapter((Provider(),))
+        session_factory, CollectionAdapter((Provider(),)), ai_manager=_StubAIManager()
     )
     claim = ClaimedCollection(uuid4(), uuid4(), uuid4(), "kabum", "GPU", NOW)
 
@@ -519,10 +747,10 @@ def test_unexpected_integrity_error_propagates(monkeypatch) -> None:
     session_factory.begin.return_value = nullcontext(MagicMock())
     monkeypatch.setattr(
         "app.collection.orchestration._persist_success",
-        MagicMock(side_effect=IntegrityError("statement", {}, RuntimeError())),
+        AsyncMock(side_effect=IntegrityError("statement", {}, RuntimeError())),
     )
     orchestrator = CollectionOrchestrator(
-        session_factory, CollectionAdapter((Provider(),))
+        session_factory, CollectionAdapter((Provider(),)), ai_manager=_StubAIManager()
     )
     claim = ClaimedCollection(uuid4(), uuid4(), uuid4(), "pichau", "GPU", NOW)
 

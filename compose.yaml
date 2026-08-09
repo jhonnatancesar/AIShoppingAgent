@@ -133,6 +133,14 @@ services:
       AISHOPPING_DATABASE_NAME: ${POSTGRES_DB:-aishoppingagent}
       AISHOPPING_DATABASE_USER: ${POSTGRES_USER:-aishoppingagent}
       AISHOPPING_DATABASE_PASSWORD_FILE: /run/secrets/postgres_password
+      # TASK-063: normalização de título e classificação de relevância
+      # (mission x oferta) via AIProviderManager. Perfil ADMIN/DEV (mesma
+      # chave já usada pela api para essa cascata) -- não usa a chave/cota
+      # do perfil USER, reservada a conversas reais no Telegram. Nenhum
+      # outro secret (token do bot, segredo do webhook, chave Gemini USER)
+      # é concedido a este serviço.
+      AISHOPPING_GEMINI_API_KEY_ADMIN_DEV_FILE: /run/secrets/gemini_api_key_admin_dev
+      AISHOPPING_GROQ_API_KEY_FILE: /run/secrets/groq_api_key
       AISHOPPING_OBSERVABILITY_ENABLED: "true"
       AISHOPPING_OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://otel-collector:4318/v1/traces
       AISHOPPING_TRACE_SAMPLE_RATIO: ${AISHOPPING_TRACE_SAMPLE_RATIO:-1.0}
@@ -161,6 +169,8 @@ services:
       - "9464"
     secrets:
       - postgres_password
+      - gemini_api_key_admin_dev
+      - groq_api_key
     depends_on:
       database:
         condition: service_healthy

@@ -8,6 +8,9 @@ import pytest
 from app.authentication.models import CredentialAction, UserAuthSession
 from app.events import ConsumptionOutcome, Event
 from app.missions.models import Mission, MissionStatus
+from app.offers.models import Offer
+from app.products.models import Product
+from app.stores.models import Store
 from app.telegram.bot_api import TelegramBotAPIError
 from app.telegram.contracts import TelegramChatType, TelegramMessage
 from app.telegram.notifications import (
@@ -82,6 +85,24 @@ def _event(mission: Mission, *, event_type: str = "price.decreased.v1") -> Event
     )
 
 
+def _offer_context() -> tuple[Offer, Product, Store]:
+    product_id, store_id = uuid4(), uuid4()
+    offer = Offer(
+        id=uuid4(),
+        product_id=product_id,
+        store_id=store_id,
+        url="https://example.invalid/anuncio-real",
+    )
+    product = Product(id=product_id, name="Título bruto do anúncio")
+    store = Store(
+        id=store_id,
+        code="kabum",
+        name="Kabum",
+        base_url="https://kabum.example.invalid",
+    )
+    return offer, product, store
+
+
 def test_remember_private_chat_only_for_the_same_person() -> None:
     user = _user(chat_id=None)
     private_message = TelegramMessage(
@@ -131,7 +152,7 @@ def test_private_chat_rejects_mismatched_identity() -> None:
     ("event_type", "expected_fragment"),
     [
         ("price.decreased.v1", "R$ 4.499,90"),
-        ("price.target_reached.v1", "Preço-alvo atingido"),
+        ("price.target_reached.v1", "PREÇO ENCONTRADO"),
     ],
 )
 async def test_process_sends_alert_and_records_success(
@@ -142,8 +163,9 @@ async def test_process_sends_alert_and_records_success(
     user = _user()
     mission = _mission(user)
     event = _event(mission, event_type=event_type)
+    offer, product, store = _offer_context()
     session = MagicMock()
-    session.get.side_effect = [mission, user]
+    session.get.side_effect = [mission, user, offer, product, store]
     monkeypatch.setattr(
         "app.telegram.notifications.claim_unconsumed_events",
         lambda *args, **kwargs: [event],
@@ -248,8 +270,9 @@ async def test_process_records_api_rejection_without_leaking_details(
     user = _user()
     mission = _mission(user)
     event = _event(mission)
+    offer, product, store = _offer_context()
     session = MagicMock()
-    session.get.side_effect = [mission, user]
+    session.get.side_effect = [mission, user, offer, product, store]
     monkeypatch.setattr(
         "app.telegram.notifications.claim_unconsumed_events",
         lambda *args, **kwargs: [event],

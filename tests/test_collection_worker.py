@@ -55,6 +55,9 @@ def test_worker_once_records_batch_and_disposes(monkeypatch) -> None:
     )
     monkeypatch.setattr("app.collection.worker.build_collection_adapter", MagicMock())
     monkeypatch.setattr(
+        "app.collection.worker.build_admin_dev_ai_provider_manager", MagicMock()
+    )
+    monkeypatch.setattr(
         "app.collection.worker.CollectionOrchestrator", lambda *_a, **_k: orchestrator
     )
     monkeypatch.setattr("app.collection.worker.observe_worker_batch", observe)

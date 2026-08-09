@@ -79,3 +79,22 @@ entre perfis: `AISHOPPING_GEMINI_API_KEY_USER` (perfil `USER`) e
 usuários reais nunca seja consumida por validação manual ou uso
 administrativo — mesmo objetivo do `--profile admin` da TASK-059, agora
 garantido também no nível da credencial, não só do perfil lógico.
+
+Em 2026-08-09 (TASK-063), o `collection_worker` passou a ser um novo
+chamador do `AIProviderManager` — perfil `ADMIN` fixo (mesma cascata do
+`AdminDevAIProviderManager`, nunca a chave/cota do perfil `USER`), para
+normalizar título de exibição e classificar a correspondência
+missão↔oferta antes de um alerta (`app.collection.relevance`,
+`docs/PRICE_ALERTS.md`). É o primeiro caso de uso da IA fora do caminho do
+webhook/Telegram: o secret `gemini_api_key_admin_dev` (e opcionalmente
+`groq_api_key`) passou a ser montado também no serviço `collection_worker`
+(`docs/SECRETS.md`) — continua sem token do bot, segredo do webhook nem
+chave Gemini `USER`. Falha de IA (indisponibilidade, cota, resposta fora do
+contrato) nunca derruba a coleta: o chamador trata como "sem resultado
+válido ainda" e tenta de novo na próxima coleta. Validado numa missão real
+via Telegram: sob carga real (~20 classificações numa única coleta), a
+maioria das chamadas de IA falhou (`unavailable` nas três camadas da
+cascata), mas as que tiveram sucesso classificaram corretamente — inclusive
+distinguindo corretamente dois modelos textualmente parecidos ("Logitech G
+PRO 2" como `match` do critério pedido; "Logitech G Pro X Superlight 2"
+como `no_match`, apesar de nome muito similar).

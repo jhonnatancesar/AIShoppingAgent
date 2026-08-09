@@ -8,14 +8,21 @@ para o diretório e `0600` para cada arquivo.
 
 ## Inventário e menor privilégio
 
-| Secret | Arquivo | API | Worker | PostgreSQL |
-| --- | --- | --- | --- | --- |
-| Senha PostgreSQL | `postgres_password` | sim | sim | sim |
-| Chave Gemini USER | `gemini_api_key_user` | sim | não | não |
-| Chave Gemini ADMIN/DEV | `gemini_api_key_admin_dev` | sim | não | não |
-| Chave Groq | `groq_api_key` | sim | não | não |
-| Token do bot Telegram | `telegram_bot_token` | sim | sim | não |
-| Segredo do webhook | `telegram_webhook_secret` | sim | não | não |
+| Secret | Arquivo | API | Collection Worker | Telegram Notifier | PostgreSQL |
+| --- | --- | --- | --- | --- | --- |
+| Senha PostgreSQL | `postgres_password` | sim | sim | sim | sim |
+| Chave Gemini USER | `gemini_api_key_user` | sim | não | não | não |
+| Chave Gemini ADMIN/DEV | `gemini_api_key_admin_dev` | sim | sim (TASK-063) | não | não |
+| Chave Groq | `groq_api_key` | sim | sim (TASK-063) | não | não |
+| Token do bot Telegram | `telegram_bot_token` | sim | não | sim | não |
+| Segredo do webhook | `telegram_webhook_secret` | sim | não | não | não |
+
+O `collection_worker` (TASK-063) usa a chave Gemini ADMIN/DEV — a mesma
+cascata premium/Groq/gratuito já usada pela `api` (nunca a chave/cota do
+perfil `USER`, reservada a conversas reais no Telegram) — só para
+normalizar título de exibição e classificar a correspondência
+missão↔oferta antes de um alerta. Não recebe token do bot, segredo do
+webhook nem a chave Gemini `USER`.
 
 `POSTGRES_USER`, nomes de banco, URLs e nomes de modelo não são tratados como
 secrets. Senhas de usuário e tokens de ação da TASK-061 permanecem no banco

@@ -12,7 +12,10 @@ custo final com frete continua exclusivo de `app.purchase`
 (recomendação/comparação, TASK-038/039), que não muda.
 
 - `price.decreased.v1` é produzido quando `amount` diminui em relação à
-  observação anterior disponível e comparável da mesma oferta e moeda.
+  observação anterior disponível e comparável da mesma oferta e moeda —
+  "anterior" é sempre escopado pela mesma missão (`DEC-048`/TASK-063): duas
+  missões diferentes que coletem a mesma `Offer` avaliam cruzamento de
+  alvo pela sua própria história, sem compartilhar estado uma com a outra.
 - `price.target_reached.v1` é produzido quando uma observação disponível fica
   menor ou igual ao `target_amount` da missão (preço-alvo do produto, sem
   exigir frete). Após atingir o alvo, novas observações que continuem abaixo
@@ -35,6 +38,22 @@ carregam o valor de `amount` para os alertas da V1, por compatibilidade de
 contrato — não foram renomeados. `total_amount` continua existindo e sendo
 persistido normalmente (`docs/PRICE_ENGINE.md`), mas não é a base de
 comparação do avaliador.
+
+## Relevância produto-missão (`DEC-048`/TASK-063)
+
+`evaluate_price_alerts` em si não mudou: continua avaliando só preço,
+disponibilidade e moeda. A TASK-063 acrescentou um filtro **antes** dela,
+em `app.collection.orchestration._persist_success`: cada oferta só é
+avaliada para alerta se `MissionOfferRelevance` para aquele
+`(mission_id, offer_id)` já estiver classificada como `MATCH` (IA via
+`AIProviderManager`, comparando o `search_query` da missão com o título
+bruto do anúncio). `POSSIBLE_MATCH`, `NO_MATCH` e ausência de classificação
+válida (IA indisponível/resposta fora do contrato) são todos tratados como
+não elegíveis para alerta — comportamento conservador. A classificação é
+feita uma única vez por par e cacheada (`docs/DATABASE.md`); ver
+`docs/tasks/TASK-063.md` para o desenho completo. Preço, disponibilidade e
+moeda nunca são decididos pela IA — continuam vindo exclusivamente da
+coleta.
 
 O resultado é um `PriceAlertCandidate` validado contra `app.events`.
 Persistência e publicação foram implementadas na TASK-043

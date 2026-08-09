@@ -13,6 +13,7 @@ from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.ai_provider import AIProviderManager
 from app.alerts import evaluate_price_alerts
 from app.collection.adapter import CollectionAdapter
 from app.collection.contracts import CollectionRequest
@@ -23,9 +24,19 @@ from app.collection.errors import (
     ProviderCircuitOpenError,
     ProviderNavigationError,
 )
-from app.collection.models import CollectionRun, CollectionRunStatus, PriceObservation
+from app.collection.models import (
+    CollectionRun,
+    CollectionRunStatus,
+    MissionOfferRelevance,
+    PriceObservation,
+)
 from app.collection.normalization import NormalizedCollectionResult, PriceNormalizer
 from app.collection.persistence import finish_collection_run, start_collection_run
+from app.collection.relevance import (
+    OfferRelevance,
+    classify_offer_relevance,
+    normalize_offer_title,
+)
 from app.database.time import utc_now
 from app.events import (
     AggregateType,
@@ -51,6 +62,7 @@ from app.missions.schedule import (
 from app.offers.models import Offer
 from app.products.models import Product
 from app.stores.models import Seller, Store
+from app.users.models import UserRole
 
 logger = logging.getLogger("app.collection.orchestration")
 
@@ -254,6 +266,8 @@ class CollectionOrchestrator:
         session_factory: sessionmaker[Session],
         adapter: CollectionAdapter,
         *,
+        ai_manager: AIProviderManager,
+        ai_profile: UserRole = UserRole.ADMIN,
         normalizer: PriceNormalizer | None = None,
         schedule_interval_minutes: int = 60,
         schedule_stagger_seconds: int = 0,
@@ -270,6 +284,8 @@ class CollectionOrchestrator:
             raise ValueError("max_concurrency must be between 1 and 4")
         self._session_factory = session_factory
         self._adapter = adapter
+        self._ai_manager = ai_manager
+        self._ai_profile = ai_profile
         self._normalizer = normalizer or PriceNormalizer()
         self._schedule_interval_minutes = schedule_interval_minutes
         self._schedule_stagger_seconds = schedule_stagger_seconds
@@ -314,7 +330,13 @@ class CollectionOrchestrator:
                 )
             normalized = self._normalizer.normalize_result(result)
             with self._session_factory.begin() as session:
-                return _persist_success(session, claim, normalized)
+                return await _persist_success(
+                    session,
+                    claim,
+                    normalized,
+                    self._ai_manager,
+                    self._ai_profile,
+                )
         except asyncio.CancelledError:
             raise
         except IntegrityError:
@@ -350,11 +372,29 @@ class CollectionOrchestrator:
             return False
 
 
-def _persist_success(
+async def _persist_success(
     session: Session,
     claim: ClaimedCollection,
     normalized: NormalizedCollectionResult,
+    ai_manager: AIProviderManager,
+    ai_profile: UserRole,
 ) -> bool:
+    """Persiste as ofertas normalizadas de uma coleta bem-sucedida.
+
+    Classificação de relevância (`MissionOfferRelevance`) e normalização de
+    título (`Product.display_name`) via IA acontecem aqui, dentro desta
+    mesma transação curta, só na primeira vez que uma `(mission, offer)` ou
+    `Product` é vista — nas coletas seguintes, ambas já estão em cache e
+    nenhuma chamada de IA acontece. Isso mantém uma transação aberta um
+    pouco além do puramente síncrono, mas só para ofertas novas: a chamada
+    de IA já é protegida por timeout/circuit breaker (bem mais curta e
+    previsível que Playwright, que é o motivo original de nunca segurar
+    transação durante acesso externo neste módulo) e nunca impede a
+    persistência da observação em si — falha de IA só faz a relevância
+    ficar indefinida (comportamento conservador: sem alerta) e o título de
+    exibição ficar pendente (o notifier usa o título bruto como
+    alternativa), tentando de novo na próxima coleta.
+    """
     run = session.scalar(
         select(CollectionRun).where(CollectionRun.id == claim.run_id).with_for_update()
     )
@@ -379,9 +419,16 @@ def _persist_success(
             continue
         seen_offer_keys.add(identity_key)
         offer = _resolve_offer(session, claim.store_id, item)
+        # DEC-048/TASK-063: escopado por missão -- duas missões diferentes
+        # que coletem a mesma Offer nao compartilham mais o "ultimo preco
+        # visto" para fins de cruzamento de alvo (bug corrigido).
         previous = session.scalar(
             select(PriceObservation)
-            .where(PriceObservation.offer_id == offer.id)
+            .join(CollectionRun, CollectionRun.id == PriceObservation.collection_run_id)
+            .where(
+                PriceObservation.offer_id == offer.id,
+                CollectionRun.mission_id == claim.mission_id,
+            )
             .order_by(PriceObservation.observed_at.desc(), PriceObservation.id.desc())
             .limit(1)
         )
@@ -399,18 +446,32 @@ def _persist_success(
         )
         session.add(observation)
         session.flush()
-        for candidate in evaluate_price_alerts(
-            mission, criteria, observation, previous
-        ):
-            publish_event(
-                session,
-                event_type=candidate.event_type,
-                aggregate_type=candidate.aggregate_type,
-                aggregate_id=candidate.aggregate_id,
-                payload=candidate.payload,
-                occurred_at=normalized.raw_result.completed_at,
-                mission_id=mission.id,
-            )
+
+        relevance = await _resolve_offer_relevance(
+            session,
+            mission,
+            criteria,
+            offer,
+            item.raw_offer.title,
+            ai_manager,
+            ai_profile,
+        )
+        if relevance is OfferRelevance.MATCH:
+            for candidate in evaluate_price_alerts(
+                mission, criteria, observation, previous
+            ):
+                publish_event(
+                    session,
+                    event_type=candidate.event_type,
+                    aggregate_type=candidate.aggregate_type,
+                    aggregate_id=candidate.aggregate_id,
+                    payload=candidate.payload,
+                    occurred_at=normalized.raw_result.completed_at,
+                    mission_id=mission.id,
+                )
+        await _ensure_display_name(
+            session, offer, item.raw_offer.title, ai_manager, ai_profile
+        )
         if previous is not None and previous.availability != observation.availability:
             publish_event(
                 session,
@@ -448,6 +509,74 @@ def _persist_success(
     )
     _reset_source_backoff(session, run.mission_id, run.store_id)
     return True
+
+
+async def _resolve_offer_relevance(
+    session: Session,
+    mission: Any,
+    criteria: Any,
+    offer: Offer,
+    raw_title: str,
+    ai_manager: AIProviderManager,
+    ai_profile: UserRole,
+) -> OfferRelevance | None:
+    """Classifica `(mission, offer)` uma única vez; devolve o cache depois.
+
+    Os insumos (busca da missão, título bruto da oferta) são imutáveis
+    depois que a missão e a oferta existem, então uma classificação válida
+    nunca precisa ser refeita. `None` (IA falhou ou respondeu fora do
+    contrato) não é persistido -- a próxima coleta tenta de novo, e a
+    observação atual é tratada como não elegível para alerta (DEC-048:
+    comportamento conservador para `POSSIBLE_MATCH`/ausência de
+    classificação, igual a `NO_MATCH`).
+    """
+    existing = session.get(MissionOfferRelevance, (mission.id, offer.id))
+    if existing is not None:
+        return existing.classification
+    classification = await classify_offer_relevance(
+        ai_manager,
+        mission_search_query=criteria.search_query,
+        raw_title=raw_title,
+        profile=ai_profile,
+    )
+    if classification is None:
+        return None
+    session.add(
+        MissionOfferRelevance(
+            mission_id=mission.id,
+            offer_id=offer.id,
+            classification=classification,
+            classified_at=utc_now(),
+        )
+    )
+    session.flush()
+    return classification
+
+
+async def _ensure_display_name(
+    session: Session,
+    offer: Offer,
+    raw_title: str,
+    ai_manager: AIProviderManager,
+    ai_profile: UserRole,
+) -> None:
+    """Normaliza `Product.display_name` uma única vez; nunca a sobrescreve.
+
+    Não depende da missão (`Product` é 1:1 com `Offer` hoje) -- por isso é
+    resolvido separado de `_resolve_offer_relevance`, mesmo que ambos
+    costumem ser acionados no mesmo momento (primeira vez que a oferta é
+    vista). Se a IA falhar, `Product.display_name` continua `None` e a
+    próxima coleta tenta de novo; o notifier usa o título bruto
+    (`Product.name`) como alternativa enquanto isso.
+    """
+    product = session.get(Product, offer.product_id)
+    if product is None or product.display_name is not None:
+        return
+    display_title = await normalize_offer_title(
+        ai_manager, raw_title=raw_title, profile=ai_profile
+    )
+    if display_title is not None:
+        product.display_name = display_title
 
 
 def _resolve_offer(session: Session, store_id: UUID, item: Any) -> Offer:

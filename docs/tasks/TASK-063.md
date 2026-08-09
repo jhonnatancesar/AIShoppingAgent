@@ -1,7 +1,8 @@
 # TASK-063 — Corrigir relevância dos resultados e apresentação dos alertas
 
-Status: Auditoria concluída em 2026-08-09; aguardando autorização explícita
-do usuário para implementar. **Não implementado ainda.**
+Status: Implementada e validada em 2026-08-09 (pipeline oficial, E2E
+reproduzível e missão real via Telegram); **aguardando aprovação explícita
+do usuário para encerrar formalmente.**
 
 Dependência: TASK-054 concluída (`v1.0.0`), mas a release deixa de ser
 considerada definitiva até esta TASK fechar — ver "Relação com a
@@ -245,6 +246,112 @@ notifier. O que exige desenho novo é: (a) normalização do título via IA
    auditável e reaproveitável entre observações da mesma oferta) ou
    recalculado a cada alerta sem persistir? Persistir evita custo de IA
    repetido por alerta da mesma oferta, mas é mudança de schema.
+
+## Decisões do usuário (2026-08-09)
+
+1. **`POSSIBLE_MATCH` nunca alerta** — só `MATCH` é elegível para
+   avaliação/alerta. `POSSIBLE_MATCH` e `NO_MATCH` têm o mesmo efeito
+   prático (sem alerta); comportamento conservador, sem "possível
+   promoção" nesta versão.
+2. **Bug do `previous` compartilhado incluído nesta TASK**, tratado como
+   correção funcional (não melhoria opcional), com a menor alteração
+   possível e testes específicos para duas missões na mesma oferta.
+3. **Título normalizado é persistido**, mantendo bruto e normalizado
+   separados e fallback para o bruto quando a IA falhar. Granularidade da
+   relevância ajustada para `(mission_id, offer_id)` — não por
+   `PriceObservation` — porque a mesma oferta pode ser `MATCH` para uma
+   missão e `NO_MATCH` para outra; reclassificar a cada coleta seria
+   desnecessário. O título normalizado fica associado a `Product` (hoje
+   1:1 com `Offer`, sem deduplicação entre lojas), porque não depende da
+   missão.
+
+## Modelagem final
+
+- `products.display_name` (`varchar(300)`, opcional): título normalizado
+  por IA, nunca substitui `products.name` (título bruto da primeira
+  coleta). `NULL` até a normalização ter sucesso pela primeira vez —
+  nunca recalculado depois (os insumos não mudam:
+  `RawCollectedOffer.title` de uma oferta já criada é fixo). Notifier usa
+  `products.name` como alternativa enquanto `display_name` for `NULL`.
+- `mission_offer_relevance` (`mission_id`, `offer_id` — PK composta,
+  ambas `RESTRICT`): `classification` (`offer_relevance`: `match` /
+  `possible_match` / `no_match`), `classified_at`, `created_at`. Índice em
+  `offer_id`. Classificada uma única vez por par — os insumos (busca da
+  missão, título bruto) são imutáveis depois que ambos existem, então uma
+  linha nunca precisa ser reclassificada. Só é criada quando a IA devolve
+  uma resposta válida: falha ou resposta fora do contrato não é
+  persistida, para que a próxima coleta tente de novo (mesmo padrão de
+  "ausência de classificação válida" pedido no item 7 do escopo original).
+- Migration `20260809_0004`.
+
+## Implementação real (o que mudou, não o que foi planejado)
+
+1. **`app/collection/relevance.py` (novo)** — `OfferRelevance` (StrEnum) e
+   duas funções assíncronas via `AIProviderManager`,
+   `normalize_offer_title` e `classify_offer_relevance`; qualquer falha
+   (rede, provedor, JSON fora do contrato, campo fora do vocabulário
+   fechado) devolve `None` e loga um aviso sanitizado — nunca lança.
+2. **`app/collection/orchestration.py`** — dentro da mesma transação curta
+   de `_persist_success` (não em duas fases): `_resolve_offer_relevance`
+   consulta o cache e só chama a IA na primeira vez que o par
+   `(mission, offer)` aparece; `evaluate_price_alerts` só roda quando a
+   classificação é `MATCH`. `_ensure_display_name` normaliza
+   `Product.display_name` uma única vez, mesma lógica de cache. **Trade-off
+   assumido conscientemente**: isso mantém uma transação aberta um pouco
+   além do puramente síncrono para ofertas novas (documentado em
+   docstring) — aceito porque a chamada de IA já é protegida por
+   timeout/circuit breaker (bem mais curta e previsível que Playwright,
+   motivo original do princípio "sem transação durante acesso externo"
+   deste módulo) e só acontece na primeira vez por par, nunca em coletas
+   repetidas da mesma oferta/missão. A alternativa (duas fases, IA fora da
+   transação) adiaria o primeiro alerta possível de uma oferta nova para o
+   ciclo seguinte e exigiria reestruturar o fluxo de claim/persist — mais
+   complexo sem benefício claro para o volume atual da V1.
+3. **Correção do bug do `previous` compartilhado** — `_persist_success`
+   passou a filtrar a consulta de `previous` por
+   `CollectionRun.mission_id == claim.mission_id` (join com
+   `collection_runs`), em vez de pegar a última observação daquela
+   `Offer` em qualquer missão. Mudança de uma consulta, sem schema novo.
+4. **`app/telegram/notifications.py`** — `_resolve_offer_context` busca
+   `Offer`/`Product`/`Store` a partir de `event.payload["offer_id"]`
+   (já existia no payload, nunca era usado); `_render_alert` reescrito
+   para o formato pedido (🔥/🏪/💰/🎯/🔎/🔗 para preço-alvo, 📉 análogo para
+   queda), usando `product.display_name or product.name`, `store.name` e
+   `offer.url` — nunca o nome da missão como nome do produto. Template
+   continua string fixa no código, não gerada por IA.
+5. **Infra** — `collection_worker` ganhou acesso ao secret
+   `gemini_api_key_admin_dev` (+ `groq_api_key` opcional, mesma cascata da
+   `api`) em `compose.yaml`/`docs/SECRETS.md`, perfil `ADMIN` fixo, nunca a
+   chave/cota do perfil `USER`. Não recebe token do bot nem segredo do
+   webhook.
+6. **Achado adicional não implementado**: nenhum outro ajuste além do
+   listado — nada além do escopo aprovado foi tocado.
+
+## Validação real (2026-08-09)
+
+- **Pipeline oficial**: aprovado — 753 testes rápidos (18 novos:
+  `test_offer_relevance.py`, `test_mission_offer_relevance.py`, mais casos
+  em `test_collection_orchestration.py`/`test_products.py`), 90,59% de
+  cobertura, 14 integrações PostgreSQL reais (incluindo o teste dedicado
+  de isolamento entre duas missões na mesma oferta), migration head
+  `20260809_0004`.
+- **E2E reproduzível**: 2/2 aprovados, com a fronteira de IA controlada
+  (sem chamar Gemini/Groq reais), consistente com `docs/E2E_TESTS.md`.
+- **Missão real via Telegram**: stack Docker reconstruído com o código
+  atual, migration aplicada, `collection_worker` com o novo secret. Missão
+  "mouse Logitech g pro 2" (alvo R$ 999.999,99, Kabum) processada pelo
+  worker real. Achado relevante: sob carga real (~20 classificações numa
+  única coleta), a maioria das chamadas de IA falhou
+  (`unavailable` nas três camadas da cascata premium/Groq/gratuito) — o
+  sistema reagiu exatamente como projetado, sem persistir classificação
+  inválida e sem bloquear a coleta. As classificações que tiveram sucesso
+  foram corretas, inclusive distinguindo dois modelos textualmente
+  parecidos: "Logitech G PRO 2" (pedido) → `match`; "Logitech G Pro X
+  Superlight 2" (modelo diferente, nome parecido) → `no_match`. Dois
+  eventos `price.target_reached.v1` reais, 2 consumos `succeeded`, 0
+  duplicados. **Confirmado visualmente pelo usuário**: as mensagens
+  recebidas mostraram o nome real do anúncio, a loja Kabum, preço e link
+  clicável — nunca o nome da missão como nome do produto.
 
 ## Relação com a TASK-054/`v1.0.0`
 

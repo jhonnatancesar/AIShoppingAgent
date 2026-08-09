@@ -143,6 +143,28 @@ def _adapter() -> CollectionAdapter:
     )
 
 
+class _ControlledAIManager:
+    """Fronteira de IA controlada do E2E (TASK-063): sempre MATCH + título fixo.
+
+    O E2E reproduzível controla só as bordas externas de IA, marketplace e
+    Telegram (`docs/E2E_TESTS.md`) -- nunca chama o Gemini/Groq reais.
+    """
+
+    async def generate(self, request):
+        content = (
+            '{"relevance": "match"}'
+            if request.purpose == "classify_offer_relevance"
+            else '{"display_title": "Controlled offer"}'
+        )
+        return AIResponse(
+            request_id=request.request_id,
+            provider="controlled_boundary",
+            model="e2e-local",
+            content=content,
+            finished_at=datetime.now(UTC),
+        )
+
+
 def _seed_authenticated_user(database: IntegrationDatabase, telegram_id: int) -> User:
     now = datetime.now(UTC)
     with database.sessions.begin() as session:
@@ -358,6 +380,10 @@ async def test_critical_chain_replay_restart_skipped_and_ownership(
     monkeypatch.setattr("app.telegram.notifications.send_message", capture_notification)
     monkeypatch.setattr(
         "app.collection.worker.build_collection_adapter", lambda _: _adapter()
+    )
+    monkeypatch.setattr(
+        "app.collection.worker.build_admin_dev_ai_provider_manager",
+        lambda _: _ControlledAIManager(),
     )
     monkeypatch.setattr("app.missions.schedule.random.uniform", lambda a, b: 0.0)
     _get_session_factory.cache_clear()
