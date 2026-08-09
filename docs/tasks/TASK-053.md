@@ -116,3 +116,38 @@ validação representativa atual em Docker/Linux. O provider permaneceu sem
 alteração. Caso a falha reapareça, a investigação deve ser retomada com
 evidência capturada no momento da ocorrência.
 
+## E2E reproduzível refeito após disponibilidade por card, DEC-046 e DEC-047
+
+A validação registrada em "Validações realizadas nesta execução" é anterior à
+disponibilidade por card/fallback seletivo, ao DEC-046 (intervalo/stagger) e
+ao DEC-047 (backoff persistente por fonte). Reexecutado com o estado atual
+(`3f02fd8`):
+
+- primeira execução (`python scripts/run_e2e_tests.py`) **falhou**:
+  `test_critical_chain_replay_restart_skipped_and_ownership` esperava 4
+  `CollectionRun` logo após criar a missão e rodar o `collection_worker` uma
+  vez, mas recebeu 0. Causa raiz confirmada: o `staggered_next_run_at`
+  (DEC-046) passou a deslocar `next_run_at` em até
+  `collection_schedule_stagger_seconds` (padrão 300s) já na criação da
+  missão pelo webhook; o teste não fixava esse valor, então o `next_run_at`
+  gerado ficava aleatoriamente no futuro e a agenda não estava due na hora do
+  `once=True`. Não é bug de produto — é o comportamento pretendido pelo
+  DEC-046 (evitar sincronização entre missões) não refletido no cenário E2E,
+  que foi escrito antes da mudança.
+- corrigido em `tests/e2e/test_critical_flow.py`: mesma técnica já usada em
+  `tests/test_mission_schedules.py` para testar `staggered_next_run_at`
+  isoladamente — `monkeypatch.setattr("app.missions.schedule.random.uniform",
+  lambda a, b: 0.0)`, tornando o E2E determinístico sem alterar o produto
+  nem o comportamento real de stagger (que já tem cobertura unitária
+  dedicada em `test_mission_schedules.py`, `test_mission_creation.py` e
+  `test_collection_orchestration.py`).
+- segunda execução: **2/2 cenários aprovados**, incluindo a cadeia completa
+  (criação → confirmação → agenda → `collection_worker` real → 4
+  `CollectionRun`/3 observações/3 eventos de alvo → `telegram_notifier` real
+  → restart sem duplicação → missão `skipped` sem reenvio → missão pausada
+  sem run → ownership) e o cenário de onboarding/autenticação (senha, login,
+  avisos de expiração sem duplicação).
+- E2E reproduzível considerado válido para o código atual, incluindo
+  disponibilidade por card, DEC-046 e DEC-047. **E2E externo real ainda não
+  foi refeito** — pendência sem alteração.
+

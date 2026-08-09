@@ -359,6 +359,7 @@ async def test_critical_chain_replay_restart_skipped_and_ownership(
     monkeypatch.setattr(
         "app.collection.worker.build_collection_adapter", lambda _: _adapter()
     )
+    monkeypatch.setattr("app.missions.schedule.random.uniform", lambda a, b: 0.0)
     _get_session_factory.cache_clear()
     get_settings.cache_clear()
     app.dependency_overrides[get_settings] = lambda: database.settings
