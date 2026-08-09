@@ -127,9 +127,11 @@ sem confundir recuperação básica com disaster recovery (`DEC-039`). A TASK-05
 mantém testes de integração reais, isolados e fail-closed em PostgreSQL 18.4,
 obrigatórios no pipeline completo (`DEC-040`). A TASK-062 passou a orquestrar
 automaticamente agenda, Store Providers, persistência, avaliação e publicação
-de eventos (`DEC-041`). A TASK-053 executou os E2E reproduzíveis e validou
-autenticação no Telegram real, incluindo avisos de sessão sem duplicação, mas
-permanece `BLOCKED_EXTERNAL/no_eligible_external_evidence`: as quatro lojas
-não forneceram frete determinável sem login. A TASK-054 continua bloqueada e
-não há próxima TASK executável até decisão explícita sobre essa dependência
-externa.
+de eventos (`DEC-041`). A TASK-053 refez o E2E reproduzível e o E2E externo depois da disponibilidade
+por card, do DEC-045 (alertas por `amount`), do DEC-046 (intervalo/stagger) e
+do DEC-047 (backoff persistente por fonte): ambos aprovados, com o E2E
+externo classificado `PASS` em 2026-08-09 (quatro fontes reais, Pichau falhou
+por instabilidade externa isolada sem virar `FAIL_INTERNO`, Telegram real
+confirmou entrega sem duplicação). A TASK-053 continua sem fechamento
+formal — aguarda aprovação explícita do usuário. A TASK-054 não deve começar
+automaticamente até essa aprovação.

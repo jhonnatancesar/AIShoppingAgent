@@ -1,6 +1,6 @@
 # TASK-053 — Criar testes ponta a ponta
 
-Status: Bloqueada externamente (`BLOCKED_EXTERNAL`)
+Status: E2E externo `PASS` em 2026-08-09 (ver "E2E externo final refeito" abaixo); aguardando aprovação explícita do usuário para encerramento.
 
 Dependência obrigatória: TASK-062 concluída. O E2E exercita o fluxo real da
 aplicação e não monta manualmente a sequência agenda → coleta → persistência
@@ -95,7 +95,11 @@ diagnóstico deve demonstrar que a falha pertence ao sistema.
 - o classificador externo deixou de consultar uma coluna inexistente da chave
   composta de `mission_sources`.
 
-## Validações realizadas nesta execução
+## Validações realizadas nesta execução (histórico — superseded)
+
+> Classificação `BLOCKED_EXTERNAL` abaixo é anterior à disponibilidade por
+> card, DEC-046 e DEC-047. Ver "E2E externo final refeito" para o resultado
+> `PASS` atual.
 
 - E2E reproduzível: 2 cenários aprovados em PostgreSQL 18.4, incluindo
   upgrade, downgrade e novo upgrade até `20260809_0002`;
@@ -148,6 +152,82 @@ ao DEC-047 (backoff persistente por fonte). Reexecutado com o estado atual
   sem run → ownership) e o cenário de onboarding/autenticação (senha, login,
   avisos de expiração sem duplicação).
 - E2E reproduzível considerado válido para o código atual, incluindo
-  disponibilidade por card, DEC-046 e DEC-047. **E2E externo real ainda não
-  foi refeito** — pendência sem alteração.
+  disponibilidade por card, DEC-046 e DEC-047.
+
+## E2E externo final refeito (2026-08-09, `3f02fd8`/`bb6bb3f`)
+
+Execução única e representativa, sem investigação preparatória contra a
+Pichau (nenhuma busca de aquecimento, nenhuma página extra, nenhuma repetição
+de URL, nenhum fallback forçado) — só a coleta normal que já fazia parte do
+fluxo.
+
+**Ambiente:** stack Compose local reconstruído com o código atual (imagem
+rebuildada, migration `20260809_0003` aplicada ao banco existente), túnel
+`cloudflared` temporário, webhook do bot real substituído temporariamente e
+restaurado (removido, `--action delete`) ao final — a URL anterior já estava
+morta antes desta execução. `AISHOPPING_AUTH_PUBLIC_BASE_URL` revertido em
+`.env` depois do teste.
+
+**Missão real:** criada e confirmada pelo próprio usuário via Telegram real
+("Logitech g pro 2", alvo `999999.00 BRL`, quatro fontes selecionadas).
+Agenda, `staggered_next_run_at` (~4 min) e o `collection_worker` real
+(poll de 15s, sem chamada manual da cadeia interna) processaram a missão
+sozinhos.
+
+**Resultado por fonte:**
+
+| Fonte | Coleta | Observações | Com `amount` válido | AVAILABLE | UNKNOWN | Bloqueio externo | Fallback |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Amazon | `succeeded` | 18 | 18 | 18 | 0 | não | não precisou (sem UNKNOWN) |
+| Terabyte | `succeeded` | 20 | 20 | 20 | 0 | não | não precisou (sem UNKNOWN) |
+| Kabum | `succeeded` | 20 | 20 | 3 | 17 | não | sim — top K=3 (`availability_fallback_max_candidates`), as 3 tentativas resolveram para AVAILABLE; as 17 restantes permaneceram UNKNOWN por estarem fora do K, não por falha |
+| Pichau | `failed` | 0 | 0 | 0 | 0 | instabilidade externa observada (ver abaixo) | não aplicável (run falhou antes de qualquer card) |
+
+**Pichau — o que aconteceu, sem investigação adicional:** o worker processou
+outra missão pré-existente com Pichau selecionada pouco antes (mesmo
+processo, mesmo circuit breaker por provider da TASK-049); essa tentativa
+falhou com `failure_code=provider_unavailable`
+(`ProviderNavigationError`/timeout de navegação — não um `403`/`429`
+confirmado). O circuit breaker do provider Pichau abriu em seguida, e a
+tentativa desta missão herdou esse circuito já aberto
+(`failure_code=circuit_open`), falhando sem nova requisição de rede. Não é
+bug: é exatamente o comportamento pretendido da resiliência local (TASK-049)
+protegendo contra falhas repetidas. Como não foi um `ProviderBlockedError`
+com status `403`/`429` confirmado, o backoff persistente por fonte do
+DEC-047 **corretamente não foi acionado**
+(`mission_sources.consecutive_blocks=0`, `next_eligible_at=NULL` para
+Pichau) — critério do DEC-047 é intencionalmente restrito a bloqueio
+confirmado, não a timeout/instabilidade de navegação. Registrado como
+bloqueio/instabilidade externa observada; nenhuma nova tentativa foi feita,
+nenhuma página extra foi aberta, nenhum fallback foi forçado.
+
+**Eventos e notificações:**
+
+- `collection.completed.v1`: 3 (uma por fonte bem-sucedida);
+- `collection.failed.v1`: 1 (Pichau);
+- `offer.availability_changed.v1`: 1 (Kabum, oferta que virou AVAILABLE via
+  fallback);
+- `price.target_reached.v1`: 11 (6 Amazon, 1 Kabum, 4 Terabyte) — todas as
+  ofertas elegíveis (`amount` real, disponibilidade AVAILABLE, moeda BRL
+  compatível com o critério) geraram alerta, sem preço fabricado;
+- consumo pelo `telegram_notifier` real: 11 tentativas, **11 `succeeded`**,
+  **0 duplicadas** — todas entregues pela Bot API real ao chat privado do
+  usuário.
+
+**Classificação oficial** (`python -m scripts.validate_external_e2e
+--mission-title "Logitech g pro 2"`):
+
+```json
+{"evidence": {"consumption_attempts": 11, "duplicate_terminal_consumption": false,
+"eligible_observations": 41, "failed_runs": 1, "observations": 58,
+"running_runs": 0, "runs": 4, "selected_sources": 4, "succeeded_runs": 3,
+"successful_notifications": 11, "target_events": 11}, "status": "PASS"}
+```
+
+**`PASS`.** Uma fonte (Pichau) falhou por instabilidade externa real, e o
+sistema reagiu corretamente — sem transformar isso em `FAIL_INTERNO` nem
+insistir contra o bloqueio: as outras três fontes produziram evidência
+elegível real, geraram eventos reais e o Telegram real confirmou entrega sem
+duplicação. Nenhuma observação/evento foi inserido manualmente; nenhum
+provider foi contornado; nenhum CAPTCHA/bloqueio foi burlado.
 

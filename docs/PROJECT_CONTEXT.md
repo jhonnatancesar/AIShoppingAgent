@@ -237,14 +237,21 @@ Linux/Xvfb com as quatro lojas foram validados. A TASK-053 é a próxima.
 O pipeline oficial terminou com 638 testes rápidos, 90,04% de cobertura e 11
 integrações PostgreSQL reais.
 
-A TASK-053 está **bloqueada externamente**, não concluída. A suíte permanente
-E2E passou em PostgreSQL 18.4 e o Telegram real confirmou senha criada, login,
-aviso pré-expiração e expiração sem duplicação. No modo externo de ofertas, as
-quatro fontes executaram e gravaram 40 observações, mas nenhuma trouxe frete
-determinável sem autenticação no marketplace; o classificador retornou
-`BLOCKED_EXTERNAL/no_eligible_external_evidence`. Credenciais das lojas não
-pertencem à V1 e a ausência não pode ser mascarada como sucesso. A TASK-054
-permanece bloqueada até a TASK-053 obter validação externa elegível.
+A TASK-053 obteve `PASS` no E2E externo em 2026-08-09, depois da
+disponibilidade por card, do DEC-045 (alertas por `amount`, sem exigir
+frete), do DEC-046 (intervalo/stagger) e do DEC-047 (backoff persistente por
+fonte). O E2E reproduzível também foi refeito (2/2 aprovados) depois de
+corrigir um teste que não considerava o stagger de `DEC-046` na criação da
+missão — achado de teste, não de produto. No E2E externo, uma missão real
+criada pelo próprio usuário via Telegram real, com as quatro fontes,
+produziu 58 observações reais (41 elegíveis), 11 eventos de alvo e 11
+notificações Telegram reais entregues sem duplicação; Amazon e Terabyte
+100% `AVAILABLE`, Kabum resolveu 3 ofertas via fallback seletivo (top K=3),
+Pichau falhou por instabilidade externa isolada (não um `403/429`
+confirmado) sem virar `FAIL_INTERNO` e sem acionar o backoff persistente do
+DEC-047. Ainda assim, a TASK-053 **não está formalmente encerrada**: aguarda
+aprovação explícita do usuário. A TASK-054 não deve começar automaticamente
+até essa aprovação.
 
 A TASK-058 (`DEC-015`) está **concluída**: `create_mission` e
 `mission_command` não executam mais direto — ficam encenados em

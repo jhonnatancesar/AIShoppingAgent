@@ -1,5 +1,28 @@
 # Changelog
 
+## 2026-08-09 — TASK-053: E2E reproduzível e externo refeitos, `PASS`
+
+- Correção do gatilho de backoff persistente (`DEC-047`): `401` removido do
+  conjunto que aciona backoff por fonte; tratamento da chamada em si continua
+  cobrindo `401/403/429` normalmente.
+- E2E reproduzível refeito com o código atual (disponibilidade por card,
+  `DEC-046`, `DEC-047`). Achado real: `staggered_next_run_at` (`DEC-046`)
+  desloca `next_run_at` em até 5 min já na criação da missão; o cenário E2E
+  não fixava esse valor e passou a falhar de forma não determinística.
+  Corrigido só no teste (`tests/e2e/test_critical_flow.py`), sem mudança de
+  produto. 2/2 cenários aprovados.
+- E2E externo refeito com missão real criada pelo usuário via Telegram real,
+  quatro fontes, `collection_worker` real sem chamada manual. Resultado:
+  `PASS` — Amazon e Terabyte 100% `AVAILABLE`; Kabum resolveu 3 ofertas via
+  fallback seletivo (top K=3) e manteve 17 `UNKNOWN` dentro da regra; Pichau
+  falhou por instabilidade externa isolada (`provider_unavailable` →
+  `circuit_open`), sem bloqueio `403/429` confirmado, corretamente sem
+  acionar o backoff persistente do `DEC-047`. 58 observações, 41 elegíveis,
+  11 eventos de alvo, 11 notificações Telegram reais entregues sem
+  duplicação.
+- TASK-053 aguarda aprovação explícita do usuário para encerramento; TASK-054
+  não iniciada.
+
 ## 2026-08-09 — TASK-053: E2E implementado, validação externa bloqueada
 
 - Criada suíte E2E reproduzível separada do pipeline rápido, usando webhook,

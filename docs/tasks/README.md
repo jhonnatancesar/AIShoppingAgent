@@ -17,7 +17,8 @@ fecha privacidade técnica com retenções limitadas e desidentificação fail-c
 backup/restauração manual validada (`DEC-039`). A TASK-052 mantém a suíte
 PostgreSQL real, isolada e obrigatória do pipeline (`DEC-040`). A TASK-062 fecha
 a lacuna entre agenda, providers, histórico e event log (`DEC-041`). A
-TASK-053 possui suíte reproduzível e autenticação Telegram real aprovadas, mas
-permanece `BLOCKED_EXTERNAL` pela ausência de frete determinável sem login nos
-marketplaces. Ela não está concluída; a TASK-054 continua bloqueada e não
-existe próxima TASK executável até decisão sobre essa dependência.
+TASK-053 obteve `PASS` no E2E reproduzível (2/2) e no E2E externo com as
+quatro fontes reais e Telegram real (2026-08-09), depois da disponibilidade
+por card, do DEC-045, do DEC-046 e do DEC-047. Ainda assim, ela **não está
+formalmente encerrada** — aguarda aprovação explícita do usuário. A TASK-054
+não deve começar automaticamente até essa aprovação.
