@@ -41,15 +41,19 @@ O script interrompe na primeira falha e executa, nesta ordem:
 4. integridade das dependências com `pip check`;
 5. lint com Ruff;
 6. verificação de formatação com Ruff;
-7. testes e cobertura com Pytest, sem gravar cache local;
+7. testes rápidos e cobertura com Pytest, sem gravar cache local;
 8. validação do grafo de migrações Alembic;
-9. validação estrutural do Docker Compose com secret files temporários.
+9. validação estrutural do Docker Compose com secret files temporários;
+10. suíte permanente de integração em PostgreSQL 18 descartável, incluindo
+    migration dinâmica até o único head e cleanup dos recursos exclusivos.
 
 O primeiro uso do Gitleaks exige rede para baixar o release oficial. O binário
 verificado permanece em `.tools/`, ignorado. A varredura usa redação total,
 não grava relatórios e não imprime descobertas potencialmente sensíveis.
 
 O script cria seis secret files não reais em diretório temporário somente para
-validar o Compose e remove o diretório ao terminar. O pipeline não inicia
-contêineres, não altera dados, não faz commits e não acessa o repositório
-remoto.
+validar o Compose e remove o diretório ao terminar. O pipeline não inicia os
+serviços do Compose nem altera dados do operador. A etapa de integração cria
+somente container/volume PostgreSQL próprios, removidos ao terminar. O pipeline
+não faz commits nem acessa o repositório remoto. Execução individual e detalhes
+de isolamento estão em `docs/INTEGRATION_TESTS.md`.

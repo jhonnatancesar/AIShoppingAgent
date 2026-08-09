@@ -1,5 +1,22 @@
 # Changelog
 
+## 2026-08-08 — TASK-052: suíte permanente de integração PostgreSQL
+
+- Criado runner multiplataforma fail-closed com PostgreSQL 18.4 fixado por
+  digest, porta loopback aleatória e recursos sintéticos exclusivos.
+- Alembic aplica `upgrade head` dinamicamente, exige head único, confere a
+  revisão persistida e executa `alembic check`.
+- Cada teste clona um banco limpo do template migrado; não há rollback global,
+  dependência de ordem, `.env`, credencial ou banco do operador.
+- Oito integrações reais cobrem schema/seeds, missão/preço/evento, concorrência,
+  recomendação/compra, autenticação, autorização, resiliência e privacidade.
+- Suíte completa repetida, teste individual, falha controlada e guard direto
+  foram aprovados; nenhum container ou volume residual permaneceu.
+- A integração tornou-se etapa obrigatória do pipeline completo; a TASK-053
+  continua exclusivamente responsável pelos testes E2E externos.
+- Pipeline aprovado em Python 3.14.6 com 607 testes rápidos, 90,61% de
+  cobertura e 8 integrações PostgreSQL reais.
+
 ## 2026-08-08 — TASK-051: runbook operacional e recuperação básica
 
 - Criado `docs/OPERATIONS.md` para preparar e operar um único Ubuntu Server,

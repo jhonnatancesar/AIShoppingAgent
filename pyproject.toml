@@ -21,3 +21,6 @@ addopts = [
 ]
 pythonpath = ["backend"]
 testpaths = ["tests"]
+markers = [
+    "integration: requires the fail-closed disposable PostgreSQL runner",
+]

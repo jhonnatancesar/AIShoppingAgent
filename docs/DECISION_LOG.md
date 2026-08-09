@@ -25,6 +25,19 @@ Após a classificação, registrar a decisão neste arquivo e atualizar a docume
 - **Justificativa:** impacto avaliado e motivo da classificação.
 - **Próxima ação:** documento a atualizar, TASK a criar quando aplicável, ou ação de não implementação.
 
+### DEC-040 — Isolar integração real por banco descartável
+
+- **Data:** 2026-08-08
+- **Ideia:** tornar os fluxos persistentes críticos uma suíte permanente contra
+  PostgreSQL real sem permitir contato acidental com dados do operador.
+- **Classificação:** Implementar agora.
+- **Justificativa:** mocks e transações globais não exercitam migrations,
+  constraints, commits ou corridas reais. Um PostgreSQL 18.4 fixado por digest,
+  com recursos exclusivos por execução e banco clonado por teste, oferece
+  isolamento determinístico. Guards de ambiente/banco, loopback e cleanup exato
+  fazem a suíte falhar fechado sem usar prune ou infraestrutura real.
+- **Próxima ação:** TASK-052 concluída; executar a TASK-053 para E2E externo.
+
 ### DEC-039 — Operar de forma privada com recuperação manual comprovada
 
 - **Data:** 2026-08-08

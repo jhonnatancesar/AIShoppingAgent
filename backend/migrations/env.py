@@ -1,8 +1,10 @@
 """Configuração do Alembic integrada à aplicação."""
 
+import os
 from logging.config import fileConfig
 
 from alembic import context
+from app.core.config import Settings
 from app.database.base import Base
 from app.database.model_registry import REGISTERED_MODELS
 from app.database.session import build_database_url
@@ -13,7 +15,20 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-database_url = build_database_url().render_as_string(hide_password=False)
+integration_run_id = os.getenv("AISHOPPING_INTEGRATION_RUN_ID")
+integration_settings = None
+if integration_run_id is not None:
+    integration_settings = Settings(_env_file=None)
+    if (
+        integration_settings.database_host != "127.0.0.1"
+        or integration_settings.database_name
+        != f"aishopping_template_{integration_run_id}"
+    ):
+        raise RuntimeError("integration Alembic target failed closed")
+
+database_url = build_database_url(integration_settings).render_as_string(
+    hide_password=False
+)
 config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
 if not REGISTERED_MODELS or any(
     model.metadata is not Base.metadata for model in REGISTERED_MODELS

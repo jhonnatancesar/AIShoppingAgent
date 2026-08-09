@@ -22,7 +22,7 @@
 | Segurança e entrega — continuação | TASK-048 a TASK-054 | Segredos, resiliência, privacidade, documentação, testes e lançamento |
 | Expansão de fontes (futuro) | Tarefas a definir | Mercado Livre, Shopee, AliExpress e outras fontes futuras |
 
-As TASKs 000 a 051 e as TASKs 055 a 061 estão
+As TASKs 000 a 052 e as TASKs 055 a 061 estão
 concluídas. O preflight
 da TASK-036 revelou dependências reais não satisfeitas (pipeline de eventos
 persistidos/publicados e `chat_id` do Telegram, nenhum dos dois existente
@@ -56,8 +56,10 @@ por integração e dead letter append-only. A TASK-050 (`DEC-038`) removeu PII
 de logs, limitou a retenção de telemetria e implementou desidentificação
 fail-closed preservando UUID/históricos. A TASK-051 (`DEC-039`) consolidou o
 runbook do Ubuntu Server, tornou as portas administrativas privadas por padrão
-e validou backup/restauração manual sem alegar disaster recovery. A próxima
-tarefa executável é a TASK-052. A
+e validou backup/restauração manual sem alegar disaster recovery. A TASK-052
+(`DEC-040`) criou a suíte permanente e fail-closed em PostgreSQL 18.4
+descartável, agora obrigatória no pipeline. A próxima tarefa executável é a
+TASK-053. A
 TASK-057 (`DEC-017`): validação real contra o
 `USER`/Gemini cobre 3 dos 4 `IntentKind`, e o usuário aceitou explicitamente
 encerrar nesse estado, adiando mais variedade de linguagem para a V2

@@ -95,13 +95,16 @@ try {
         python -m ruff format --check .
     }
     Invoke-Check "Testes e cobertura" {
-        python -m pytest -p no:cacheprovider --basetemp="$resolvedPipelineTemporary\pytest"
+        python -m pytest -p no:cacheprovider --ignore=tests/integration --basetemp="$resolvedPipelineTemporary\pytest"
     }
     Invoke-Check "Grafo de migrações" {
         python -m alembic -c backend/alembic.ini heads
     }
     Invoke-Check "Configuração do Docker Compose" {
         & $dockerCommand compose -f compose.yaml config --quiet
+    }
+    Invoke-Check "Testes de integração PostgreSQL" {
+        python scripts/run_integration_tests.py
     }
 
     Write-Host "Pipeline local aprovado."

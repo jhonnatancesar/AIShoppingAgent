@@ -113,6 +113,11 @@ O pipeline também instala o Gitleaks 8.29.1 com checksum verificado, examina
 working tree, arquivos versionados e histórico, e valida um canário gerado em
 repositório temporário. O detalhamento está em `docs/LOCAL_PIPELINE.md`.
 
+A suíte PostgreSQL real também pode ser executada isoladamente com
+`.\scripts\check-integration.cmd` no Windows ou
+`python scripts/run_integration_tests.py` no Ubuntu. Ela cria e remove somente
+recursos sintéticos exclusivos; consulte `docs/INTEGRATION_TESTS.md`.
+
 ## Migrações
 
 Após configurar os secret files e iniciar o PostgreSQL, aplique as migrações

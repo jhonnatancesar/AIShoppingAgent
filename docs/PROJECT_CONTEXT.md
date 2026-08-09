@@ -212,8 +212,20 @@ manual é distinto de disaster recovery e só é considerado validado depois de
 restauração em banco limpo. Rollback de código exige compatibilidade com o
 schema; downgrade destrutivo nunca é automático. PostgreSQL 18 e o stack real
 isolado confirmaram migrations, endpoints, restart, backup `0600`, restauração,
-contagem e dado sintético. A próxima tarefa executável é a TASK-052. O pipeline
+contagem e dado sintético. A tarefa seguinte foi a TASK-052. O pipeline
 terminou com 602 testes e 90,61% de cobertura.
+
+A TASK-052 (`DEC-040`) está **concluída**: o pipeline possui uma suíte
+permanente e obrigatória contra PostgreSQL 18.4 fixado por digest. O runner
+recusa configuração de banco ou ambiente de produção herdados, cria recursos
+sintéticos exclusivos em loopback, migra dinamicamente até o único head e
+clona um banco limpo por teste. Oito integrações reais cobrem schema/seeds,
+missão até consumo concorrente, compra, autenticação, autorização, resiliência
+e privacidade. Execução completa repetida, teste individual, falha controlada e
+guard fora do runner foram aprovados sem deixar containers ou volumes. A
+próxima tarefa executável é a TASK-053; E2E externo continua exclusivamente na
+TASK-053. O pipeline terminou com 607 testes rápidos, 90,61% de cobertura e 8
+integrações PostgreSQL reais.
 
 A TASK-058 (`DEC-015`) está **concluída**: `create_mission` e
 `mission_command` não executam mais direto — ficam encenados em

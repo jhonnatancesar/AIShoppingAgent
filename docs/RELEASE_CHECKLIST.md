@@ -12,12 +12,12 @@ TASK-054 (preparar release), que ainda está pendente.
 
 Atualizar este documento sempre que uma TASK relevante para produção for
 concluída ou revisada. Snapshot gerado em **2026-08-08**, logo após a
-conclusão da TASK-051.
+conclusão da TASK-052.
 
 ## Resumo executivo
 
-**Não está pronto para produção.** 59 das 62 tarefas planejadas estão
-concluídas, mas as 3 pendentes cobrem áreas que separam
+**Não está pronto para produção.** 60 das 62 tarefas planejadas estão
+concluídas, mas as 2 pendentes cobrem áreas que separam
 "funciona quando eu valido manualmente" de "está seguro para um usuário
 real depender disso": testes permanentes, release e — mais importante —
 não existe hoje nenhum
@@ -34,7 +34,7 @@ mecanismo que dispare a coleta de preços sozinho. Uma missão criada fica
 | 4 | Condição de preço produz evento e notificação rastreáveis | ⚠️ Parcial | Avaliação (TASK-027), publicação (TASK-043), consumo (TASK-044) e notificação Telegram (TASK-036) funcionam e foram validados realmente; ainda não existe fluxo de coleta que invoque automaticamente avaliação/publicação em produção |
 | 5 | Recomendação/comparação básica com evidências históricas | ✅ Atendido | TASK-038 recomenda uma oferta com regras monetárias seguras e histórico identificável; TASK-039 compara as mesmas evidências, mantém a posição 1 invariável e não inventa total para frete desconhecido |
 | 6 | Todo uso de IA passa pelo AI Provider Manager | ✅ Atendido | Invariante reforçada e validada em todas as tarefas de IA (TASK-028 a TASK-032, TASK-057 a TASK-060) |
-| 7 | Fluxos críticos com testes de integração e ponta a ponta | ❌ Faltando | TASK-052 (integração) e TASK-053 (e2e) pendentes; validação real hoje é manual/pontual por TASK, sem suíte permanente |
+| 7 | Fluxos críticos com testes de integração e ponta a ponta | ⚠️ Parcial | TASK-052 mantém integração permanente em PostgreSQL real; TASK-053 (E2E externo) permanece pendente |
 | 8 | Documentação operacional, segurança mínima e checklist de release concluídos | ⚠️ Parcial | TASK-051 entregou runbook, binds privados e restauração validada; o checklist/release final da TASK-054 permanece pendente |
 
 ## Bloqueios adicionais para rodar em produção de verdade
@@ -68,6 +68,9 @@ Além dos critérios formais do MVP:
   Ubuntu Server, portas privadas, backup manual e restauração validada estão
   documentados. Isso não substitui disaster recovery nem resolve domínio/TLS,
   scheduler, CI/CD ou release.
+- **Integração permanente disponível** (TASK-052): migrations, persistência,
+  concorrência e fluxos críticos rodam em PostgreSQL 18.4 descartável e isolado
+  como etapa obrigatória do pipeline; E2E externo continua na TASK-053.
 - **Notificador sem produtor automático**: a TASK-036 entrega eventos reais já
   publicados, mas hoje nenhum fluxo contínuo de coleta cria esses eventos sem
   preparação manual.
@@ -89,11 +92,11 @@ Além dos critérios formais do MVP:
 | Compra e eventos | TASK-038 a TASK-041, TASK-043 a TASK-045 | 7/7 | — |
 | Catálogo de eventos | TASK-042 | 1/1 | — |
 | Segurança — canal, autorização e autenticação real | TASK-046, TASK-047, TASK-061 | 3/3 | — |
-| Segurança e entrega — continuação | TASK-048 a TASK-054 | 4/7 | TASK-052 a TASK-054 |
+| Segurança e entrega — continuação | TASK-048 a TASK-054 | 5/7 | TASK-053 e TASK-054 |
 | Store Providers e identidade | TASK-055, TASK-056 | 2/2 | — |
 | Robustez, confirmação e IA (V1.2 antecipado) | TASK-057 a TASK-060 | 4/4 | — |
 
-**Total: 59 concluídas, 3 pendentes.**
+**Total: 60 concluídas, 2 pendentes.**
 
 ## Recomendação
 
@@ -102,4 +105,4 @@ seguro. Colocar um usuário real dependendo do sistema hoje não é — os
 maiores riscos são a ausência de coleta automática (a missão nunca
 "funciona sozinha") e os controles restantes de segurança/release. A
 ordem mais natural para fechar essas lacunas segue o próprio
-`docs/ROADMAP.md`: TASK-052, TASK-053 e TASK-054.
+`docs/ROADMAP.md`: TASK-053 e TASK-054.

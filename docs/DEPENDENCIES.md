@@ -14,6 +14,11 @@ Este documento é a referência de ambiente para qualquer nova máquina. Antes d
 
 PostgreSQL não exige instalação direta na máquina: o ambiente local usa a imagem oficial `postgres:18-alpine` por meio do Docker Compose.
 
+A suíte permanente da TASK-052 usa PostgreSQL `18.4-alpine` fixado pelo digest
+`sha256:9a8afca54e7861fd90fab5fdf4c42477a6b1cb7d293595148e674e0a3181de15`.
+A atualização desse patch/digest deve ser deliberada, revisada e validada; o
+runner não aceita uma tag flutuante.
+
 No Ubuntu Server, o procedimento operacional usa Docker Engine e o plugin
 Compose instalados pelos canais oficiais. As portas administrativas ficam no
 loopback e o runbook completo, incluindo backup/restauração manual, está em
