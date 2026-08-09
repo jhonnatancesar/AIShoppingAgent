@@ -98,9 +98,12 @@ A TASK-036 reutiliza o mesmo token no processo `app.telegram.worker`. O
 intervalo e o tamanho do lote são configuráveis por
 `AISHOPPING_TELEGRAM_NOTIFICATION_POLL_SECONDS` (padrão 5) e
 `AISHOPPING_TELEGRAM_NOTIFICATION_BATCH_SIZE` (padrão 50). No Docker Compose,
-API e `telegram_notifier` não carregam `backend/.env`: recebem somente os
-secret files necessários. O worker recebe senha do banco e token do bot, mas
-não recebe chaves de IA nem segredo do webhook.
+API, `telegram_notifier` e `collection_worker` não carregam `backend/.env`:
+recebem somente os secret files necessários. O notifier recebe senha do banco
+e token do bot; o coletor recebe somente a senha do banco, sem token Telegram,
+chaves de IA ou segredo do webhook. Poll, lote, agenda, TTL de run e
+concorrência da coleta usam as variáveis `AISHOPPING_COLLECTION_*` documentadas
+no Compose.
 
 A TASK-045 validou OpenTelemetry 1.44.0/instrumentation 0.65b0 e
 `prometheus-client` 0.26.0. O Compose usa imagens oficiais explicitamente

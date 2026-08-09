@@ -12,17 +12,15 @@ TASK-054 (preparar release), que ainda está pendente.
 
 Atualizar este documento sempre que uma TASK relevante para produção for
 concluída ou revisada. Snapshot revisado em **2026-08-09**, após o preflight da
-TASK-053 registrar a TASK-062 como requisito funcional do MVP.
+TASK-062 concluir a orquestração automática antes da TASK-053.
 
 ## Resumo executivo
 
-**Não está pronto para produção.** 60 das 63 tarefas planejadas estão
-concluídas, mas as 3 pendentes cobrem áreas que separam
+**Não está pronto para produção.** 61 das 63 tarefas planejadas estão
+concluídas, mas as 2 pendentes cobrem áreas que separam
 "funciona quando eu valido manualmente" de "está seguro para um usuário
-real depender disso": testes permanentes, release e — mais importante —
-não existe hoje nenhum
-mecanismo que dispare a coleta de preços sozinho. Uma missão criada fica
-"ativa" no banco, mas nada a pesquisa automaticamente.
+real depender disso": testes E2E externos e release. A coleta automática já
+existe, mas ainda precisa ser comprovada ponta a ponta até a entrega ao usuário.
 
 ## Critérios objetivos do MVP (`docs/MVP.md`) — status real
 
@@ -30,8 +28,8 @@ mecanismo que dispare a coleta de preços sozinho. Uma missão criada fica
 | --- | --- | --- | --- |
 | 1 | Ambiente local sobe de forma documentada e reproduzível | ✅ Atendido | Docker Compose, `docs/DEPENDENCIES.md`, `scripts\check.cmd` |
 | 2 | Usuário autorizado cria e consulta missão pelo Telegram | ✅ Atendido | TASK-046 autentica transporte/identidade; TASK-047 aplica RBAC/ownership; TASK-061 exige sessão por senha com Argon2id, TTL e recuperação segura |
-| 3 | Sistema pesquisa todas as fontes selecionadas, normaliza e preserva histórico | ⚠️ Parcial | Store Providers (TASK-055) e normalização (TASK-025) existem isoladamente; a TASK-062 foi registrada para conectá-los automaticamente às agendas e ao histórico |
-| 4 | Condição de preço produz evento e notificação rastreáveis | ⚠️ Parcial | Avaliação, event log, consumo e Telegram existem; a TASK-062 deve produzir automaticamente observações/eventos e a TASK-053 comprovar a cadeia real |
+| 3 | Sistema pesquisa todas as fontes selecionadas, normaliza e preserva histórico | ✅ Atendido | TASK-062 agenda e executa automaticamente as fontes selecionadas, persiste observações append-only e isola falhas por loja |
+| 4 | Condição de preço produz evento e notificação rastreáveis | ⚠️ Parcial | TASK-062 produz observações/eventos automaticamente e o notifier existe; a TASK-053 deve comprovar a cadeia externa até o usuário |
 | 5 | Recomendação/comparação básica com evidências históricas | ✅ Atendido | TASK-038 recomenda uma oferta com regras monetárias seguras e histórico identificável; TASK-039 compara as mesmas evidências, mantém a posição 1 invariável e não inventa total para frete desconhecido |
 | 6 | Todo uso de IA passa pelo AI Provider Manager | ✅ Atendido | Invariante reforçada e validada em todas as tarefas de IA (TASK-028 a TASK-032, TASK-057 a TASK-060) |
 | 7 | Fluxos críticos com testes de integração e ponta a ponta | ⚠️ Parcial | TASK-052 mantém integração permanente em PostgreSQL real; TASK-053 (E2E externo) permanece pendente |
@@ -41,10 +39,9 @@ mecanismo que dispare a coleta de preços sozinho. Uma missão criada fica
 
 Além dos critérios formais do MVP:
 
-- **Sem coleta automática**: embora a TASK-044 forneça o consumo genérico, não
-  existe um orquestrador de `mission_schedules`; uma missão ativa não gera nenhuma
-  observação de preço sozinha. A correção está planejada na TASK-062 antes dos
-  E2E, mas ainda não foi implementada.
+- **Coleta automática implementada**: TASK-062 consome `mission_schedules`,
+  executa as fontes selecionadas, persiste histórico e publica eventos. A
+  TASK-053 ainda precisa validar externamente a entrega completa ao usuário.
 - **Autenticação real aplicada**: TASK-061 usa Argon2id, tokens descartáveis,
   sessão absoluta de 12 horas e recuperação pelo Telegram vinculado. MFA,
   e-mail verificado e outro canal permanecem futuros.
@@ -72,9 +69,8 @@ Além dos critérios formais do MVP:
 - **Integração permanente disponível** (TASK-052): migrations, persistência,
   concorrência e fluxos críticos rodam em PostgreSQL 18.4 descartável e isolado
   como etapa obrigatória do pipeline; E2E externo continua na TASK-053.
-- **Notificador sem produtor automático**: a TASK-036 entrega eventos reais já
-  publicados, mas hoje nenhum fluxo contínuo de coleta cria esses eventos sem
-  preparação manual.
+- **Produtor e notifier desacoplados**: TASK-062 publica no event log e a
+  TASK-036 consome os alertas; a prova E2E conjunta permanece na TASK-053.
 - **Ambiente de validação é manual e efêmero**: a API roda no Docker Compose,
   mas o túnel `cloudflared` é recriado a cada sessão
   e o webhook do Telegram é reregistrado manualmente — não há deploy
@@ -94,17 +90,16 @@ Além dos critérios formais do MVP:
 | Catálogo de eventos | TASK-042 | 1/1 | — |
 | Segurança — canal, autorização e autenticação real | TASK-046, TASK-047, TASK-061 | 3/3 | — |
 | Segurança e entrega — continuação | TASK-048 a TASK-054 | 5/7 | TASK-053 e TASK-054 |
-| Orquestração automática do fluxo principal | TASK-062 | 0/1 | TASK-062 |
+| Orquestração automática do fluxo principal | TASK-062 | 1/1 | — |
 | Store Providers e identidade | TASK-055, TASK-056 | 2/2 | — |
 | Robustez, confirmação e IA (V1.2 antecipado) | TASK-057 a TASK-060 | 4/4 | — |
 
-**Total: 60 concluídas, 3 pendentes.**
+**Total: 61 concluídas, 2 pendentes.**
 
 ## Recomendação
 
 Continuar validando manualmente por sessão (como já vem sendo feito) é
 seguro. Colocar um usuário real dependendo do sistema hoje não é — os
-maiores riscos são a ausência de coleta automática (a missão nunca
-"funciona sozinha") e os controles restantes de segurança/release. A
+maiores riscos são a ausência da prova E2E externa completa e da release. A
 ordem mais natural para fechar essas lacunas segue o próprio
-`docs/ROADMAP.md`: TASK-062, TASK-053 e TASK-054.
+`docs/ROADMAP.md`: TASK-053 e TASK-054.

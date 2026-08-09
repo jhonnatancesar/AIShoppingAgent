@@ -1,5 +1,27 @@
 # Changelog
 
+## 2026-08-09 — TASK-062: orquestração automática de coletas
+
+- Novas missões recebem agenda atômica e missões ativas antigas recebem
+  backfill idempotente, sem reativar agenda desabilitada.
+- `collection_worker` reivindica agendas em transação curta, executa as quatro
+  fontes fora do lock e persiste observações/eventos por fonte de forma
+  independente.
+- Migration `20260809_0001` impede run concorrente duplicado por missão/loja e
+  observação duplicada por run/oferta; upgrade, downgrade e novo upgrade foram
+  validados no PostgreSQL 18.4 real.
+- Runs abandonados são terminalizados como `stale_execution`; resultados
+  tardios não persistem. Falhas usam catálogo sanitizado e não revertem fontes
+  bem-sucedidas.
+- Frete desconhecido não produz alertas dependentes de custo total.
+- Docker Linux/Xvfb validou Pichau, Terabyte, Amazon e Kabum reais. O worker
+  automático processou quatro fontes, persistiu 20 observações e quatro eventos
+  em banco isolado; seu container montou somente o secret do PostgreSQL.
+- A próxima tarefa executável passou a ser a TASK-053; a main remota permanece
+  fora do fluxo automático.
+- Pipeline oficial aprovado no Python 3.14.6 com 638 testes rápidos, 90,04% de
+  cobertura, 11 integrações PostgreSQL reais, Ruff, Alembic, Compose e Gitleaks.
+
 ## 2026-08-09 — Planejamento da TASK-062: orquestração automática de coletas
 
 - O preflight da TASK-053 confirmou que missões ativas não criam agenda nem são

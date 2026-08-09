@@ -9,9 +9,9 @@ estratégia completa de disaster recovery.
 
 Antes de disponibilizar a instância a usuários, considere estes bloqueios:
 
-- não existe scheduler/orquestrador que execute automaticamente as coletas das
-  missões; os Store Providers funcionam isoladamente, mas uma missão ativa não
-  pesquisa preços sozinha; a correção foi registrada na TASK-062 antes dos E2E;
+- o `collection_worker` da TASK-062 executa as coletas automaticamente, mas a
+  validação E2E externa completa da TASK-053 ainda precisa comprovar a cadeia
+  até a entrega ao usuário;
 - há suíte permanente de integração PostgreSQL da TASK-052, mas a suíte E2E
   externa da TASK-053 ainda não existe;
 - não há release final da TASK-054, CI/CD ou deploy automático;
@@ -175,7 +175,7 @@ docker compose exec -T database sh -c \
 Consulte logs com janela e volume limitados:
 
 ```bash
-docker compose logs --since=10m --tail=200 api telegram_notifier database
+docker compose logs --since=10m --tail=200 api collection_worker telegram_notifier database
 ```
 
 Não copie logs completos para canais públicos. Mesmo com sanitização na
@@ -221,7 +221,7 @@ decisão destrutiva explícita e backup restaurado/testado.
 ### Restart controlado
 
 ```bash
-docker compose restart api telegram_notifier
+docker compose restart api collection_worker telegram_notifier
 docker compose ps
 curl --fail --silent --show-error http://127.0.0.1:8000/ready
 ```
@@ -329,7 +329,7 @@ intervenção técnica manual; não improvise downgrade no banco ativo.
 | --- | --- | --- |
 | `/health` falha | `docker compose ps api`, logs limitados | Reiniciar apenas a API e investigar crash/configuração. |
 | `/health=200`, `/ready=503` | health do banco, espaço em disco, logs | Recuperar PostgreSQL; não culpar observabilidade. |
-| Worker sem métricas | `docker compose ps telegram_notifier`, logs | Reiniciar worker após encerrar transações e investigar secret/rede. |
+| Worker sem métricas | `docker compose ps collection_worker telegram_notifier`, logs | Reiniciar o worker afetado após encerrar transações e investigar secret/rede. |
 | Dead letters | regra Prometheus e histórico append-only | Identificar erro permanente; não alterar/apagar tentativas. |
 | Circuito aberto | métricas por componente/evento | Corrigir dependência e aguardar/observar a sonda half-open. |
 | Cota de IA | telemetria sanitizada do provider | USER aguarda renovação da cota gratuita; ADMIN/DEV usa apenas fallback configurado. |

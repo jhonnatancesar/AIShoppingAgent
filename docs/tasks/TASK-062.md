@@ -1,6 +1,6 @@
 # TASK-062 — Orquestrar coletas das missões ativas
 
-Status: Planejada — implementação aguardando aprovação do plano detalhado
+Status: Concluída em 2026-08-09
 
 ## Classificação
 
@@ -38,7 +38,7 @@ orquestrador nunca chama Telegram diretamente.
 - os providers já possuem retry seguro e circuit breaker da TASK-049;
 - o notifier já consome somente eventos de preço pelo event log append-only.
 
-## Decisões propostas para aprovação
+## Decisões implementadas
 
 ### 1. Agenda e elegibilidade
 
@@ -161,9 +161,9 @@ do usuário.
 - toda consulta e persistência mantém `mission_id`, fonte e entidades
   relacionadas coerentes, sem bypass cross-user.
 
-## Arquivos/módulos previstos
+## Arquivos/módulos implementados
 
-- `app.collection.orchestrator`: claim, execução e persistência por fonte;
+- `app.collection.orchestration`: claim, execução e persistência por fonte;
 - `app.collection.worker`: loop operacional;
 - `app.collection.persistence`: extensão dos serviços existentes, sem segundo
   modelo de armazenamento;
@@ -173,7 +173,7 @@ do usuário.
 - migration `20260809_0001`: somente garantias de unicidade justificadas acima;
 - testes unitários e integração PostgreSQL permanente da TASK-052.
 
-## Validação obrigatória
+## Validação executada
 
 - missões ativa, pausada, cancelada, concluída, expirada e sem agenda;
 - criação automática/idempotente da agenda e respeito à desativação explícita;
@@ -203,6 +203,24 @@ do usuário.
 
 ## Ordem
 
-Depois da aprovação e conclusão desta TASK, a TASK-053 volta a ser a próxima
-executável e deverá testar o fluxo realmente criado pela aplicação. A TASK-053
-não será iniciada automaticamente.
+## Resultado
+
+- migration `20260809_0001` aprovada em PostgreSQL 18.4 real com
+  `upgrade → downgrade → upgrade`;
+- testes permanentes provaram claim concorrente, backfill idempotente, missão
+  pausada ignorada, falha isolada, observações e eventos reais;
+- pipeline Docker Linux/Xvfb acessou Pichau, Terabyte, Amazon e Kabum reais;
+- o `collection_worker` detectou sozinho uma missão sintética com quatro
+  fontes, terminalizou quatro runs, persistiu 20 observações e quatro eventos;
+- o container montou somente `/run/secrets/postgres_password`; Telegram,
+  webhook e IA permaneceram ausentes;
+- frete desconhecido continua persistido como evidência desconhecida e não
+  produz alerta dependente de custo total;
+- o ambiente descartável de validação foi removido depois da inspeção.
+- pipeline oficial aprovado com Python 3.14.6, 638 testes rápidos, 90,04% de
+  cobertura e 11 integrações PostgreSQL reais.
+
+## Próxima tarefa no fluxo
+
+TASK-053 — executar os testes E2E externos sobre o fluxo automático real. Ela
+não foi iniciada automaticamente.

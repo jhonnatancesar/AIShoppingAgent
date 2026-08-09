@@ -113,6 +113,57 @@ services:
       retries: 5
       start_period: 5s
 
+  collection_worker:
+    logging: *bounded-logging
+    image: aishoppingagent-app:local
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    environment:
+      AISHOPPING_ENVIRONMENT: ${AISHOPPING_ENVIRONMENT:-development}
+      AISHOPPING_LOG_LEVEL: ${AISHOPPING_LOG_LEVEL:-INFO}
+      AISHOPPING_DATABASE_HOST: database
+      AISHOPPING_DATABASE_PORT: 5432
+      AISHOPPING_DATABASE_NAME: ${POSTGRES_DB:-aishoppingagent}
+      AISHOPPING_DATABASE_USER: ${POSTGRES_USER:-aishoppingagent}
+      AISHOPPING_DATABASE_PASSWORD_FILE: /run/secrets/postgres_password
+      AISHOPPING_OBSERVABILITY_ENABLED: "true"
+      AISHOPPING_OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://otel-collector:4318/v1/traces
+      AISHOPPING_TRACE_SAMPLE_RATIO: ${AISHOPPING_TRACE_SAMPLE_RATIO:-1.0}
+      AISHOPPING_EXTERNAL_HTTP_TIMEOUT_SECONDS: ${AISHOPPING_EXTERNAL_HTTP_TIMEOUT_SECONDS:-10}
+      AISHOPPING_SAFE_RETRY_MAX_ATTEMPTS: ${AISHOPPING_SAFE_RETRY_MAX_ATTEMPTS:-3}
+      AISHOPPING_RETRY_BASE_DELAY_SECONDS: ${AISHOPPING_RETRY_BASE_DELAY_SECONDS:-0.25}
+      AISHOPPING_RETRY_MAX_DELAY_SECONDS: ${AISHOPPING_RETRY_MAX_DELAY_SECONDS:-5}
+      AISHOPPING_RETRY_AFTER_CAP_SECONDS: ${AISHOPPING_RETRY_AFTER_CAP_SECONDS:-30}
+      AISHOPPING_CIRCUIT_FAILURE_THRESHOLD: ${AISHOPPING_CIRCUIT_FAILURE_THRESHOLD:-5}
+      AISHOPPING_CIRCUIT_OPEN_SECONDS: ${AISHOPPING_CIRCUIT_OPEN_SECONDS:-30}
+      AISHOPPING_WORKER_FAILURE_BACKOFF_SECONDS: ${AISHOPPING_WORKER_FAILURE_BACKOFF_SECONDS:-5}
+      AISHOPPING_COLLECTION_POLL_SECONDS: ${AISHOPPING_COLLECTION_POLL_SECONDS:-15}
+      AISHOPPING_COLLECTION_BATCH_SIZE: ${AISHOPPING_COLLECTION_BATCH_SIZE:-25}
+      AISHOPPING_COLLECTION_SCHEDULE_INTERVAL_MINUTES: ${AISHOPPING_COLLECTION_SCHEDULE_INTERVAL_MINUTES:-60}
+      AISHOPPING_COLLECTION_STALE_RUN_MINUTES: ${AISHOPPING_COLLECTION_STALE_RUN_MINUTES:-10}
+      AISHOPPING_COLLECTION_MAX_CONCURRENCY: ${AISHOPPING_COLLECTION_MAX_CONCURRENCY:-4}
+      AISHOPPING_WORKER_METRICS_PORT: 9464
+    command: ["python", "-m", "app.collection.worker"]
+    expose:
+      - "9464"
+    secrets:
+      - postgres_password
+    depends_on:
+      database:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://localhost:9464/metrics', timeout=2)"
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
   database:
     logging: *bounded-logging
     image: postgres:18-alpine

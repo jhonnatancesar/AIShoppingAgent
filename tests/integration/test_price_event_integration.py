@@ -64,20 +64,32 @@ def test_price_alert_publication_and_concurrent_consumption(
             target_amount=Decimal("2500"),
             target_currency="BRL",
         )
-        run = CollectionRun(
+        previous_run = CollectionRun(
             mission_id=mission.id,
             store_id=store.id,
             status=CollectionRunStatus.SUCCEEDED,
             started_at=now - timedelta(minutes=2),
             finished_at=now - timedelta(minutes=1),
         )
+        current_run = CollectionRun(
+            mission_id=mission.id,
+            store_id=store.id,
+            status=CollectionRunStatus.SUCCEEDED,
+            started_at=now - timedelta(seconds=30),
+            finished_at=now,
+        )
         session.add_all(
-            (criteria, MissionSource(mission_id=mission.id, store_id=store.id), run)
+            (
+                criteria,
+                MissionSource(mission_id=mission.id, store_id=store.id),
+                previous_run,
+                current_run,
+            )
         )
         session.flush()
         previous = PriceObservation(
             offer_id=offer.id,
-            collection_run_id=run.id,
+            collection_run_id=previous_run.id,
             amount=Decimal("2900"),
             shipping_amount=Decimal("100"),
             total_amount=Decimal("3000"),
@@ -88,7 +100,7 @@ def test_price_alert_publication_and_concurrent_consumption(
         )
         current = PriceObservation(
             offer_id=offer.id,
-            collection_run_id=run.id,
+            collection_run_id=current_run.id,
             amount=Decimal("2300"),
             shipping_amount=Decimal("100"),
             total_amount=Decimal("2400"),

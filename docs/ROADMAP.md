@@ -24,7 +24,7 @@
 | Testes E2E e lançamento | TASK-053 e TASK-054 | Validação ponta a ponta do fluxo real e preparação da release |
 | Expansão de fontes (futuro) | Tarefas a definir | Mercado Livre, Shopee, AliExpress e outras fontes futuras |
 
-As TASKs 000 a 052 e as TASKs 055 a 061 estão
+As TASKs 000 a 052 e as TASKs 055 a 062 estão
 concluídas. O preflight
 da TASK-036 revelou dependências reais não satisfeitas (pipeline de eventos
 persistidos/publicados e `chat_id` do Telegram, nenhum dos dois existente
@@ -62,8 +62,8 @@ e validou backup/restauração manual sem alegar disaster recovery. A TASK-052
 (`DEC-040`) criou a suíte permanente e fail-closed em PostgreSQL 18.4
 descartável, agora obrigatória no pipeline. O preflight da TASK-053 confirmou
 que não existe processo ligando agendas, providers, observações e eventos; a
-TASK-062 foi criada como requisito funcional do MVP (`DEC-041`) e passa a ser a
-próxima executável. Depois de sua conclusão, a TASK-053 volta ao fluxo. A
+TASK-062 foi criada como requisito funcional do MVP (`DEC-041`) e concluiu a
+orquestração automática. A TASK-053 é a próxima executável. A
 TASK-057 (`DEC-017`): validação real contra o
 `USER`/Gemini cobre 3 dos 4 `IntentKind`, e o usuário aceitou explicitamente
 encerrar nesse estado, adiando mais variedade de linguagem para a V2

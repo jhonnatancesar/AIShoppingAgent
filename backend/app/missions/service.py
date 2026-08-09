@@ -13,6 +13,7 @@ from app.missions.models import (
     Mission,
     MissionCommand,
     MissionCriteria,
+    MissionSchedule,
     MissionSource,
     MissionStatus,
     MissionTransition,
@@ -20,6 +21,7 @@ from app.missions.models import (
 from app.stores.models import Store
 
 _DEFAULT_V1_SOURCE_CODES = ("pichau", "terabyte", "amazon", "kabum")
+_DEFAULT_SCHEDULE_INTERVAL_MINUTES = 60
 """Fontes selecionáveis da V1 usadas quando o Intent não especifica nenhuma."""
 
 
@@ -156,6 +158,7 @@ def create_mission_from_criteria(
     target_currency: str | None,
     source_codes: Sequence[str],
     requested_at: datetime,
+    schedule_interval_minutes: int = _DEFAULT_SCHEDULE_INTERVAL_MINUTES,
 ) -> tuple[Mission, tuple[str, ...]]:
     """Cria uma missão a partir de critérios e a ativa imediatamente.
 
@@ -165,6 +168,8 @@ def create_mission_from_criteria(
     efetivamente usadas, para que o chamador possa relatá-las ao usuário.
     """
     effective_codes = tuple(source_codes) or _DEFAULT_V1_SOURCE_CODES
+    if schedule_interval_minutes <= 0:
+        raise ValueError("schedule_interval_minutes deve ser positivo.")
 
     mission = Mission(
         id=uuid4(),
@@ -215,4 +220,15 @@ def create_mission_from_criteria(
         actor_id=user_id,
         transitioned_at=requested_at,
     )
+    session.add(
+        MissionSchedule(
+            mission_id=mission.id,
+            interval_minutes=schedule_interval_minutes,
+            next_run_at=requested_at,
+            is_enabled=True,
+            created_at=requested_at,
+            updated_at=requested_at,
+        )
+    )
+    session.flush()
     return mission, effective_codes

@@ -51,11 +51,14 @@ def evaluate_price_alerts(
         return ()
     if current.availability is not Availability.AVAILABLE:
         return ()
+    if current.shipping_amount is None:
+        return ()
 
     candidates: list[PriceAlertCandidate] = []
     if (
         previous is not None
         and previous.availability is Availability.AVAILABLE
+        and previous.shipping_amount is not None
         and previous.currency == current.currency
         and current.total_amount < previous.total_amount
     ):
@@ -114,6 +117,7 @@ def _target_was_reached(
     return not (
         previous is not None
         and previous.availability is Availability.AVAILABLE
+        and previous.shipping_amount is not None
         and previous.currency == currency
         and previous.total_amount <= target
     )

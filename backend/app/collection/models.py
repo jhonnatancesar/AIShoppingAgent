@@ -47,6 +47,13 @@ class CollectionRun(Base):
             "ix_collection_runs_mission_started_at", "mission_id", desc("started_at")
         ),
         Index("ix_collection_runs_store_started_at", "store_id", desc("started_at")),
+        Index(
+            "uq_collection_runs_running_mission_store",
+            "mission_id",
+            "store_id",
+            unique=True,
+            postgresql_where="status = 'running' AND mission_id IS NOT NULL",
+        ),
     )
     id: Mapped[UUID] = mapped_column(
         PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4
@@ -113,6 +120,12 @@ class PriceObservation(Base):
             "id",
         ),
         Index("ix_price_observations_collection_run_id", "collection_run_id"),
+        Index(
+            "uq_price_observations_run_offer",
+            "collection_run_id",
+            "offer_id",
+            unique=True,
+        ),
     )
     id: Mapped[UUID] = mapped_column(
         PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4

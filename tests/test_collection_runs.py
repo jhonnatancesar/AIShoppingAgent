@@ -19,4 +19,5 @@ def test_collection_run_schema_and_statuses() -> None:
     assert {index.name for index in table.indexes} == {
         "ix_collection_runs_mission_started_at",
         "ix_collection_runs_store_started_at",
+        "uq_collection_runs_running_mission_store",
     }

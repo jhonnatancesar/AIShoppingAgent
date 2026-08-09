@@ -63,6 +63,12 @@ Telegram, Slack ou qualquer notificação externa.
 - `AISHOPPING_TRACE_SAMPLE_RATIO`;
 - `AISHOPPING_READINESS_TIMEOUT_SECONDS`;
 - `AISHOPPING_WORKER_METRICS_PORT`.
+- `AISHOPPING_COLLECTION_POLL_SECONDS` e
+  `AISHOPPING_COLLECTION_BATCH_SIZE` para o ciclo do coletor;
+- `AISHOPPING_COLLECTION_SCHEDULE_INTERVAL_MINUTES`,
+  `AISHOPPING_COLLECTION_STALE_RUN_MINUTES` e
+  `AISHOPPING_COLLECTION_MAX_CONCURRENCY` para agenda, recuperação e limite
+  fechado de quatro fontes.
 
 Em execução local fora do Compose, a observabilidade fica desativada por
 padrão. O Compose a habilita e fornece os endereços internos.

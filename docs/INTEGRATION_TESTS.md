@@ -36,14 +36,18 @@ Docker e publicada somente em `127.0.0.1`.
 
 O runner recusa `DATABASE_URL` ou qualquer `AISHOPPING_DATABASE_*` herdado,
 gera configuração sintética, aguarda readiness por no máximo 60 segundos e
-executa `alembic upgrade head`. Exige um único head dinâmico, confere a revision
-persistida e roda `alembic check`; migrations futuras não exigem editar um
-número fixo na suíte.
+executa `alembic upgrade head`, downgrade de uma revisão e novo upgrade. Exige
+um único head dinâmico, confere a revision persistida e roda `alembic check`;
+migrations futuras não exigem editar um número fixo na suíte.
 
 Depois da migration, o runner cria um guard secreto sintético no banco-template.
 Cada teste clona esse template em banco próprio, verifica guard/head, executa
 com conexões e commits reais e remove o banco. Seeds das quatro lojas vêm das
 migrations. Não há rollback global nem dependência de ordem.
+
+A TASK-062 acrescentou integração permanente de agenda/backfill, missões
+inativas, falha isolada, persistência/eventos e duas conexões concorrentes no
+claim. A suíte atual possui 11 integrações reais.
 
 Container e volume são removidos nominalmente no `finally`, inclusive após
 falha ou Ctrl+C quando o processo ainda consegue executar cleanup. Nunca são

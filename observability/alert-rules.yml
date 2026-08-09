@@ -10,7 +10,7 @@ groups:
           summary: API indisponível para scrape
 
       - alert: AIShoppingWorkerUnavailable
-        expr: up{job="aishopping-worker"} == 0
+        expr: up{job=~"aishopping-worker|aishopping-collection-worker"} == 0
         for: 30s
         labels:
           severity: critical

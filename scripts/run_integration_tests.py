@@ -232,6 +232,8 @@ def _validate_migrations(
             raise IntegrationRunnerError(
                 "banco não terminou no único head Alembic atual"
             )
+    _run_alembic(environment, "downgrade", "-1")
+    _run_alembic(environment, "upgrade", expected_head)
     _run_alembic(environment, "check")
 
 

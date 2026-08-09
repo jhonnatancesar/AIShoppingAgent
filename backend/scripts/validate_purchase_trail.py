@@ -549,12 +549,33 @@ def _confirmation_count(session_factory, mission_id) -> int:
 
 
 def _add_observation(session, offer_id, run_id, observed_at, amount, shipping):
+    existing_in_run = session.scalar(
+        select(PriceObservation.id).where(
+            PriceObservation.collection_run_id == run_id,
+            PriceObservation.offer_id == offer_id,
+        )
+    )
+    effective_run_id = run_id
+    if existing_in_run is not None:
+        original_run = session.get(CollectionRun, run_id)
+        if original_run is None:
+            raise RuntimeError("collection run not found")
+        replacement_run = CollectionRun(
+            mission_id=original_run.mission_id,
+            store_id=original_run.store_id,
+            status=CollectionRunStatus.SUCCEEDED,
+            started_at=observed_at - timedelta(seconds=1),
+            finished_at=observed_at,
+        )
+        session.add(replacement_run)
+        session.flush()
+        effective_run_id = replacement_run.id
     item_amount = Decimal(amount)
     shipping_amount = Decimal(shipping)
     session.add(
         PriceObservation(
             offer_id=offer_id,
-            collection_run_id=run_id,
+            collection_run_id=effective_run_id,
             amount=item_amount,
             shipping_amount=shipping_amount,
             total_amount=item_amount + shipping_amount,

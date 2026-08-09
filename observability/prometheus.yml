@@ -15,6 +15,10 @@ scrape_configs:
     static_configs:
       - targets: [telegram_notifier:9464]
 
+  - job_name: aishopping-collection-worker
+    static_configs:
+      - targets: [collection_worker:9464]
+
   - job_name: prometheus
     static_configs:
       - targets: [localhost:9090]

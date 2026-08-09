@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 from uuid import uuid4
 
 import pytest
-from app.missions.models import Mission, MissionStatus
+from app.missions.models import Mission, MissionSchedule, MissionStatus
 from app.missions.service import MissionCreationError, create_mission_from_criteria
 
 NOW = datetime(2026, 8, 7, 12, 0, tzinfo=UTC)
@@ -62,6 +62,14 @@ def test_create_mission_with_explicit_sources_activates_with_exactly_those() -> 
     assert sources == ("pichau", "kabum")
     assert mission.status is MissionStatus.ACTIVE
     assert mission.title == "notebook gamer"
+    schedule = next(
+        call.args[0]
+        for call in session.add.call_args_list
+        if isinstance(call.args[0], MissionSchedule)
+    )
+    assert schedule.mission_id == mission.id
+    assert schedule.next_run_at == NOW
+    assert schedule.interval_minutes == 60
 
 
 def test_create_mission_without_sources_uses_all_four_v1_sources() -> None:

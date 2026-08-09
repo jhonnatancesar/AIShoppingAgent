@@ -13,6 +13,7 @@ por consumidor; o contrato at-least-once e seus limites estão em
 concreto dos dois alertas de preço e sua entrega Telegram; ver
 `docs/PRICE_ALERTS.md`, `docs/EVENT_CONSUMPTION.md` e as TASKs 043–044.
 
-A TASK-062 está planejada para publicar, pelo serviço existente, candidatos de
-preço e os fatos `collection.completed.v1`/`collection.failed.v1` produzidos
-pelo futuro orquestrador. Ela não altera o catálogo nem o consumidor atual.
+A TASK-062 publica, pelo serviço existente, candidatos de preço e os fatos
+`collection.completed.v1`/`collection.failed.v1` produzidos pelo orquestrador.
+Ela não altera o catálogo nem o consumidor atual e nunca chama Telegram
+diretamente.

@@ -11,6 +11,8 @@ Avaliar observações históricas e produzir candidatos tipados de alerta de pre
 - Detectar queda de preço na mesma oferta e moeda.
 - Detectar a entrada no total-alvo de uma missão ativa sem repetição contínua.
 - Ignorar disponibilidade não confirmada e comparações entre moedas distintas.
+- Ignorar custo total quando o frete for desconhecido; frete nulo nunca é zero
+  nem grátis e não pode produzir queda/atingimento de alvo total.
 - Não persistir, publicar, consumir ou notificar eventos.
 
 ## Ordem e dependências

@@ -2,7 +2,7 @@
 
 Cada arquivo descreve uma unidade de trabalho. Antes de executar uma tarefa, leia os documentos obrigatórios definidos em `AGENTS.md`.
 
-As TASKs 000 a 052 e as TASKs 055 a 061 estão concluídas. A TASK-038 recomenda
+As TASKs 000 a 052 e as TASKs 055 a 062 estão concluídas. A TASK-038 recomenda
 deterministicamente (`DEC-026`), a TASK-039 compara as mesmas evidências
 (`DEC-027`), a TASK-040 define a confirmação com TTL (`DEC-028`) e a TASK-041
 persiste sua solicitação imutável e resolução append-only (`DEC-029`). A
@@ -15,6 +15,6 @@ replay, retries seguros, circuit breakers e dead letter (`DEC-037`). A TASK-050
 fecha privacidade técnica com retenções limitadas e desidentificação fail-closed
 (`DEC-038`). A TASK-051 consolida o runbook operacional, binds privados e
 backup/restauração manual validada (`DEC-039`). A TASK-052 mantém a suíte
-PostgreSQL real, isolada e obrigatória do pipeline (`DEC-040`). A próxima tarefa
-executável é a TASK-062, criada para fechar a lacuna entre agenda, providers,
-histórico e event log (`DEC-041`). Depois dela, a TASK-053 volta ao fluxo.
+PostgreSQL real, isolada e obrigatória do pipeline (`DEC-040`). A TASK-062 fecha
+a lacuna entre agenda, providers, histórico e event log (`DEC-041`). A próxima
+tarefa executável é a TASK-053.

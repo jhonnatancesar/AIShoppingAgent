@@ -227,14 +227,15 @@ próxima tarefa seria inicialmente a TASK-053; E2E externo continua
 exclusivamente nela. O pipeline terminou com 607 testes rápidos, 90,61% de cobertura e 8
 integrações PostgreSQL reais.
 
-O preflight da TASK-053, em 2026-08-09, comprovou uma lacuna funcional já
-apontada pelo checklist: missões Telegram são ativadas sem agenda automática e
-nenhum processo consome `mission_schedules` para chamar providers, persistir
-observações, avaliar alertas e publicar eventos. A TASK-062 (`DEC-041`) foi
-criada como requisito do MVP, não como expansão opcional, e deve ser executada
-antes da TASK-053. Seu plano reutiliza `FOR UPDATE SKIP LOCKED`,
-`CollectionRun`, providers, normalizador, avaliador, event log e notifier; a
-implementação permanece aguardando aprovação explícita.
+O preflight da TASK-053, em 2026-08-09, comprovou a lacuna entre missão ativa,
+agenda, providers, histórico e eventos. A TASK-062 (`DEC-041`) foi criada como
+requisito do MVP e concluída antes dos E2E: novas missões recebem agenda,
+`collection_worker` usa claim curto com `FOR UPDATE SKIP LOCKED`, chama os
+quatro providers fora da transação, persiste observações, avalia alertas e
+publica eventos por fonte. PostgreSQL 18.4, concorrência real e Docker
+Linux/Xvfb com as quatro lojas foram validados. A TASK-053 é a próxima.
+O pipeline oficial terminou com 638 testes rápidos, 90,04% de cobertura e 11
+integrações PostgreSQL reais.
 
 A TASK-058 (`DEC-015`) está **concluída**: `create_mission` e
 `mission_command` não executam mais direto — ficam encenados em

@@ -16,6 +16,8 @@ eventos e não envia notificações.
   observação anterior indisponível não suprime esse fato.
 - Missões fora de `active` e ofertas `unavailable` ou `unknown` não alertam.
 - Moedas diferentes nunca são comparadas nem convertidas.
+- Frete desconhecido torna o custo total indeterminável e não gera alerta de
+  queda nem de preço-alvo; nunca é tratado como zero ou grátis.
 - Missões sem preço-alvo ainda podem produzir o evento de queda.
 
 O total usa `Decimal` e corresponde ao item somado ao frete conhecido. Frete nulo
@@ -28,7 +30,7 @@ Persistência e publicação foram implementadas na TASK-043
 desempacota seus campos (`event_type`, `aggregate_type`, `aggregate_id`,
 `payload`) na chamada. A TASK-044 implementou o consumo genérico at-least-once
 por consumidor (`docs/EVENT_CONSUMPTION.md`); o consumidor concreto e a
-notificação Telegram foram implementados na TASK-036. Ainda não existe um
-fluxo de coleta que invoque automaticamente avaliação e publicação; quando o
+notificação Telegram foram implementados na TASK-036. A TASK-062 invoca
+automaticamente avaliação e publicação após persistir cada lote; quando o
 evento durável existe, `telegram_price_alerts_v1` o entrega e registra o
 resultado.

@@ -19,6 +19,7 @@ from starlette.routing import Match
 METRICS_REGISTRY = CollectorRegistry(auto_describe=True)
 HTTP_METHODS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"})
 WORKER_OUTCOMES = frozenset({"succeeded", "failed", "skipped", "dead_lettered"})
+WORKERS = frozenset({"telegram_notifier", "collection_orchestrator"})
 RESILIENCE_COMPONENTS = frozenset({"webhook", "telegram", "ai", "store", "worker"})
 RESILIENCE_EVENTS = frozenset(
     {"rate_limited", "replay", "retry", "circuit_open", "dead_lettered", "failure"}
@@ -130,6 +131,7 @@ def start_worker_metrics_server(port: int) -> None:
 
 
 def mark_worker_started(worker: str) -> None:
+    _require_worker(worker)
     WORKER_UP.labels(worker).set(1)
 
 
@@ -139,6 +141,7 @@ def observe_worker_batch(
     started_at: float,
     outcomes: Mapping[str, int],
 ) -> None:
+    _require_worker(worker)
     WORKER_BATCHES.labels(worker).inc()
     WORKER_BATCH_DURATION.labels(worker).observe(perf_counter() - started_at)
     for outcome, count in outcomes.items():
@@ -148,9 +151,13 @@ def observe_worker_batch(
 
 
 def observe_worker_failure(worker: str) -> None:
-    if worker != "telegram_notifier":
-        raise ValueError("worker is not allowlisted")
+    _require_worker(worker)
     observe_resilience_event("worker", "failure")
+
+
+def _require_worker(worker: str) -> None:
+    if worker not in WORKERS:
+        raise ValueError("worker is not allowlisted")
 
 
 def observe_resilience_event(component: str, event: str) -> None:

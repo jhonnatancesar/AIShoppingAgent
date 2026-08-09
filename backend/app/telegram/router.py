@@ -558,6 +558,7 @@ def _execute_create_mission(
         target_currency=payload["target_currency"],
         source_codes=tuple(payload["sources"]),
         requested_at=datetime.now(UTC),
+        schedule_interval_minutes=get_settings().collection_schedule_interval_minutes,
     )
     return (
         f'Missão "{mission.title}" criada e ativa! Buscando em: {", ".join(sources)}.'

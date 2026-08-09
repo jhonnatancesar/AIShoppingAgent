@@ -36,8 +36,9 @@ inicializado.
 
 A API ficará disponível em `http://localhost:8000`, o PostgreSQL em
 `localhost:5432`, o Prometheus em `http://localhost:9090` e o Jaeger em
-`http://localhost:16686`. O serviço `telegram_notifier` consumirá continuamente
-os alertas de preço. Para encerrar os contêineres sem apagar o volume do banco,
+`http://localhost:16686`. O serviço `collection_worker` pesquisa as missões
+agendadas e publica eventos; `telegram_notifier` consome continuamente os
+alertas de preço. Para encerrar os contêineres sem apagar o volume do banco,
 execute `docker compose down`.
 
 Essas portas usam `127.0.0.1` por padrão. PostgreSQL, Prometheus, Jaeger,
@@ -98,7 +99,7 @@ Os testes geram relatório de cobertura no terminal e exigem cobertura mínima d
 As regras para novos endpoints estão em `docs/API_CONVENTIONS.md`. O contrato executável da aplicação pode ser consultado em `http://localhost:8000/openapi.json` quando a API estiver ativa.
 
 Os logs da aplicação são emitidos como JSON em `stdout`. Use
-`docker compose logs --follow api telegram_notifier` para acompanhá-los e
+`docker compose logs --follow api collection_worker telegram_notifier` para acompanhá-los e
 consulte `docs/LOGGING.md` para o contrato dos eventos.
 
 ## Pipeline local

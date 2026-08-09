@@ -467,11 +467,28 @@ def _observation(
     observed_at: datetime,
     currency: str = "BRL",
 ) -> PriceObservation:
+    existing_in_run = session.scalar(
+        select(PriceObservation.id).where(
+            PriceObservation.collection_run_id == run.id,
+            PriceObservation.offer_id == offer.id,
+        )
+    )
+    effective_run = run
+    if existing_in_run is not None:
+        effective_run = CollectionRun(
+            mission_id=run.mission_id,
+            store_id=run.store_id,
+            status=CollectionRunStatus.SUCCEEDED,
+            started_at=observed_at - timedelta(seconds=1),
+            finished_at=observed_at,
+        )
+        session.add(effective_run)
+        session.flush()
     item_amount = Decimal(amount)
     shipping_amount = Decimal(shipping) if shipping is not None else None
     observation = PriceObservation(
         offer_id=offer.id,
-        collection_run_id=run.id,
+        collection_run_id=effective_run.id,
         amount=item_amount,
         shipping_amount=shipping_amount,
         total_amount=item_amount + (shipping_amount or Decimal("0")),

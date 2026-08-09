@@ -36,6 +36,7 @@ def _observation(
     observed_at: datetime,
     currency: str = "BRL",
     availability: Availability = Availability.AVAILABLE,
+    shipping: Decimal | None = Decimal("0"),
 ) -> PriceObservation:
     amount = Decimal(total)
     return PriceObservation(
@@ -43,11 +44,25 @@ def _observation(
         offer_id=offer_id,
         collection_run_id=uuid4(),
         amount=amount,
+        shipping_amount=shipping,
         currency=currency,
         total_amount=amount,
         availability=availability,
         observed_at=observed_at,
     )
+
+
+def test_unknown_shipping_never_generates_total_based_alert() -> None:
+    mission = _mission()
+    criteria = _criteria(mission)
+    current = _observation(
+        uuid4(),
+        "90.0000",
+        observed_at=datetime.now(UTC),
+        shipping=None,
+    )
+
+    assert evaluate_price_alerts(mission, criteria, current) == ()
 
 
 def test_price_drop_crossing_target_emits_two_catalog_events() -> None:

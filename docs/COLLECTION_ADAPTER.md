@@ -18,7 +18,8 @@ regras de normalização.
 
 Campos brutos não são interpretados pelo adaptador. A TASK-025 adicionou
 `PriceNormalizer` depois dessa fronteira, produzindo valores exatos sem alterar
-`RawCollectedOffer`; execução e persistência do lote pertencem à TASK-026.
+`RawCollectedOffer`. A TASK-062 conecta o adaptador às agendas, normaliza e
+persiste cada fonte atomicamente, sem ensinar banco ou regras ao adaptador.
 
 ## Evolução prevista
 

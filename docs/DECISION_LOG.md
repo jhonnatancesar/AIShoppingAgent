@@ -52,9 +52,9 @@ Após a classificação, registrar a decisão neste arquivo e atualizar a docume
   apenas o test harness, não o funcionamento real da V1. A nova TASK fecha um
   requisito já existente nos critérios 3 e 4 do MVP sem adicionar produto,
   loja, IA ou infraestrutura distribuída.
-- **Próxima ação:** aprovar e executar a especificação detalhada em
-  `docs/tasks/TASK-062.md`; depois retomar a TASK-053. Não iniciar nenhuma das
-  duas automaticamente.
+- **Próxima ação:** TASK-062 concluída e documentada em
+  `docs/tasks/TASK-062.md`; executar a TASK-053 sobre a cadeia real, sem início
+  automático.
 
 ### DEC-039 — Operar de forma privada com recuperação manual comprovada
 

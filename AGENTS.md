@@ -110,7 +110,7 @@ Nunca iniciar automaticamente a próxima TASK. Encerrar apresentando resumo da i
 
 ## Estado atual
 
-TASKs 000 a 052 e TASK-055 a TASK-061 concluídas. A observabilidade da
+TASKs 000 a 052 e TASK-055 a TASK-062 concluídas. A observabilidade da
 TASK-045 (`DEC-031`) foi validada com PostgreSQL, API, worker, Collector,
 Prometheus e Jaeger reais, incluindo falha/recuperação e privacidade. A
 TASK-046 autentica a identidade mínima do canal Telegram (`DEC-032`). A
@@ -125,7 +125,7 @@ append-only (`DEC-038`). A TASK-051 documenta a operação do Ubuntu Server,
 mantém endpoints administrativos privados e valida backup/restauração manual
 sem confundir recuperação básica com disaster recovery (`DEC-039`). A TASK-052
 mantém testes de integração reais, isolados e fail-closed em PostgreSQL 18.4,
-obrigatórios no pipeline completo (`DEC-040`). A próxima tarefa executável é a
-TASK-062, que deve orquestrar automaticamente agenda, Store Providers,
-persistência, avaliação e publicação de eventos (`DEC-041`). A TASK-053 depende
-de sua conclusão e não deve ser iniciada automaticamente.
+obrigatórios no pipeline completo (`DEC-040`). A TASK-062 passou a orquestrar
+automaticamente agenda, Store Providers, persistência, avaliação e publicação
+de eventos (`DEC-041`). A próxima tarefa executável é a TASK-053, que deve
+validar a cadeia externa real e não deve ser iniciada automaticamente.

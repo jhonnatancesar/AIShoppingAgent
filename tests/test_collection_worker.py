@@ -1,0 +1,70 @@
+"""Inicialização e ciclo rápido do worker de coleta."""
+
+import asyncio
+from contextlib import nullcontext
+from types import SimpleNamespace
+from unittest.mock import MagicMock
+
+import pytest
+from app.collection.worker import build_collection_adapter, run_worker
+from app.core.config import Settings
+from app.observability.metrics import mark_worker_started, observe_worker_failure
+
+
+def test_build_adapter_registers_exactly_v1_sources() -> None:
+    adapter = build_collection_adapter(Settings(_env_file=None))
+    assert adapter.supported_sources == ("amazon", "kabum", "pichau", "terabyte")
+
+
+def test_collection_worker_is_an_allowlisted_metric_dimension() -> None:
+    mark_worker_started("collection_orchestrator")
+    observe_worker_failure("collection_orchestrator")
+
+
+def test_worker_once_records_batch_and_disposes(monkeypatch) -> None:
+    engine = MagicMock()
+    factory = MagicMock()
+    orchestrator = MagicMock()
+    orchestrator.run_batch = MagicMock(
+        return_value=SimpleNamespace(
+            __await__=lambda self: iter(()),
+        )
+    )
+
+    async def result(*_args, **_kwargs):
+        return SimpleNamespace(claimed=2, succeeded=1, failed=1, recovered_stale=0)
+
+    orchestrator.run_batch = result
+    observe = MagicMock()
+    monkeypatch.setattr(
+        "app.collection.worker.create_database_engine", lambda *_: engine
+    )
+    monkeypatch.setattr(
+        "app.collection.worker.create_session_factory", lambda *_: factory
+    )
+    monkeypatch.setattr("app.collection.worker.build_collection_adapter", MagicMock())
+    monkeypatch.setattr(
+        "app.collection.worker.CollectionOrchestrator", lambda *_a, **_k: orchestrator
+    )
+    monkeypatch.setattr("app.collection.worker.observe_worker_batch", observe)
+    monkeypatch.setattr(
+        "app.collection.worker.trace.get_tracer",
+        lambda *_: SimpleNamespace(
+            start_as_current_span=lambda *_a, **_k: nullcontext()
+        ),
+    )
+
+    asyncio.run(run_worker(Settings(_env_file=None), once=True))
+
+    observe.assert_called_once()
+    engine.dispose.assert_called_once()
+
+
+@pytest.mark.parametrize(("poll", "batch"), [(0, 1), (1, 0), (1, 1001)])
+def test_worker_rejects_invalid_limits(poll: float, batch: int) -> None:
+    with pytest.raises(ValueError):
+        asyncio.run(
+            run_worker(
+                Settings(_env_file=None), once=True, poll_seconds=poll, batch_size=batch
+            )
+        )
