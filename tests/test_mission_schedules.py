@@ -12,6 +12,7 @@ from app.missions.models import MissionSchedule
 from app.missions.schedule import (
     advance_schedule,
     find_due_schedules,
+    next_source_backoff,
     staggered_next_run_at,
 )
 from sqlalchemy import CheckConstraint, ForeignKeyConstraint, Index, UniqueConstraint
@@ -176,3 +177,55 @@ def test_staggered_next_run_at_never_moves_before_base() -> None:
     for _ in range(50):
         result = staggered_next_run_at(NOW, max_stagger_seconds=300)
         assert NOW <= result <= NOW + timedelta(seconds=300)
+
+
+def test_next_source_backoff_doubles_with_base_interval_30() -> None:
+    blocks, delay = next_source_backoff(base_interval_minutes=30, consecutive_blocks=0)
+    assert (blocks, delay) == (1, 60)
+    blocks, delay = next_source_backoff(base_interval_minutes=30, consecutive_blocks=1)
+    assert (blocks, delay) == (2, 120)
+    blocks, delay = next_source_backoff(base_interval_minutes=30, consecutive_blocks=2)
+    assert (blocks, delay) == (3, 240)
+
+
+def test_next_source_backoff_caps_at_360_and_freezes_counter() -> None:
+    blocks, delay = next_source_backoff(base_interval_minutes=30, consecutive_blocks=3)
+    assert (blocks, delay) == (4, 360)  # 30 * 2**4 = 480 > 360, capado
+
+    # bloqueios seguintes mantem o delay no teto sem crescer o contador
+    blocks, delay = next_source_backoff(base_interval_minutes=30, consecutive_blocks=4)
+    assert (blocks, delay) == (4, 360)
+    blocks, delay = next_source_backoff(base_interval_minutes=30, consecutive_blocks=4)
+    assert (blocks, delay) == (4, 360)
+
+
+def test_next_source_backoff_doubles_with_base_interval_15() -> None:
+    sequence = []
+    blocks = 0
+    for _ in range(6):
+        blocks, delay = next_source_backoff(
+            base_interval_minutes=15, consecutive_blocks=blocks
+        )
+        sequence.append((blocks, delay))
+    assert sequence == [
+        (1, 30),
+        (2, 60),
+        (3, 120),
+        (4, 240),
+        (5, 360),  # 15 * 2**5 = 480 > 360, capado
+        (5, 360),  # contador congelado no teto
+    ]
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"base_interval_minutes": 0, "consecutive_blocks": 0},
+        {"base_interval_minutes": -5, "consecutive_blocks": 0},
+        {"base_interval_minutes": 30, "consecutive_blocks": -1},
+        {"base_interval_minutes": 30, "consecutive_blocks": 0, "cap_minutes": 0},
+    ],
+)
+def test_next_source_backoff_rejects_invalid_input(kwargs: dict) -> None:
+    with pytest.raises(ValueError):
+        next_source_backoff(**kwargs)

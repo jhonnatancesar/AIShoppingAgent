@@ -25,6 +25,50 @@ Após a classificação, registrar a decisão neste arquivo e atualizar a docume
 - **Justificativa:** impacto avaliado e motivo da classificação.
 - **Próxima ação:** documento a atualizar, TASK a criar quando aplicável, ou ação de não implementação.
 
+### DEC-047 — Backoff persistente por `(mission_id, source)` em `MissionSource`, não na `MissionSchedule`
+
+- **Data:** 2026-08-09
+- **Ideia:** aprovar e implementar a modelagem mínima de backoff persistente
+  proposta em `DEC-046`, corrigida por uma restrição explícita do usuário:
+  o backoff não pode atrasar a missão inteira quando só uma das quatro
+  lojas selecionadas está bloqueada — cada `provider_blocked` confirmado
+  (401/403/429) deve afetar somente aquela fonte específica. `MissionSource`
+  (já a entidade `(mission_id, store_id)`) ganhou `next_eligible_at` e
+  `consecutive_blocks` (migração `20260809_0003`); `claim_due_collections`
+  passou a filtrar por fonte, sem tocar em `MissionSchedule.next_run_at`.
+  O gatilho ficou restrito a bloqueio externo **confirmado** (status
+  401/403/429 do próprio `ProviderBlockedError`) — não dispara para
+  timeout, erro de rede, erro de parsing, erro interno, nem para o mesmo
+  `ProviderBlockedError` com status ambíguo (seletor ausente/oferta vazia,
+  possível mudança de markup). A fórmula (`2**consecutive_blocks`,
+  teto 6h) usa sempre o `interval_minutes` já configurado da missão, nunca
+  um valor fixo, e o contador para de crescer assim que o teto é atingido.
+  Sucesso reseta só a fonte que teve sucesso.
+- **Classificação:** Implementar agora.
+- **Justificativa técnica:** `MissionSource` já existia com a granularidade
+  certa (PK composta `mission_id`/`store_id`), reutilizada pelo próprio
+  `claim_due_collections` para decidir quais fontes reivindicar — bastou
+  adicionar 2 colunas e um filtro a mais na mesma consulta, sem tabela nova
+  nem mudança na cadência da missão. `advance_schedule`/`MissionSchedule`
+  continuam exatamente como antes: o gate existente
+  `if mission_claims: advance_schedule(...)` já garante que uma missão com
+  todas as fontes em backoff permanece due (reexaminada no próximo poll,
+  não no próximo intervalo inteiro) sem precisar de nenhuma mudança de
+  arquitetura — confirmado com teste de integração real
+  (`test_all_sources_in_backoff_creates_no_run_and_schedule_stays_due`).
+  Distinguir bloqueio confirmado (401/403/429) de `ProviderBlockedError`
+  ambíguo (mesma exceção, status diferente, já usada hoje também para
+  seletor ausente/oferta vazia) evita que um possível bug de mudança de
+  markup na loja seja tratado como se fosse proteção anti-bot confirmada.
+- **Próxima ação:** `docs/MISSION_SCHEDULES.md` atualizado com a modelagem
+  final. Testes unitários (função pura de backoff, classificação de erro,
+  wiring de `_record_failure`/`_persist_success`) e de integração real
+  (ciclo completo de bloqueio → exclusão do claim → expiração → segundo
+  bloqueio; todas as fontes bloqueadas não cria run nem erro) aprovados via
+  `scripts/check.ps1` (723 testes rápidos, 90,43% de cobertura, 13
+  integrações PostgreSQL, migração `20260809_0003`). TASK-053 continua sem
+  fechamento até a validação E2E final ser refeita com este estado.
+
 ### DEC-046 — Intervalo de coleta configurável com stagger; 30 min é implantação temporária de 8 GB, alvo da V1 é 15 min
 
 - **Data:** 2026-08-09

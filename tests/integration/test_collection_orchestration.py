@@ -2,7 +2,7 @@
 
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from threading import Barrier
 from uuid import uuid4
@@ -192,6 +192,173 @@ def test_concurrent_claimers_never_duplicate_a_source(integration_database) -> N
         )
         assert len(runs) == 2
         assert len({(run.mission_id, run.store_id) for run in runs}) == 2
+
+
+def test_source_backoff_lifecycle_across_batches(integration_database) -> None:
+    """Ciclo completo do backoff por fonte (DEC-046) num intervalo de 30 min.
+
+    Usa sempre `now=datetime.now(UTC)` real em cada `run_batch`: quando uma
+    fonte falha, `finished_at` vem de `utc_now()` real, então `started_at`
+    nunca pode estar no futuro em relação a isso. Simular "o tempo passou"
+    é feito escrevendo direto no banco entre os ciclos (agenda/backoff),
+    não avançando `now` para o futuro. Cada chamada abre sessão/transação
+    novas e só lê o estado já persistido -- equivalente a um restart do
+    worker entre os ciclos, então este teste também comprova que o backoff
+    sobrevive a isso.
+    """
+    # microsecond=0: _SuccessfulProvider faz completed_at = requested_at com
+    # microsegundo fixo em 500000, e completed_at >= started_at é exigido;
+    # sem truncar, um requested_at com microsegundo > 500000 quebraria isso.
+    now0 = datetime.now(UTC).replace(microsecond=0)
+    with integration_database.sessions.begin() as session:
+        stores = {
+            store.code: store
+            for store in session.scalars(
+                select(Store).where(Store.code.in_(("pichau", "kabum")))
+            )
+        }
+        user = User(display_name="DEC-046 lifecycle", role=UserRole.USER)
+        session.add(user)
+        session.flush()
+        mission = Mission(
+            user_id=user.id, title="backoff lifecycle", status=MissionStatus.ACTIVE
+        )
+        session.add(mission)
+        session.flush()
+        session.add_all(
+            (
+                MissionCriteria(mission_id=mission.id, search_query="synthetic GPU"),
+                MissionSchedule(
+                    mission_id=mission.id,
+                    interval_minutes=30,
+                    next_run_at=now0,
+                    is_enabled=True,
+                ),
+                *(
+                    MissionSource(mission_id=mission.id, store_id=stores[code].id)
+                    for code in ("pichau", "kabum")
+                ),
+            )
+        )
+        mission_id = mission.id
+        pichau_id, kabum_id = stores["pichau"].id, stores["kabum"].id
+
+    def _source_state(store_id):
+        with integration_database.sessions() as session:
+            source = session.get(MissionSource, (mission_id, store_id))
+            return source.consecutive_blocks, source.next_eligible_at
+
+    def _run_count_for(store_id):
+        with integration_database.sessions() as session:
+            return session.scalar(
+                select(func.count(CollectionRun.id)).where(
+                    CollectionRun.mission_id == mission_id,
+                    CollectionRun.store_id == store_id,
+                )
+            )
+
+    def _make_due_again(due_at):
+        with integration_database.sessions.begin() as session:
+            schedule = session.scalar(
+                select(MissionSchedule).where(MissionSchedule.mission_id == mission_id)
+            )
+            schedule.next_run_at = due_at
+
+    def _expire_backoff(store_id, due_at):
+        with integration_database.sessions.begin() as session:
+            source = session.get(MissionSource, (mission_id, store_id))
+            source.next_eligible_at = due_at - timedelta(seconds=1)
+
+    orchestrator = CollectionOrchestrator(
+        integration_database.sessions,
+        CollectionAdapter((_SuccessfulProvider(), _FailingProvider())),
+    )
+
+    # Ciclo 1: pichau sucede, kabum leva 403 confirmado -> 1o bloqueio.
+    before = datetime.now(UTC)
+    result = asyncio.run(orchestrator.run_batch(now=now0))
+    after = datetime.now(UTC)
+    assert (result.claimed, result.succeeded, result.failed) == (2, 1, 1)
+    assert _source_state(pichau_id) == (0, None)
+    kabum_blocks, kabum_eligible = _source_state(kabum_id)
+    assert kabum_blocks == 1
+    assert (
+        before + timedelta(minutes=60)
+        <= kabum_eligible
+        <= after + timedelta(minutes=60)
+    )  # 30 * 2**1
+
+    # Ciclo 2: agenda due de novo, kabum ainda em backoff real (só
+    # elegível daqui a ~60 min) -> só pichau é reivindicada; kabum intocado.
+    # `due_at` único evita corrida entre a escrita da agenda e o `now`
+    # passado ao run_batch (ambos precisam concordar exatamente).
+    due_at = datetime.now(UTC).replace(microsecond=0)
+    _make_due_again(due_at)
+    result = asyncio.run(orchestrator.run_batch(now=due_at))
+    assert (result.claimed, result.succeeded, result.failed) == (1, 1, 0)
+    assert _run_count_for(kabum_id) == 1  # não ganhou run novo neste ciclo
+    assert _run_count_for(pichau_id) == 2
+    assert _source_state(kabum_id) == (kabum_blocks, kabum_eligible)  # intocado
+
+    # Ciclo 3: backoff do kabum expira (simulado) e a agenda fica due de
+    # novo -> kabum volta a ser reivindicada, falha de novo (2o bloqueio).
+    due_at = datetime.now(UTC).replace(microsecond=0)
+    _expire_backoff(kabum_id, due_at)
+    _make_due_again(due_at)
+    before = datetime.now(UTC)
+    result = asyncio.run(orchestrator.run_batch(now=due_at))
+    after = datetime.now(UTC)
+    assert (result.claimed, result.succeeded, result.failed) == (2, 1, 1)
+    assert _run_count_for(kabum_id) == 2
+    kabum_blocks, kabum_eligible = _source_state(kabum_id)
+    assert kabum_blocks == 2
+    assert (
+        before + timedelta(minutes=120)
+        <= kabum_eligible
+        <= after + timedelta(minutes=120)
+    )  # 30 * 2**2
+    assert _source_state(pichau_id) == (0, None)  # sucesso continua resetado
+
+
+def test_all_sources_in_backoff_creates_no_run_and_schedule_stays_due(
+    integration_database,
+) -> None:
+    now = datetime.now(UTC).replace(microsecond=0)
+    mission_id, pichau_id, kabum_id = _seed_due_mission(
+        integration_database.sessions, now
+    )
+    future = now + timedelta(minutes=90)
+    with integration_database.sessions.begin() as session:
+        for store_id in (pichau_id, kabum_id):
+            source = session.get(MissionSource, (mission_id, store_id))
+            source.next_eligible_at = future
+            source.consecutive_blocks = 3
+
+    orchestrator = CollectionOrchestrator(
+        integration_database.sessions,
+        CollectionAdapter((_SuccessfulProvider(), _FailingProvider())),
+    )
+
+    result = asyncio.run(orchestrator.run_batch(now=now))
+
+    assert (result.claimed, result.succeeded, result.failed) == (0, 0, 0)
+    with integration_database.sessions.begin() as session:
+        assert (
+            session.scalar(
+                select(func.count(CollectionRun.id)).where(
+                    CollectionRun.mission_id == mission_id
+                )
+            )
+            == 0
+        )
+        # a missao continua due (nao avancou): sera reexaminada no proximo
+        # poll, sem esperar um intervalo inteiro quando uma fonte liberar.
+        next_run_at = session.scalar(
+            select(MissionSchedule.next_run_at).where(
+                MissionSchedule.mission_id == mission_id
+            )
+        )
+        assert next_run_at == now
 
 
 def test_backfill_runs_old_active_mission_but_ignores_paused(

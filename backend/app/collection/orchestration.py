@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import exists, select
+from sqlalchemy import exists, or_, select
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
@@ -45,6 +45,7 @@ from app.missions.models import (
 from app.missions.schedule import (
     advance_schedule,
     find_due_schedules,
+    next_source_backoff,
     staggered_next_run_at,
 )
 from app.offers.models import Offer
@@ -55,6 +56,13 @@ logger = logging.getLogger("app.collection.orchestration")
 
 V1_SOURCE_CODES = frozenset({"pichau", "terabyte", "amazon", "kabum"})
 _RUNNING_INDEX = "uq_collection_runs_running_mission_store"
+# DEC-046: só 401/403/429 confirmados acionam backoff persistente por
+# fonte. ProviderBlockedError também cobre seletor ausente/oferta vazia
+# com outro status (possível markup change, não bloqueio confirmado) —
+# esses casos permanecem sem backoff persistente, só o corte por
+# execução que já existe em app.collection.providers.base.
+_CONFIRMED_BLOCK_STATUSES = frozenset({401, 403, 429})
+_SOURCE_BACKOFF_CAP_MINUTES = 360
 _OFFER_IDENTITY_INDEXES = frozenset(
     {
         "uq_offers_retailer_external_id",
@@ -193,6 +201,13 @@ def claim_due_collections(
                 MissionSource.mission_id == mission_id,
                 Store.is_active.is_(True),
                 Store.code.in_(V1_SOURCE_CODES),
+                # DEC-046: fonte específica em backoff (bloqueio externo
+                # confirmado) fica de fora deste ciclo; as demais fontes da
+                # mesma missão continuam normalmente.
+                or_(
+                    MissionSource.next_eligible_at.is_(None),
+                    MissionSource.next_eligible_at <= effective_now,
+                ),
             )
             .order_by(Store.code)
         ).all()
@@ -306,9 +321,16 @@ class CollectionOrchestrator:
             raise
         except Exception as error:
             failure_code = _failure_code(error)
+            confirmed_block = _is_confirmed_external_block(error)
             try:
                 with self._session_factory.begin() as session:
-                    _record_failure(session, claim, failure_code, utc_now())
+                    _record_failure(
+                        session,
+                        claim,
+                        failure_code,
+                        utc_now(),
+                        confirmed_block=confirmed_block,
+                    )
             except Exception:
                 logger.exception(
                     "collection_failure_recording_failed",
@@ -420,6 +442,7 @@ def _persist_success(
         occurred_at=normalized.raw_result.completed_at,
         mission_id=run.mission_id,
     )
+    _reset_source_backoff(session, run.mission_id, run.store_id)
     return True
 
 
@@ -522,6 +545,8 @@ def _record_failure(
     claim: ClaimedCollection,
     failure_code: str,
     failed_at: datetime,
+    *,
+    confirmed_block: bool = False,
 ) -> bool:
     run = session.scalar(
         select(CollectionRun).where(CollectionRun.id == claim.run_id).with_for_update()
@@ -532,6 +557,8 @@ def _record_failure(
         session, run.id, CollectionRunStatus.FAILED, finished_at=failed_at
     )
     _publish_failure(session, run, failure_code, failed_at)
+    if confirmed_block:
+        _apply_source_backoff(session, run.mission_id, run.store_id, failed_at)
     return True
 
 
@@ -549,6 +576,52 @@ def _publish_failure(
         occurred_at=failed_at,
         mission_id=run.mission_id,
     )
+
+
+def _is_confirmed_external_block(error: Exception) -> bool:
+    """Só 401/403/429 confirmados acionam backoff persistente (DEC-046).
+
+    `ProviderBlockedError` também cobre seletor ausente/oferta vazia com
+    outro status (possível markup change, não bloqueio confirmado) — esse
+    caso ambíguo não conta.
+    """
+    return (
+        isinstance(error, ProviderBlockedError)
+        and error.status in _CONFIRMED_BLOCK_STATUSES
+    )
+
+
+def _apply_source_backoff(
+    session: Session, mission_id: UUID, store_id: UUID, failed_at: datetime
+) -> None:
+    source = session.get(MissionSource, (mission_id, store_id))
+    if source is None:
+        return
+    base_interval_minutes = session.scalar(
+        select(MissionSchedule.interval_minutes).where(
+            MissionSchedule.mission_id == mission_id
+        )
+    )
+    if base_interval_minutes is None:
+        return
+    consecutive_blocks, delay_minutes = next_source_backoff(
+        base_interval_minutes=base_interval_minutes,
+        consecutive_blocks=source.consecutive_blocks,
+        cap_minutes=_SOURCE_BACKOFF_CAP_MINUTES,
+    )
+    source.consecutive_blocks = consecutive_blocks
+    source.next_eligible_at = failed_at + timedelta(minutes=delay_minutes)
+
+
+def _reset_source_backoff(session: Session, mission_id: UUID, store_id: UUID) -> None:
+    source = session.get(MissionSource, (mission_id, store_id))
+    if source is None:
+        return
+    already_reset = source.consecutive_blocks == 0 and source.next_eligible_at is None
+    if already_reset:
+        return
+    source.consecutive_blocks = 0
+    source.next_eligible_at = None
 
 
 def _failure_code(error: Exception) -> str:

@@ -71,6 +71,37 @@ def advance_schedule(schedule: MissionSchedule, *, started_at: datetime) -> None
     schedule.updated_at = started_at
 
 
+def next_source_backoff(
+    *,
+    base_interval_minutes: int,
+    consecutive_blocks: int,
+    cap_minutes: int = 360,
+) -> tuple[int, int]:
+    """Calcula o próximo backoff de uma fonte após bloqueio externo confirmado.
+
+    Retorna `(consecutive_blocks, delay_minutes)`. `delay_minutes` cresce
+    geometricamente (`base_interval_minutes * 2**consecutive_blocks`) até
+    `cap_minutes`; uma vez atingido o teto, `consecutive_blocks` para de
+    crescer — o contador não aumenta indefinidamente enquanto o delay
+    permanecer no teto (DEC-046).
+    """
+    if base_interval_minutes <= 0:
+        raise ValueError("base_interval_minutes deve ser positivo.")
+    if consecutive_blocks < 0:
+        raise ValueError("consecutive_blocks deve ser não negativo.")
+    if cap_minutes <= 0:
+        raise ValueError("cap_minutes deve ser positivo.")
+
+    if consecutive_blocks > 0:
+        current_delay = base_interval_minutes * (2**consecutive_blocks)
+        if current_delay >= cap_minutes:
+            return consecutive_blocks, cap_minutes
+
+    candidate_blocks = consecutive_blocks + 1
+    delay_minutes = min(base_interval_minutes * (2**candidate_blocks), cap_minutes)
+    return candidate_blocks, delay_minutes
+
+
 def _require_aware(value: datetime, field: str) -> None:
     if value.tzinfo is None or value.utcoffset() is None:
         raise ValueError(f"{field} deve possuir fuso horário.")

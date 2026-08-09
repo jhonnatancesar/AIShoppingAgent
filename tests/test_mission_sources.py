@@ -3,7 +3,7 @@
 from app.database.base import Base
 from app.database.model_registry import REGISTERED_MODELS
 from app.missions.models import MissionSource
-from sqlalchemy import ForeignKeyConstraint, Index
+from sqlalchemy import CheckConstraint, ForeignKeyConstraint, Index
 
 
 def test_mission_source_uses_composite_identity() -> None:
@@ -11,6 +11,8 @@ def test_mission_source_uses_composite_identity() -> None:
     assert [column.name for column in table.columns] == [
         "mission_id",
         "store_id",
+        "next_eligible_at",
+        "consecutive_blocks",
         "created_at",
     ]
     assert tuple(column.name for column in table.primary_key.columns) == (
@@ -18,6 +20,19 @@ def test_mission_source_uses_composite_identity() -> None:
         "store_id",
     )
     assert table.c.created_at.type.timezone is True
+    assert table.c.next_eligible_at.type.timezone is True
+    assert table.c.next_eligible_at.nullable is True
+    assert table.c.consecutive_blocks.nullable is False
+    assert table.c.consecutive_blocks.default.arg == 0
+
+
+def test_mission_source_backoff_columns_have_non_negative_constraint() -> None:
+    constraint = next(
+        constraint
+        for constraint in MissionSource.__table__.constraints
+        if isinstance(constraint, CheckConstraint)
+    )
+    assert constraint.name == "ck_mission_sources_consecutive_blocks_non_negative"
 
 
 def test_mission_source_references_history_with_restrict() -> None:

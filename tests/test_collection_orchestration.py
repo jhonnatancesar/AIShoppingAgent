@@ -23,10 +23,13 @@ from app.collection.normalization import PriceNormalizer
 from app.collection.orchestration import (
     ClaimedCollection,
     CollectionOrchestrator,
+    _apply_source_backoff,
     _failure_code,
+    _is_confirmed_external_block,
     _persist_success,
     _raw_evidence,
     _record_failure,
+    _reset_source_backoff,
     _resolve_offer,
     _resolve_seller,
     _safe_source,
@@ -35,7 +38,7 @@ from app.collection.orchestration import (
     recover_stale_runs,
 )
 from app.events import EventType
-from app.missions.models import MissionSchedule
+from app.missions.models import Mission, MissionSchedule
 from sqlalchemy.exc import IntegrityError
 
 NOW = datetime(2026, 8, 9, 12, 0, tzinfo=UTC)
@@ -70,6 +73,30 @@ def _raw(*, source: str = "pichau", external_id: str = "stable"):
 )
 def test_failure_codes_are_closed(error: Exception, code: str) -> None:
     assert _failure_code(error) == code
+
+
+@pytest.mark.parametrize(
+    ("error", "confirmed"),
+    [
+        (ProviderBlockedError("pichau", 403), True),
+        (ProviderBlockedError("pichau", 429), True),
+        (ProviderBlockedError("pichau", 401), True),
+        # mesmo erro, mas status ambiguo (selector ausente/oferta vazia com
+        # HTTP 200): nao e bloqueio confirmado, DEC-046 nao aciona backoff.
+        (ProviderBlockedError("pichau", 200), False),
+        (ProviderBlockedError("pichau", None), False),
+        (ProviderCircuitOpenError("pichau"), False),
+        (ProviderNavigationError("pichau", 500), False),
+        (TimeoutError(), False),
+        (CollectionNormalizationError("bad"), False),
+        (CollectionContractError("bad"), False),
+        (RuntimeError("internal"), False),
+    ],
+)
+def test_is_confirmed_external_block_only_matches_401_403_429(
+    error: Exception, confirmed: bool
+) -> None:
+    assert _is_confirmed_external_block(error) is confirmed
 
 
 def test_evidence_is_bounded_json_and_source_is_allowlisted() -> None:
@@ -213,9 +240,12 @@ def test_persist_success_deduplicates_and_publishes_events(monkeypatch) -> None:
     )
     mission = SimpleNamespace(id=mission_id)
     criteria = SimpleNamespace(mission_id=mission_id)
+    source = SimpleNamespace(consecutive_blocks=2, next_eligible_at=NOW)
     session = MagicMock()
     session.scalar.side_effect = [run, criteria, None]
-    session.get.return_value = mission
+    session.get.side_effect = lambda model, _key: (
+        mission if model is Mission else source
+    )
     result = CollectionResult(
         "pichau", NOW, NOW + timedelta(seconds=2), (_raw(), _raw())
     )
@@ -243,6 +273,8 @@ def test_persist_success_deduplicates_and_publishes_events(monkeypatch) -> None:
     assert _persist_success(session, claim, normalized) is True
     assert session.add.call_count == 1
     assert publish.call_count == 2
+    assert source.consecutive_blocks == 0
+    assert source.next_eligible_at is None
     finish.assert_called_once()
 
 
@@ -253,6 +285,106 @@ def test_record_failure_discards_late_result(monkeypatch) -> None:
         id=claim.run_id, status=CollectionRunStatus.SUCCEEDED
     )
     assert _record_failure(session, claim, "provider_blocked", NOW) is False
+
+
+def test_record_failure_applies_backoff_only_when_confirmed(monkeypatch) -> None:
+    claim = ClaimedCollection(uuid4(), uuid4(), uuid4(), "pichau", "GPU", NOW)
+    session = MagicMock()
+    session.scalar.return_value = SimpleNamespace(
+        id=claim.run_id,
+        status=CollectionRunStatus.RUNNING,
+        mission_id=claim.mission_id,
+        store_id=claim.store_id,
+    )
+    apply_backoff = MagicMock()
+    monkeypatch.setattr(
+        "app.collection.orchestration._apply_source_backoff", apply_backoff
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration.finish_collection_run", MagicMock()
+    )
+    monkeypatch.setattr("app.collection.orchestration._publish_failure", MagicMock())
+
+    assert (
+        _record_failure(session, claim, "provider_blocked", NOW, confirmed_block=True)
+        is True
+    )
+    apply_backoff.assert_called_once_with(
+        session, claim.mission_id, claim.store_id, NOW
+    )
+
+
+def test_record_failure_skips_backoff_when_not_confirmed(monkeypatch) -> None:
+    claim = ClaimedCollection(uuid4(), uuid4(), uuid4(), "pichau", "GPU", NOW)
+    session = MagicMock()
+    session.scalar.return_value = SimpleNamespace(
+        id=claim.run_id,
+        status=CollectionRunStatus.RUNNING,
+        mission_id=claim.mission_id,
+        store_id=claim.store_id,
+    )
+    apply_backoff = MagicMock()
+    monkeypatch.setattr(
+        "app.collection.orchestration._apply_source_backoff", apply_backoff
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration.finish_collection_run", MagicMock()
+    )
+    monkeypatch.setattr("app.collection.orchestration._publish_failure", MagicMock())
+
+    # timeout/erro interno/parsing: confirmed_block=False (o padrao)
+    assert _record_failure(session, claim, "provider_unavailable", NOW) is True
+    apply_backoff.assert_not_called()
+
+
+def test_apply_source_backoff_updates_only_the_matching_source() -> None:
+    mission_id, store_id = uuid4(), uuid4()
+    source = SimpleNamespace(consecutive_blocks=0, next_eligible_at=None)
+    session = MagicMock()
+    session.get.return_value = source
+    session.scalar.return_value = 30  # interval_minutes da MissionSchedule
+
+    _apply_source_backoff(session, mission_id, store_id, NOW)
+
+    assert source.consecutive_blocks == 1
+    assert source.next_eligible_at == NOW + timedelta(minutes=60)
+
+
+def test_apply_source_backoff_is_noop_without_source_or_schedule() -> None:
+    session = MagicMock()
+    session.get.return_value = None
+    _apply_source_backoff(session, uuid4(), uuid4(), NOW)  # nao levanta
+
+    source = SimpleNamespace(consecutive_blocks=0, next_eligible_at=None)
+    session2 = MagicMock()
+    session2.get.return_value = source
+    session2.scalar.return_value = None  # missao sem agenda (nao deveria ocorrer)
+    _apply_source_backoff(session2, uuid4(), uuid4(), NOW)
+    assert source.consecutive_blocks == 0  # nao mutado sem intervalo base
+
+
+def test_reset_source_backoff_clears_only_that_source() -> None:
+    source = SimpleNamespace(consecutive_blocks=3, next_eligible_at=NOW)
+    session = MagicMock()
+    session.get.return_value = source
+
+    _reset_source_backoff(session, uuid4(), uuid4())
+
+    assert source.consecutive_blocks == 0
+    assert source.next_eligible_at is None
+
+
+def test_reset_source_backoff_is_noop_when_already_reset_or_missing() -> None:
+    session = MagicMock()
+    session.get.return_value = None
+    _reset_source_backoff(session, uuid4(), uuid4())  # nao levanta
+
+    already_reset = SimpleNamespace(consecutive_blocks=0, next_eligible_at=None)
+    session2 = MagicMock()
+    session2.get.return_value = already_reset
+    _reset_source_backoff(session2, uuid4(), uuid4())
+    assert already_reset.consecutive_blocks == 0
+    assert already_reset.next_eligible_at is None
 
 
 def test_orchestrator_batch_processes_success_and_failure(monkeypatch) -> None:

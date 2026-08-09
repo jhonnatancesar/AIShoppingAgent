@@ -265,10 +265,22 @@ class MissionTransition(Base):
 
 
 class MissionSource(Base):
-    """Fonte explicitamente selecionada para a busca de uma missão."""
+    """Fonte explicitamente selecionada para a busca de uma missão.
+
+    `next_eligible_at`/`consecutive_blocks` (DEC-046) implementam backoff
+    persistente por `(mission_id, store_id)` após bloqueio externo
+    confirmado (401/403/429): não afetam a seleção da fonte nem a agenda
+    da missão, só se essa fonte específica pode ser reivindicada agora.
+    """
 
     __tablename__ = "mission_sources"
-    __table_args__ = (Index("ix_mission_sources_store_id", "store_id"),)
+    __table_args__ = (
+        Index("ix_mission_sources_store_id", "store_id"),
+        CheckConstraint(
+            "consecutive_blocks >= 0",
+            name="ck_mission_sources_consecutive_blocks_non_negative",
+        ),
+    )
 
     mission_id: Mapped[UUID] = mapped_column(
         PostgreSQLUUID(as_uuid=True),
@@ -279,6 +291,12 @@ class MissionSource(Base):
         PostgreSQLUUID(as_uuid=True),
         ForeignKey("stores.id", ondelete="RESTRICT"),
         primary_key=True,
+    )
+    next_eligible_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    consecutive_blocks: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
