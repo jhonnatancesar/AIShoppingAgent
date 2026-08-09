@@ -60,7 +60,8 @@ autenticadas usam `discarded`.
 
 ## Comandos dedicados
 
-Nove comandos são registrados no menu. Os comandos de autenticação e perfil
+Dez comandos são registrados no menu. Os comandos de autenticação, perfil e
+privacidade
 são reconhecidos diretamente pelo webhook, antes de qualquer
 interpretação por IA — não passam pelo vocabulário fechado do
 `IntentInterpreter`:
@@ -74,13 +75,18 @@ interpretação por IA — não passam pelo vocabulário fechado do
 - `/preferencias` (TASK-037): consulta as notificações e aceita
   `quedas ativar|desativar` ou `alvo ativar|desativar`. Não altera cadastro,
   e-mail, autenticação ou fontes e não usa botões.
+- `/privacidade` (TASK-050): resposta fixa e curta sobre uso de dados,
+  terceiros, retenção e desidentificação; funciona sem IA e sem sessão por
+  senha e não envia dados pessoais a provider externo. Detalhes em
+  `docs/PRIVACY.md`.
 - `/senha`, `/entrar`, `/sair` e `/recuperar` (TASK-061): emitem link HTTPS,
   estabelecem/revogam sessão ou recuperam a senha sem receber segredo no chat.
   Detalhes em `docs/AUTHENTICATION.md`.
 - `/start` e `/ajuda`: orientação de onboarding e autenticação.
 
 Sem sessão por senha, permanecem disponíveis `/start`, `/ajuda`, `/cadastro`,
-`/senha`, `/entrar` e `/recuperar`, sempre depois das TASKs 046/047. Missões,
+`/senha`, `/entrar`, `/recuperar` e `/privacidade`, sempre depois das TASKs
+046/047. Missões,
 preferências, IA, recomendações, comparações, confirmações, trilha,
 `/upgrade` e demais efeitos funcionais exigem sessão válida.
 

@@ -1,7 +1,14 @@
 name: aishoppingagent
 
+x-bounded-logging: &bounded-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
 services:
   api:
+    logging: *bounded-logging
     image: aishoppingagent-app:local
     build:
       context: ./backend
@@ -59,6 +66,7 @@ services:
       start_period: 5s
 
   telegram_notifier:
+    logging: *bounded-logging
     image: aishoppingagent-app:local
     build:
       context: ./backend
@@ -106,6 +114,7 @@ services:
       start_period: 5s
 
   database:
+    logging: *bounded-logging
     image: postgres:18-alpine
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-aishoppingagent}
@@ -125,6 +134,7 @@ services:
       start_period: 10s
 
   otel-collector:
+    logging: *bounded-logging
     image: otel/opentelemetry-collector-contrib:0.157.0
     command: ["--config=/etc/otelcol-contrib/config.yaml"]
     volumes:
@@ -136,10 +146,13 @@ services:
       - "127.0.0.1:${OTEL_HEALTH_PORT:-13133}:13133"
 
   prometheus:
+    logging: *bounded-logging
     image: prom/prometheus:v3.12.0
     command:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+      - --storage.tsdb.retention.size=2GB
     volumes:
       - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./observability/alert-rules.yml:/etc/prometheus/alert-rules.yml:ro
@@ -157,7 +170,11 @@ services:
       start_period: 5s
 
   jaeger:
+    logging: *bounded-logging
     image: jaegertracing/jaeger:2.20.0
+    command:
+      - --set=extensions.jaeger_storage.backends.some_storage.memory.max_traces=10000
+    mem_limit: 512m
     ports:
       - "${JAEGER_UI_PORT:-16686}:16686"
     healthcheck:

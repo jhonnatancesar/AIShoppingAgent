@@ -21,6 +21,11 @@ do Collector é publicado somente em `127.0.0.1:13133`. As imagens são
 versionadas em `compose.yaml` e compatíveis com execução headless no Ubuntu
 Server.
 
+Prometheus preserva no máximo 15 dias ou 2 GB no volume, prevalecendo o limite
+atingido primeiro. Jaeger usa memória volátil limitada a 10.000 traces e o
+container possui teto de 512 MB; não existe volume de traces. São defaults
+operacionais da V1, não prazos jurídicos definitivos de retenção.
+
 ## Privacidade e cardinalidade
 
 Métricas aceitam apenas método fechado, rota normalizada, classe de status,
@@ -34,6 +39,10 @@ somente sistema e operação fechada; statement, bind parameters, literais, DSN,
 credenciais e resultados não são exportados. Logs não usam o access log bruto
 do Uvicorn e nunca devem incluir token, header sensível, payload ou query
 string completa.
+
+Mensagens e tracebacks brutos de exceção não entram nos logs. Apenas a classe
+segura e códigos internos fechados são permitidos. A política consolidada está
+em `docs/PRIVACY.md`.
 
 ## Regras Prometheus
 

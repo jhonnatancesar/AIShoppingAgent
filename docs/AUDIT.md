@@ -21,8 +21,10 @@ No modelo Python, a coluna `metadata` é acessada como `entry_metadata`, pois
 
 A tabela é append-only: não possui `updated_at`, e um trigger PostgreSQL rejeita
 `UPDATE` e `DELETE`. Correções devem ser registradas como novas entradas, nunca
-reescrever o fato original. A futura política de retenção ou anonimização exige
-decisão explícita e migration própria.
+reescrever o fato original. A TASK-050 preserva esses fatos e seus UUIDs durante
+a desidentificação; PII encontrada em metadata interrompe toda a operação em
+vez de contornar o trigger. Anonimização ou eliminação futura exige avaliação e
+decisão explícitas próprias.
 
 O índice `(resource_type, resource_id, created_at, id)` permite histórico
 determinístico por recurso. O índice parcial `(actor_id, created_at)` atende

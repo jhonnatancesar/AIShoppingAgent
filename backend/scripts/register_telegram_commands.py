@@ -12,6 +12,7 @@ _COMMANDS = [
     {"command": "sair", "description": "Encerrar a sessão autenticada"},
     {"command": "recuperar", "description": "Recuperar sua senha"},
     {"command": "preferencias", "description": "Configurar notificações"},
+    {"command": "privacidade", "description": "Consultar uso e proteção de dados"},
     {"command": "upgrade", "description": "Mudar de perfil (em breve)"},
 ]
 

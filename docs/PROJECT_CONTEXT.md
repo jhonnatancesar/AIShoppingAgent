@@ -34,7 +34,8 @@ adaptador `USER` (Gemini gratuito) e o adaptador `ADMIN`/`DEV` (cascata da
 TASK-059) a partir do `User.role` resolvido — validado de ponta a ponta
 contra o Telegram real, incluindo o caso real em que o premium retornou
 `429` e a cascata caiu para o Groq real com sucesso. O dono do projeto foi
-elevado manualmente para `ADMIN`. Um comando `/cadastro` captura nome de
+elevado manualmente para `ADMIN` nessa etapa e depois para `DEV` pela operação
+one-shot controlada da TASK-047. Um comando `/cadastro` captura nome de
 usuário, e-mail e preferências (lojas e categorias) em passos sequenciais,
 persistidos em `users` (revisão `20260808_0001`), sem passar pelo
 `IntentInterpreter`; validado de ponta a ponta contra o Telegram real. Um
@@ -187,7 +188,21 @@ e Store Provider. A revisão `20260808_0009` acrescenta `next_retry_at`,
 `dead_lettered` terminal e `telegram_update_receipts`, todos validados em
 PostgreSQL 18 real com concorrência, restart e migration reversível. API,
 worker, Prometheus, Jaeger, Telegram e as quatro lojas foram validados em
-Docker isolado; a próxima tarefa executável é a TASK-050.
+Docker isolado; a tarefa seguinte foi a TASK-050.
+
+A TASK-050 (`DEC-038`) está **concluída**: `docs/PRIVACY.md` inventaria conta,
+autenticação, missões, preços, compra, eventos, telemetria e compartilhamentos
+necessários. `/privacidade` é resposta fixa sem IA nem sessão. Logs filtram
+identificadores pessoais e exceções expõem somente classe segura. Containers
+rotacionam `10m × 5`; Prometheus limita 15 dias/2 GB e Jaeger mantém no máximo
+10.000 traces voláteis sob 512 MB. `app.privacy` limpa tokens/sessões após
+24h/30d e desidentifica conta em transação única, removendo identificadores,
+perfil, autenticação, preferências, intenção e textos mutáveis. UUID e fatos
+append-only permanecem pseudônimos; PII detectada em histórico imutável aborta
+toda a operação antes de mutação. PostgreSQL e Docker reais, canário de
+telemetria e Bot API validaram o fluxo sem alterar o proprietário. A próxima
+tarefa executável é a TASK-051. O pipeline terminou com 601 testes e 90,61% de
+cobertura.
 
 A TASK-058 (`DEC-015`) está **concluída**: `create_mission` e
 `mission_command` não executam mais direto — ficam encenados em
@@ -391,6 +406,10 @@ persistente significa somente consentimento registrado.
 - Ofertas identificam anúncios estáveis por loja e nunca armazenam preço ou disponibilidade corrente; lojas persistentes não implementam providers de coleta.
 - Marketplaces possuem vendedores próprios; a identidade da oferta inclui vendedor, enquanto frete e fulfillment pertencem à observação histórica.
 - Auditoria é append-only; correções geram novas entradas, e metadata nunca contém segredos ou dados pessoais desnecessários.
+- Desidentificação remove identificadores diretos, autenticação, preferências e
+  textos mutáveis, mas preserva UUID e fatos append-only. PII detectada nesses
+  fatos aborta toda a operação; o projeto não chama essa correlação preservada
+  de anonimização irreversível (TASK-050/DEC-038).
 - Missões nascem em `draft`; alterações de estado e de `state_version` são executadas atomicamente com histórico append-only e versão concorrente.
 - Critérios usam busca textual e preço-alvo opcional pareado com moeda; recorrência usa agenda separada com intervalo fixo positivo.
 - Eventos usam nomes versionados e payloads mínimos do catálogo; tipos

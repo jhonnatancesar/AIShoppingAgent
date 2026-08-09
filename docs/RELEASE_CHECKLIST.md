@@ -12,15 +12,15 @@ TASK-054 (preparar release), que ainda está pendente.
 
 Atualizar este documento sempre que uma TASK relevante para produção for
 concluída ou revisada. Snapshot gerado em **2026-08-08**, logo após a
-conclusão da TASK-049.
+conclusão da TASK-050.
 
 ## Resumo executivo
 
-**Não está pronto para produção.** 57 das 62 tarefas planejadas estão
-concluídas, mas as 5 pendentes cobrem áreas que separam
+**Não está pronto para produção.** 58 das 62 tarefas planejadas estão
+concluídas, mas as 4 pendentes cobrem áreas que separam
 "funciona quando eu valido manualmente" de "está seguro para um usuário
-real depender disso": privacidade, resiliência, documentação,
-integração/release e — mais importante — não existe hoje nenhum
+real depender disso": documentação, integração/release e — mais importante —
+não existe hoje nenhum
 mecanismo que dispare a coleta de preços sozinho. Uma missão criada fica
 "ativa" no banco, mas nada a pesquisa automaticamente.
 
@@ -35,7 +35,7 @@ mecanismo que dispare a coleta de preços sozinho. Uma missão criada fica
 | 5 | Recomendação/comparação básica com evidências históricas | ✅ Atendido | TASK-038 recomenda uma oferta com regras monetárias seguras e histórico identificável; TASK-039 compara as mesmas evidências, mantém a posição 1 invariável e não inventa total para frete desconhecido |
 | 6 | Todo uso de IA passa pelo AI Provider Manager | ✅ Atendido | Invariante reforçada e validada em todas as tarefas de IA (TASK-028 a TASK-032, TASK-057 a TASK-060) |
 | 7 | Fluxos críticos com testes de integração e ponta a ponta | ❌ Faltando | TASK-052 (integração) e TASK-053 (e2e) pendentes; validação real hoje é manual/pontual por TASK, sem suíte permanente |
-| 8 | Documentação operacional, segurança mínima e checklist de release concluídos | ❌ Faltando | TASK-048 protegeu secrets; TASK-050 (privacidade), TASK-051 (documentação operacional) e TASK-054 (release) continuam pendentes |
+| 8 | Documentação operacional, segurança mínima e checklist de release concluídos | ❌ Faltando | TASK-048 protegeu secrets e TASK-050 fechou privacidade técnica; TASK-051 (documentação operacional) e TASK-054 (release) continuam pendentes |
 
 ## Bloqueios adicionais para rodar em produção de verdade
 
@@ -60,6 +60,10 @@ Além dos critérios formais do MVP:
   rate limit persistentes, timeouts, retry somente seguro, circuit breakers por
   integração e dead letter append-only. Os circuitos continuam locais por
   processo, limitação deliberada da V1.
+- **Privacidade técnica revisada** (TASK-050): PII saiu de logs/exceções,
+  telemetria possui retenções limitadas, `/privacidade` não usa IA e existe
+  desidentificação controlada que preserva a integridade append-only. O projeto
+  não afirma anonimização irreversível nem certificação LGPD.
 - **Notificador sem produtor automático**: a TASK-036 entrega eventos reais já
   publicados, mas hoje nenhum fluxo contínuo de coleta cria esses eventos sem
   preparação manual.
@@ -81,11 +85,11 @@ Além dos critérios formais do MVP:
 | Compra e eventos | TASK-038 a TASK-041, TASK-043 a TASK-045 | 7/7 | — |
 | Catálogo de eventos | TASK-042 | 1/1 | — |
 | Segurança — canal, autorização e autenticação real | TASK-046, TASK-047, TASK-061 | 3/3 | — |
-| Segurança e entrega — continuação | TASK-048 a TASK-054 | 2/7 | TASK-050 a TASK-054 |
+| Segurança e entrega — continuação | TASK-048 a TASK-054 | 3/7 | TASK-051 a TASK-054 |
 | Store Providers e identidade | TASK-055, TASK-056 | 2/2 | — |
 | Robustez, confirmação e IA (V1.2 antecipado) | TASK-057 a TASK-060 | 4/4 | — |
 
-**Total: 57 concluídas, 5 pendentes.**
+**Total: 58 concluídas, 4 pendentes.**
 
 ## Recomendação
 
@@ -94,5 +98,5 @@ seguro. Colocar um usuário real dependendo do sistema hoje não é — os
 maiores riscos são a ausência de coleta automática (a missão nunca
 "funciona sozinha") e os controles restantes de segurança/release. A
 ordem mais natural para fechar essas lacunas segue o próprio
-`docs/ROADMAP.md`: TASK-050 e demais tarefas de
-Segurança e entrega até a TASK-054.
+`docs/ROADMAP.md`: TASK-051 e demais tarefas de Segurança e entrega até a
+TASK-054.

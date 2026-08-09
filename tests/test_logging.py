@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import sys
 from unittest.mock import Mock
 
 import pytest
@@ -57,6 +58,38 @@ def test_json_formatter_includes_context_without_private_fields() -> None:
     assert "_private" not in payload
     assert "authorization_header" not in payload
     assert "request_id" not in payload
+
+
+def test_json_formatter_removes_personal_fields_and_raw_exception() -> None:
+    """PII em extras ou mensagem de exceção nunca deve sair no JSON."""
+    canary = "privacy-canary@example.invalid"
+    try:
+        raise RuntimeError(canary)
+    except RuntimeError:
+        exception = sys.exc_info()
+    record = logging.LogRecord(
+        name="app.test",
+        level=logging.ERROR,
+        pathname=__file__,
+        lineno=1,
+        msg="controlled_failure",
+        args=(),
+        exc_info=exception,
+    )
+    record.telegram_chat_id = 123456789
+    record.owner_user_id = "private-user"
+    record.email = canary
+    record.product_url = f"https://example.invalid/{canary}"
+    record.message_text = canary
+
+    serialized = JsonFormatter(environment="production").format(record)
+    payload = json.loads(serialized)
+
+    assert payload["exception_type"] == "RuntimeError"
+    assert "exception" not in payload
+    assert canary not in serialized
+    assert "123456789" not in serialized
+    assert "private-user" not in serialized
 
 
 def test_request_log_records_safe_http_context(monkeypatch: pytest.MonkeyPatch) -> None:

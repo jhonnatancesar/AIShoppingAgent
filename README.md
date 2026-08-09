@@ -43,8 +43,11 @@ execute `docker compose down`.
 No Telegram, `/preferencias` consulta as notificações. Use
 `/preferencias quedas ativar|desativar` e
 `/preferencias alvo ativar|desativar` para configurá-las separadamente.
-Ambas começam ativadas; eventos bloqueados pela preferência não são reenviados
-quando ela for reativada.
+As duas preferências começam ativadas; eventos bloqueados não são reenviados
+quando a preferência correspondente for reativada.
+`/privacidade` apresenta, sem IA, um resumo do uso e proteção de dados. O
+inventário, as retenções operacionais e a desidentificação controlada estão em
+[`docs/PRIVACY.md`](docs/PRIVACY.md).
 
 Operações de usuário pelo bot são aceitas somente no chat privado direto da
 própria pessoa e para uma conta interna ativa. Depois da autenticação, a

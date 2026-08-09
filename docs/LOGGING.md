@@ -13,7 +13,9 @@ Todo evento contém:
 - `service` e `environment`;
 - `request_id`, `trace_id` e `span_id` quando houver contexto ativo.
 
-Contextos adicionais são incluídos como campos no mesmo objeto. Exceções registradas com `logger.exception` acrescentam o campo `exception`.
+Contextos adicionais são incluídos como campos no mesmo objeto. Exceções
+acrescentam somente `exception_type`, com a classe segura. Mensagem bruta e
+traceback não são emitidos, inclusive em produção.
 
 ## Requisições HTTP
 
@@ -66,5 +68,9 @@ docker compose logs --follow api
 docker compose logs --follow telegram_notifier
 ```
 
-Métricas e tracing estão documentados em `docs/OBSERVABILITY.md`. Retenção
-e envio externo de logs continuam fora desta etapa.
+Campos cujo nome indique Telegram/user ID, nome, username, e-mail, URL, texto
+livre, query, payload, token, senha/hash ou credencial são removidos pelo
+formatador. Os containers usam `json-file` com `max-size=10m` e `max-file=5`.
+Esse limite é operacional, não política jurídica definitiva. Métricas e tracing
+estão documentados em `docs/OBSERVABILITY.md`; o inventário completo está em
+`docs/PRIVACY.md`.

@@ -11,7 +11,11 @@ PostgreSQL é a fonte transacional do MVP. Este documento define o esquema relac
 - Estados fechados e estáveis podem usar enum PostgreSQL. Categorias extensíveis, como tipos de evento, usam texto validado pela aplicação até possuírem catálogo próprio.
 - JSONB é reservado a evidências brutas e payloads variáveis. Dados usados em relações, filtros, ordenação ou invariantes devem estar em colunas tipadas.
 - Chaves estrangeiras históricas usam `RESTRICT`; exclusão em cascata não pode remover preços, transições, eventos ou auditoria.
-- Exclusão física de registros com histórico associado não pertence ao fluxo normal. Políticas de anonimização e retenção exigem decisão explícita nas tarefas de privacidade.
+- Exclusão física de registros com histórico associado não pertence ao fluxo
+  normal. A TASK-050 remove identificadores diretos e neutraliza textos
+  mutáveis, mas mantém UUID interno e fatos append-only: é desidentificação/
+  pseudonimização operacional, não anonimização irreversível. PII encontrada
+  em histórico imutável bloqueia a operação; triggers nunca são contornados.
 
 ## Visão relacional
 

@@ -68,7 +68,12 @@ fechado. O papel `PLUS`, planos e múltiplos papéis permanecem fora do MVP.
 - Todo usuário criado automaticamente pelo Telegram recebe `USER`. Nenhum
   fluxo público aceita papel por payload, texto, comando ou cadastro; não há
   autopromoção nem gestão de papéis pelo bot.
-- Exclusão e anonimização serão definidas pelas tarefas de segurança e privacidade, preservando referências históricas.
+- A TASK-050 definiu desidentificação local e controlada: remove identificadores
+  diretos, perfil, credenciais, sessões, tokens, preferências e textos mutáveis,
+  desativa a conta e preserva referências históricas pelo UUID interno. Isso é
+  pseudonimização operacional, não garantia de anonimização irreversível. O
+  procedimento falha antes de qualquer mutação se encontrar PII em histórico
+  append-only (`docs/PRIVACY.md`).
 - `telegram_user_id` (TASK-056) é confiado pela TASK-046 somente após validar
   o segredo do webhook, chat privado e igualdade entre chat e remetente. Isso
   não implementa sozinha login ou senha; a TASK-061 acrescenta a camada de
@@ -93,6 +98,8 @@ fechado. O papel `PLUS`, planos e múltiplos papéis permanecem fora do MVP.
 - O comando `/preferencias` (TASK-037) consulta ou altera exclusivamente
   `notify_price_decreases` e `notify_target_reached`, sem modificar nenhum
   campo do cadastro da TASK-060. O fluxo é textual, sem IA e sem botões.
+- `/privacidade` apresenta aviso fixo sem IA e sem sessão por senha. Não existe
+  comando público de exclusão, alteração de papel ou desidentificação.
 
 O modelo está em `backend/app/users/models.py`; sua criação reversível está na
 revisão Alembic `20260802_0002`, `telegram_user_id` foi adicionado pela

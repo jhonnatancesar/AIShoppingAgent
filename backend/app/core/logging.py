@@ -17,14 +17,23 @@ STANDARD_RECORD_ATTRIBUTES = frozenset(logging.makeLogRecord({}).__dict__) | {
 CORRELATION_FIELDS = frozenset({"request_id", "trace_id", "span_id"})
 SENSITIVE_FIELD_FRAGMENTS = (
     "authorization",
+    "chat_id",
     "credential",
+    "display_name",
     "dsn",
+    "email",
     "header",
+    "message_text",
     "password",
     "payload",
+    "query",
     "query_string",
     "secret",
     "token",
+    "url",
+    "user_id",
+    "username",
+    "user_text",
 )
 
 
@@ -67,7 +76,12 @@ class JsonFormatter(logging.Formatter):
             payload["trace_id"] = format(span_context.trace_id, "032x")
             payload["span_id"] = format(span_context.span_id, "016x")
         if record.exc_info:
-            payload["exception"] = self.formatException(record.exc_info)
+            exception_type = record.exc_info[0]
+            payload["exception_type"] = (
+                exception_type.__name__
+                if isinstance(exception_type, type)
+                else "Exception"
+            )
 
         return json.dumps(
             payload, ensure_ascii=False, default=str, separators=(",", ":")

@@ -25,6 +25,20 @@ Após a classificação, registrar a decisão neste arquivo e atualizar a docume
 - **Justificativa:** impacto avaliado e motivo da classificação.
 - **Próxima ação:** documento a atualizar, TASK a criar quando aplicável, ou ação de não implementação.
 
+### DEC-038 — Desidentificar sem reescrever históricos
+
+- **Data:** 2026-08-08
+- **Ideia:** remover identificadores diretos e limitar retenção operacional sem
+  transformar UUID e fatos correlacionáveis em falsa alegação de anonimização.
+- **Classificação:** Implementar agora.
+- **Justificativa:** conta, Telegram, textos livres e autenticação exigem
+  minimização, mas preços, eventos, transições, auditoria e confirmações são
+  fatos protegidos por imutabilidade/FKs. A operação transacional remove dados
+  diretos e falha antes de mutar se detectar PII em histórico append-only.
+  Telemetria recebe limites explícitos e não se afirma certificação LGPD.
+- **Próxima ação:** TASK-050 concluída; executar a TASK-051. Anonimização
+  irreversível de bases históricas exige avaliação futura específica.
+
 ### DEC-037 — Persistir replay/retry e manter resiliência externa local
 
 - **Data:** 2026-08-08
@@ -37,7 +51,7 @@ Após a classificação, registrar a decisão neste arquivo e atualizar a docume
   permanecer locais por processo. `sendMessage` e outras operações
   potencialmente não idempotentes não recebem retry cego; eventos não ganham
   estado mutável. O desenho fecha a TASK-049 com segurança sem Redis ou broker.
-- **Próxima ação:** TASK-049 concluída; executar a TASK-050. Coordenação
+- **Próxima ação:** TASK-049 concluída e seguida pela TASK-050. Coordenação
   distribuída de circuitos e infraestrutura de filas permanecem fora da V1.
 
 ### DEC-036 — Usar secret files com fonte única e menor privilégio

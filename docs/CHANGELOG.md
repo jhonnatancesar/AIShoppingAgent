@@ -1,5 +1,26 @@
 # Changelog
 
+## 2026-08-08 — TASK-050: privacidade técnica e desidentificação
+
+- Criado inventário de dados, finalidades, terceiros, retenções e limitações em
+  `docs/PRIVACY.md`, sem alegar anonimização irreversível ou certificação LGPD.
+- `/privacidade` responde em português sem IA nem sessão e foi registrado e
+  entregue pela Bot API real sem conteúdo pessoal.
+- Telegram IDs saíram dos logs; campos pessoais são filtrados e exceções expõem
+  somente a classe segura, sem mensagem ou traceback bruto.
+- Logs Docker ficaram limitados a `10m × 5`, Prometheus a 15 dias/2 GB e Jaeger
+  a 10.000 traces voláteis em container de 512 MB.
+- Action tokens e sessões receberam limpeza manual após 24h/30d, sem scheduler.
+- `app.privacy` remove identificadores diretos, autenticação, preferências,
+  intenção pendente e textos mutáveis em transação única, preservando UUID e
+  fatos append-only. PII em histórico imutável bloqueia toda a operação.
+- PostgreSQL real validou limpeza, desidentificação, idempotência e conflito com
+  rollback; a conta do proprietário permaneceu intacta.
+- Docker real confirmou limites e consumo; canário ficou ausente de logs,
+  métricas e traces.
+- Pipeline aprovado em Python 3.14.6 com 601 testes, 90,61% de cobertura,
+  Ruff, Alembic, Gitleaks e Docker Compose.
+
 ## 2026-08-08 — TASK-049: limites, replay e resiliência limitada
 
 - Adicionado limite HTTP de 64 KiB e recibos append-only únicos por `update_id`,

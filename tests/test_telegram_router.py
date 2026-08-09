@@ -180,6 +180,37 @@ async def test_valid_secret_and_text_message_returns_204_and_calls_adapter(
 
 
 @pytest.mark.anyio
+async def test_privacy_command_is_static_and_does_not_require_ai_or_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user = _fake_user()
+    _patch_user(monkeypatch, user)
+    send_calls = _patch_send_message(monkeypatch)
+    adapter = _FakeAdapter(AssertionError("AI must not be called"))
+
+    response = await receive_telegram_webhook(
+        update=_update(
+            message=_TelegramIncomingMessage(
+                text="/privacidade",
+                date=1754586000,
+                chat=_TelegramChat(id=222, type=TelegramChatType.PRIVATE),
+                from_=_TelegramSender(id=222, first_name="Pessoa"),
+            )
+        ),
+        x_telegram_bot_api_secret_token="correct-secret",
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        settings=_settings(),
+        session=MagicMock(),
+    )
+
+    assert response.status_code == 204
+    assert adapter.calls == []
+    assert len(send_calls) == 1
+    assert "UUID interno pseudônimo" in send_calls[0][1]
+    assert "anonimização irreversível" in send_calls[0][1]
+
+
+@pytest.mark.anyio
 async def test_admin_user_uses_admin_dev_adapter(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

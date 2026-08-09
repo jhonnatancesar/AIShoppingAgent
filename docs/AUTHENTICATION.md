@@ -52,3 +52,9 @@ e do Telegram exige operação manual e controlada pelo proprietário.
 Senha, hash, token, payload e material de autenticação não podem aparecer em
 logs, traces, métricas ou auditoria. As rotas `/auth` e `/auth/actions` são
 excluídas do tracing automático; métricas usam apenas rota normalizada.
+
+Action tokens expirados/resolvidos ficam elegíveis à limpeza manual após 24
+horas; sessões expiradas/revogadas, após 30 dias. Não há scheduler na V1. A
+desidentificação controlada remove credencial, tokens e sessões da conta em uma
+única transação, preservando somente auditoria sanitizada. Procedimentos e
+limitações estão em `docs/PRIVACY.md`.

@@ -57,6 +57,7 @@ from app.missions.service import (
     transition_mission,
 )
 from app.observability.metrics import observe_resilience_event
+from app.privacy.notice import PRIVACY_COMMAND, privacy_notice
 from app.telegram.adapter import TelegramIntentAdapter
 from app.telegram.authentication import (
     authenticate_telegram_user,
@@ -320,6 +321,8 @@ async def _handle_message(
             "Eu acompanho suas missões de compra. Use /cadastro para completar "
             "seu perfil, /senha para criar sua senha e /entrar para autenticar."
         )
+    if lowered == PRIVACY_COMMAND:
+        return privacy_notice()
     if lowered == _CADASTRO_COMMAND:
         authorize(session, user, Permission.PROFILE_MANAGE)
         return start_registration(user)
@@ -362,10 +365,7 @@ async def _handle_message(
     try:
         intent = await adapters[profile].interpret(message, profile=profile)
     except TelegramContractError, AIProviderError:
-        logger.warning(
-            "telegram_webhook_intent_failed",
-            extra={"telegram_chat_id": message.chat_id},
-        )
+        logger.warning("telegram_webhook_intent_failed")
         return None
 
     try:
@@ -373,10 +373,7 @@ async def _handle_message(
     except _KNOWN_DISPATCH_ERRORS as error:
         logger.warning(
             "telegram_webhook_mission_failed",
-            extra={
-                "telegram_chat_id": message.chat_id,
-                "mission_error": type(error).__name__,
-            },
+            extra={"mission_error": type(error).__name__},
         )
         return str(error)
 
@@ -459,10 +456,7 @@ async def _resolve_pending_intent(
         user.pending_intent = None
         logger.warning(
             "telegram_webhook_mission_failed",
-            extra={
-                "telegram_chat_id": message.chat_id,
-                "mission_error": type(error).__name__,
-            },
+            extra={"mission_error": type(error).__name__},
         )
         return str(error)
     except Exception:
