@@ -33,6 +33,7 @@ class GroqProvider:
         model: str = "llama-3.3-70b-versatile",
         *,
         client_factory: Callable[..., httpx.AsyncClient] = httpx.AsyncClient,
+        timeout_seconds: float = 10.0,
     ) -> None:
         if not api_key.get_secret_value().strip():
             raise AIRequestError("Groq API key is required")
@@ -41,6 +42,9 @@ class GroqProvider:
         self._api_key = api_key
         self.model = model
         self._client_factory = client_factory
+        if timeout_seconds <= 0:
+            raise AIRequestError("Groq timeout must be positive")
+        self._timeout_seconds = timeout_seconds
 
     async def generate(self, request: AIRequest) -> AIResponse:
         payload = {
@@ -51,7 +55,7 @@ class GroqProvider:
             ],
         }
         try:
-            async with self._client_factory(timeout=30.0) as client:
+            async with self._client_factory(timeout=self._timeout_seconds) as client:
                 response = await client.post(
                     _ENDPOINT,
                     headers={

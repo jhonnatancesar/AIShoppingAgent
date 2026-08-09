@@ -18,6 +18,7 @@ from app.events.catalog import (
 from app.events.consumption import (
     EventConsumptionError,
     claim_unconsumed_events,
+    count_failed_attempts,
     record_consumption_attempt,
 )
 from app.events.models import ConsumptionOutcome, Event, EventConsumptionAttempt
@@ -41,6 +42,7 @@ __all__ = [
     "PriceDecreasedPayload",
     "PriceTargetReachedPayload",
     "claim_unconsumed_events",
+    "count_failed_attempts",
     "publish_event",
     "record_consumption_attempt",
     "resolve_event_spec",

@@ -147,7 +147,9 @@ async def test_process_sends_alert_and_records_success(
     )
     sent: list[tuple[int, str]] = []
 
-    async def _send(chat_id: int, text: str, *, bot_token: SecretStr) -> None:
+    async def _send(
+        chat_id: int, text: str, *, bot_token: SecretStr, **kwargs: object
+    ) -> None:
         sent.append((chat_id, text))
 
     monkeypatch.setattr("app.telegram.notifications.send_message", _send)
@@ -257,12 +259,12 @@ async def test_process_records_api_rejection_without_leaking_details(
 
     result = await process_telegram_notifications(session, bot_token=SecretStr("token"))
 
-    assert result.failed == 1
-    assert session.add.call_args.args[0].failure_code == "telegram_delivery_failed"
+    assert result.dead_lettered == 1
+    assert session.add.call_args.args[0].failure_code == "telegram_api_rejected"
 
 
 @pytest.mark.anyio
-async def test_process_records_invalid_payload_for_retry(
+async def test_process_records_invalid_payload_as_permanent_dead_letter(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     user = _user()
@@ -278,5 +280,5 @@ async def test_process_records_invalid_payload_for_retry(
 
     result = await process_telegram_notifications(session, bot_token=SecretStr("token"))
 
-    assert result.failed == 1
+    assert result.dead_lettered == 1
     assert session.add.call_args.args[0].failure_code == "notification_payload_invalid"

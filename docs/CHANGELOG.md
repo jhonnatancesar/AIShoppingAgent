@@ -1,5 +1,27 @@
 # Changelog
 
+## 2026-08-08 — TASK-049: limites, replay e resiliência limitada
+
+- Adicionado limite HTTP de 64 KiB e recibos append-only únicos por `update_id`,
+  atômicos com os efeitos aceitos do webhook.
+- Implementado rate limit persistente de 20 updates autenticados/minuto por
+  usuário; replay, excesso e descarte retornam `204` sem repetir domínio/IA.
+- Toda integração ganhou timeout explícito; somente operações seguras recebem
+  retry com jitter. Timeout ambíguo de `sendMessage` nunca é repetido cegamente.
+- Circuit breakers locais foram separados por Telegram, provider/modelo de IA
+  e Store Provider, com uma única sonda half-open.
+- A migration `20260808_0009` acrescentou `next_retry_at`,
+  `dead_lettered` terminal e `telegram_update_receipts`, preservando histórico
+  append-only e unicidade concorrente no PostgreSQL.
+- Worker passou a fazer rollback e backoff fora da transação após falha
+  inesperada; Prometheus recebeu métricas allowlisted e regras de detecção para
+  dead letters/circuitos abertos, sem notificação externa.
+- PostgreSQL 18, Docker Linux, API, worker, Prometheus, Jaeger, Telegram real e
+  Store Providers reais validaram migração reversível, restart, replay,
+  concorrência, falha/recuperação e privacidade.
+- Pipeline completo aprovado em Python 3.14.6: 590 testes, 91,38% de cobertura,
+  Ruff, Alembic, Gitleaks e Docker Compose válidos.
+
 ## 2026-08-08 — TASK-048: secrets por arquivo e varredura reproduzível
 
 - Produção agora aceita credenciais somente por `*_FILE`; conflito com valor

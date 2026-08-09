@@ -86,6 +86,7 @@ class ConsumptionOutcome(StrEnum):
     SUCCEEDED = "succeeded"
     FAILED = "failed"
     SKIPPED = "skipped"
+    DEAD_LETTERED = "dead_lettered"
 
 
 class EventConsumptionAttempt(Base):
@@ -98,16 +99,31 @@ class EventConsumptionAttempt(Base):
             name="ck_event_consumption_attempts_consumer_not_blank",
         ),
         CheckConstraint(
-            "(outcome IN ('succeeded', 'skipped') AND failure_code IS NULL) OR "
+            "(outcome IN ('succeeded', 'skipped') AND failure_code IS NULL AND "
+            "next_retry_at IS NULL) OR "
             "(outcome = 'failed' AND failure_code IS NOT NULL AND "
-            "failure_code ~ '^[a-z][a-z0-9]*(_[a-z0-9]+)*$')",
+            "failure_code ~ '^[a-z][a-z0-9]*(_[a-z0-9]+)*$' AND "
+            "next_retry_at IS NOT NULL AND next_retry_at > attempted_at) OR "
+            "(outcome = 'dead_lettered' AND failure_code IS NOT NULL AND "
+            "failure_code ~ '^[a-z][a-z0-9]*(_[a-z0-9]+)*$' AND "
+            "next_retry_at IS NULL)",
             name="ck_event_consumption_attempts_outcome_failure",
         ),
         Index(
-            "ix_event_consumption_attempts_terminal",
+            "ux_event_consumption_attempts_terminal",
             "consumer_name",
             "event_id",
-            postgresql_where=text("outcome IN ('succeeded', 'skipped')"),
+            unique=True,
+            postgresql_where=text(
+                "outcome IN ('succeeded', 'skipped', 'dead_lettered')"
+            ),
+        ),
+        Index(
+            "ix_event_consumption_attempts_retry",
+            "consumer_name",
+            "event_id",
+            "next_retry_at",
+            postgresql_where=text("outcome = 'failed'"),
         ),
     )
 
@@ -131,4 +147,7 @@ class EventConsumptionAttempt(Base):
     failure_code: Mapped[str | None] = mapped_column(String(120), nullable=True)
     attempted_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
+    )
+    next_retry_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )

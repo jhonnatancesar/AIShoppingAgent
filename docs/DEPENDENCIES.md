@@ -98,6 +98,11 @@ versionadas: OpenTelemetry Collector Contrib 0.157.0, Prometheus 3.12.0 e
 Jaeger 2.20.0. Métricas são coletadas por scrape direto; somente traces usam
 OTLP/HTTP. Nenhuma credencial adicional é necessária no ambiente local.
 
+A TASK-049 não adicionou dependências. Retry, jitter, parsing de `Retry-After`,
+circuit breaker e limite ASGI usam a biblioteca padrão; persistência reutiliza
+SQLAlchemy/PostgreSQL e Playwright/HTTP já declarados. Os limites operacionais
+estão em `docs/RESILIENCE.md` e nas variáveis dos arquivos `.env.example`.
+
 As versões validadas na TASK-011 foram SQLAlchemy 2.0.51, Alembic 1.18.5 e Psycopg 3.3.4. O extra binário do Psycopg evita exigir uma instalação separada de `libpq` e possui suporte validado a Python 3.14 e PostgreSQL 18.
 
 Playwright 1.62.0 e Chromium 151.0.7922.34 foram validados na TASK-024. O pacote

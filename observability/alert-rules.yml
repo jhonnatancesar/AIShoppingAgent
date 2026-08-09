@@ -48,3 +48,19 @@ groups:
           severity: warning
         annotations:
           summary: Worker registrou falhas de processamento
+
+      - alert: AIShoppingDeadLetters
+        expr: increase(aishopping_resilience_events_total{event="dead_lettered"}[5m]) > 0
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: Evento terminou em dead letter e requer inspeção operacional
+
+      - alert: AIShoppingCircuitOpen
+        expr: increase(aishopping_resilience_events_total{event="circuit_open"}[5m]) > 0
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: Integração externa teve chamada recusada por circuit breaker

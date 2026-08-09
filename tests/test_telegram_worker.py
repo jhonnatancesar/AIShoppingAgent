@@ -1,5 +1,6 @@
 """Testes do processo contínuo de notificações Telegram."""
 
+import asyncio
 from unittest.mock import MagicMock
 
 import pytest
@@ -45,7 +46,9 @@ async def test_worker_once_processes_and_commits_one_batch(
     )
     calls: list[tuple[object, int]] = []
 
-    async def _process(active_session: object, *, bot_token: object, limit: int):
+    async def _process(
+        active_session: object, *, bot_token: object, limit: int, **kwargs: object
+    ):
         calls.append((active_session, limit))
         return TelegramNotificationBatch(claimed=1, succeeded=1, failed=0, skipped=0)
 
@@ -55,4 +58,51 @@ async def test_worker_once_processes_and_commits_one_batch(
 
     assert calls == [(session, 25)]
     transaction.__exit__.assert_called_once()
+    engine.dispose.assert_called_once()
+
+
+@pytest.mark.anyio
+async def test_worker_rolls_back_then_backs_off_outside_failed_transaction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = Settings(
+        database_password="password",
+        telegram_bot_token="token",
+        worker_failure_backoff_seconds=0.01,
+        _env_file=None,
+    )
+    engine = MagicMock()
+    sessions = MagicMock()
+    transaction = MagicMock()
+    transaction.__enter__.return_value = MagicMock()
+    sessions.begin.return_value = transaction
+    monkeypatch.setattr("app.telegram.worker.create_database_engine", lambda _: engine)
+    monkeypatch.setattr(
+        "app.telegram.worker.create_session_factory", lambda _: sessions
+    )
+    calls = 0
+
+    async def process(*args: object, **kwargs: object) -> TelegramNotificationBatch:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("controlled failure")
+        return TelegramNotificationBatch(0, 0, 0, 0)
+
+    sleeps: list[float] = []
+
+    async def sleep(delay: float) -> None:
+        sleeps.append(delay)
+        if len(sleeps) == 2:
+            raise asyncio.CancelledError
+
+    monkeypatch.setattr("app.telegram.worker.process_telegram_notifications", process)
+    monkeypatch.setattr("app.telegram.worker.asyncio.sleep", sleep)
+
+    with pytest.raises(asyncio.CancelledError):
+        await run_worker(settings, poll_seconds=0.01)
+
+    assert calls == 2
+    assert sleeps[0] == settings.worker_failure_backoff_seconds
+    assert transaction.__exit__.call_count == 2
     engine.dispose.assert_called_once()

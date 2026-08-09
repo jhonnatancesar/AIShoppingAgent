@@ -71,6 +71,10 @@ O schema em `/openapi.json` é a representação executável do contrato. Altera
 
 ## Limites atuais
 
+Toda requisição HTTP possui corpo máximo de 64 KiB, aplicado antes do parsing.
+Excesso retorna `413` com o código `request_body_too_large`. Endpoints
+operacionais sem corpo continuam fora do rate limit do Telegram.
+
 `GET /health` é operacional, não versionado, não consulta dependências externas e responde `200 OK` com `{"status":"ok"}`.
 
 `POST /telegram/webhook` (`docs/TELEGRAM_ADAPTER.md`, `docs/MISSION_COMMANDS.md`) recebe o callback externo e autentica o transporte por segredo. A TASK-046 aceita somente pessoa ativa em chat privado; a TASK-047 autoriza; a TASK-061 exige sessão por senha antes dos comandos funcionais.

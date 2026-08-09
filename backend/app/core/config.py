@@ -55,6 +55,19 @@ class Settings(BaseSettings):
     telegram_webhook_secret_file: Path | None = None
     telegram_notification_poll_seconds: float = Field(default=5.0, gt=0, le=3600)
     telegram_notification_batch_size: int = Field(default=50, ge=1, le=1000)
+    max_request_body_bytes: int = Field(default=65_536, ge=1024, le=1_048_576)
+    telegram_rate_limit_per_minute: int = Field(default=20, ge=1, le=1000)
+    external_http_timeout_seconds: float = Field(default=10.0, gt=0, le=60)
+    safe_retry_max_attempts: int = Field(default=3, ge=1, le=5)
+    retry_base_delay_seconds: float = Field(default=0.25, gt=0, le=10)
+    retry_max_delay_seconds: float = Field(default=5.0, gt=0, le=60)
+    retry_after_cap_seconds: float = Field(default=30.0, gt=0, le=300)
+    circuit_failure_threshold: int = Field(default=5, ge=1, le=20)
+    circuit_open_seconds: float = Field(default=30.0, gt=0, le=300)
+    event_consumer_max_attempts: int = Field(default=5, ge=1, le=20)
+    event_retry_base_seconds: float = Field(default=60.0, gt=0, le=3600)
+    event_retry_cap_seconds: float = Field(default=900.0, gt=0, le=86400)
+    worker_failure_backoff_seconds: float = Field(default=5.0, gt=0, le=300)
     observability_enabled: bool = False
     otel_exporter_otlp_traces_endpoint: str = Field(
         default="http://localhost:4318/v1/traces", min_length=1
@@ -67,6 +80,12 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def resolve_secret_files(self) -> Settings:
         """Resolve uma única fonte por segredo e proíbe ENV direto em produção."""
+        if self.retry_max_delay_seconds < self.retry_base_delay_seconds:
+            raise ValueError("retry max delay must not be smaller than base delay")
+        if self.event_retry_cap_seconds < self.event_retry_base_seconds:
+            raise ValueError(
+                "event retry cap must not be smaller than event retry base"
+            )
         for secret_field, file_field in _SECRET_FILE_FIELDS.items():
             direct_value = getattr(self, secret_field)
             file_path = getattr(self, file_field)

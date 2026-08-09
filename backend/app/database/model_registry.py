@@ -19,6 +19,7 @@ from app.offers.models import Offer
 from app.products.models import Product
 from app.purchase.models import PurchaseConfirmation, PurchaseTrailEntry
 from app.stores.models import Seller, Store
+from app.telegram.models import TelegramUpdateReceipt
 from app.users.models import User
 
 REGISTERED_MODELS = (
@@ -42,4 +43,5 @@ REGISTERED_MODELS = (
     UserCredential,
     UserAuthSession,
     CredentialActionToken,
+    TelegramUpdateReceipt,
 )

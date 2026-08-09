@@ -110,12 +110,13 @@ Nunca iniciar automaticamente a próxima TASK. Encerrar apresentando resumo da i
 
 ## Estado atual
 
-TASKs 000 a 048 e TASK-055 a TASK-061 concluídas. A observabilidade da
+TASKs 000 a 049 e TASK-055 a TASK-061 concluídas. A observabilidade da
 TASK-045 (`DEC-031`) foi validada com PostgreSQL, API, worker, Collector,
 Prometheus e Jaeger reais, incluindo falha/recuperação e privacidade. A
 TASK-046 autentica a identidade mínima do canal Telegram (`DEC-032`). A
 TASK-047 autoriza por papel único com `USER ⊂ ADMIN ⊂ DEV`, preservando
 ownership inclusive para DEV (`DEC-034`). A TASK-061 adiciona senha e sessão
 persistente (`DEC-035`). A TASK-048 protege secrets por arquivos, menor
-privilégio e Gitleaks reproduzível (`DEC-036`). A próxima tarefa executável é
-a TASK-049.
+privilégio e Gitleaks reproduzível (`DEC-036`). A TASK-049 adiciona limites,
+replay/rate limit persistentes, retry seguro, circuit breakers locais e dead
+letter append-only (`DEC-037`). A próxima tarefa executável é a TASK-050.

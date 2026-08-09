@@ -5,6 +5,7 @@ from fastapi import FastAPI
 from .authentication.router import router as authentication_router
 from .core.config import get_settings
 from .core.logging import configure_logging
+from .core.request_limits import MaxRequestBodyMiddleware
 from .core.request_logging import log_request
 from .health.router import router as health_router
 from .observability.metrics import metrics_router
@@ -24,6 +25,7 @@ app = FastAPI(
     version="0.1.0",
     description="Agente inteligente de compras.",
 )
+app.add_middleware(MaxRequestBodyMiddleware, max_bytes=settings.max_request_body_bytes)
 app.middleware("http")(log_request)
 app.include_router(health_router)
 app.include_router(metrics_router)

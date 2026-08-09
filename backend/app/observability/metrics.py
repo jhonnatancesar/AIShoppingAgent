@@ -18,7 +18,11 @@ from starlette.routing import Match
 
 METRICS_REGISTRY = CollectorRegistry(auto_describe=True)
 HTTP_METHODS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"})
-WORKER_OUTCOMES = frozenset({"succeeded", "failed", "skipped"})
+WORKER_OUTCOMES = frozenset({"succeeded", "failed", "skipped", "dead_lettered"})
+RESILIENCE_COMPONENTS = frozenset({"webhook", "telegram", "ai", "store", "worker"})
+RESILIENCE_EVENTS = frozenset(
+    {"rate_limited", "replay", "retry", "circuit_open", "dead_lettered", "failure"}
+)
 SUPPORTED_EVENT_TYPES = frozenset(
     {
         "price.decreased.v1",
@@ -66,6 +70,12 @@ WORKER_EVENTS = Counter(
     "aishopping_worker_events_total",
     "Eventos concluídos pelo worker por resultado fechado.",
     ("worker", "outcome"),
+    registry=METRICS_REGISTRY,
+)
+RESILIENCE_TOTAL = Counter(
+    "aishopping_resilience_events_total",
+    "Eventos operacionais de resiliência por catálogo fechado.",
+    ("component", "event"),
     registry=METRICS_REGISTRY,
 )
 
@@ -135,3 +145,17 @@ def observe_worker_batch(
         if outcome not in WORKER_OUTCOMES:
             raise ValueError("worker outcome is not allowlisted")
         WORKER_EVENTS.labels(worker, outcome).inc(count)
+
+
+def observe_worker_failure(worker: str) -> None:
+    if worker != "telegram_notifier":
+        raise ValueError("worker is not allowlisted")
+    observe_resilience_event("worker", "failure")
+
+
+def observe_resilience_event(component: str, event: str) -> None:
+    if component not in RESILIENCE_COMPONENTS:
+        raise ValueError("resilience component is not allowlisted")
+    if event not in RESILIENCE_EVENTS:
+        raise ValueError("resilience event is not allowlisted")
+    RESILIENCE_TOTAL.labels(component, event).inc()

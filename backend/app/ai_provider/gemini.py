@@ -29,6 +29,7 @@ class GeminiProvider:
         model: str = "gemini-3.6-flash",
         *,
         client_factory: Callable[..., genai.Client] = genai.Client,
+        timeout_seconds: float = 10.0,
     ) -> None:
         if not api_key.get_secret_value().strip():
             raise AIRequestError("Gemini API key is required")
@@ -37,6 +38,9 @@ class GeminiProvider:
         self._api_key = api_key
         self.model = model
         self._client_factory = client_factory
+        if timeout_seconds <= 0:
+            raise AIRequestError("Gemini timeout must be positive")
+        self._timeout_milliseconds = int(timeout_seconds * 1000)
 
     async def generate(self, request: AIRequest) -> AIResponse:
         contents, system_instruction = _translate_messages(request)
@@ -47,7 +51,13 @@ class GeminiProvider:
         )
         client = None
         try:
-            client = self._client_factory(api_key=self._api_key.get_secret_value())
+            client = self._client_factory(
+                api_key=self._api_key.get_secret_value(),
+                http_options=types.HttpOptions(
+                    timeout=self._timeout_milliseconds,
+                    retry_options=types.HttpRetryOptions(attempts=1),
+                ),
+            )
             async with client.aio as async_client:
                 result = await async_client.models.generate_content(
                     model=self.model,

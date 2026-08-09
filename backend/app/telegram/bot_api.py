@@ -8,19 +8,64 @@ exposta fora deste módulo.
 
 import asyncio
 import json
+import socket
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from pydantic import SecretStr
 
+from app.core.resilience import CIRCUITS, CircuitOpenError, parse_retry_after
+from app.observability.metrics import observe_resilience_event
 
-class TelegramBotAPIError(RuntimeError):
+_TELEGRAM_CIRCUIT_KEY = "telegram:bot_api:send_message"
+
+
+class TelegramDeliveryError(RuntimeError):
+    """Falha sanitizada da entrega, classificada sem expor a URL/token."""
+
+    def __init__(
+        self,
+        code: str,
+        *,
+        transient: bool,
+        ambiguous: bool = False,
+        retry_after_seconds: float | None = None,
+    ) -> None:
+        self.code = code
+        self.transient = transient
+        self.ambiguous = ambiguous
+        self.retry_after_seconds = retry_after_seconds
+        super().__init__(code)
+
+
+class TelegramBotAPIError(TelegramDeliveryError):
     """Indica que a Bot API recebeu a chamada, mas rejeitou a operação."""
 
-    def __init__(self, error_code: int | None = None) -> None:
+    def __init__(
+        self,
+        error_code: int | None = None,
+        *,
+        retry_after_seconds: float | None = None,
+    ) -> None:
         self.error_code = error_code
-        suffix = f" ({error_code})" if error_code is not None else ""
-        super().__init__(f"telegram api rejected the request{suffix}")
+        transient = error_code == 429 or (
+            isinstance(error_code, int) and error_code >= 500
+        )
+        super().__init__(
+            "telegram_api_rejected",
+            transient=transient,
+            retry_after_seconds=retry_after_seconds,
+        )
+
+
+class TelegramDeliveryAmbiguous(TelegramDeliveryError):
+    def __init__(self) -> None:
+        super().__init__("telegram_delivery_ambiguous", transient=True, ambiguous=True)
+
+
+class TelegramBotAPIUnavailable(TelegramDeliveryError):
+    def __init__(self, code: str = "telegram_api_unavailable") -> None:
+        super().__init__(code, transient=True)
 
 
 def call_bot_api(
@@ -28,6 +73,8 @@ def call_bot_api(
     params: dict[str, object] | None = None,
     *,
     bot_token: SecretStr,
+    timeout_seconds: float = 10.0,
+    retry_after_cap_seconds: float = 30.0,
 ) -> dict:
     """Chama um método síncrono da Bot API e devolve a resposta decodificada."""
     token = bot_token.get_secret_value()
@@ -40,23 +87,61 @@ def call_bot_api(
         method="POST",
     )
     try:
-        with urlopen(request, timeout=10) as response:
+        with urlopen(request, timeout=timeout_seconds) as response:
             return json.loads(response.read())
     except HTTPError as error:
-        return json.loads(error.read())
+        try:
+            return json.loads(error.read())
+        except json.JSONDecodeError, UnicodeDecodeError:
+            return {"ok": False, "error_code": error.code}
     except URLError as error:
-        raise ConnectionError(f"telegram api unreachable: {error.reason}") from error
+        if isinstance(error.reason, (socket.gaierror, ConnectionRefusedError)):
+            raise TelegramBotAPIUnavailable() from None
+        raise TelegramDeliveryAmbiguous() from None
+    except TimeoutError:
+        raise TelegramDeliveryAmbiguous() from None
 
 
-async def send_message(chat_id: int, text: str, *, bot_token: SecretStr) -> None:
+async def send_message(
+    chat_id: int,
+    text: str,
+    *,
+    bot_token: SecretStr,
+    timeout_seconds: float = 10.0,
+    retry_after_cap_seconds: float = 30.0,
+    circuit_failure_threshold: int = 5,
+    circuit_open_seconds: float = 30.0,
+) -> None:
     """Envia uma mensagem de texto para uma conversa, sem bloquear o loop de eventos."""
-    response = await asyncio.to_thread(
-        call_bot_api,
-        "sendMessage",
-        {"chat_id": chat_id, "text": text},
-        bot_token=bot_token,
+    circuit = CIRCUITS.get(
+        _TELEGRAM_CIRCUIT_KEY,
+        failure_threshold=circuit_failure_threshold,
+        open_seconds=circuit_open_seconds,
     )
-    if response.get("ok") is not True:
-        raw_error_code = response.get("error_code")
-        error_code = raw_error_code if isinstance(raw_error_code, int) else None
-        raise TelegramBotAPIError(error_code)
+    try:
+        circuit.before_call()
+    except CircuitOpenError:
+        observe_resilience_event("telegram", "circuit_open")
+        raise TelegramBotAPIUnavailable("telegram_api_circuit_open") from None
+    try:
+        response = await asyncio.to_thread(
+            call_bot_api,
+            "sendMessage",
+            {"chat_id": chat_id, "text": text},
+            bot_token=bot_token,
+            timeout_seconds=timeout_seconds,
+            retry_after_cap_seconds=retry_after_cap_seconds,
+        )
+        if response.get("ok") is not True:
+            raw_error_code = response.get("error_code")
+            error_code = raw_error_code if isinstance(raw_error_code, int) else None
+            raw_retry_after = response.get("parameters", {}).get("retry_after")
+            retry_after = parse_retry_after(
+                str(raw_retry_after) if raw_retry_after is not None else None,
+                cap_seconds=retry_after_cap_seconds,
+            )
+            raise TelegramBotAPIError(error_code, retry_after_seconds=retry_after)
+    except TelegramDeliveryError as error:
+        circuit.record_failure(transient=error.transient)
+        raise
+    circuit.record_success()

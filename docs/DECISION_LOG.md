@@ -25,6 +25,21 @@ Após a classificação, registrar a decisão neste arquivo e atualizar a docume
 - **Justificativa:** impacto avaliado e motivo da classificação.
 - **Próxima ação:** documento a atualizar, TASK a criar quando aplicável, ou ação de não implementação.
 
+### DEC-037 — Persistir replay/retry e manter resiliência externa local
+
+- **Data:** 2026-08-08
+- **Ideia:** impedir abuso, replay e cascatas de falha sem adicionar
+  infraestrutura distribuída à V1.
+- **Classificação:** Implementar agora.
+- **Justificativa:** `update_id`, cota por usuário e histórico de consumo
+  precisam sobreviver a restart e concorrência, portanto usam fatos append-only
+  no PostgreSQL. Timeout, retry de operações seguras e circuit breaker podem
+  permanecer locais por processo. `sendMessage` e outras operações
+  potencialmente não idempotentes não recebem retry cego; eventos não ganham
+  estado mutável. O desenho fecha a TASK-049 com segurança sem Redis ou broker.
+- **Próxima ação:** TASK-049 concluída; executar a TASK-050. Coordenação
+  distribuída de circuitos e infraestrutura de filas permanecem fora da V1.
+
 ### DEC-036 — Usar secret files com fonte única e menor privilégio
 
 - **Data:** 2026-08-08

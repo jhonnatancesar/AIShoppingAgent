@@ -14,6 +14,7 @@ from app.database.session import create_database_engine, create_session_factory
 from app.observability.metrics import (
     mark_worker_started,
     observe_worker_batch,
+    observe_worker_failure,
     start_worker_metrics_server,
 )
 from app.observability.tracing import configure_tracing
@@ -49,22 +50,52 @@ async def run_worker(
     engine = create_database_engine(settings)
     session_factory = create_session_factory(engine)
     try:
+        consecutive_failures = 0
         while True:
             started_at = perf_counter()
-            tracer = trace.get_tracer("app.telegram.worker")
-            with tracer.start_as_current_span(
-                "telegram notification batch",
-                kind=SpanKind.CONSUMER,
-                attributes={"worker.name": "telegram_notifier"},
-                record_exception=False,
-                set_status_on_exception=False,
-            ):
-                with session_factory.begin() as session:
-                    result = await process_telegram_notifications(
-                        session,
-                        bot_token=settings.telegram_bot_token,
-                        limit=limit,
-                    )
+            try:
+                tracer = trace.get_tracer("app.telegram.worker")
+                with tracer.start_as_current_span(
+                    "telegram notification batch",
+                    kind=SpanKind.CONSUMER,
+                    attributes={"worker.name": "telegram_notifier"},
+                    record_exception=False,
+                    set_status_on_exception=False,
+                ):
+                    with session_factory.begin() as session:
+                        result = await process_telegram_notifications(
+                            session,
+                            bot_token=settings.telegram_bot_token,
+                            limit=limit,
+                            max_attempts=settings.event_consumer_max_attempts,
+                            retry_base_seconds=settings.event_retry_base_seconds,
+                            retry_cap_seconds=settings.event_retry_cap_seconds,
+                            timeout_seconds=settings.external_http_timeout_seconds,
+                            retry_after_cap_seconds=settings.retry_after_cap_seconds,
+                            circuit_failure_threshold=(
+                                settings.circuit_failure_threshold
+                            ),
+                            circuit_open_seconds=settings.circuit_open_seconds,
+                        )
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:
+                observe_worker_failure("telegram_notifier")
+                logger.error(
+                    "telegram_notification_batch_failed",
+                    extra={"worker_failure": type(error).__name__},
+                )
+                if once:
+                    raise
+                consecutive_failures += 1
+                delay = min(
+                    60.0,
+                    settings.worker_failure_backoff_seconds
+                    * (2 ** min(consecutive_failures - 1, 5)),
+                )
+                await asyncio.sleep(delay)
+                continue
+            consecutive_failures = 0
             observe_worker_batch(
                 "telegram_notifier",
                 started_at=started_at,
@@ -72,6 +103,7 @@ async def run_worker(
                     "succeeded": result.succeeded,
                     "failed": result.failed,
                     "skipped": result.skipped,
+                    "dead_lettered": result.dead_lettered,
                 },
             )
             logger.log(
@@ -82,6 +114,7 @@ async def run_worker(
                     "notification_succeeded": result.succeeded,
                     "notification_failed": result.failed,
                     "notification_skipped": result.skipped,
+                    "notification_dead_lettered": result.dead_lettered,
                 },
             )
             if once:

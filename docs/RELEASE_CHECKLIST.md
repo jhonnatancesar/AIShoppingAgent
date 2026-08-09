@@ -12,12 +12,12 @@ TASK-054 (preparar release), que ainda está pendente.
 
 Atualizar este documento sempre que uma TASK relevante para produção for
 concluída ou revisada. Snapshot gerado em **2026-08-08**, logo após a
-conclusão da TASK-048.
+conclusão da TASK-049.
 
 ## Resumo executivo
 
-**Não está pronto para produção.** 56 das 62 tarefas planejadas estão
-concluídas, mas as 6 pendentes cobrem áreas que separam
+**Não está pronto para produção.** 57 das 62 tarefas planejadas estão
+concluídas, mas as 5 pendentes cobrem áreas que separam
 "funciona quando eu valido manualmente" de "está seguro para um usuário
 real depender disso": privacidade, resiliência, documentação,
 integração/release e — mais importante — não existe hoje nenhum
@@ -56,9 +56,10 @@ Além dos critérios formais do MVP:
 - **Observabilidade disponível** (TASK-045): logs JSON, métricas Prometheus,
   traces Collector/Jaeger, health/readiness e regras de estado existem; ainda
   não há Alertmanager, que não pertenceu ao escopo aprovado.
-- **Sem limites nem resiliência** (TASK-049): sem rate limiting, retries
-  padronizados ou circuit breakers além do que cada integração implementa
-  isoladamente.
+- **Limites e resiliência aplicados** (TASK-049): corpo HTTP limitado, replay e
+  rate limit persistentes, timeouts, retry somente seguro, circuit breakers por
+  integração e dead letter append-only. Os circuitos continuam locais por
+  processo, limitação deliberada da V1.
 - **Notificador sem produtor automático**: a TASK-036 entrega eventos reais já
   publicados, mas hoje nenhum fluxo contínuo de coleta cria esses eventos sem
   preparação manual.
@@ -80,11 +81,11 @@ Além dos critérios formais do MVP:
 | Compra e eventos | TASK-038 a TASK-041, TASK-043 a TASK-045 | 7/7 | — |
 | Catálogo de eventos | TASK-042 | 1/1 | — |
 | Segurança — canal, autorização e autenticação real | TASK-046, TASK-047, TASK-061 | 3/3 | — |
-| Segurança e entrega — continuação | TASK-048 a TASK-054 | 1/7 | TASK-049 a TASK-054 |
+| Segurança e entrega — continuação | TASK-048 a TASK-054 | 2/7 | TASK-050 a TASK-054 |
 | Store Providers e identidade | TASK-055, TASK-056 | 2/2 | — |
 | Robustez, confirmação e IA (V1.2 antecipado) | TASK-057 a TASK-060 | 4/4 | — |
 
-**Total: 56 concluídas, 6 pendentes.**
+**Total: 57 concluídas, 5 pendentes.**
 
 ## Recomendação
 
@@ -93,5 +94,5 @@ seguro. Colocar um usuário real dependendo do sistema hoje não é — os
 maiores riscos são a ausência de coleta automática (a missão nunca
 "funciona sozinha") e os controles restantes de segurança/release. A
 ordem mais natural para fechar essas lacunas segue o próprio
-`docs/ROADMAP.md`: TASK-049 e demais tarefas de
+`docs/ROADMAP.md`: TASK-050 e demais tarefas de
 Segurança e entrega até a TASK-054.

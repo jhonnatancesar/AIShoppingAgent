@@ -77,4 +77,5 @@ def test_metadata_contains_only_implemented_tables() -> None:
         "user_credentials",
         "user_auth_sessions",
         "credential_action_tokens",
+        "telegram_update_receipts",
     }

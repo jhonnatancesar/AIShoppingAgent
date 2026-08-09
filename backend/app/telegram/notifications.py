@@ -1,7 +1,9 @@
 """Consumidor de alertas de preço com entrega proativa pelo Telegram."""
 
 import logging
+import random
 from dataclasses import dataclass
+from datetime import timedelta
 from decimal import Decimal, InvalidOperation
 
 from pydantic import SecretStr
@@ -13,10 +15,17 @@ from app.events import (
     Event,
     EventType,
     claim_unconsumed_events,
+    count_failed_attempts,
     record_consumption_attempt,
 )
 from app.missions.models import Mission
-from app.telegram.bot_api import TelegramBotAPIError, send_message
+from app.observability.metrics import observe_resilience_event
+from app.telegram.bot_api import (
+    TelegramBotAPIError,
+    TelegramDeliveryAmbiguous,
+    TelegramDeliveryError,
+    send_message,
+)
 from app.telegram.contracts import TelegramChatType, TelegramMessage
 from app.telegram.preferences import notification_is_enabled
 from app.users.models import User
@@ -33,8 +42,9 @@ _NOTIFICATION_EVENT_TYPES = (
 class TelegramNotificationError(ValueError):
     """Indica uma falha conhecida e sanitizada ao preparar a notificação."""
 
-    def __init__(self, failure_code: str) -> None:
+    def __init__(self, failure_code: str, *, permanent: bool = True) -> None:
         self.failure_code = failure_code
+        self.permanent = permanent
         super().__init__(failure_code)
 
 
@@ -48,6 +58,7 @@ class TelegramNotificationBatch:
     succeeded: int
     failed: int
     skipped: int
+    dead_lettered: int = 0
 
 
 def remember_private_notification_chat(user: User, message: TelegramMessage) -> bool:
@@ -65,6 +76,13 @@ async def process_telegram_notifications(
     *,
     bot_token: SecretStr,
     limit: int = 50,
+    max_attempts: int = 5,
+    retry_base_seconds: float = 60.0,
+    retry_cap_seconds: float = 900.0,
+    timeout_seconds: float = 10.0,
+    retry_after_cap_seconds: float = 30.0,
+    circuit_failure_threshold: int = 5,
+    circuit_open_seconds: float = 30.0,
 ) -> TelegramNotificationBatch:
     """Entrega um lote mantendo locks e tentativas na transação do chamador."""
     events = claim_unconsumed_events(
@@ -72,36 +90,87 @@ async def process_telegram_notifications(
         consumer_name=TELEGRAM_NOTIFICATION_CONSUMER,
         limit=limit,
         event_types=_NOTIFICATION_EVENT_TYPES,
+        max_attempts=max_attempts,
     )
     succeeded = 0
     failed = 0
     skipped = 0
+    dead_lettered = 0
     for event in events:
         failure_code: str | None = None
         outcome = ConsumptionOutcome.SUCCEEDED
+        retry_after: float | None = None
+        permanent = False
         try:
             recipient, text = _prepare_notification(session, event)
-            await send_message(recipient, text, bot_token=bot_token)
+            await send_message(
+                recipient,
+                text,
+                bot_token=bot_token,
+                timeout_seconds=timeout_seconds,
+                retry_after_cap_seconds=retry_after_cap_seconds,
+                circuit_failure_threshold=circuit_failure_threshold,
+                circuit_open_seconds=circuit_open_seconds,
+            )
         except TelegramNotificationSkipped:
             outcome = ConsumptionOutcome.SKIPPED
         except TelegramNotificationError as error:
             failure_code = error.failure_code
-            outcome = ConsumptionOutcome.FAILED
-        except ConnectionError, TelegramBotAPIError:
-            failure_code = "telegram_delivery_failed"
-            outcome = ConsumptionOutcome.FAILED
+            permanent = error.permanent
+        except TelegramDeliveryAmbiguous as error:
+            failure_code = error.code
+            permanent = True
+        except TelegramBotAPIError as error:
+            failure_code = error.code
+            permanent = not error.transient
+            retry_after = error.retry_after_seconds
+        except TelegramDeliveryError as error:
+            failure_code = error.code
+            permanent = not error.transient
+        except ConnectionError:
+            failure_code = "telegram_api_unavailable"
+            permanent = False
+
+        attempted_at = utc_now()
+        next_retry_at = None
+        if failure_code is not None:
+            failures = count_failed_attempts(
+                session,
+                event_id=event.id,
+                consumer_name=TELEGRAM_NOTIFICATION_CONSUMER,
+            )
+            if permanent or failures + 1 >= max_attempts:
+                outcome = ConsumptionOutcome.DEAD_LETTERED
+                observe_resilience_event("telegram", "dead_lettered")
+            else:
+                outcome = ConsumptionOutcome.FAILED
+                observe_resilience_event("telegram", "retry")
+                delay = _retry_delay(
+                    failures + 1,
+                    base_seconds=retry_base_seconds,
+                    cap_seconds=retry_cap_seconds,
+                    retry_after=retry_after,
+                )
+                next_retry_at = attempted_at + timedelta(seconds=delay)
         record_consumption_attempt(
             session,
             event=event,
             consumer_name=TELEGRAM_NOTIFICATION_CONSUMER,
             outcome=outcome,
-            attempted_at=utc_now(),
+            attempted_at=attempted_at,
             failure_code=failure_code,
+            next_retry_at=next_retry_at,
         )
         if outcome is ConsumptionOutcome.SUCCEEDED:
             succeeded += 1
         elif outcome is ConsumptionOutcome.SKIPPED:
             skipped += 1
+        elif outcome is ConsumptionOutcome.DEAD_LETTERED:
+            dead_lettered += 1
+            logger.warning(
+                "telegram_notification_dead_lettered",
+                extra={"notification_failure_code": failure_code},
+            )
         else:
             failed += 1
             logger.warning(
@@ -111,7 +180,9 @@ async def process_telegram_notifications(
                     "notification_failure_code": failure_code,
                 },
             )
-    return TelegramNotificationBatch(len(events), succeeded, failed, skipped)
+    return TelegramNotificationBatch(
+        len(events), succeeded, failed, skipped, dead_lettered
+    )
 
 
 def _prepare_notification(session: Session, event: Event) -> tuple[int, str]:
@@ -126,9 +197,13 @@ def _prepare_notification(session: Session, event: Event) -> tuple[int, str]:
     if not notification_is_enabled(user, event.event_type):
         raise TelegramNotificationSkipped
     if user.telegram_chat_id is None:
-        raise TelegramNotificationError("notification_recipient_missing")
+        raise TelegramNotificationError(
+            "notification_recipient_missing", permanent=False
+        )
     if not user.is_active:
-        raise TelegramNotificationError("notification_recipient_inactive")
+        raise TelegramNotificationError(
+            "notification_recipient_inactive", permanent=False
+        )
     return user.telegram_chat_id, _render_alert(event, mission.title)
 
 
@@ -191,3 +266,18 @@ def _format_money(amount: Decimal, currency: str) -> str:
     formatted = f"{amount:,.2f}".replace(",", "_").replace(".", ",").replace("_", ".")
     prefix = "R$" if currency == "BRL" else currency
     return f"{prefix} {formatted}"
+
+
+def _retry_delay(
+    attempt: int,
+    *,
+    base_seconds: float,
+    cap_seconds: float,
+    retry_after: float | None,
+) -> float:
+    if base_seconds <= 0 or cap_seconds <= 0:
+        raise ValueError("retry delays must be positive")
+    if retry_after is not None:
+        return max(0.001, min(retry_after, cap_seconds))
+    ceiling = min(cap_seconds, base_seconds * (2 ** max(0, attempt - 1)))
+    return max(0.001, random.uniform(ceiling / 2, ceiling))

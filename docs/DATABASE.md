@@ -37,6 +37,7 @@ erDiagram
     purchase_confirmations ||--o{ purchase_trail_entries : records
     missions ||--o{ events : relates
     events ||--o{ event_consumption_attempts : attempted_by
+    users ||--o{ telegram_update_receipts : receives
     stores ||--o{ collection_runs : serves
     users o|--o{ audit_entries : acts
 ```
@@ -358,16 +359,35 @@ Histórico imutável dos resultados de consumo por consumidor.
 | `id` | `uuid` | Chave primária. |
 | `event_id` | `uuid` | FK obrigatória para `events.id`, com `RESTRICT`. |
 | `consumer_name` | `varchar(64)` | Obrigatório e não vazio. |
-| `outcome` | `consumption_outcome` | Enum `succeeded`, `failed` ou `skipped`. |
-| `failure_code` | `varchar(120)` | Nulo em `succeeded`/`skipped`; obrigatório e em snake_case na falha. |
+| `outcome` | `consumption_outcome` | Enum `succeeded`, `failed`, `skipped` ou `dead_lettered`. |
+| `failure_code` | `varchar(120)` | Nulo em `succeeded`/`skipped`; obrigatório e em snake_case na falha/dead letter. |
 | `attempted_at` | `timestamptz` | Obrigatório e informado pelo consumidor. |
+| `next_retry_at` | `timestamptz` | Obrigatório somente em `failed` e posterior à tentativa. |
 
 A TASK-044 implementou a tabela pela revisão `20260808_0004`; a TASK-037
 adicionou o resultado terminal `skipped` pela revisão `20260808_0006`. Um trigger
 rejeita `UPDATE`/`DELETE`; falhas permanecem como evidência e não impedem novo
-consumo. A elegibilidade exclui eventos com resultado terminal (`succeeded` ou
-`skipped`) do mesmo `consumer_name`. O contrato transacional está em
+consumo. A TASK-049 (`20260808_0009`) adicionou retry agendado e
+`dead_lettered`, com unicidade parcial para no máximo um terminal por
+consumidor/evento. A elegibilidade exclui `succeeded`, `skipped` e
+`dead_lettered`; `failed` só volta depois de `next_retry_at`. O contrato está em
 `docs/EVENT_CONSUMPTION.md`.
+
+### `telegram_update_receipts`
+
+Fatos mínimos e append-only usados para replay e rate limit do webhook.
+
+| Coluna | Tipo | Regra |
+| --- | --- | --- |
+| `id` | `uuid` | Chave primária. |
+| `update_id` | `bigint` | Obrigatório e único globalmente. |
+| `user_id` | `uuid` | FK obrigatória para `users.id`, com `RESTRICT`. |
+| `disposition` | `varchar(24)` | `accepted`, `rate_limited` ou `discarded`. |
+| `recorded_at` | `timestamptz` | Gerado pelo PostgreSQL. |
+
+A revisão `20260808_0009` criou a tabela e um trigger que rejeita `UPDATE` e
+`DELETE`. Não existe estado `processing`; recibo aceito e efeitos funcionais
+fazem parte da mesma transação.
 
 ### `audit_entries`
 
@@ -401,7 +421,11 @@ em `docs/AUDIT.md`.
 - `price_observations (offer_id, observed_at desc, id)` para histórico de uma oferta.
 - `price_observations (collection_run_id)` para rastrear os resultados de uma coleta.
 - `events (aggregate_type, aggregate_id, occurred_at, id)` e `events (mission_id, occurred_at, id)`.
-- `event_consumption_attempts (consumer_name, event_id)` parcial para tentativas terminais (`succeeded` ou `skipped`).
+- `event_consumption_attempts (consumer_name, event_id)` único parcial para
+  terminais (`succeeded`, `skipped`, `dead_lettered`) e índice de retry por
+  `next_retry_at`.
+- `telegram_update_receipts (update_id)` único e
+  `(user_id, recorded_at)` parcial para a janela de updates aceitos.
 - `audit_entries (resource_type, resource_id, created_at, id)` e `audit_entries (actor_id, created_at)` quando `actor_id` não for nulo.
 - `user_auth_sessions (user_id, telegram_user_id, expires_at)` parcial para
   sessões ainda não revogadas.
@@ -421,6 +445,7 @@ em `docs/AUDIT.md`.
   aleatórios e `user_auth_sessions` guarda estado temporal/revogação.
 - Migrações, metadata ORM, sessões e conexão foram configuradas na TASK-011.
   Todas as entidades previstas até `collection_runs` e `price_observations` já
-  foram implementadas, além de `events` (TASK-043) e
-  `event_consumption_attempts` (TASK-044). As consultas históricas da TASK-017 são somente leitura e
+  foram implementadas, além de `events` (TASK-043),
+  `event_consumption_attempts` (TASK-044/TASK-049) e
+  `telegram_update_receipts` (TASK-049). As consultas históricas da TASK-017 são somente leitura e
   estão documentadas em `docs/PRICE_HISTORY.md`.

@@ -43,9 +43,20 @@ supergrupos e canais nunca são persistidos como destino automático.
 
 O processo `app.telegram.worker` consome `price.decreased.v1` e
 `price.target_reached.v1` pelo contrato at-least-once da TASK-044. Cada envio
-gera uma tentativa append-only; falhas de destino, payload ou Bot API podem ser
-tentadas novamente. Detalhes operacionais estão em
+gera uma tentativa append-only. Depois da TASK-049, somente falhas transitórias
+inequívocas podem ser tentadas novamente; timeout ambíguo não provoca reenvio
+cego. Erros permanentes e tentativas esgotadas geram `dead_lettered`. Detalhes
+operacionais estão em
 `docs/EVENT_CONSUMPTION.md`.
+
+## Replay e rate limit (TASK-049)
+
+Depois de autenticar transporte e identidade, o webhook persiste um recibo
+terminal por `update_id`. Recibo aceito e efeito funcional fazem commit juntos;
+rollback remove ambos. Replay retorna `204` sem repetir efeito, IA, cota ou
+resposta. Cada usuário aceita 20 updates por minuto; excesso persiste
+`rate_limited`, retorna `204` e não executa domínio/IA. Recusas de política
+autenticadas usam `discarded`.
 
 ## Comandos dedicados
 

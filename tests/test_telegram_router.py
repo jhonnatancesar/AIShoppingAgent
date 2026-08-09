@@ -14,6 +14,8 @@ from app.missions.query import MissionReferenceError
 from app.missions.service import MissionCreationError, MissionTransitionConditionError
 from app.telegram.confirmation import ConfirmationError
 from app.telegram.contracts import TelegramChatType, TelegramMessage
+from app.telegram.limits import TelegramUpdateReservation
+from app.telegram.models import TelegramUpdateDisposition
 from app.telegram.router import (
     TelegramUpdate,
     _TelegramChat,
@@ -22,6 +24,16 @@ from app.telegram.router import (
     receive_telegram_webhook,
 )
 from app.users.models import UserRole
+
+
+@pytest.fixture(autouse=True)
+def _reserve_update_without_database(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "app.telegram.router.reserve_telegram_update",
+        lambda *args, **kwargs: TelegramUpdateReservation(
+            TelegramUpdateDisposition.ACCEPTED
+        ),
+    )
 
 
 class _FakeAdapter:
@@ -133,7 +145,9 @@ def _patch_user(
 def _patch_send_message(monkeypatch: pytest.MonkeyPatch) -> list[tuple[int, str]]:
     send_calls: list[tuple[int, str]] = []
 
-    async def _fake_send_message(chat_id: int, text: str, *, bot_token: object) -> None:
+    async def _fake_send_message(
+        chat_id: int, text: str, *, bot_token: object, **kwargs: object
+    ) -> None:
         send_calls.append((chat_id, text))
 
     monkeypatch.setattr("app.telegram.router.send_message", _fake_send_message)

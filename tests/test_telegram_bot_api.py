@@ -6,7 +6,12 @@ from unittest.mock import patch
 from urllib.error import HTTPError, URLError
 
 import pytest
-from app.telegram.bot_api import TelegramBotAPIError, call_bot_api, send_message
+from app.telegram.bot_api import (
+    TelegramBotAPIError,
+    TelegramDeliveryAmbiguous,
+    call_bot_api,
+    send_message,
+)
 from pydantic import SecretStr
 
 
@@ -70,12 +75,12 @@ def test_call_bot_api_returns_decoded_error_body_on_http_error() -> None:
     assert result == {"ok": False, "error_code": 401}
 
 
-def test_call_bot_api_raises_connection_error_on_unreachable_network() -> None:
+def test_call_bot_api_treats_unknown_network_failure_as_ambiguous() -> None:
     def _fake_urlopen(request: object, timeout: int = 10) -> None:
         raise URLError("network down")
 
     with patch("app.telegram.bot_api.urlopen", _fake_urlopen):
-        with pytest.raises(ConnectionError, match="unreachable"):
+        with pytest.raises(TelegramDeliveryAmbiguous):
             call_bot_api("sendMessage", bot_token=SecretStr("secret-token"))
 
 
@@ -100,9 +105,27 @@ async def test_send_message_raises_sanitized_error_when_api_rejects() -> None:
 
     with (
         patch("app.telegram.bot_api.urlopen", _fake_urlopen),
-        pytest.raises(TelegramBotAPIError, match="403") as captured,
+        pytest.raises(TelegramBotAPIError) as captured,
     ):
         await send_message(123, "oi", bot_token=SecretStr("secret-token"))
 
     assert captured.value.error_code == 403
     assert "secret-token" not in str(captured.value)
+
+
+@pytest.mark.anyio
+async def test_ambiguous_send_timeout_is_not_retried_blindly() -> None:
+    calls = 0
+
+    def _timeout(request: object, timeout: int = 10) -> None:
+        nonlocal calls
+        calls += 1
+        raise TimeoutError
+
+    with (
+        patch("app.telegram.bot_api.urlopen", _timeout),
+        pytest.raises(TelegramDeliveryAmbiguous),
+    ):
+        await send_message(123, "oi", bot_token=SecretStr("secret-token"))
+
+    assert calls == 1

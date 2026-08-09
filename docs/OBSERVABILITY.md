@@ -24,7 +24,8 @@ Server.
 ## Privacidade e cardinalidade
 
 Métricas aceitam apenas método fechado, rota normalizada, classe de status,
-worker e outcome fechado. `event_type`, caso usado, passa pela allowlist atual;
+worker, outcome e os catálogos fechados `component`/`event` de resiliência.
+`event_type`, caso usado, passa pela allowlist atual;
 valores desconhecidos viram `other`. IDs, URL, texto livre e mensagens de
 exceção nunca viram labels.
 
@@ -37,7 +38,8 @@ string completa.
 ## Regras Prometheus
 
 `observability/alert-rules.yml` detecta indisponibilidade da API/worker, taxa
-de erros HTTP, latência e falhas do worker. Sem Alertmanager ou receiver, essas
+de erros HTTP, latência, falhas do worker, dead letters e circuitos abertos.
+Sem Alertmanager ou receiver, essas
 regras somente ficam `inactive`, `pending` ou `firing`; elas não enviam e-mail,
 Telegram, Slack ou qualquer notificação externa.
 

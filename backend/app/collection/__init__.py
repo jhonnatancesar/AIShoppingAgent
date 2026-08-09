@@ -14,6 +14,7 @@ from app.collection.errors import (
     CollectionNormalizationError,
     DuplicateProviderError,
     ProviderBlockedError,
+    ProviderCircuitOpenError,
     ProviderNavigationError,
     UnsupportedSourceError,
 )
@@ -54,6 +55,7 @@ __all__ = [
     "PriceHistoryQueryError",
     "DuplicateProviderError",
     "ProviderBlockedError",
+    "ProviderCircuitOpenError",
     "ProviderNavigationError",
     "RawCollectedOffer",
     "AmazonProvider",

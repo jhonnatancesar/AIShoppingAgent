@@ -7,7 +7,12 @@ adaptadores. O contrato assíncrono do AI Provider Manager é a fronteira
 transversal obrigatória para qualquer chamada de IA; adaptadores, seleção de
 modelos e fallback permanecem nas tarefas de implementação dos perfis.
 
-A implementação atual contém o monólito FastAPI, módulos persistentes de catálogo, auditoria e missões e uma fronteira assíncrona de coleta. `app.collection` despacha pedidos por fonte, transporta resultados brutos e oferece uma sessão Playwright/Chromium isolada; não contém providers concretos, normalização ou persistência, responsabilidades adicionadas somente pelas tarefas correspondentes.
+A implementação atual contém o monólito FastAPI, módulos persistentes de
+catálogo, auditoria e missões e uma fronteira assíncrona de coleta.
+`app.collection` despacha pedidos por fonte, transporta resultados brutos e
+oferece uma sessão Playwright/Chromium isolada. Pichau, Terabyte, Amazon e
+Kabum possuem providers concretos; normalização e persistência permanecem em
+módulos separados.
 
 As interfaces HTTP seguem `docs/API_CONVENTIONS.md`. Endpoints de negócio serão versionados sob `/api/v1`; endpoints operacionais permanecem fora desse prefixo.
 
@@ -38,6 +43,13 @@ A TASK-048 retira secrets do ambiente dos contêineres. Produção usa somente
 conflito com valor direto falha fechado. API e worker executam como usuário
 non-root. O contrato e os limites operacionais estão em `docs/SECRETS.md` e
 `adr/ADR-011-secrets-por-arquivo.md`.
+
+A TASK-049 adiciona fatos persistentes mínimos para replay/rate limit e retry
+de eventos, mantendo `events` imutável. Timeouts, retries de leituras seguras e
+circuit breakers por integração ficam locais a cada processo; nenhuma operação
+potencialmente não idempotente recebe retry cego. O desenho não acrescenta
+Redis, broker ou outro serviço (`docs/RESILIENCE.md`,
+`adr/ADR-012-limites-e-resiliencia-local.md`).
 
 As TASKs 038 a 041 adicionaram `app.purchase` como módulo determinístico. Ele
 consulta missões, fontes, coletas e histórico já persistidos, produz recomendação

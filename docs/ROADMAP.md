@@ -22,7 +22,7 @@
 | Segurança e entrega — continuação | TASK-048 a TASK-054 | Segredos, resiliência, privacidade, documentação, testes e lançamento |
 | Expansão de fontes (futuro) | Tarefas a definir | Mercado Livre, Shopee, AliExpress e outras fontes futuras |
 
-As TASKs 000 a 048 e as TASKs 055 a 061 estão
+As TASKs 000 a 049 e as TASKs 055 a 061 estão
 concluídas. O preflight
 da TASK-036 revelou dependências reais não satisfeitas (pipeline de eventos
 persistidos/publicados e `chat_id` do Telegram, nenhum dos dois existente
@@ -50,7 +50,10 @@ herança `USER ⊂ ADMIN ⊂ DEV` e ownership obrigatório. A TASK-061
 (`DEC-035`) acrescentou Argon2id, tokens de 10 minutos, sessões absolutas de
 12 horas e recuperação pelo Telegram vinculado. A TASK-048 (`DEC-036`) moveu
 os secrets para arquivos por serviço, adicionou Gitleaks reproduzível e validou
-rotação manual do PostgreSQL. A próxima tarefa executável é a TASK-049. A
+rotação manual do PostgreSQL. A TASK-049 (`DEC-037`) adicionou limite HTTP,
+replay/rate limit persistentes, retry apenas seguro, circuit breakers locais
+por integração e dead letter append-only. A próxima tarefa executável é a
+TASK-050. A
 TASK-057 (`DEC-017`): validação real contra o
 `USER`/Gemini cobre 3 dos 4 `IntentKind`, e o usuário aceitou explicitamente
 encerrar nesse estado, adiando mais variedade de linguagem para a V2

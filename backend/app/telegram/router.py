@@ -56,12 +56,13 @@ from app.missions.service import (
     create_mission_from_criteria,
     transition_mission,
 )
+from app.observability.metrics import observe_resilience_event
 from app.telegram.adapter import TelegramIntentAdapter
 from app.telegram.authentication import (
     authenticate_telegram_user,
     webhook_secret_matches,
 )
-from app.telegram.bot_api import send_message
+from app.telegram.bot_api import TelegramDeliveryError, send_message
 from app.telegram.confirmation import (
     ConfirmationError,
     describe_create_mission,
@@ -75,6 +76,8 @@ from app.telegram.contracts import (
     TelegramContractError,
     TelegramMessage,
 )
+from app.telegram.limits import reserve_telegram_update
+from app.telegram.models import TelegramUpdateDisposition
 from app.telegram.notifications import remember_private_notification_chat
 from app.telegram.preferences import PREFERENCES_COMMAND, handle_preferences_command
 from app.users.models import User, UserRole
@@ -149,7 +152,7 @@ class TelegramUpdate(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
-    update_id: int
+    update_id: int = Field(ge=0)
     message: _TelegramIncomingMessage | None = None
 
 
@@ -229,7 +232,35 @@ async def receive_telegram_webhook(
         try:
             authorize(session, user, Permission.TELEGRAM_INTERACT)
         except AuthorizationDenied as error:
+            reservation = reserve_telegram_update(
+                session,
+                update_id=update.update_id,
+                user_id=user.id,
+                accepted_per_minute=settings.telegram_rate_limit_per_minute,
+                forced_disposition=TelegramUpdateDisposition.DISCARDED,
+            )
+            if reservation.replay:
+                observe_resilience_event("webhook", "replay")
+                return Response(status_code=status.HTTP_204_NO_CONTENT)
             _log_authorization_denial(error, user)
+            return Response(status_code=status.HTTP_204_NO_CONTENT)
+        reservation = reserve_telegram_update(
+            session,
+            update_id=update.update_id,
+            user_id=user.id,
+            accepted_per_minute=settings.telegram_rate_limit_per_minute,
+        )
+        if reservation.replay:
+            observe_resilience_event("webhook", "replay")
+            return Response(status_code=status.HTTP_204_NO_CONTENT)
+        if reservation.disposition is TelegramUpdateDisposition.RATE_LIMITED:
+            observe_resilience_event("webhook", "rate_limited")
+            if reservation.warn_rate_limit and settings.telegram_bot_token is not None:
+                await _send_reply_safely(
+                    message.chat_id,
+                    "Muitas mensagens em pouco tempo. Aguarde um minuto e tente novamente.",
+                    settings=settings,
+                )
             return Response(status_code=status.HTTP_204_NO_CONTENT)
         try:
             reply = await _handle_message(
@@ -244,10 +275,35 @@ async def receive_telegram_webhook(
             return Response(status_code=status.HTTP_204_NO_CONTENT)
         remember_private_notification_chat(user, message)
         if reply is not None and settings.telegram_bot_token is not None:
-            await send_message(
-                message.chat_id, reply, bot_token=settings.telegram_bot_token
+            await _send_reply_safely(
+                message.chat_id,
+                reply,
+                settings=settings,
             )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+async def _send_reply_safely(chat_id: int, text: str, *, settings: Settings) -> None:
+    """Não desfaz efeitos já aceitos por uma entrega externa ambígua/falha."""
+    assert settings.telegram_bot_token is not None
+    try:
+        await send_message(
+            chat_id,
+            text,
+            bot_token=settings.telegram_bot_token,
+            timeout_seconds=settings.external_http_timeout_seconds,
+            retry_after_cap_seconds=settings.retry_after_cap_seconds,
+            circuit_failure_threshold=settings.circuit_failure_threshold,
+            circuit_open_seconds=settings.circuit_open_seconds,
+        )
+    except TelegramDeliveryError as error:
+        logger.warning(
+            "telegram_reply_delivery_failed",
+            extra={
+                "telegram_delivery_code": error.code,
+                "telegram_delivery_ambiguous": error.ambiguous,
+            },
+        )
 
 
 async def _handle_message(

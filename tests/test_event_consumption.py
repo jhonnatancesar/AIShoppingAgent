@@ -16,7 +16,7 @@ from app.events import (
     claim_unconsumed_events,
     record_consumption_attempt,
 )
-from sqlalchemy import CheckConstraint, ForeignKeyConstraint, Index
+from sqlalchemy import CheckConstraint, ForeignKeyConstraint
 
 NOW = datetime(2026, 8, 8, 18, 0, tzinfo=UTC)
 
@@ -42,6 +42,7 @@ def test_consumption_attempt_table_matches_contract() -> None:
         "outcome",
         "failure_code",
         "attempted_at",
+        "next_retry_at",
     ]
     assert table.c.outcome.type.name == "consumption_outcome"
     assert table.c.attempted_at.type.timezone is True
@@ -61,14 +62,14 @@ def test_consumption_attempt_table_matches_contract() -> None:
     element = tuple(foreign_key.elements)[0]
     assert element.target_fullname == "events.id"
     assert element.ondelete == "RESTRICT"
-    index = next(index for index in table.indexes if isinstance(index, Index))
-    assert index.name == "ix_event_consumption_attempts_terminal"
+    index = next(index for index in table.indexes if index.unique)
+    assert index.name == "ux_event_consumption_attempts_terminal"
     assert tuple(column.name for column in index.columns) == (
         "consumer_name",
         "event_id",
     )
     assert str(index.dialect_options["postgresql"]["where"]) == (
-        "outcome IN ('succeeded', 'skipped')"
+        "outcome IN ('succeeded', 'skipped', 'dead_lettered')"
     )
 
 
@@ -94,6 +95,13 @@ def test_claim_returns_deterministic_locked_events() -> None:
     rendered = str(statement)
     assert "event_consumption_attempts" in rendered
     assert "NOT (EXISTS" in rendered
+    terminal_values = next(
+        value
+        for value in statement.compile().params.values()
+        if isinstance(value, list)
+    )
+    assert ConsumptionOutcome.DEAD_LETTERED in terminal_values
+    assert "next_retry_at" in rendered
     assert "ORDER BY events.recorded_at, events.id" in rendered
     assert statement._for_update_arg.skip_locked is True
     assert statement._for_update_arg.of == [Event.__table__]
@@ -210,6 +218,11 @@ def test_record_adds_and_flushes_append_only_attempt(
     session = MagicMock()
     event = _event()
 
+    next_retry_at = (
+        datetime(2026, 8, 8, 18, 1, tzinfo=UTC)
+        if outcome is ConsumptionOutcome.FAILED
+        else None
+    )
     attempt = record_consumption_attempt(
         session,
         event=event,
@@ -217,6 +230,7 @@ def test_record_adds_and_flushes_append_only_attempt(
         outcome=outcome,
         attempted_at=NOW,
         failure_code=failure_code,
+        next_retry_at=next_retry_at,
     )
 
     assert attempt.event_id == event.id
@@ -224,5 +238,6 @@ def test_record_adds_and_flushes_append_only_attempt(
     assert attempt.outcome is outcome
     assert attempt.failure_code == failure_code
     assert attempt.attempted_at == NOW
+    assert attempt.next_retry_at == next_retry_at
     session.add.assert_called_once_with(attempt)
     session.flush.assert_called_once_with()

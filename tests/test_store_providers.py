@@ -10,9 +10,12 @@ from app.collection import (
     KabumProvider,
     PichauProvider,
     ProviderBlockedError,
+    ProviderNavigationError,
     TerabyteProvider,
 )
 from app.collection.providers.base import PlaywrightStoreProvider
+from app.core.resilience import RetryPolicy
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 from scripts.validate_store_providers import should_use_headed
 
 NOW = datetime(2026, 8, 2, 12, tzinfo=UTC)
@@ -127,3 +130,52 @@ def test_provider_rejects_silent_empty_collection(monkeypatch) -> None:
 
     with pytest.raises(ProviderBlockedError):
         asyncio.run(EmptyProvider(clock=lambda: NOW).collect(request))
+
+
+def test_provider_retries_safe_navigation_timeout_only(monkeypatch) -> None:
+    calls = 0
+
+    class Page:
+        async def goto(self, *args, **kwargs):
+            nonlocal calls
+            calls += 1
+            raise PlaywrightTimeoutError("timeout")
+
+    class Session:
+        def __init__(self, settings):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def new_page(self):
+            return Page()
+
+    class TimeoutProvider(PlaywrightStoreProvider):
+        source_code = "timeout"
+        result_selector = ".offer"
+
+        def build_url(self, query):
+            return "https://example.test/search"
+
+        async def extract(self, page, collected_at):
+            raise AssertionError("navigation failure must happen before extraction")
+
+    monkeypatch.setattr("app.collection.providers.base.BrowserSession", Session)
+    request = CollectionRequest(uuid4(), "timeout", "GPU", NOW)
+    provider = TimeoutProvider(
+        clock=lambda: NOW,
+        retry_policy=RetryPolicy(
+            max_attempts=3,
+            base_delay_seconds=0.001,
+            max_delay_seconds=0.001,
+        ),
+    )
+
+    with pytest.raises(ProviderNavigationError):
+        asyncio.run(provider.collect(request))
+
+    assert calls == 3

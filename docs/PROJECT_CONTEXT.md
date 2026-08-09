@@ -65,13 +65,15 @@ A TASK-044 (`DEC-023`) está **concluída**: a revisão `20260808_0004` criou
 `event_consumption_attempts`, histórico append-only de sucessos e falhas por
 consumidor. `claim_unconsumed_events` usa ordem determinística e
 `FOR UPDATE SKIP LOCKED`; `record_consumption_attempt` registra o desfecho sem
-controlar o commit do chamador. O contrato é at-least-once, permite retry
-ilimitado após falha e considera o sucesso somente para aquele consumidor.
+controlar o commit do chamador. O contrato é at-least-once e considera o
+resultado somente para aquele consumidor.
 Concorrência, retry, independência de consumidores, imutabilidade e reversão
 da migração foram validados em PostgreSQL real descartável. Não há worker,
-backoff, dead-letter queue, exactly-once ou integração Telegram.
+backoff, dead-letter queue, exactly-once ou integração Telegram em seu escopo
+original.
 Posteriormente, a TASK-037 acrescentou `skipped` como segundo resultado
-terminal, preservando `failed` como o único resultado elegível para retry.
+terminal. A TASK-049 limitou retries, acrescentou `next_retry_at` e
+`dead_lettered` sem abandonar o histórico append-only.
 
 A TASK-036 (`DEC-024`) está **concluída**: a revisão `20260808_0005`
 adicionou `User.telegram_chat_id`, atualizado somente por mensagens privadas da
@@ -174,6 +176,18 @@ inspect, imagem, filesystem, logs, métricas e Jaeger, e uma rotação PostgreSQ
 real rejeitou a senha antiga após recriar consumidores. A próxima tarefa
 executável é a TASK-049. O pipeline terminou com 573 testes e 92,53% de
 cobertura.
+
+A TASK-049 (`DEC-037`) está **concluída**: corpos HTTP são limitados a 64 KiB;
+o webhook persiste recibos append-only e únicos por `update_id`, com cota de 20
+updates autenticados/minuto por usuário e atomicidade entre recibo aceito e
+efeitos. Operações externas têm timeout; somente leituras seguras recebem retry
+com jitter, enquanto `sendMessage` ambíguo nunca é repetido cegamente.
+Circuit breakers locais são independentes por Telegram, provider/modelo de IA
+e Store Provider. A revisão `20260808_0009` acrescenta `next_retry_at`,
+`dead_lettered` terminal e `telegram_update_receipts`, todos validados em
+PostgreSQL 18 real com concorrência, restart e migration reversível. API,
+worker, Prometheus, Jaeger, Telegram e as quatro lojas foram validados em
+Docker isolado; a próxima tarefa executável é a TASK-050.
 
 A TASK-058 (`DEC-015`) está **concluída**: `create_mission` e
 `mission_command` não executam mais direto — ficam encenados em
@@ -315,6 +329,9 @@ reais observadas em produção.
   sanitizadas e worker contínuo no Docker Compose (TASK-036).
 - Preferências independentes de notificações de queda e preço-alvo pelo comando
   `/preferencias`; supressões ficam terminalmente `skipped` (TASK-037).
+- Limite HTTP, replay/rate limit persistentes do Telegram, retry seguro,
+  circuit breakers locais por integração e retry/dead letter append-only de
+  eventos (TASK-049).
 - Recomendação determinística e somente leitura por missão ativa
   (`app.purchase`, TASK-038), com menor custo total determinável na moeda do
   critério, evidências históricas identificáveis e vendedor opcional.
@@ -335,7 +352,8 @@ Além de `users`, `products`, `stores`, `sellers`, `offers`, `audit_entries`,
 `mission_schedules`, `collection_runs`, `price_observations`, `events`,
 `event_consumption_attempts`, `purchase_confirmations`,
 `purchase_trail_entries`, `user_credentials`, `user_auth_sessions` e
-`credential_action_tokens`, não há outras tabelas implementadas. Não existem
+`credential_action_tokens` e `telegram_update_receipts`, não há outras tabelas
+implementadas. Não existem
 OAuth, MFA, refresh token, recuperação por e-mail ou outro canal,
 teclado interativo de seleção de fontes, mudança real de plano/perfil pelo próprio usuário (o
 `/upgrade` da TASK-060 é só um placeholder inativo), APIs de negócio,
@@ -382,14 +400,18 @@ persistente significa somente consentimento registrado.
   reforçado por trigger no banco (mesmo padrão de `mission_transitions` e
   `audit_entries`). `recorded_at` é gerado exclusivamente pelo PostgreSQL,
   nunca pela aplicação.
-- Tentativas de consumo são append-only e at-least-once por consumidor: falha
-  mantém o evento elegível; sucesso ou descarte por preferência o encerram só para o mesmo
-  `consumer_name`; reivindicação, processamento e registro devem compartilhar
-  a transação controlada pelo chamador (TASK-044).
+- Tentativas de consumo são append-only e at-least-once por consumidor:
+  `failed` só volta após `next_retry_at` e abaixo do limite; `succeeded`,
+  `skipped` e `dead_lettered` são terminais para o mesmo `consumer_name`;
+  reivindicação, processamento e registro compartilham a transação controlada
+  pelo chamador (TASK-044/TASK-049).
 - O destino Telegram é sempre o chat privado correspondente à pessoa; chats de
   grupo, supergrupo e canal nunca são persistidos automaticamente. Entregas de
   alerta são at-least-once e podem se repetir se a API aceitar a mensagem antes
   de um rollback do banco (TASK-036).
+- Update autenticado do Telegram possui no máximo um recibo terminal. Recibo
+  `accepted` e efeitos fazem commit ou rollback juntos; replay e rate limit
+  retornam `204` sem repetir domínio, IA ou consumir cota (TASK-049).
 - Preferências de queda e preço-alvo começam ativadas; `skipped` é terminal e
   sem código de falha, portanto opt-out não gera retry nem backlog retroativo
   (TASK-037).
