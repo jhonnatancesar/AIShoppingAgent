@@ -1,5 +1,6 @@
 """Providers independentes das quatro lojas selecionáveis na V1."""
 
+import re
 from datetime import datetime
 from urllib.parse import quote, quote_plus
 
@@ -7,6 +8,11 @@ from playwright.async_api import Page
 
 from app.collection.contracts import RawCollectedOffer
 from app.collection.providers.base import PlaywrightStoreProvider
+
+_NEGATIVE_STOCK_TEXT = re.compile(r"esgotad[oa]|indispon[ií]vel|sem\s+estoque", re.I)
+_BUY_BUTTON_TEXT = (
+    "button:has-text('Comprar'), button:has-text('Adicionar ao carrinho')"
+)
 
 
 class PichauProvider(PlaywrightStoreProvider):
@@ -19,9 +25,17 @@ class PichauProvider(PlaywrightStoreProvider):
         self, page: Page, collected_at: datetime
     ) -> tuple[RawCollectedOffer, ...]:
         rows = await page.locator(self.result_selector).evaluate_all(
-            """cards => cards.map(card => ({url: card.href, title: card.querySelector('h2')?.textContent, price: card.querySelector('[class*="price_vista"]')?.textContent, external_id: new URL(card.href).pathname.split('/').filter(Boolean).pop(), availability: /indisponível/i.test(card.innerText) ? 'Indisponível' : null, evidence: card.innerText}))"""
+            """cards => cards.map(card => { const text = card.innerText || ''; const unavailable = !!card.querySelector('[class*="out_of_stock"]') || /esgotado|indispon[ií]vel|sem estoque/i.test(text); const available = !unavailable && !!card.querySelector('[class*="availability_span_available"]'); return {url: card.href, title: card.querySelector('h2')?.textContent, price: card.querySelector('[class*="price_vista"]')?.textContent, external_id: new URL(card.href).pathname.split('/').filter(Boolean).pop(), availability: unavailable ? 'Esgotado' : available ? 'Disponível' : null, evidence: text}; })"""
         )
         return self.offers_from_rows(rows, collected_at)
+
+    async def resolve_product_availability(self, page: Page) -> str | None:
+        text = await page.locator("body").inner_text()
+        if _NEGATIVE_STOCK_TEXT.search(text):
+            return "Esgotado"
+        if await page.locator(_BUY_BUTTON_TEXT).count():
+            return "Disponível"
+        return None
 
 
 class TerabyteProvider(PlaywrightStoreProvider):
@@ -34,9 +48,17 @@ class TerabyteProvider(PlaywrightStoreProvider):
         self, page: Page, collected_at: datetime
     ) -> tuple[RawCollectedOffer, ...]:
         rows = await page.locator(self.result_selector).evaluate_all(
-            """links => links.map(link => { const card = link.closest('.product-item') || link.parentElement?.parentElement; const match = new URL(link.href).pathname.match(/\\/produto\\/(\\d+)/); return {url: link.href, title: link.textContent || link.title, price: card?.querySelector('.product-item__new-price span')?.textContent, external_id: match?.[1], availability: /indisponível/i.test(card?.innerText || '') ? 'Indisponível' : null, evidence: card?.innerText}; })"""
+            """links => links.map(link => { const card = link.closest('.product-item') || link.parentElement?.parentElement; const match = new URL(link.href).pathname.match(/\\/produto\\/(\\d+)/); const estoque = card?.getAttribute('data-tss-estoque'); const text = card?.innerText || ''; const unavailable = estoque === '0' || /esgotado|indispon[ií]vel/i.test(text); const available = !unavailable && estoque === '1'; return {url: link.href, title: link.textContent || link.title, price: card?.querySelector('.product-item__new-price span')?.textContent, external_id: match?.[1], availability: unavailable ? 'Esgotado' : available ? 'Disponível' : null, evidence: text}; })"""
         )
         return self.offers_from_rows(rows, collected_at)
+
+    async def resolve_product_availability(self, page: Page) -> str | None:
+        text = await page.locator("body").inner_text()
+        if _NEGATIVE_STOCK_TEXT.search(text):
+            return "Esgotado"
+        if await page.locator(f"{_BUY_BUTTON_TEXT}, button.tbt_cart").count():
+            return "Disponível"
+        return None
 
 
 class AmazonProvider(PlaywrightStoreProvider):
@@ -69,7 +91,7 @@ class KabumProvider(PlaywrightStoreProvider):
         self, page: Page, collected_at: datetime
     ) -> tuple[RawCollectedOffer, ...]:
         rows = await page.locator(self.result_selector).evaluate_all(
-            """links => links.map(link => { const text = link.innerText || ''; const match = new URL(link.href).pathname.match(/\\/produto\\/(\\d+)/); const title = link.querySelector('span.line-clamp-2')?.textContent; const current = [...link.querySelectorAll('span.text-base.font-semibold')].map(x => x.textContent.trim()).join(' '); return {url: link.href, title, price: current || text.match(/R\\$\\s?[\\d.]+,\\d{2}/)?.[0], external_id: match?.[1], seller: text.match(/Vendido por\\s+([^\\n]+)/i)?.[1], shipping: /frete grátis/i.test(text) ? 'Frete grátis' : null, availability: /indisponível/i.test(text) ? 'Indisponível' : null, evidence: text}; })"""
+            """links => links.map(link => { const text = link.innerText || ''; const match = new URL(link.href).pathname.match(/\\/produto\\/(\\d+)/); const title = link.querySelector('span.line-clamp-2')?.textContent; const current = [...link.querySelectorAll('span.text-base.font-semibold')].map(x => x.textContent.trim()).join(' '); const inStock = /restam\\s+\\d+\\s+unid/i.test(text); return {url: link.href, title, price: current || text.match(/R\\$\\s?[\\d.]+,\\d{2}/)?.[0], external_id: match?.[1], seller: text.match(/Vendido por\\s+([^\\n]+)/i)?.[1], shipping: /frete grátis/i.test(text) ? 'Frete grátis' : null, availability: inStock ? 'Disponível' : /indisponível/i.test(text) ? 'Indisponível' : null, evidence: text}; })"""
         )
         unique, seen = [], set()
         for row in rows:
@@ -78,3 +100,14 @@ class KabumProvider(PlaywrightStoreProvider):
                 seen.add(external_id)
                 unique.append(row)
         return self.offers_from_rows(unique, collected_at)
+
+    async def resolve_product_availability(self, page: Page) -> str | None:
+        text = await page.locator("body").inner_text()
+        if _NEGATIVE_STOCK_TEXT.search(text):
+            return "Esgotado"
+        if (
+            re.search(r"restam\s+\d+\s+unid", text, re.I)
+            or await page.locator(_BUY_BUTTON_TEXT).count()
+        ):
+            return "Disponível"
+        return None

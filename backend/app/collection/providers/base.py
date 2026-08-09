@@ -1,7 +1,10 @@
 """Base compartilhada pelos coletores Playwright da V1."""
 
+import re
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import UTC, datetime
+from decimal import Decimal
 from typing import Any
 
 from playwright.async_api import Error as PlaywrightError
@@ -15,10 +18,12 @@ from app.collection.contracts import (
     RawCollectedOffer,
 )
 from app.collection.errors import (
+    CollectionNormalizationError,
     ProviderBlockedError,
     ProviderCircuitOpenError,
     ProviderNavigationError,
 )
+from app.collection.normalization import PriceNormalizer
 from app.core.resilience import (
     CIRCUITS,
     CircuitOpenError,
@@ -29,6 +34,7 @@ from app.core.resilience import (
 from app.observability.metrics import observe_resilience_event
 
 Clock = Callable[[], datetime]
+_HAS_DIGIT = re.compile(r"\d")
 
 
 class PlaywrightStoreProvider:
@@ -44,13 +50,21 @@ class PlaywrightStoreProvider:
         retry_policy: RetryPolicy | None = None,
         circuit_failure_threshold: int = 5,
         circuit_open_seconds: float = 30.0,
+        availability_fallback_max_candidates: int = 3,
     ) -> None:
         if max_offers <= 0:
             raise ValueError("max_offers must be positive")
+        if availability_fallback_max_candidates < 0:
+            raise ValueError(
+                "availability_fallback_max_candidates must not be negative"
+            )
         self.settings = settings or BrowserSettings()
         self.max_offers = max_offers
         self._clock = clock or (lambda: datetime.now(UTC))
         self._retry_policy = retry_policy or RetryPolicy()
+        self._availability_fallback_max_candidates = (
+            availability_fallback_max_candidates
+        )
         self._circuit = CIRCUITS.get(
             f"store:{self.source_code}:search",
             failure_threshold=circuit_failure_threshold,
@@ -64,6 +78,16 @@ class PlaywrightStoreProvider:
         self, page: Page, collected_at: datetime
     ) -> tuple[RawCollectedOffer, ...]:
         raise NotImplementedError
+
+    async def resolve_product_availability(self, page: Page) -> str | None:
+        """Evidência de disponibilidade na página individual (fallback).
+
+        `page` já está navegada na URL do produto. Retorna o texto canônico
+        de disponibilidade (ex.: "Disponível"/"Esgotado") ou `None` quando a
+        evidência continua ambígua. Providers sem fallback de página
+        individual (ex.: Amazon, ainda não revisitada) mantêm o padrão.
+        """
+        return None
 
     async def collect(self, request: CollectionRequest) -> CollectionResult:
         if request.source_code != self.source_code:
@@ -122,7 +146,65 @@ class PlaywrightStoreProvider:
             offers = await self.extract(page, self._clock())
             if not offers:
                 raise ProviderBlockedError(self.source_code, response.status)
+            offers = await self._resolve_unknown_availability(page, offers)
         return CollectionResult(self.source_code, started_at, self._clock(), offers)
+
+    async def _resolve_unknown_availability(
+        self, page: Page, offers: tuple[RawCollectedOffer, ...]
+    ) -> tuple[RawCollectedOffer, ...]:
+        """Fallback seletivo: só abre página individual dos UNKNOWN mais baratos.
+
+        AVAILABLE/UNAVAILABLE já resolvidos no card nunca chegam aqui
+        (`raw_availability` já preenchido). Candidatos sem preço válido não
+        entram no ranking; falha ao abrir um candidato nunca derruba os
+        seguintes nem o resultado já obtido no card.
+        """
+        if self._availability_fallback_max_candidates == 0:
+            return offers
+        if (
+            type(self).resolve_product_availability
+            is PlaywrightStoreProvider.resolve_product_availability
+        ):
+            # Provider sem fallback de página individual implementado
+            # (ex.: Amazon, ainda não revisitada): nenhuma navegação extra.
+            return offers
+        candidates = self._rank_unknown_candidates(offers)
+        candidates = candidates[: self._availability_fallback_max_candidates]
+        if not candidates:
+            return offers
+        resolved: dict[str, str] = {}
+        for offer in candidates:
+            try:
+                await page.goto(offer.url, wait_until="domcontentloaded")
+                evidence = await self.resolve_product_availability(page)
+            except Exception:
+                evidence = None
+            if evidence:
+                resolved[offer.url] = evidence
+        if not resolved:
+            return offers
+        return tuple(
+            replace(offer, raw_availability=resolved[offer.url])
+            if offer.url in resolved
+            else offer
+            for offer in offers
+        )
+
+    def _rank_unknown_candidates(
+        self, offers: tuple[RawCollectedOffer, ...]
+    ) -> list[RawCollectedOffer]:
+        normalizer = PriceNormalizer()
+        scored: list[tuple[Decimal, RawCollectedOffer]] = []
+        for offer in offers:
+            if offer.raw_availability is not None:
+                continue
+            try:
+                amount = normalizer.normalize_offer(offer).amount
+            except CollectionNormalizationError:
+                continue
+            scored.append((amount, offer))
+        scored.sort(key=lambda pair: pair[0])
+        return [offer for _, offer in scored]
 
     def offers_from_rows(
         self, rows: list[dict[str, Any]], collected_at: datetime
@@ -136,6 +218,15 @@ class PlaywrightStoreProvider:
             if not title or not url:
                 continue
             price = _optional(row.get("price"))
+            if price is None or not _HAS_DIGIT.search(price):
+                # Sem preço numérico no card (ausente, ou texto como
+                # "Indisponível" no lugar do valor) o produto não vira
+                # RawCollectedOffer: normalizar preço inválido derrubaria o
+                # lote inteiro da fonte, não só esta oferta, e a V1 nunca
+                # fabrica preço. Sem preço determinável, não é candidato
+                # desta execução (mesmo princípio da Kabum: ausência de
+                # oferta normal na busca não é candidato).
+                continue
             offers.append(
                 RawCollectedOffer(
                     source_code=self.source_code,

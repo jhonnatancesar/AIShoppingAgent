@@ -69,6 +69,7 @@ class Settings(BaseSettings):
     retry_after_cap_seconds: float = Field(default=30.0, gt=0, le=300)
     circuit_failure_threshold: int = Field(default=5, ge=1, le=20)
     circuit_open_seconds: float = Field(default=30.0, gt=0, le=300)
+    availability_fallback_max_candidates: int = Field(default=3, ge=0, le=10)
     event_consumer_max_attempts: int = Field(default=5, ge=1, le=20)
     event_retry_base_seconds: float = Field(default=60.0, gt=0, le=3600)
     event_retry_cap_seconds: float = Field(default=900.0, gt=0, le=86400)

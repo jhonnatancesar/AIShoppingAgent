@@ -56,6 +56,9 @@ def build_collection_adapter(settings: Settings) -> CollectionAdapter:
             retry_policy=retry_policy,
             circuit_failure_threshold=settings.circuit_failure_threshold,
             circuit_open_seconds=settings.circuit_open_seconds,
+            availability_fallback_max_candidates=(
+                settings.availability_fallback_max_candidates
+            ),
         )
         for provider_type in V1_PROVIDER_TYPES
     )
