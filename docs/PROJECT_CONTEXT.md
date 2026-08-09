@@ -223,9 +223,18 @@ clona um banco limpo por teste. Oito integrações reais cobrem schema/seeds,
 missão até consumo concorrente, compra, autenticação, autorização, resiliência
 e privacidade. Execução completa repetida, teste individual, falha controlada e
 guard fora do runner foram aprovados sem deixar containers ou volumes. A
-próxima tarefa executável é a TASK-053; E2E externo continua exclusivamente na
-TASK-053. O pipeline terminou com 607 testes rápidos, 90,61% de cobertura e 8
+próxima tarefa seria inicialmente a TASK-053; E2E externo continua
+exclusivamente nela. O pipeline terminou com 607 testes rápidos, 90,61% de cobertura e 8
 integrações PostgreSQL reais.
+
+O preflight da TASK-053, em 2026-08-09, comprovou uma lacuna funcional já
+apontada pelo checklist: missões Telegram são ativadas sem agenda automática e
+nenhum processo consome `mission_schedules` para chamar providers, persistir
+observações, avaliar alertas e publicar eventos. A TASK-062 (`DEC-041`) foi
+criada como requisito do MVP, não como expansão opcional, e deve ser executada
+antes da TASK-053. Seu plano reutiliza `FOR UPDATE SKIP LOCKED`,
+`CollectionRun`, providers, normalizador, avaliador, event log e notifier; a
+implementação permanece aguardando aprovação explícita.
 
 A TASK-058 (`DEC-015`) está **concluída**: `create_mission` e
 `mission_command` não executam mais direto — ficam encenados em
@@ -381,7 +390,7 @@ reais observadas em produção.
   TASK-041), vinculada ao proprietário e à observação original, com
   revalidação material, recuperação e idempotência concorrente.
 - Documentos de visão, arquitetura, dados, módulos-alvo, escopo do MVP, backlog, itens fora de escopo, governança de decisões e workflow permanente de execução.
-- ADRs, RFCs e 62 tarefas planejadas.
+- ADRs, RFCs e 63 tarefas planejadas.
 
 ## O que não existe
 

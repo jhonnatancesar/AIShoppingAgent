@@ -36,7 +36,25 @@ Após a classificação, registrar a decisão neste arquivo e atualizar a docume
   com recursos exclusivos por execução e banco clonado por teste, oferece
   isolamento determinístico. Guards de ambiente/banco, loopback e cleanup exato
   fazem a suíte falhar fechado sem usar prune ou infraestrutura real.
-- **Próxima ação:** TASK-052 concluída; executar a TASK-053 para E2E externo.
+- **Próxima ação:** TASK-052 concluída; o preflight da TASK-053 originou a
+  correção de ordem registrada posteriormente na DEC-041.
+
+### DEC-041 — Orquestrar coletas antes dos testes E2E
+
+- **Data:** 2026-08-09
+- **Ideia:** criar a TASK-062 para ligar automaticamente agendas vencidas,
+  fontes selecionadas, Store Providers, persistência de observações, avaliação
+  e publicação no event log antes de executar a TASK-053.
+- **Classificação:** Nova TASK do MVP.
+- **Justificativa:** o código possui todos esses componentes isolados, mas
+  `create_mission_from_criteria` não cria agenda e nenhum processo consome
+  `mission_schedules`. Um E2E que chamasse os componentes manualmente provaria
+  apenas o test harness, não o funcionamento real da V1. A nova TASK fecha um
+  requisito já existente nos critérios 3 e 4 do MVP sem adicionar produto,
+  loja, IA ou infraestrutura distribuída.
+- **Próxima ação:** aprovar e executar a especificação detalhada em
+  `docs/tasks/TASK-062.md`; depois retomar a TASK-053. Não iniciar nenhuma das
+  duas automaticamente.
 
 ### DEC-039 — Operar de forma privada com recuperação manual comprovada
 

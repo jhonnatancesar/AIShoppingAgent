@@ -19,7 +19,9 @@
 | Compra e eventos | TASK-038 a TASK-041 e TASK-043 a TASK-045 | Fluxos de compra, publicação, consumo e monitoramento |
 | Segurança — canal e autorização | TASK-046 e TASK-047 | Autenticação mínima do Telegram e autorização por papel |
 | Autenticação real por usuário e senha | TASK-061 | Executada depois da TASK-047: hashing seguro, verificação e recuperação de conta (`DEC-019`, `DEC-033`) |
-| Segurança e entrega — continuação | TASK-048 a TASK-054 | Segredos, resiliência, privacidade, documentação, testes e lançamento |
+| Segurança e entrega — preparação | TASK-048 a TASK-052 | Segredos, resiliência, privacidade, documentação e integração |
+| Orquestração automática das coletas | TASK-062 | Liga agendas, fontes, providers, histórico, avaliação e event log antes dos E2E (`DEC-041`) |
+| Testes E2E e lançamento | TASK-053 e TASK-054 | Validação ponta a ponta do fluxo real e preparação da release |
 | Expansão de fontes (futuro) | Tarefas a definir | Mercado Livre, Shopee, AliExpress e outras fontes futuras |
 
 As TASKs 000 a 052 e as TASKs 055 a 061 estão
@@ -58,8 +60,10 @@ fail-closed preservando UUID/históricos. A TASK-051 (`DEC-039`) consolidou o
 runbook do Ubuntu Server, tornou as portas administrativas privadas por padrão
 e validou backup/restauração manual sem alegar disaster recovery. A TASK-052
 (`DEC-040`) criou a suíte permanente e fail-closed em PostgreSQL 18.4
-descartável, agora obrigatória no pipeline. A próxima tarefa executável é a
-TASK-053. A
+descartável, agora obrigatória no pipeline. O preflight da TASK-053 confirmou
+que não existe processo ligando agendas, providers, observações e eventos; a
+TASK-062 foi criada como requisito funcional do MVP (`DEC-041`) e passa a ser a
+próxima executável. Depois de sua conclusão, a TASK-053 volta ao fluxo. A
 TASK-057 (`DEC-017`): validação real contra o
 `USER`/Gemini cobre 3 dos 4 `IntentKind`, e o usuário aceitou explicitamente
 encerrar nesse estado, adiando mais variedade de linguagem para a V2

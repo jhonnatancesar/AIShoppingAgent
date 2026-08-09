@@ -16,4 +16,5 @@ fecha privacidade técnica com retenções limitadas e desidentificação fail-c
 (`DEC-038`). A TASK-051 consolida o runbook operacional, binds privados e
 backup/restauração manual validada (`DEC-039`). A TASK-052 mantém a suíte
 PostgreSQL real, isolada e obrigatória do pipeline (`DEC-040`). A próxima tarefa
-executável é a TASK-053.
+executável é a TASK-062, criada para fechar a lacuna entre agenda, providers,
+histórico e event log (`DEC-041`). Depois dela, a TASK-053 volta ao fluxo.

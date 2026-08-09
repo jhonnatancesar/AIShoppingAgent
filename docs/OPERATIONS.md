@@ -11,7 +11,7 @@ Antes de disponibilizar a instância a usuários, considere estes bloqueios:
 
 - não existe scheduler/orquestrador que execute automaticamente as coletas das
   missões; os Store Providers funcionam isoladamente, mas uma missão ativa não
-  pesquisa preços sozinha;
+  pesquisa preços sozinha; a correção foi registrada na TASK-062 antes dos E2E;
 - há suíte permanente de integração PostgreSQL da TASK-052, mas a suíte E2E
   externa da TASK-053 ainda não existe;
 - não há release final da TASK-054, CI/CD ou deploy automático;

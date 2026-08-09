@@ -33,3 +33,8 @@ retroativa de execuções, evitando tempestade de coletas após indisponibilidad
 A frequência é um intervalo fixo; cron, calendário complexo e regras por fuso
 local não pertencem ao MVP atual. A TASK-022 não cria processo em segundo plano,
 `collection_runs`, Store Providers, API, eventos ou notificações.
+
+A TASK-062 foi planejada em 2026-08-09 para consumir esta agenda com claim
+transacional curto, sem manter o row lock durante Playwright/HTTP. Essa
+orquestração ainda não está implementada e depende de aprovação do plano em
+`docs/tasks/TASK-062.md`.

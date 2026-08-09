@@ -2,6 +2,10 @@
 
 Status: Pendente
 
+Dependência obrigatória: TASK-062 concluída. O E2E deve exercitar o fluxo real
+da aplicação e não montar manualmente a sequência agenda → coleta → persistência
+→ evento.
+
 ## Objetivo
 
 Planejar e executar, quando solicitada, a etapa “Criar testes ponta a ponta”.

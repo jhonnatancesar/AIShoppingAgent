@@ -126,4 +126,6 @@ mantém endpoints administrativos privados e valida backup/restauração manual
 sem confundir recuperação básica com disaster recovery (`DEC-039`). A TASK-052
 mantém testes de integração reais, isolados e fail-closed em PostgreSQL 18.4,
 obrigatórios no pipeline completo (`DEC-040`). A próxima tarefa executável é a
-TASK-053.
+TASK-062, que deve orquestrar automaticamente agenda, Store Providers,
+persistência, avaliação e publicação de eventos (`DEC-041`). A TASK-053 depende
+de sua conclusão e não deve ser iniciada automaticamente.

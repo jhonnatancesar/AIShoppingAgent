@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-08-09 — Planejamento da TASK-062: orquestração automática de coletas
+
+- O preflight da TASK-053 confirmou que missões ativas não criam agenda nem são
+  consumidas por qualquer worker de coleta.
+- A TASK-062 foi classificada como nova TASK obrigatória do MVP e inserida antes
+  da TASK-053, sem iniciar implementação funcional.
+- O plano audita e reutiliza scheduler, Store Providers, normalização,
+  persistência, alertas, event log, notifier, resiliência e observabilidade já
+  existentes.
+- Concorrência foi desenhada com claim PostgreSQL curto, runs duráveis e nenhum
+  lock durante Playwright/HTTP; migration fica limitada a unicidades necessárias
+  para runs e observações.
+- TASK-053 permanece pendente e deverá exercitar a cadeia real entregue pela
+  TASK-062, nunca montar os componentes manualmente.
+
 ## 2026-08-08 — TASK-052: suíte permanente de integração PostgreSQL
 
 - Criado runner multiplataforma fail-closed com PostgreSQL 18.4 fixado por

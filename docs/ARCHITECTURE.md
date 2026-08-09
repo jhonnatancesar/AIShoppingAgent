@@ -59,6 +59,12 @@ básica, sem promessa de disaster recovery. Rollback de código exige
 compatibilidade com o schema atual e nunca autoriza downgrade destrutivo
 automático (`adr/ADR-014-operacao-privada-e-recuperacao-manual.md`).
 
+O preflight da TASK-053 registrou a TASK-062 para fechar a lacuna entre
+`mission_schedules`, Store Providers, persistência, avaliação e event log. O
+plano mantém o monólito e propõe um processo `collection_worker` da mesma
+imagem, sem broker, scheduler externo ou chamada direta ao Telegram. A
+implementação ainda não foi iniciada.
+
 As TASKs 038 a 041 adicionaram `app.purchase` como módulo determinístico. Ele
 consulta missões, fontes, coletas e histórico já persistidos, produz recomendação
 e comparação e cria uma confirmação vinculada à evidência apresentada. Não usa
