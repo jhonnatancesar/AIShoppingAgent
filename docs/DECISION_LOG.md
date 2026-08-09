@@ -25,6 +25,22 @@ Após a classificação, registrar a decisão neste arquivo e atualizar a docume
 - **Justificativa:** impacto avaliado e motivo da classificação.
 - **Próxima ação:** documento a atualizar, TASK a criar quando aplicável, ou ação de não implementação.
 
+### DEC-039 — Operar de forma privada com recuperação manual comprovada
+
+- **Data:** 2026-08-08
+- **Ideia:** consolidar o runbook do Ubuntu Server, tornar binds administrativos
+  privados por padrão e validar backup/restauração sem prometer disaster
+  recovery ou rollback universal.
+- **Classificação:** Implementar agora.
+- **Justificativa:** documentação operacional precisa reproduzir início,
+  diagnóstico e recuperação básica sem expor PostgreSQL/telemetria. Backup só
+  tem valor depois de restauração comprovada, enquanto versões anteriores da
+  aplicação podem ser incompatíveis com o schema atual. Loopback por padrão,
+  restauração em banco limpo e bloqueio de downgrade automático reduzem perda e
+  exposição sem criar infraestrutura de V2.
+- **Próxima ação:** concluir a TASK-051; manter scheduler, testes permanentes,
+  release, domínio/TLS e disaster recovery completo fora desta tarefa.
+
 ### DEC-038 — Desidentificar sem reescrever históricos
 
 - **Data:** 2026-08-08

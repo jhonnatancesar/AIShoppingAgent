@@ -201,8 +201,19 @@ perfil, autenticação, preferências, intenção e textos mutáveis. UUID e fat
 append-only permanecem pseudônimos; PII detectada em histórico imutável aborta
 toda a operação antes de mutação. PostgreSQL e Docker reais, canário de
 telemetria e Bot API validaram o fluxo sem alterar o proprietário. A próxima
-tarefa executável é a TASK-051. O pipeline terminou com 601 testes e 90,61% de
-cobertura.
+tarefa executada foi a TASK-051. O pipeline terminou com 601 testes e 90,61%
+de cobertura.
+
+A TASK-051 (`DEC-039`) está **concluída**: `docs/OPERATIONS.md` consolida a
+preparação e operação manual de um único Ubuntu Server headless, sem declarar
+produção pronta. API, PostgreSQL, Prometheus, Jaeger e Collector ficam no
+loopback por padrão; métricas do worker permanecem internas. Backup PostgreSQL
+manual é distinto de disaster recovery e só é considerado validado depois de
+restauração em banco limpo. Rollback de código exige compatibilidade com o
+schema; downgrade destrutivo nunca é automático. PostgreSQL 18 e o stack real
+isolado confirmaram migrations, endpoints, restart, backup `0600`, restauração,
+contagem e dado sintético. A próxima tarefa executável é a TASK-052. O pipeline
+terminou com 602 testes e 90,61% de cobertura.
 
 A TASK-058 (`DEC-015`) está **concluída**: `create_mission` e
 `mission_command` não executam mais direto — ficam encenados em

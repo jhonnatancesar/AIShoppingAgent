@@ -51,6 +51,14 @@ potencialmente não idempotente recebe retry cego. O desenho não acrescenta
 Redis, broker ou outro serviço (`docs/RESILIENCE.md`,
 `adr/ADR-012-limites-e-resiliencia-local.md`).
 
+A TASK-051 consolida a operação de um único Ubuntu Server em
+`docs/OPERATIONS.md`. Portas da API, PostgreSQL e observabilidade bindam no
+loopback por padrão; o tráfego entre serviços continua na rede interna do
+Compose. Backup manual e restauração validada fornecem recuperação operacional
+básica, sem promessa de disaster recovery. Rollback de código exige
+compatibilidade com o schema atual e nunca autoriza downgrade destrutivo
+automático (`adr/ADR-014-operacao-privada-e-recuperacao-manual.md`).
+
 As TASKs 038 a 041 adicionaram `app.purchase` como módulo determinístico. Ele
 consulta missões, fontes, coletas e histórico já persistidos, produz recomendação
 e comparação e cria uma confirmação vinculada à evidência apresentada. Não usa

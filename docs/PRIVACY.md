@@ -52,6 +52,11 @@ A aplicação não mantém tabela própria de logs. Logs anteriores à implanta�
 desses limites deixam de existir conforme a rotação do Docker; a TASK-050 não
 apaga silenciosamente arquivos operacionais do host.
 
+Backups PostgreSQL também contêm dados potencialmente pessoais. O procedimento
+manual da TASK-051 exige diretório privado, arquivo `0600` e restauração de
+prova em banco limpo; retenção, criptografia e cópia externa continuam sob
+responsabilidade do operador. Consulte `docs/OPERATIONS.md`.
+
 ## Retenção de autenticação
 
 - action tokens expirados, consumidos ou invalidados ficam elegíveis para

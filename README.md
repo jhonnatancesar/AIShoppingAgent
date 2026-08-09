@@ -10,7 +10,7 @@ O desenvolvimento usa a versão estável mais recente do Python disponível. A v
 > nem crie exceções automaticamente. Consulte o histórico e as medidas adotadas no
 > [log de incidentes de segurança](docs/SECURITY_INCIDENT_LOG.md).
 
-Consulte `AGENTS.md` antes de executar tarefas e `docs/ROADMAP.md` para a sequência planejada.
+Consulte `AGENTS.md` antes de executar tarefas e `docs/ROADMAP.md` para a sequência planejada. O procedimento de instalação e manutenção em Ubuntu Server está em [`docs/OPERATIONS.md`](docs/OPERATIONS.md).
 
 ## Ambiente local com Docker Compose
 
@@ -39,6 +39,10 @@ A API ficará disponível em `http://localhost:8000`, o PostgreSQL em
 `http://localhost:16686`. O serviço `telegram_notifier` consumirá continuamente
 os alertas de preço. Para encerrar os contêineres sem apagar o volume do banco,
 execute `docker compose down`.
+
+Essas portas usam `127.0.0.1` por padrão. PostgreSQL, Prometheus, Jaeger,
+Collector e métricas do worker nunca devem ser abertos diretamente para a
+Internet; consulte o runbook antes de alterar qualquer bind ou firewall.
 
 No Telegram, `/preferencias` consulta as notificações. Use
 `/preferencias quedas ativar|desativar` e

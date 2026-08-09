@@ -14,6 +14,11 @@ Este documento é a referência de ambiente para qualquer nova máquina. Antes d
 
 PostgreSQL não exige instalação direta na máquina: o ambiente local usa a imagem oficial `postgres:18-alpine` por meio do Docker Compose.
 
+No Ubuntu Server, o procedimento operacional usa Docker Engine e o plugin
+Compose instalados pelos canais oficiais. As portas administrativas ficam no
+loopback e o runbook completo, incluindo backup/restauração manual, está em
+`docs/OPERATIONS.md`.
+
 Na instalação oficial por usuário do Docker Desktop no Windows, o CLI pode
 ficar em
 `%LOCALAPPDATA%\Programs\DockerDesktop\resources\bin`. Esse diretório precisa

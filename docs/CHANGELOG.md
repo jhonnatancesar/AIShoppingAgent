@@ -1,5 +1,23 @@
 # Changelog
 
+## 2026-08-08 — TASK-051: runbook operacional e recuperação básica
+
+- Criado `docs/OPERATIONS.md` para preparar e operar um único Ubuntu Server,
+  incluindo secrets, migrations, Telegram, health/readiness, observabilidade,
+  manutenção e diagnóstico.
+- API, PostgreSQL, Prometheus e Jaeger agora bindam em `127.0.0.1` por padrão;
+  ferramentas administrativas não são orientadas à exposição pública.
+- Backup manual foi separado de disaster recovery completo e rollback de
+  código foi separado de downgrade de schema destrutivo.
+- PostgreSQL 18 real confirmou backup `0600`, restauração em banco limpo,
+  migration `20260808_0009`, contagem e dado sintético; o stack isolado também
+  validou endpoints e restart.
+- Cloudflared ficou explicitamente restrito a desenvolvimento/validação;
+  domínio, TLS, reverse proxy e HTTPS permanente continuam pendências da
+  implantação real.
+- Pipeline aprovado em Python 3.14.6 com 602 testes, 90,61% de cobertura,
+  Ruff, Alembic, Gitleaks e Docker Compose.
+
 ## 2026-08-08 — TASK-050: privacidade técnica e desidentificação
 
 - Criado inventário de dados, finalidades, terceiros, retenções e limitações em

@@ -16,8 +16,12 @@
 | `/ready` | Executa `SELECT 1` no PostgreSQL com timeout curto; retorna 503 em falha e permanece rastreável. |
 | `/metrics` | Métricas Prometheus; fora do OpenAPI e do tracing. |
 
-No Compose, Prometheus fica em `:9090`, Jaeger em `:16686` e o health endpoint
-do Collector é publicado somente em `127.0.0.1:13133`. As imagens são
+No Compose, Prometheus fica em `127.0.0.1:9090`, Jaeger em
+`127.0.0.1:16686` e o health endpoint do Collector fica em
+`127.0.0.1:13133`. As métricas do worker permanecem somente na rede interna.
+Essas ferramentas não devem ser expostas diretamente à Internet; acesso remoto
+usa túnel SSH ou canal administrativo equivalente conforme
+`docs/OPERATIONS.md`. As imagens são
 versionadas em `compose.yaml` e compatíveis com execução headless no Ubuntu
 Server.
 
