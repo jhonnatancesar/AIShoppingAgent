@@ -6,21 +6,21 @@ Este é um **retrato do estado real do repositório**, não um plano. Ele
 cruza os 8 critérios objetivos de conclusão do MVP (`docs/MVP.md`) e o
 inventário completo das 63 tarefas planejadas (`docs/tasks/`) com o que
 está de fato implementado hoje. `docs/MVP.md` já prevê "checklist de
-release" como parte do critério 8 — este arquivo é esse checklist,
-mantido como snapshot vivo enquanto o MVP avança, não o artefato final da
-TASK-054 (preparar release), que ainda está pendente.
+release" como parte do critério 8 — este arquivo é esse checklist, e a
+TASK-054 o fechou publicando o tag `v1.0.0` sobre o commit revisado.
 
 Atualizar este documento sempre que uma TASK relevante para produção for
-concluída ou revisada. Snapshot revisado em **2026-08-09**, após a TASK-053
-obter `PASS` no E2E reproduzível e no E2E externo (quatro fontes reais,
-Telegram real) e ser encerrada com aprovação explícita do usuário.
+concluída ou revisada. Snapshot revisado em **2026-08-09**, após a TASK-054
+fechar o checklist de release e publicar o tag `v1.0.0` em `origin`.
 
 ## Resumo executivo
 
-**Ainda não está pronto para produção — falta só a release.** 62 das 63
-tarefas planejadas estão concluídas; a única pendente é a TASK-054
-(preparar release MVP). A coleta automática (TASK-062) e a prova E2E
-completa até a entrega ao usuário (TASK-053, `PASS`) já estão comprovadas.
+**MVP da V1 completo — release `v1.0.0` publicada como tag revisado, sem
+deploy real ainda.** 63 das 63 tarefas planejadas estão concluídas; os 8
+critérios objetivos do MVP estão atendidos. Deploy num Ubuntu Server real
+fica para quando o servidor estiver provisionado, seguindo integralmente
+`docs/OPERATIONS.md` (fora do escopo desta TASK, por decisão explícita do
+usuário). CI/CD e deploy automático continuam fora do escopo da V1.
 
 ## Critérios objetivos do MVP (`docs/MVP.md`) — status real
 
@@ -33,7 +33,7 @@ completa até a entrega ao usuário (TASK-053, `PASS`) já estão comprovadas.
 | 5 | Recomendação/comparação básica com evidências históricas | ✅ Atendido | TASK-038 recomenda uma oferta com regras monetárias seguras e histórico identificável; TASK-039 compara as mesmas evidências, mantém a posição 1 invariável e não inventa total para frete desconhecido |
 | 6 | Todo uso de IA passa pelo AI Provider Manager | ✅ Atendido | Invariante reforçada e validada em todas as tarefas de IA (TASK-028 a TASK-032, TASK-057 a TASK-060) |
 | 7 | Fluxos críticos com testes de integração e ponta a ponta | ✅ Atendido | Integração, E2E reproduzível e E2E externo aprovados (`PASS`, 2026-08-09); quatro fontes reais, Telegram real, Pichau isolada por instabilidade externa sem contaminar as demais |
-| 8 | Documentação operacional, segurança mínima e checklist de release concluídos | ⚠️ Parcial | TASK-051 entregou runbook, binds privados e restauração validada; o checklist/release final da TASK-054 permanece pendente |
+| 8 | Documentação operacional, segurança mínima e checklist de release concluídos | ✅ Atendido | TASK-051 entregou runbook, binds privados e restauração validada; TASK-054 fechou este checklist e publicou o tag `v1.0.0` |
 
 ## Bloqueios adicionais para rodar em produção de verdade
 
@@ -89,16 +89,19 @@ Além dos critérios formais do MVP:
 | Compra e eventos | TASK-038 a TASK-041, TASK-043 a TASK-045 | 7/7 | — |
 | Catálogo de eventos | TASK-042 | 1/1 | — |
 | Segurança — canal, autorização e autenticação real | TASK-046, TASK-047, TASK-061 | 3/3 | — |
-| Segurança e entrega — continuação | TASK-048 a TASK-054 | 6/7 | TASK-054 |
+| Segurança e entrega — continuação | TASK-048 a TASK-054 | 7/7 | — |
 | Orquestração automática do fluxo principal | TASK-062 | 1/1 | — |
 | Store Providers e identidade | TASK-055, TASK-056 | 2/2 | — |
 | Robustez, confirmação e IA (V1.2 antecipado) | TASK-057 a TASK-060 | 4/4 | — |
 
-**Total: 62 concluídas, 1 pendente.**
+**Total: 63 concluídas, 0 pendentes.**
 
 ## Recomendação
 
-Continuar validando manualmente por sessão (como já vem sendo feito) é
-seguro. Colocar um usuário real dependendo do sistema hoje ainda não é — a
-prova E2E externa completa já foi obtida (TASK-053, `PASS`), mas falta a
-release (TASK-054), próxima e única TASK pendente do roadmap.
+O MVP da V1 está completo e taggeado (`v1.0.0`). Continuar validando
+manualmente por sessão (como já vem sendo feito) é seguro para uso próprio
+sem deploy real. Colocar um usuário real dependendo do sistema em produção
+ainda exige provisionar um Ubuntu Server real e executar `docs/OPERATIONS.md`
+integralmente (domínio, TLS, deploy) — deliberadamente fora do escopo da
+TASK-054. Não há próxima TASK do roadmap da V1 pendente; evoluções ficam em
+`docs/V1_2.md` e `docs/BACKLOG.md`, sob decisão explícita futura.

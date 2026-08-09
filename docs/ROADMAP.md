@@ -67,8 +67,12 @@ orquestração automática. A TASK-053 refez a suíte reproduzível e o E2E
 externo depois da disponibilidade por card, do DEC-045, do DEC-046 e do
 DEC-047, obteve `PASS` nos dois modos em 2026-08-09 e foi encerrada com
 aprovação explícita do usuário; a falha isolada da Pichau no E2E externo é
-uma condição externa observada, não um bug interno pendente. A TASK-054 é a
-próxima TASK executável do roadmap, mas não foi iniciada automaticamente. A
+uma condição externa observada, não um bug interno pendente. A TASK-054
+fechou o checklist de release e publicou o tag `v1.0.0` em `origin`, só como
+marco revisado (sem deploy real, sem CI/CD, sem GitHub Release pública, por
+decisão explícita do usuário), encerrando o roadmap da V1: o MVP está
+completo e não há próxima TASK executável até uma decisão explícita sobre
+V1.2/V2. A
 TASK-057 (`DEC-017`): validação real contra o
 `USER`/Gemini cobre 3 dos 4 `IntentKind`, e o usuário aceitou explicitamente
 encerrar nesse estado, adiando mais variedade de linguagem para a V2

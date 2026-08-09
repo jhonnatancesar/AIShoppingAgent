@@ -252,7 +252,16 @@ confirmado) sem virar `FAIL_INTERNO` e sem acionar o backoff persistente do
 DEC-047. A TASK-053 está **concluída**, com fechamento aprovado
 explicitamente pelo usuário em 2026-08-09; a condição externa da Pichau
 permanece registrada como observação de terceiro, não como bug interno
-pendente. A TASK-054 é a próxima TASK do roadmap, mas não foi iniciada.
+pendente.
+
+A TASK-054 está **concluída**: fechou `docs/RELEASE_CHECKLIST.md` como
+retrato real do repositório (63/63 tarefas, 8/8 critérios objetivos do MVP
+atendidos) e publicou o tag Git anotado `v1.0.0` em `origin`, marcando o
+commit revisado da V1 — por decisão explícita do usuário, só o tag, sem
+deploy real num Ubuntu Server, sem CI/CD e sem GitHub Release pública. O MVP
+da V1 está completo; não há próxima TASK do roadmap pendente. Evoluções
+(V1.2 em `docs/V1_2.md`, V2 em `docs/BACKLOG.md`) exigem decisão explícita
+antes de qualquer TASK nova.
 
 A TASK-058 (`DEC-015`) está **concluída**: `create_mission` e
 `mission_command` não executam mais direto — ficam encenados em

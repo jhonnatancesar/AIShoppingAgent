@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-08-09 — TASK-054: release `v1.0.0` — MVP da V1 completo
+
+- `docs/RELEASE_CHECKLIST.md` fechado como retrato real do repositório:
+  63/63 tarefas planejadas concluídas, 8/8 critérios objetivos do MVP
+  (`docs/MVP.md`) atendidos.
+- Tag Git anotado `v1.0.0` criado sobre o commit revisado e publicado em
+  `origin`. Por decisão explícita do usuário: só o tag como marco revisado
+  (permite `docs/OPERATIONS.md` fazer checkout por tag no futuro) — sem
+  deploy real num Ubuntu Server, sem CI/CD e sem GitHub Release pública.
+  Deploy real fica para quando o servidor estiver provisionado.
+- `AGENTS.md`, `docs/ROADMAP.md`, `docs/PROJECT_CONTEXT.md` e
+  `docs/tasks/README.md` sincronizados: MVP da V1 completo, sem próxima TASK
+  do roadmap pendente. Evoluções (V1.2/V2) exigem decisão explícita futura.
+
 ## 2026-08-09 — TASK-053: E2E reproduzível e externo refeitos, `PASS`
 
 - Correção do gatilho de backoff persistente (`DEC-047`): `401` removido do

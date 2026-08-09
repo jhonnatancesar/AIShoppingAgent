@@ -110,7 +110,7 @@ Nunca iniciar automaticamente a próxima TASK. Encerrar apresentando resumo da i
 
 ## Estado atual
 
-TASKs 000 a 053 e TASK-055 a TASK-062 concluídas. A observabilidade da
+TASKs 000 a 054 e TASK-055 a TASK-062 concluídas — MVP da V1 completo. A observabilidade da
 TASK-045 (`DEC-031`) foi validada com PostgreSQL, API, worker, Collector,
 Prometheus e Jaeger reais, incluindo falha/recuperação e privacidade. A
 TASK-046 autentica a identidade mínima do canal Telegram (`DEC-032`). A
@@ -135,4 +135,9 @@ por instabilidade externa isolada sem virar `FAIL_INTERNO`, Telegram real
 confirmou entrega sem duplicação). A TASK-053 está **concluída**, com
 fechamento aprovado explicitamente pelo usuário; a condição externa da
 Pichau fica registrada como observação de terceiro, não como bug interno
-pendente. A TASK-054 é a próxima TASK do roadmap, mas não foi iniciada.
+pendente. A TASK-054 (`docs/tasks/TASK-054.md`) fechou o checklist de
+release (`docs/RELEASE_CHECKLIST.md`, 63/63) e publicou o tag Git anotado
+`v1.0.0` em `origin`, por decisão explícita do usuário só como marco
+revisado — sem deploy real num Ubuntu Server ainda, sem CI/CD e sem GitHub
+Release pública. Não há próxima TASK do roadmap da V1 pendente; evoluções
+futuras (V1.2/V2) exigem decisão explícita antes de qualquer TASK nova.
