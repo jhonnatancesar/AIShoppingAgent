@@ -25,5 +25,10 @@ explícita do usuário. A falha isolada da Pichau no E2E externo é uma
 condição externa observada, não um bug interno pendente. A TASK-054 fechou
 `docs/RELEASE_CHECKLIST.md` (63/63) e publicou o tag `v1.0.0` em `origin`
 como marco revisado da V1 — sem deploy real, CI/CD ou GitHub Release
-pública, por decisão explícita do usuário. O MVP da V1 está completo; não há
-próxima TASK do roadmap pendente.
+pública, por decisão explícita do usuário. **A release deixou de ser
+tratada como definitiva em 2026-08-09**: a TASK-063 (`docs/tasks/TASK-063.md`,
+`DEC-048`) foi registrada depois de o usuário identificar, no Telegram
+real, alertas possivelmente irrelevantes ao produto pedido, mostrando o
+nome da missão em vez do anúncio real e sem link direto. Auditoria
+concluída com causa raiz confirmada em código; implementação aguarda
+autorização explícita. O tag `v1.0.0` permanece publicado sem alteração.

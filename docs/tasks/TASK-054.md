@@ -1,6 +1,11 @@
 # TASK-054 — Preparar release MVP
 
 Status: Concluída em 2026-08-09 — tag `v1.0.0` criado e publicado em `origin`.
+**Suspensa como release final em 2026-08-09**: a TASK-063 (`DEC-048`)
+encontrou defeitos de relevância/apresentação nos alertas antes da V1 ser
+tratada como definitiva. O tag `v1.0.0` **não foi alterado nem recriado** e
+continua publicado tal como está — só deixa de ser considerado o estado
+final da V1 até a TASK-063 fechar.
 
 Dependência obrigatória: TASK-053 concluída (`PASS` no E2E reproduzível e
 externo, 2026-08-09).

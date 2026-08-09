@@ -25,6 +25,44 @@ Após a classificação, registrar a decisão neste arquivo e atualizar a docume
 - **Justificativa:** impacto avaliado e motivo da classificação.
 - **Próxima ação:** documento a atualizar, TASK a criar quando aplicável, ou ação de não implementação.
 
+### DEC-048 — Criar a TASK-063 para relevância de resultados e apresentação de alertas
+
+- **Data:** 2026-08-09
+- **Ideia:** antes de tratar a V1 como definitivamente pronta, o usuário
+  identificou no Telegram real que alertas de preço podiam corresponder a
+  itens irrelevantes (acessórios, modelos errados) e sempre mostravam o
+  nome da missão em vez do nome real do anúncio, sem link direto visível.
+  Pediu auditoria completa do fluxo `StoreProvider → Product/Offer →
+  PriceObservation → evaluator → evento → telegram_notifier`, uso do
+  `AIProviderManager` já existente para normalizar título e classificar
+  correspondência (`MATCH`/`POSSIBLE_MATCH`/`NO_MATCH`), revisão do
+  template de alerta e testes cobrindo os casos críticos — sem implementar
+  antes de autorização explícita.
+- **Classificação:** Nova TASK do MVP (corrige rastreabilidade exigida pelo
+  critério 4 de `docs/MVP.md`: "uma condição de preço... produz evento e
+  notificação rastreáveis" — hoje a notificação existe, mas não é
+  rastreável ao anúncio real, e pode não corresponder ao produto pedido).
+  Não é ampliação de escopo: usa o `AIProviderManager` já aprovado, sem
+  novo provedor de IA, novo canal ou nova loja.
+- **Justificativa técnica:** auditoria (`docs/tasks/TASK-063.md`) confirmou
+  causa raiz concreta e não hipotética: `Offer.url` já é a URL real e
+  correta; `Product.name` guarda o título bruto só na primeira coleta da
+  oferta, nunca normalizado; `telegram/notifications.py::_render_alert` usa
+  só `mission.title`, nunca busca `Offer`/`Product`/`Store` a partir do
+  `offer_id` já presente nos payloads de evento; e
+  `evaluate_price_alerts` roda para todo item devolvido pela busca do
+  site, sem nenhum filtro de correspondência produto-missão. Um achado
+  adicional (busca de `previous` observação sem filtrar por missão,
+  compartilhando estado de "alvo já atingido" entre missões diferentes na
+  mesma oferta) foi registrado na auditoria, mas fica fora do escopo desta
+  TASK até decisão explícita do usuário.
+- **Próxima ação:** `docs/tasks/TASK-063.md` criado com auditoria,
+  diagnóstico e plano proposto; implementação aguarda autorização explícita
+  do usuário, incluindo a regra para `POSSIBLE_MATCH`. A tag `v1.0.0`
+  (TASK-054) permanece publicada sem alteração, mas deixa de ser tratada
+  como estado final da V1 até a TASK-063 fechar (ver notas em
+  `docs/tasks/TASK-054.md` e `docs/RELEASE_CHECKLIST.md`).
+
 ### DEC-047 — Backoff persistente por `(mission_id, source)` em `MissionSource`, não na `MissionSchedule`
 
 - **Data:** 2026-08-09

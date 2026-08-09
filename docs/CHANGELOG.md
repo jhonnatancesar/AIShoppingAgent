@@ -1,5 +1,24 @@
 # Changelog
 
+## 2026-08-09 — TASK-063: registrada e auditada — release deixa de ser definitiva
+
+- Usuário identificou no Telegram real que alertas de preço podiam ser
+  irrelevantes ao produto pedido, mostravam o nome da missão em vez do
+  anúncio real e não exibiam link direto. TASK-063 criada (`DEC-048`).
+- Auditoria completa do fluxo `StoreProvider → Product/Offer →
+  PriceObservation → evaluator → evento → telegram_notifier`
+  (`docs/tasks/TASK-063.md`) confirmou causa raiz em código: `Offer.url` já
+  é correta; `Product.name` guarda título bruto não normalizado só na
+  primeira coleta da oferta; `telegram/notifications.py` nunca busca
+  `Offer`/`Product`/`Store` a partir do `offer_id` já presente no evento,
+  usando só `mission.title`; e não existe nenhum filtro de correspondência
+  entre o resultado da busca do site e o produto pedido pela missão.
+- Nenhum código alterado. Implementação aguarda autorização explícita do
+  usuário, incluindo a regra para classificação `POSSIBLE_MATCH`.
+- Tag `v1.0.0` (TASK-054) **não foi alterada nem recriada**; `main`/
+  `origin/main` não foram tocados. A release deixa de ser tratada como
+  estado final da V1 até a TASK-063 fechar.
+
 ## 2026-08-09 — TASK-054: release `v1.0.0` — MVP da V1 completo
 
 - `docs/RELEASE_CHECKLIST.md` fechado como retrato real do repositório:

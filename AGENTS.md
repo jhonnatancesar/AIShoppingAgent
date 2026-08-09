@@ -139,5 +139,11 @@ pendente. A TASK-054 (`docs/tasks/TASK-054.md`) fechou o checklist de
 release (`docs/RELEASE_CHECKLIST.md`, 63/63) e publicou o tag Git anotado
 `v1.0.0` em `origin`, por decisão explícita do usuário só como marco
 revisado — sem deploy real num Ubuntu Server ainda, sem CI/CD e sem GitHub
-Release pública. Não há próxima TASK do roadmap da V1 pendente; evoluções
-futuras (V1.2/V2) exigem decisão explícita antes de qualquer TASK nova.
+Release pública. **A release deixou de ser tratada como definitiva em
+2026-08-09**: a TASK-063 (`docs/tasks/TASK-063.md`, `DEC-048`) foi
+registrada depois de o usuário identificar, no Telegram real, que alertas
+de preço podiam não corresponder ao produto pedido, mostravam o nome da
+missão em vez do anúncio real e sem link direto. Auditoria concluída,
+implementação **aguarda autorização explícita**; o tag `v1.0.0` não foi
+alterado nem recriado. Não iniciar a implementação da TASK-063 nem
+qualquer TASK de V1.2/V2 sem pedido explícito.

@@ -263,6 +263,16 @@ da V1 está completo; não há próxima TASK do roadmap pendente. Evoluções
 (V1.2 em `docs/V1_2.md`, V2 em `docs/BACKLOG.md`) exigem decisão explícita
 antes de qualquer TASK nova.
 
+**Atualização 2026-08-09:** a release deixou de ser tratada como definitiva.
+A TASK-063 (`DEC-048`, `docs/tasks/TASK-063.md`) foi registrada depois de o
+usuário identificar, no Telegram real, alertas de preço possivelmente
+irrelevantes ao produto pedido, exibindo o nome da missão em vez do anúncio
+real e sem link direto. Auditoria do fluxo completo
+(`StoreProvider → Product/Offer → PriceObservation → evaluator → evento →
+telegram_notifier`) concluída, com causa raiz confirmada em código; a
+implementação aguarda autorização explícita do usuário. O tag `v1.0.0`
+permanece publicado sem alteração.
+
 A TASK-058 (`DEC-015`) está **concluída**: `create_mission` e
 `mission_command` não executam mais direto — ficam encenados em
 `User.pending_intent` e só executam após confirmação explícita, descrita em

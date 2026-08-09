@@ -15,12 +15,15 @@ fechar o checklist de release e publicar o tag `v1.0.0` em `origin`.
 
 ## Resumo executivo
 
-**MVP da V1 completo — release `v1.0.0` publicada como tag revisado, sem
-deploy real ainda.** 63 das 63 tarefas planejadas estão concluídas; os 8
-critérios objetivos do MVP estão atendidos. Deploy num Ubuntu Server real
-fica para quando o servidor estiver provisionado, seguindo integralmente
-`docs/OPERATIONS.md` (fora do escopo desta TASK, por decisão explícita do
-usuário). CI/CD e deploy automático continuam fora do escopo da V1.
+**MVP funcionalmente completo, mas `v1.0.0` suspensa como release final
+(2026-08-09).** 63 das 63 tarefas originalmente planejadas estão
+concluídas, mas a TASK-063 (`DEC-048`) — registrada depois deste snapshot —
+encontrou defeitos reais de relevância e apresentação nos alertas de preço
+(nome da missão em vez do anúncio real, sem link direto, sem filtro de
+correspondência produto-missão) antes da V1 ser tratada como definitiva. O
+critério 4 abaixo precisa ser revisto à luz disso. O tag `v1.0.0` continua
+publicado sem alteração; deploy real num Ubuntu Server continua fora do
+escopo até então.
 
 ## Critérios objetivos do MVP (`docs/MVP.md`) — status real
 
@@ -29,7 +32,7 @@ usuário). CI/CD e deploy automático continuam fora do escopo da V1.
 | 1 | Ambiente local sobe de forma documentada e reproduzível | ✅ Atendido | Docker Compose, `docs/DEPENDENCIES.md`, `scripts\check.cmd` |
 | 2 | Usuário autorizado cria e consulta missão pelo Telegram | ✅ Atendido | TASK-046 autentica transporte/identidade; TASK-047 aplica RBAC/ownership; TASK-061 exige sessão por senha com Argon2id, TTL e recuperação segura |
 | 3 | Sistema pesquisa todas as fontes selecionadas, normaliza e preserva histórico | ✅ Atendido | TASK-062 agenda e executa automaticamente as fontes selecionadas, persiste observações append-only e isola falhas por loja |
-| 4 | Condição de preço produz evento e notificação rastreáveis | ✅ Atendido | TASK-062 produz observações/eventos automaticamente; TASK-053 comprovou a cadeia externa até o usuário (11 eventos reais, 11 notificações Telegram `succeeded`, 0 duplicadas) |
+| 4 | Condição de preço produz evento e notificação rastreáveis | ⚠️ Parcial (reaberto) | TASK-062/TASK-053 comprovaram entrega mecânica (11 eventos reais, 11 notificações `succeeded`); TASK-063 (`DEC-048`) encontrou que o alerta não é rastreável ao anúncio real (usa nome da missão, sem link, sem filtro de relevância produto-missão) — correção pendente de autorização |
 | 5 | Recomendação/comparação básica com evidências históricas | ✅ Atendido | TASK-038 recomenda uma oferta com regras monetárias seguras e histórico identificável; TASK-039 compara as mesmas evidências, mantém a posição 1 invariável e não inventa total para frete desconhecido |
 | 6 | Todo uso de IA passa pelo AI Provider Manager | ✅ Atendido | Invariante reforçada e validada em todas as tarefas de IA (TASK-028 a TASK-032, TASK-057 a TASK-060) |
 | 7 | Fluxos críticos com testes de integração e ponta a ponta | ✅ Atendido | Integração, E2E reproduzível e E2E externo aprovados (`PASS`, 2026-08-09); quatro fontes reais, Telegram real, Pichau isolada por instabilidade externa sem contaminar as demais |
@@ -93,15 +96,19 @@ Além dos critérios formais do MVP:
 | Orquestração automática do fluxo principal | TASK-062 | 1/1 | — |
 | Store Providers e identidade | TASK-055, TASK-056 | 2/2 | — |
 | Robustez, confirmação e IA (V1.2 antecipado) | TASK-057 a TASK-060 | 4/4 | — |
+| Relevância e apresentação de alertas | TASK-063 | 0/1 | TASK-063 |
 
-**Total: 63 concluídas, 0 pendentes.**
+**Total: 63 concluídas, 1 pendente (TASK-063, registrada em 2026-08-09 antes
+da release ser tratada como definitiva).**
 
 ## Recomendação
 
-O MVP da V1 está completo e taggeado (`v1.0.0`). Continuar validando
-manualmente por sessão (como já vem sendo feito) é seguro para uso próprio
-sem deploy real. Colocar um usuário real dependendo do sistema em produção
-ainda exige provisionar um Ubuntu Server real e executar `docs/OPERATIONS.md`
+O MVP da V1 está funcionalmente completo e taggeado (`v1.0.0`), mas a
+release **não deve ser tratada como definitiva** até a TASK-063 corrigir a
+rastreabilidade dos alertas (critério 4). Continuar validando manualmente
+por sessão (como já vem sendo feito) é seguro para uso próprio sem deploy
+real. Colocar um usuário real dependendo do sistema em produção ainda exige
+provisionar um Ubuntu Server real e executar `docs/OPERATIONS.md`
 integralmente (domínio, TLS, deploy) — deliberadamente fora do escopo da
-TASK-054. Não há próxima TASK do roadmap da V1 pendente; evoluções ficam em
+TASK-054 — **e** fechar a TASK-063 primeiro. Evoluções além disso ficam em
 `docs/V1_2.md` e `docs/BACKLOG.md`, sob decisão explícita futura.

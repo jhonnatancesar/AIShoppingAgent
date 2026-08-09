@@ -22,6 +22,7 @@
 | Segurança e entrega — preparação | TASK-048 a TASK-052 | Segredos, resiliência, privacidade, documentação e integração |
 | Orquestração automática das coletas | TASK-062 | Liga agendas, fontes, providers, histórico, avaliação e event log antes dos E2E (`DEC-041`) |
 | Testes E2E e lançamento | TASK-053 e TASK-054 | Validação ponta a ponta do fluxo real e preparação da release |
+| Relevância e apresentação de alertas | TASK-063 | Corrige rastreabilidade do alerta ao anúncio real e filtro de correspondência produto-missão, antes da release ser definitiva (`DEC-048`) |
 | Expansão de fontes (futuro) | Tarefas a definir | Mercado Livre, Shopee, AliExpress e outras fontes futuras |
 
 As TASKs 000 a 053 e as TASKs 055 a 062 estão
@@ -70,9 +71,12 @@ aprovação explícita do usuário; a falha isolada da Pichau no E2E externo é
 uma condição externa observada, não um bug interno pendente. A TASK-054
 fechou o checklist de release e publicou o tag `v1.0.0` em `origin`, só como
 marco revisado (sem deploy real, sem CI/CD, sem GitHub Release pública, por
-decisão explícita do usuário), encerrando o roadmap da V1: o MVP está
-completo e não há próxima TASK executável até uma decisão explícita sobre
-V1.2/V2. A
+decisão explícita do usuário). A TASK-063 (`DEC-048`) foi registrada em
+seguida, ainda em 2026-08-09, depois de o usuário identificar no Telegram
+real que alertas podiam ser irrelevantes ao produto pedido e usavam o nome
+da missão em vez do anúncio real, sem link direto — auditoria concluída,
+implementação aguardando autorização explícita; `v1.0.0` continua publicada
+sem alteração, mas deixou de ser tratada como estado final da V1. A
 TASK-057 (`DEC-017`): validação real contra o
 `USER`/Gemini cobre 3 dos 4 `IntentKind`, e o usuário aceitou explicitamente
 encerrar nesse estado, adiando mais variedade de linguagem para a V2
