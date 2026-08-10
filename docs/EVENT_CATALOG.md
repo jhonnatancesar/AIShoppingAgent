@@ -16,8 +16,8 @@ reescritos.
 | `authentication.completed.v1` | `user` | usuário e ação fechada concluída |
 | `authentication.session_expiring.v1` | `auth_session` | sessão, usuário e vencimento exato |
 | `authentication.session_expired.v1` | `auth_session` | sessão, usuário e vencimento exato |
-| `mission.prelist_ready.v1` | `mission` | missão, até 2 ofertas (a mais barata primeiro), totais e moeda |
-| `mission.prelist_errata.v1` | `mission` | missão, oferta, observação, total atual/moeda, base anterior opcional |
+| `mission.prelist_ready.v1` | `mission` | missão, até 2 ofertas (a mais barata primeiro por `amount`, sem frete), valores e moeda |
+| `mission.prelist_errata.v1` | `mission` | missão, oferta, observação, valor atual/moeda (sem frete), base anterior opcional |
 
 ## Regras
 
@@ -33,11 +33,14 @@ reescritos.
 - Eventos de autenticação nunca carregam senha, hash, token, chat ID ou
   credencial. `expires_at` é timezone-aware e a ação usa `CredentialAction`.
 - `mission.prelist_ready.v1` (TASK-068) aceita 1 ou 2 ofertas; quando há duas, a
-  primeira é sempre a mais barata (`first_total <= second_total`) e as duas
-  ofertas devem ser distintas. `mission.prelist_errata.v1` exige `current_total`
-  estritamente menor que `previous_lowest_total` quando este não é `None`
+  primeira é sempre a mais barata (`first_amount <= second_amount`) e as duas
+  ofertas devem ser distintas. `mission.prelist_errata.v1` exige `current_amount`
+  estritamente menor que `previous_lowest_amount` quando este não é `None`
   (`None` só no caso de a pré-lista original não ter tido nenhuma oferta para
-  mostrar). Nenhum dos dois é gerado por IA — reaproveitam a classificação
+  mostrar). Os dois ranqueiam sempre por `PriceObservation.amount` (preço do
+  produto), nunca por `total_amount` — o frete ainda não é conhecido/comparável
+  de forma confiável entre lojas nesta V1; a mensagem final deixa isso
+  explícito. Nenhum dos dois é gerado por IA — reaproveitam a classificação
   `MATCH` já calculada pela TASK-063.
 
 O contrato executável está em `app.events`. A TASK-042 não cria a tabela

@@ -501,39 +501,48 @@ def _load_offer_context(
     return offer, product, store
 
 
+_PRELIST_SHIPPING_DISCLAIMER = (
+    "⚠️ Valores sem frete. O frete será calculado/consultado na loja."
+)
+
+
 def _render_prelist_block(
-    session: Session, offer_id: UUID, total: Decimal, currency: str
+    session: Session, offer_id: UUID, amount: Decimal, currency: str
 ) -> str:
     offer, product, store = _load_offer_context(session, offer_id)
     display_name = product.display_name or product.name
     return (
         f"🏪 {store.name}\n"
         f"{display_name}\n"
-        f"💰 {format_money(total, currency)}\n"
+        f"💰 {format_money(amount, currency)}\n"
         "🔗 Ver anúncio\n"
         f"{offer.url}"
     )
 
 
 def _render_prelist_ready(session: Session, event: Event, mission_title: str) -> str:
-    """TASK-068: até 2 ofertas já encontradas, sem julgamento -- string fixa."""
+    """TASK-068: até 2 ofertas já encontradas, sem julgamento -- string fixa.
+
+    Ranqueadas por `amount` (preço do produto), sem frete -- ver
+    `_PRELIST_SHIPPING_DISCLAIMER`.
+    """
     payload = event.payload
     if not isinstance(payload, dict):
         raise TelegramNotificationError("notification_payload_invalid")
     try:
         first_offer_id = _required_uuid(payload, "first_offer_id")
-        first_total = _money(payload, "first_total")
+        first_amount = _money(payload, "first_amount")
         first_currency = _currency(payload, "first_currency")
         blocks = [
-            _render_prelist_block(session, first_offer_id, first_total, first_currency)
+            _render_prelist_block(session, first_offer_id, first_amount, first_currency)
         ]
         if payload.get("second_offer_id") is not None:
             second_offer_id = _required_uuid(payload, "second_offer_id")
-            second_total = _money(payload, "second_total")
+            second_amount = _money(payload, "second_amount")
             second_currency = _currency(payload, "second_currency")
             blocks.append(
                 _render_prelist_block(
-                    session, second_offer_id, second_total, second_currency
+                    session, second_offer_id, second_amount, second_currency
                 )
             )
     except InvalidOperation, TypeError, ValueError:
@@ -544,21 +553,26 @@ def _render_prelist_ready(session: Session, event: Event, mission_title: str) ->
         "Das lojas que você selecionou, essas são as melhores ofertas "
         "encontradas até agora:\n\n"
         + "\n\n".join(blocks)
-        + "\n\nAinda estamos buscando nas outras lojas -- você será avisado "
+        + f"\n\n{_PRELIST_SHIPPING_DISCLAIMER}"
+        "\n\nAinda estamos buscando nas outras lojas -- você será avisado "
         "se encontrarmos algo melhor."
     )
 
 
 def _render_prelist_errata(session: Session, event: Event, mission_title: str) -> str:
-    """TASK-068: única correção da pré-lista -- string fixa, sem julgamento."""
+    """TASK-068: única correção da pré-lista -- string fixa, sem julgamento.
+
+    Comparação por `amount` (preço do produto), sem frete -- ver
+    `_PRELIST_SHIPPING_DISCLAIMER`.
+    """
     payload = event.payload
     if not isinstance(payload, dict):
         raise TelegramNotificationError("notification_payload_invalid")
     try:
         offer_id = _required_uuid(payload, "offer_id")
-        current_total = _money(payload, "current_total")
+        current_amount = _money(payload, "current_amount")
         currency = _currency(payload)
-        had_previous = payload.get("previous_lowest_total") is not None
+        had_previous = payload.get("previous_lowest_amount") is not None
     except InvalidOperation, TypeError, ValueError:
         raise TelegramNotificationError("notification_payload_invalid") from None
     offer, product, store = _load_offer_context(session, offer_id)
@@ -581,9 +595,10 @@ def _render_prelist_errata(session: Session, event: Event, mission_title: str) -
         f"{note}\n\n"
         f"🏪 {store.name}\n"
         f"{display_name}\n"
-        f"💰 {format_money(current_total, currency)}\n"
+        f"💰 {format_money(current_amount, currency)}\n"
         "🔗 Ver anúncio\n"
-        f"{offer.url}"
+        f"{offer.url}\n\n"
+        f"{_PRELIST_SHIPPING_DISCLAIMER}"
     )
 
 

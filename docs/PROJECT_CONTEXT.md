@@ -664,18 +664,24 @@ com um texto deixando claro que a busca continua, mais um mecanismo de
 correção — no máximo uma mensagem, se uma coleta posterior encontrar
 algo mais barato que a base já enviada. Reaproveita a classificação
 `MATCH` já calculada pela TASK-063 (nenhuma IA nova); comparação por
-`total_amount` (preço+frete), deliberadamente diferente do `amount` que
-`evaluate_price_alerts`/`DEC-045` usa para a mesma oferta ao longo do
-tempo — aqui o propósito é ranquear ofertas diferentes de lojas
-diferentes num instante, não comparar a mesma oferta consigo mesma.
-Dois `EventType` novos com payload autocontido
+`PriceObservation.amount` (preço do produto, **nunca** `total_amount`)
+— **correção pedida pelo usuário antes da publicação**: o frete ainda
+não é confiável/comparável entre as 4 lojas nesta V1, então a base de
+ranqueamento não pode incluí-lo; a mensagem final deixa explícito que o
+valor mostrado não inclui frete. Coerente com `evaluate_price_alerts`/
+`DEC-045`, que também usa só `amount` (pelo mesmo motivo de fundo),
+embora para a *mesma* oferta ao longo do tempo, não para ranquear
+ofertas diferentes de lojas diferentes num instante como a pré-lista
+faz. Dois `EventType` novos com payload autocontido
 (`MissionPrelistReadyPayload`/`MissionPrelistErrataPayload`), consumer
 Telegram dedicado (`telegram_prelist_v1`), sem consultar
 `notify_price_decreases`/`notify_target_reached` (TASK-037). Validado com
 pipeline oficial (771 testes, 90,49% cobertura, migration head
-`20260810_0001`, 15 integrações PostgreSQL reais) e um teste de
-integração real cobrindo as 3 rodadas do cenário completo (pré-lista com
-1 oferta, correção única, sem segunda correção). `evaluate_price_alerts`,
-preferências de queda/alvo e a semântica MATCH/POSSIBLE_MATCH/NO_MATCH da
-TASK-063 intocadas. Produção da `v1.0.1` intocada; TASK-069 não foi
-iniciada.
+`20260810_0001`, 16 integrações PostgreSQL reais) e testes de integração
+reais cobrindo as 3 rodadas do cenário completo (pré-lista com 1 oferta,
+correção única, sem segunda correção) e um cenário dedicado onde
+`amount` e `total_amount` discordam sobre qual oferta é mais barata,
+provando que a implementação ranqueia pela base correta.
+`evaluate_price_alerts`, preferências de queda/alvo e a semântica
+MATCH/POSSIBLE_MATCH/NO_MATCH da TASK-063 intocadas. Produção da
+`v1.0.1` intocada; TASK-069 não foi iniciada.

@@ -16,22 +16,31 @@
   uma coleta posterior encontrar algo mais barato que a base já
   mostrada.
 - Reaproveita a classificação `MATCH` já calculada pela TASK-063 —
-  nenhuma chamada de IA nova. Compara por `total_amount` (preço+frete),
-  deliberadamente diferente do `amount` que `evaluate_price_alerts`
-  (`DEC-045`) usa para a mesma oferta ao longo do tempo — aqui o
-  propósito é ranquear ofertas diferentes de lojas diferentes num
-  instante, não repetir a lógica de alerta.
+  nenhuma chamada de IA nova. Compara por `PriceObservation.amount`
+  (preço do produto), **nunca `total_amount`** — correção pedida pelo
+  usuário antes da publicação: o frete ainda não é confiável/comparável
+  entre as 4 lojas nesta V1, então não pode entrar na base de
+  ranqueamento; a mensagem sempre deixa explícito que o valor mostrado
+  não inclui frete ("⚠️ Valores sem frete. O frete será
+  calculado/consultado na loja."). Mesma base (`amount`) que
+  `evaluate_price_alerts` (`DEC-045`) usa, embora para a *mesma* oferta
+  ao longo do tempo, não para ranquear ofertas diferentes de lojas
+  diferentes num instante como a pré-lista faz.
 - Dois `EventType` novos (`mission.prelist_ready.v1`,
-  `mission.prelist_errata.v1`) com payload autocontido e validado;
-  consumer Telegram dedicado (`telegram_prelist_v1`), sem consultar
+  `mission.prelist_errata.v1`) com payload autocontido e validado
+  (`first_amount`/`second_amount`/`current_amount`/
+  `previous_lowest_amount`); consumer Telegram dedicado
+  (`telegram_prelist_v1`), sem consultar
   `notify_price_decreases`/`notify_target_reached` (TASK-037). Migration
   `20260810_0001` adiciona 4 colunas a `missions`
   (`prelist_sent`/`prelist_errata_sent`/`prelist_lowest_amount`/
   `prelist_lowest_currency`).
 - Validado com pipeline oficial completo (771 testes, 90,49% cobertura,
-  15 integrações PostgreSQL reais) e um teste de integração real
-  cobrindo o cenário completo em 3 rodadas (pré-lista com 1 oferta só,
-  correção única, sem segunda correção). `evaluate_price_alerts`,
+  16 integrações PostgreSQL reais) e testes de integração reais cobrindo
+  o cenário completo em 3 rodadas (pré-lista com 1 oferta só, correção
+  única, sem segunda correção) e um cenário dedicado onde `amount` e
+  `total_amount` discordam sobre a oferta mais barata, provando que a
+  implementação ranqueia pela base correta. `evaluate_price_alerts`,
   preferências de queda/alvo e a semântica MATCH/POSSIBLE_MATCH/NO_MATCH
   da TASK-063 intocadas. Nenhuma tag `v1.0.2` criada; produção da
   `v1.0.1` intocada; TASK-069 não iniciada.

@@ -778,6 +778,11 @@ def _evaluate_mission_prelist(
     enviada, no máximo uma mensagem de correção é publicada se uma coleta
     posterior encontrar uma oferta `MATCH` mais barata que a base já
     mostrada (`Mission.prelist_lowest_amount`).
+
+    Ranqueia sempre por `PriceObservation.amount` (preço anunciado do
+    produto), nunca por `total_amount` -- frete ainda não é conhecido/
+    comparável de forma confiável entre lojas nesta TASK; não é estimado
+    nem tratado como zero, e a mensagem final deixa isso explícito.
     """
     mission = session.scalar(
         select(Mission).where(Mission.id == mission_id).with_for_update()
@@ -838,7 +843,7 @@ def _maybe_publish_prelist_ready(
         return
     candidates = sorted(
         _latest_match_observations_by_store(session, mission.id),
-        key=lambda observation: observation.total_amount,
+        key=lambda observation: observation.amount,
     )
     mission.prelist_sent = True
     if not candidates:
@@ -846,7 +851,7 @@ def _maybe_publish_prelist_ready(
     top = candidates[:2]
     first = top[0]
     second = top[1] if len(top) > 1 else None
-    mission.prelist_lowest_amount = first.total_amount
+    mission.prelist_lowest_amount = first.amount
     mission.prelist_lowest_currency = first.currency
     publish_event(
         session,
@@ -857,11 +862,11 @@ def _maybe_publish_prelist_ready(
             mission_id=mission.id,
             first_offer_id=first.offer_id,
             first_observation_id=first.id,
-            first_total=first.total_amount,
+            first_amount=first.amount,
             first_currency=first.currency,
             second_offer_id=second.offer_id if second else None,
             second_observation_id=second.id if second else None,
-            second_total=second.total_amount if second else None,
+            second_amount=second.amount if second else None,
             second_currency=second.currency if second else None,
         ),
         occurred_at=occurred_at,
@@ -888,11 +893,11 @@ def _maybe_publish_prelist_errata(
     if mission.prelist_lowest_amount is not None:
         query = query.where(
             PriceObservation.currency == mission.prelist_lowest_currency,
-            PriceObservation.total_amount < mission.prelist_lowest_amount,
+            PriceObservation.amount < mission.prelist_lowest_amount,
         )
     observation = session.scalar(
         query.order_by(
-            PriceObservation.total_amount.asc(), PriceObservation.observed_at.desc()
+            PriceObservation.amount.asc(), PriceObservation.observed_at.desc()
         ).limit(1)
     )
     if observation is None:
@@ -907,9 +912,9 @@ def _maybe_publish_prelist_errata(
             mission_id=mission.id,
             offer_id=observation.offer_id,
             observation_id=observation.id,
-            current_total=observation.total_amount,
+            current_amount=observation.amount,
             currency=observation.currency,
-            previous_lowest_total=mission.prelist_lowest_amount,
+            previous_lowest_amount=mission.prelist_lowest_amount,
         ),
         occurred_at=occurred_at,
         mission_id=mission.id,

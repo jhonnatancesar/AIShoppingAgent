@@ -61,21 +61,31 @@ nada relevante para mostrar), para nunca reavaliar a mesma rodada de
 novo. Uma tentativa falha conta como terminal — a pré-lista nunca fica
 esperando para sempre por uma loja bloqueada.
 
-### 2. Seleção: 1 candidata por loja, depois as 2 mais baratas
+### 2. Seleção: 1 candidata por loja, depois as 2 mais baratas — por `amount`, sem frete
 
 Para cada loja com pelo menos uma oferta `MATCH` (classificação já
 calculada pela TASK-063 — reuso, nenhuma IA nova), pega-se a
 `PriceObservation` mais recente daquela loja como candidata. Entre as
-candidatas (no máximo 1 por loja), ordena-se por `total_amount`
+candidatas (no máximo 1 por loja), ordena-se por `PriceObservation.amount`
 crescente e mostram-se as 2 mais baratas — nunca 2 ofertas da mesma
-loja. **Escolha deliberada de comparar por `total_amount` (preço +
-frete), diferente de `evaluate_price_alerts`** (`docs/PRICE_ALERTS.md`,
-`DEC-045`), que compara só `amount` para a *mesma* oferta ao longo do
-tempo (evitar alerta falso quando o frete some/aparece). Aqui o
-propósito é outro — ranquear *ofertas diferentes* de lojas diferentes
-num único instante — e `total_amount` é a base correta para "qual é
-mais barata de verdade" nesse cenário; não há conflito com a regra da
-TASK-027, que continua intocada.
+loja.
+
+**Correção pós-implementação (2026-08-10):** a primeira versão desta
+TASK ranqueava por `total_amount` (preço + frete). O usuário revisou
+essa escolha antes da publicação: hoje o frete ainda não é
+conhecido/comparável de forma confiável entre as 4 lojas, então usar
+`total_amount` correria o risco de comparar "preço + frete estimado ou
+ausente" de forma inconsistente entre ofertas. A base de comparação
+passou a ser **sempre `PriceObservation.amount`** (preço anunciado do
+produto, sem frete) — nunca estimado, nunca tratado como zero, nunca
+usado para bloquear a pré-lista. A mensagem final deixa explícito que o
+valor não inclui frete (item 4). Isso é **parecido, mas não igual**, ao
+que `evaluate_price_alerts` (`docs/PRICE_ALERTS.md`, `DEC-045`) já faz —
+também compara só `amount`, mas para a *mesma* oferta ao longo do
+tempo — a pré-lista ranqueia *ofertas diferentes* de lojas diferentes
+num único instante; os dois usam `amount` pelo mesmo motivo de fundo
+(frete não é uma base confiável de comparação nesta V1), sem conflito
+com a regra da TASK-027.
 
 Se nenhuma loja tiver oferta `MATCH` ainda, nenhuma mensagem é enviada
 (evita "pré-lista vazia"), mas `prelist_sent` vira `true` do mesmo jeito.
@@ -83,29 +93,33 @@ Se nenhuma loja tiver oferta `MATCH` ainda, nenhuma mensagem é enviada
 ### 3. Correção (errata) — no máximo uma, por missão
 
 `Mission.prelist_lowest_amount`/`prelist_lowest_currency` guardam a base
-(a mais barata das até 2 ofertas enviadas). `Mission.prelist_errata_sent:
-bool` (default `false`) garante que a correção nunca é enviada mais de
-uma vez. Depois que a pré-lista original já foi enviada, cada novo
-`CollectionRun` bem-sucedido verifica se apareceu uma oferta `MATCH` com
-`total_amount` estritamente menor que a base (em qualquer loja, não só
-na que falhou no round 1 — decisão explícita do usuário: mais simples de
-implementar e cobre o mesmo cenário descrito). Se a base original for
-`None` (rodada completou sem nada relevante), a primeira oferta `MATCH`
-que aparecer depois conta como "achado", não como "correção" — o
-template distingue os dois casos.
+(a mais barata das até 2 ofertas enviadas, por `amount`).
+`Mission.prelist_errata_sent: bool` (default `false`) garante que a
+correção nunca é enviada mais de uma vez. Depois que a pré-lista
+original já foi enviada, cada novo `CollectionRun` bem-sucedido verifica
+se apareceu uma oferta `MATCH` com `amount` estritamente menor que a
+base (em qualquer loja, não só na que falhou no round 1 — decisão
+explícita do usuário: mais simples de implementar e cobre o mesmo
+cenário descrito). Se a base original for `None` (rodada completou sem
+nada relevante), a primeira oferta `MATCH` que aparecer depois conta
+como "achado", não como "correção" — o template distingue os dois
+casos.
 
 ### 4. Entrega: dois `EventType` + consumer dedicado
 
 - `EventType.MISSION_PRELIST_READY_V1` — payload autocontido (não só
-  `mission_id`): `first_offer_id`/`first_observation_id`/`first_total`/
+  `mission_id`): `first_offer_id`/`first_observation_id`/`first_amount`/
   `first_currency` obrigatórios, `second_*` opcionais (todos presentes
   ou todos ausentes), com validação de que a primeira é sempre a mais
-  barata e as duas ofertas são distintas.
+  barata e as duas ofertas são distintas. A mensagem final inclui a
+  frase fixa "⚠️ Valores sem frete. O frete será calculado/consultado na
+  loja." — não gerada por IA, string fixa no código.
 - `EventType.MISSION_PRELIST_ERRATA_V1` — payload com `offer_id`,
-  `observation_id`, `current_total`/`currency`, e
-  `previous_lowest_total` (`None` só no caso de "achado" acima), com
-  validação de que o total atual é estritamente menor que o anterior
-  quando este existe.
+  `observation_id`, `current_amount`/`currency`, e
+  `previous_lowest_amount` (`None` só no caso de "achado" acima), com
+  validação de que o valor atual é estritamente menor que o anterior
+  quando este existe. A mensagem de correção também inclui a mesma frase
+  fixa sobre frete.
 - Payload autocontido (não só `mission_id` + reconsulta no envio) por
   decisão de implementação: o formatador não precisa refazer a mesma
   lógica de seleção no momento do envio, e o conteúdo da mensagem reflete
@@ -141,7 +155,9 @@ template distingue os dois casos.
 - **`backend/app/telegram/notifications.py`**: `TELEGRAM_PRELIST_CONSUMER`,
   `process_telegram_prelist_notifications`, `_prepare_prelist_notification`
   (nunca chama `notification_is_enabled`), `_render_prelist_ready`,
-  `_render_prelist_errata`, `_render_prelist_block`, `_load_offer_context`.
+  `_render_prelist_errata`, `_render_prelist_block`, `_load_offer_context`,
+  `_PRELIST_SHIPPING_DISCLAIMER` ("⚠️ Valores sem frete. O frete será
+  calculado/consultado na loja.") anexada em ambas as mensagens.
 - **`backend/app/telegram/worker.py`**: terceiro `_process_batch` no loop
   de poll, combinado com os outros dois.
 - **Nenhuma alteração** em `app/alerts/evaluator.py`,
@@ -149,27 +165,28 @@ template distingue os dois casos.
   da TASK-063), `telegram/preferences.py` ou no consumer
   `telegram_price_alerts_v1`.
 
-## Validação (2026-08-10)
+## Validação (2026-08-10, revalidado após a correção de ranqueamento)
 
 - **Pipeline oficial completo** (`scripts\check.ps1`): Gitleaks, lint,
   formatação, **771 testes (90,49% cobertura)**, migration head
-  `20260810_0001`, **15 testes de integração PostgreSQL reais** — todos
+  `20260810_0001`, **16 testes de integração PostgreSQL reais** — todos
   aprovados (`Pipeline local aprovado.`).
 - **Testes novos de contrato** (`tests/test_event_catalog.py`): validam
-  a ordenação "mais barata primeiro", ofertas distintas, campos
-  `second_*` completos-ou-ausentes, e a comparação estrita da errata
-  (incluindo o caso `previous_lowest_total=None`).
+  a ordenação "mais barata primeiro" (por `amount`), ofertas distintas,
+  campos `second_*` completos-ou-ausentes, e a comparação estrita da
+  errata (incluindo o caso `previous_lowest_amount=None`).
 - **Testes novos de decisão** (`tests/test_collection_orchestration.py`):
   `_evaluate_mission_prelist` não avalia missão inativa nem os dois
   fluxos na mesma chamada; `_maybe_publish_prelist_ready` escolhe as 2
-  mais baratas entre 3 candidatas de lojas diferentes e espera a rodada
-  completar; `_maybe_publish_prelist_errata` só publica quando encontra
-  algo estritamente mais barato.
+  mais baratas por `amount` entre 3 candidatas de lojas diferentes e
+  espera a rodada completar; `_maybe_publish_prelist_errata` só publica
+  quando encontra algo estritamente mais barato por `amount`.
 - **Testes novos de mensagem** (`tests/test_telegram_notifications.py`):
   1 bloco vs. 2 blocos (mais barata primeiro), preferências de
   queda/alvo desativadas não bloqueiam a pré-lista, texto de "correção"
-  vs. "primeira oferta encontrada", e falha fechada quando o destinatário
-  está ausente/inativo.
+  vs. "primeira oferta encontrada", falha fechada quando o destinatário
+  está ausente/inativo, e presença do aviso "sem frete" nas três
+  variantes de mensagem.
 - **Teste de integração real** (PostgreSQL, `tests/integration/
   test_collection_orchestration.py::test_prelist_ready_fires_once_then_errata_corrects_a_cheaper_late_offer`):
   fluxo completo com o `CollectionOrchestrator` real —
@@ -177,13 +194,21 @@ template distingue os dois casos.
      confirmado (403) → pré-lista dispara com 1 oferta só (a que
      sucedeu), `prelist_sent=true`, `prelist_errata_sent=false`;
   2. rodada 2: a loja que tinha falhado agora sucede mais barata
-     (R$ 1.500,00) → uma única correção é publicada, `previous_lowest_total`
+     (R$ 1.500,00) → uma única correção é publicada, `previous_lowest_amount`
      bate com o valor original;
   3. rodada 3: a mesma loja encontra um preço ainda mais barato
      (R$ 1.000,00) → nenhuma segunda correção é publicada (continua 1).
   Também atualizado um teste pré-existente da TASK-062 que verificava o
   conjunto exato de eventos de uma missão, para incluir
   `mission.prelist_ready.v1`.
+- **Novo teste de integração real dedicado à correção**
+  (`test_prelist_ranks_by_product_amount_ignoring_shipping`): duas lojas
+  com `amount`/frete desenhados para que `amount` e `total_amount`
+  discordem sobre qual oferta é mais barata (pichau: R$ 1.000,00 + frete
+  R$ 500,00 = total R$ 1.500,00; kabum: R$ 1.100,00 + frete grátis =
+  total R$ 1.100,00) — confirma que a pré-lista escolhe pichau (mais
+  barata em `amount`, mesmo sendo mais cara em `total_amount`), provando
+  que a implementação usa a base correta, não por coincidência.
 - **Sem chamada de IA nova**: confirmado por auditoria de código — toda a
   seleção reaproveita `MissionOfferRelevance.classification` já calculada
   pela TASK-063; nenhum `ai_manager.generate` é invocado por este fluxo.
@@ -220,8 +245,11 @@ template distingue os dois casos.
 
 Concluída em 2026-08-10. A pré-lista informativa sem IA dispara uma
 única vez por missão, após a primeira rodada completa de coleta, com as
-2 ofertas mais baratas encontradas (a mais barata primeiro); uma única
-correção pode ser enviada depois se uma loja mais lenta encontrar algo
-mais barato. Nenhuma IA nova envolvida; alertas de queda/alvo
+2 ofertas mais baratas encontradas (a mais barata primeiro, sempre por
+`PriceObservation.amount` — preço do produto, **nunca** `total_amount`,
+já que o frete não é confiável/comparável entre lojas nesta V1); uma
+única correção pode ser enviada depois se uma loja mais lenta encontrar
+algo mais barato. A mensagem sempre deixa explícito que o valor não
+inclui frete. Nenhuma IA nova envolvida; alertas de queda/alvo
 (TASK-027/037) intocados. Produção da `v1.0.1` intocada; TASK-069 não
 iniciada.

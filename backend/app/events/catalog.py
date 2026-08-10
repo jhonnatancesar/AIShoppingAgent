@@ -157,24 +157,29 @@ class AvailabilityChangedPayload:
 @dataclass(frozen=True, slots=True)
 class MissionPrelistReadyPayload:
     """TASK-068: até 2 ofertas `MATCH` mais baratas encontradas na primeira
-    rodada de coleta da missão, sem nenhum julgamento de IA sobre elas."""
+    rodada de coleta da missão, sem nenhum julgamento de IA sobre elas.
+
+    Ranqueia por `PriceObservation.amount` (preço anunciado do produto),
+    nunca por `total_amount` -- frete ainda não é conhecido/comparável de
+    forma confiável entre lojas nesta TASK; a mensagem final deixa
+    explícito que o valor não inclui frete."""
 
     mission_id: UUID
     first_offer_id: UUID
     first_observation_id: UUID
-    first_total: Decimal
+    first_amount: Decimal
     first_currency: str
     second_offer_id: UUID | None = None
     second_observation_id: UUID | None = None
-    second_total: Decimal | None = None
+    second_amount: Decimal | None = None
     second_currency: str | None = None
 
     def __post_init__(self) -> None:
-        _validate_money(self.first_total, self.first_currency)
+        _validate_money(self.first_amount, self.first_currency)
         has_second = self.second_offer_id is not None
         second_complete = (
             self.second_observation_id is not None
-            and self.second_total is not None
+            and self.second_amount is not None
             and self.second_currency is not None
         )
         if has_second != second_complete:
@@ -182,9 +187,9 @@ class MissionPrelistReadyPayload:
                 "second offer fields must be complete or all absent"
             )
         if has_second:
-            _validate_money(self.second_total, self.second_currency)
-            if self.second_total < self.first_total:
-                raise EventCatalogError("first_total must be the lowest of the two")
+            _validate_money(self.second_amount, self.second_currency)
+            if self.second_amount < self.first_amount:
+                raise EventCatalogError("first_amount must be the lowest of the two")
             if self.second_offer_id == self.first_offer_id:
                 raise EventCatalogError("first and second offers must differ")
 
@@ -192,24 +197,25 @@ class MissionPrelistReadyPayload:
 @dataclass(frozen=True, slots=True)
 class MissionPrelistErrataPayload:
     """TASK-068: única correção permitida quando uma coleta posterior à
-    pré-lista encontra uma oferta `MATCH` mais barata que a base já
-    enviada -- `previous_lowest_total` é `None` só quando a pré-lista
-    original não teve nenhuma oferta para mostrar."""
+    pré-lista encontra uma oferta `MATCH` com preço (`amount`, sem frete)
+    mais barato que a base já enviada -- `previous_lowest_amount` é
+    `None` só quando a pré-lista original não teve nenhuma oferta para
+    mostrar."""
 
     mission_id: UUID
     offer_id: UUID
     observation_id: UUID
-    current_total: Decimal
+    current_amount: Decimal
     currency: str
-    previous_lowest_total: Decimal | None
+    previous_lowest_amount: Decimal | None
 
     def __post_init__(self) -> None:
-        _validate_money(self.current_total, self.currency)
-        if self.previous_lowest_total is not None:
-            _validate_money(self.previous_lowest_total, self.currency)
-            if self.current_total >= self.previous_lowest_total:
+        _validate_money(self.current_amount, self.currency)
+        if self.previous_lowest_amount is not None:
+            _validate_money(self.previous_lowest_amount, self.currency)
+            if self.current_amount >= self.previous_lowest_amount:
                 raise EventCatalogError(
-                    "current_total must be lower than previous_lowest_total"
+                    "current_amount must be lower than previous_lowest_amount"
                 )
 
 

@@ -826,13 +826,13 @@ def test_maybe_publish_prelist_ready_picks_two_cheapest_of_three_stores(
         id=uuid4(), prelist_sent=False, prelist_lowest_amount=None
     )
     cheap = SimpleNamespace(
-        offer_id=uuid4(), id=uuid4(), total_amount=Decimal("100.00"), currency="BRL"
+        offer_id=uuid4(), id=uuid4(), amount=Decimal("100.00"), currency="BRL"
     )
     mid = SimpleNamespace(
-        offer_id=uuid4(), id=uuid4(), total_amount=Decimal("150.00"), currency="BRL"
+        offer_id=uuid4(), id=uuid4(), amount=Decimal("150.00"), currency="BRL"
     )
     expensive = SimpleNamespace(
-        offer_id=uuid4(), id=uuid4(), total_amount=Decimal("999.00"), currency="BRL"
+        offer_id=uuid4(), id=uuid4(), amount=Decimal("999.00"), currency="BRL"
     )
     monkeypatch.setattr(
         "app.collection.orchestration._mission_prelist_round_complete",
@@ -852,9 +852,9 @@ def test_maybe_publish_prelist_ready_picks_two_cheapest_of_three_stores(
     assert mission.prelist_lowest_currency == "BRL"
     payload = publish.call_args.kwargs["payload"]
     assert payload.first_offer_id == cheap.offer_id
-    assert payload.first_total == Decimal("100.00")
+    assert payload.first_amount == Decimal("100.00")
     assert payload.second_offer_id == mid.offer_id  # a 3a mais barata fica de fora
-    assert payload.second_total == Decimal("150.00")
+    assert payload.second_amount == Decimal("150.00")
 
 
 def test_maybe_publish_prelist_ready_sends_nothing_without_match_offers(
@@ -929,7 +929,7 @@ def test_maybe_publish_prelist_errata_publishes_once_when_cheaper_found(
         prelist_lowest_currency="BRL",
     )
     cheaper = SimpleNamespace(
-        offer_id=uuid4(), id=uuid4(), total_amount=Decimal("80.00"), currency="BRL"
+        offer_id=uuid4(), id=uuid4(), amount=Decimal("80.00"), currency="BRL"
     )
     session = MagicMock()
     session.scalar.return_value = cheaper
@@ -941,8 +941,8 @@ def test_maybe_publish_prelist_errata_publishes_once_when_cheaper_found(
     assert mission.prelist_errata_sent is True
     payload = publish.call_args.kwargs["payload"]
     assert payload.offer_id == cheaper.offer_id
-    assert payload.current_total == Decimal("80.00")
-    assert payload.previous_lowest_total == Decimal("100.00")
+    assert payload.current_amount == Decimal("80.00")
+    assert payload.previous_lowest_amount == Decimal("100.00")
 
 
 def test_unexpected_integrity_error_propagates(monkeypatch) -> None:

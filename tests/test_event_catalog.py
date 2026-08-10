@@ -176,7 +176,7 @@ def test_prelist_ready_contract_allows_one_or_two_offers_lowest_first() -> None:
         Decimal("150.00"),
         "BRL",
     )
-    assert pair.second_total == Decimal("150.00")
+    assert pair.second_amount == Decimal("150.00")
 
     with pytest.raises(EventCatalogError, match="lowest"):
         MissionPrelistReadyPayload(
@@ -219,12 +219,12 @@ def test_prelist_errata_contract_requires_strictly_cheaper() -> None:
     first_ever = MissionPrelistErrataPayload(
         mission_id, offer_id, observation_id, Decimal("100.00"), "BRL", None
     )
-    assert first_ever.previous_lowest_total is None
+    assert first_ever.previous_lowest_amount is None
 
     correction = MissionPrelistErrataPayload(
         mission_id, offer_id, observation_id, Decimal("80.00"), "BRL", Decimal("100.00")
     )
-    assert correction.current_total == Decimal("80.00")
+    assert correction.current_amount == Decimal("80.00")
 
     with pytest.raises(EventCatalogError, match="lower"):
         MissionPrelistErrataPayload(

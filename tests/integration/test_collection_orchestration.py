@@ -26,6 +26,7 @@ from app.missions.models import (
     MissionSource,
     MissionStatus,
 )
+from app.offers.models import Offer
 from app.stores.models import Store
 from app.users.models import User, UserRole
 from sqlalchemy import func, select
@@ -594,7 +595,7 @@ def test_prelist_ready_fires_once_then_errata_corrects_a_cheaper_late_offer(
             )
         )
         assert ready_event is not None
-        assert Decimal(ready_event.payload["first_total"]) == Decimal("1900.00")
+        assert Decimal(ready_event.payload["first_amount"]) == Decimal("1900.00")
         # kabum falhou -- nenhuma segunda oferta para mostrar ainda.
         assert ready_event.payload["second_offer_id"] is None
         errata_before = session.scalar(
@@ -641,8 +642,8 @@ def test_prelist_ready_fires_once_then_errata_corrects_a_cheaper_late_offer(
             )
         )
         assert len(errata_events) == 1
-        assert Decimal(errata_events[0].payload["current_total"]) == Decimal("1500.00")
-        assert Decimal(errata_events[0].payload["previous_lowest_total"]) == Decimal(
+        assert Decimal(errata_events[0].payload["current_amount"]) == Decimal("1500.00")
+        assert Decimal(errata_events[0].payload["previous_lowest_amount"]) == Decimal(
             "1900.00"
         )
         assert errata_events[0].aggregate_id == mission_id
@@ -674,6 +675,92 @@ def test_prelist_ready_fires_once_then_errata_corrects_a_cheaper_late_offer(
             )
         )
         assert errata_count == 1  # continua uma única correção, nunca duas
+
+
+class _PricedProvider:
+    """Loja/preço/frete configuráveis -- usado para provar que a pré-lista
+    ranqueia por `PriceObservation.amount` (preço do produto), nunca por
+    `total_amount` (preço+frete), já que o frete não é confiável/
+    comparável entre lojas nesta TASK."""
+
+    def __init__(self, source_code: str, raw_price: str, raw_shipping: str) -> None:
+        self.source_code = source_code
+        self._raw_price = raw_price
+        self._raw_shipping = raw_shipping
+
+    async def collect(self, request: CollectionRequest) -> CollectionResult:
+        completed = request.requested_at.replace(microsecond=500000)
+        return CollectionResult(
+            self.source_code,
+            request.requested_at,
+            completed,
+            (
+                RawCollectedOffer(
+                    source_code=self.source_code,
+                    url=f"https://example.invalid/task068-{self.source_code}-shipping",
+                    title=f"TASK-068 synthetic GPU ({self.source_code})",
+                    collected_at=completed,
+                    external_id=f"task068-{self.source_code}-shipping-offer",
+                    raw_price=self._raw_price,
+                    raw_currency="BRL",
+                    raw_shipping=self._raw_shipping,
+                    raw_availability="Em estoque",
+                    evidence={"card_text": "safe synthetic evidence"},
+                ),
+            ),
+        )
+
+
+def test_prelist_ranks_by_product_amount_ignoring_shipping(
+    integration_database,
+) -> None:
+    """TASK-068 (correção pós-revisão do usuário): a base de comparação é
+    sempre `amount` (preço anunciado do produto) -- nunca `total_amount`
+    (preço+frete). Cenário desenhado para que as duas bases discordem: se
+    o código usasse `total_amount` por engano, a loja com frete pago
+    venceria; usando `amount`, ela perde porque o preço do produto sozinho
+    é mais barato.
+    """
+    now = datetime.now(UTC).replace(microsecond=0)
+    mission_id, pichau_id, _kabum_id = _seed_due_mission(
+        integration_database.sessions, now
+    )
+    # pichau: amount=1000,00, frete=500,00 -> total=1500,00 (mais barato em
+    # amount, mais caro em total).
+    # kabum: amount=1100,00, frete grátis -> total=1100,00 (mais barato em
+    # total, mais caro em amount).
+    orchestrator = CollectionOrchestrator(
+        integration_database.sessions,
+        CollectionAdapter(
+            (
+                _PricedProvider("pichau", "R$ 1.000,00", "R$ 500,00"),
+                _PricedProvider("kabum", "R$ 1.100,00", "Frete grátis"),
+            )
+        ),
+        ai_manager=_AlwaysMatchAIManager(),
+    )
+
+    result = asyncio.run(orchestrator.run_batch(now=now))
+    assert (result.claimed, result.succeeded, result.failed) == (2, 2, 0)
+
+    with integration_database.sessions.begin() as session:
+        mission = session.get(Mission, mission_id)
+        # amount (sem frete) é a base -- pichau (1000) vence kabum (1100),
+        # mesmo pichau custando mais no total (1500 > 1100).
+        assert mission.prelist_lowest_amount == Decimal("1000.0000")
+        ready_event = session.scalar(
+            select(Event).where(
+                Event.mission_id == mission_id,
+                Event.event_type == EventType.MISSION_PRELIST_READY_V1.value,
+            )
+        )
+        assert ready_event is not None
+        assert Decimal(ready_event.payload["first_amount"]) == Decimal("1000.00")
+        assert Decimal(ready_event.payload["second_amount"]) == Decimal("1100.00")
+        pichau_offer_id = session.scalar(
+            select(Offer.id).where(Offer.store_id == pichau_id)
+        )
+        assert ready_event.payload["first_offer_id"] == str(pichau_offer_id)
 
 
 def test_backfill_runs_old_active_mission_but_ignores_paused(

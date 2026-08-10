@@ -528,18 +528,18 @@ def _ready_event(
         "mission_id": str(mission.id),
         "first_offer_id": str(offer.id),
         "first_observation_id": str(uuid4()),
-        "first_total": "1900.00",
+        "first_amount": "1900.00",
         "first_currency": "BRL",
         "second_offer_id": None,
         "second_observation_id": None,
-        "second_total": None,
+        "second_amount": None,
         "second_currency": None,
     }
     if second_offer is not None:
         payload.update(
             second_offer_id=str(second_offer.id),
             second_observation_id=str(uuid4()),
-            second_total="2100.00",
+            second_amount="2100.00",
             second_currency="BRL",
         )
     return Event(
@@ -555,7 +555,7 @@ def _ready_event(
 
 
 def _errata_event(
-    mission: Mission, offer: Offer, *, previous_lowest_total: str | None
+    mission: Mission, offer: Offer, *, previous_lowest_amount: str | None
 ) -> Event:
     return Event(
         id=uuid4(),
@@ -567,9 +567,9 @@ def _errata_event(
             "mission_id": str(mission.id),
             "offer_id": str(offer.id),
             "observation_id": str(uuid4()),
-            "current_total": "1500.00",
+            "current_amount": "1500.00",
             "currency": "BRL",
-            "previous_lowest_total": previous_lowest_total,
+            "previous_lowest_amount": previous_lowest_amount,
         },
         occurred_at=NOW,
         recorded_at=NOW,
@@ -606,6 +606,7 @@ async def test_prelist_ready_sends_one_block_when_only_one_store_answered(
     assert "R$ 1.900,00" in sent[0]
     assert store.name in sent[0]
     assert sent[0].count("🏪") == 1  # só uma loja respondeu ainda
+    assert "sem frete" in sent[0].lower()
     attempt = session.add.call_args.args[0]
     assert attempt.consumer_name == TELEGRAM_PRELIST_CONSUMER
 
@@ -687,7 +688,7 @@ async def test_prelist_errata_message_frames_correction_vs_first_find(
     user = _user()
     mission = _mission(user)
     offer, product, store = _offer_context()
-    correction_event = _errata_event(mission, offer, previous_lowest_total="1900.00")
+    correction_event = _errata_event(mission, offer, previous_lowest_amount="1900.00")
     session = MagicMock()
     session.get.side_effect = [mission, user, offer, product, store]
     monkeypatch.setattr(
@@ -708,6 +709,7 @@ async def test_prelist_errata_message_frames_correction_vs_first_find(
     assert result.succeeded == 1
     assert "CORREÇÃO" in sent[0]
     assert "R$ 1.500,00" in sent[0]
+    assert "sem frete" in sent[0].lower()
 
 
 @pytest.mark.anyio
@@ -717,7 +719,7 @@ async def test_prelist_errata_frames_first_find_without_previous_baseline(
     user = _user()
     mission = _mission(user)
     offer, product, store = _offer_context()
-    first_find_event = _errata_event(mission, offer, previous_lowest_total=None)
+    first_find_event = _errata_event(mission, offer, previous_lowest_amount=None)
     session = MagicMock()
     session.get.side_effect = [mission, user, offer, product, store]
     monkeypatch.setattr(
@@ -738,6 +740,7 @@ async def test_prelist_errata_frames_first_find_without_previous_baseline(
     assert result.succeeded == 1
     assert "PRIMEIRA OFERTA" in sent[0]
     assert "CORREÇÃO" not in sent[0]
+    assert "sem frete" in sent[0].lower()
 
 
 @pytest.mark.anyio
