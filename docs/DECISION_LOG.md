@@ -25,6 +25,41 @@ Após a classificação, registrar a decisão neste arquivo e atualizar a docume
 - **Justificativa:** impacto avaliado e motivo da classificação.
 - **Próxima ação:** documento a atualizar, TASK a criar quando aplicável, ou ação de não implementação.
 
+### DEC-052 — Registrar `v1.0.2` como release corretiva de configuração/infraestrutura, antes da V1.2
+
+- **Data:** 2026-08-10
+- **Ideia:** a preparação de `docs/PRODUCTION_SETUP.md` para a `v1.0.1`
+  encontrou dois ajustes corretivos válidos, nenhum bloqueador da
+  `v1.0.1`: (1) `AISHOPPING_GEMINI_MODEL`/`AISHOPPING_GROQ_MODEL` existem em
+  `.env`/`.env.example`/`backend/.env.example` mas não são propagadas pelo
+  `compose.yaml` atual, sem efeito real em produção; (2) só
+  `collection_worker` e `telegram_notifier` têm `restart: unless-stopped`
+  em `compose.yaml` — os outros cinco serviços não voltam sozinhos após
+  reboot/queda de energia/crash. O usuário decidiu não implementar nenhum
+  dos dois agora (prioridade é colocar a `v1.0.1` em produção primeiro) e
+  registrar formalmente uma futura release corretiva **`v1.0.2`** —
+  sem funcionalidade nova, só configuração/infraestrutura — que deve
+  acontecer depois da `v1.0.1` estar em produção e observada, e **antes**
+  da V1.2 funcional já listada em `docs/V1_2.md`.
+- **Classificação:** Versão futura (`v1.0.2`, registrada em
+  `docs/V1_2.md`, à frente da lista funcional da V1.2; nenhuma TASK criada,
+  nenhuma implementação autorizada agora).
+- **Justificativa técnica:** os dois achados são reais (confirmados por
+  auditoria de `compose.yaml` durante a TASK-064/preparação do manual de
+  produção) mas de baixo risco e não funcionais — remoção de configuração
+  morta e ajuste de resiliência operacional, não mudança de comportamento
+  de IA nem de arquitetura. Adiar para uma release corretiva dedicada
+  (`v1.0.2`) evita misturar correção de infraestrutura com a primeira
+  subida real em produção da `v1.0.1`, e evita competir com o escopo
+  funcional já priorizado da V1.2. A cascata `Gemini Flash → Groq`
+  (`DEC-050`) não é alterada por nenhum dos dois itens.
+- **Próxima ação:** `docs/V1_2.md` registra os dois itens com ordem de
+  execução (`v1.0.2` antes da V1.2). `docs/PRODUCTION_SETUP.md` atualizado
+  para deixar explícito, no comportamento real da `v1.0.1`, que ambos os
+  pontos estão planejados para correção na `v1.0.2`. Nenhuma TASK criada
+  ainda; implementação aguarda solicitação explícita futura, depois da
+  `v1.0.1` estar em produção.
+
 ### DEC-051 — Manter `v1.0.0` imutável; publicar `v1.0.1` como release corretiva atual
 
 - **Data:** 2026-08-10

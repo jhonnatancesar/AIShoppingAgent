@@ -287,6 +287,12 @@ quiser mudar o comportamento padrão, adicione-as ao seu `.env`:
 > expectativa de que alterar essas três no `.env` da raiz muda o
 > comportamento do Compose hoje — isso exigiria uma mudança de código, fora
 > do escopo deste documento.
+>
+> **Correção planejada:** a remoção de `AISHOPPING_GEMINI_MODEL` e
+> `AISHOPPING_GROQ_MODEL` (sem uso real, confirmado acima) está registrada
+> para a release corretiva **`v1.0.2`** (`docs/V1_2.md`, `DEC-052`) —
+> depois da `v1.0.1` estar em produção. Não remova essas variáveis agora;
+> este documento continua descrevendo o comportamento real da `v1.0.1`.
 
 ## 6. Secrets
 
@@ -653,6 +659,13 @@ Serviços realmente presentes em `compose.yaml` (7, nenhum a mais):
 `collection_worker` e `telegram_notifier` têm `restart: unless-stopped`; os
 outros cinco serviços **não têm política de restart definida** — isso importa
 para a seção 15.
+
+> **Correção planejada:** uma auditoria serviço por serviço para aplicar
+> `restart: unless-stopped` só onde for tecnicamente apropriado (não
+> cegamente aos sete) está registrada para a release corretiva **`v1.0.2`**
+> (`docs/V1_2.md`, `DEC-052`) — depois da `v1.0.1` estar em produção. Não
+> altere `compose.yaml` agora; este documento continua descrevendo o
+> comportamento real da `v1.0.1`.
 
 Ordem real de inicialização (já coberta na seção 8 para o banco/migrations):
 

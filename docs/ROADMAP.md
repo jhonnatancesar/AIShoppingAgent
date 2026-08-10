@@ -130,3 +130,10 @@ atualização da `main` local. A `main` remota só é atualizada após solicita�
 explícita do usuário.
 
 O escopo obrigatório da V1 está em `docs/MVP.md`. Evoluções futuras devem ser registradas em `docs/BACKLOG.md`, e exclusões explícitas da V1 estão em `docs/OUT_OF_SCOPE.md`. Uma lista priorizada de evoluções para depois da V1 e antes da V2 está em `docs/V1_2.md` (`DEC-021`); a TASK-061 não faz mais parte dessa lista (`DEC-033`).
+
+Ordem de versões registrada: `v1.0.1` (release atual, em preparação para
+produção) → `v1.0.2` (release corretiva de configuração/infraestrutura, sem
+funcionalidade nova — dois ajustes encontrados na preparação de
+`docs/PRODUCTION_SETUP.md`, registrados em `docs/V1_2.md`/`DEC-052`,
+nenhuma TASK criada ainda) → V1.2 (evolução funcional já listada em
+`docs/V1_2.md`) → V2.
