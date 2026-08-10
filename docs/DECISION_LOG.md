@@ -25,6 +25,41 @@ Após a classificação, registrar a decisão neste arquivo e atualizar a docume
 - **Justificativa:** impacto avaliado e motivo da classificação.
 - **Próxima ação:** documento a atualizar, TASK a criar quando aplicável, ou ação de não implementação.
 
+### DEC-050 — Eliminar o nível Gemini Pro/preview da V1; USER/ADMIN/DEV usam só Flash
+
+- **Data:** 2026-08-09
+- **Ideia:** depois da auditoria da TASK-064 (`DEC-049`) mostrar que tanto o
+  modelo premium configurado (`gemini-3.1-pro-preview`, preview) quanto um
+  candidato GA "Pro" (`gemini-pro-latest`) falham com a chave atual
+  (`quota_exceeded` imediato no candidato GA), o usuário rejeitou
+  explicitamente continuar procurando um modelo Gemini Pro/premium
+  alternativo. Decisão final: `USER`, `ADMIN` e `DEV` usam o mesmo modelo
+  Gemini Flash (o gratuito já configurado, `Settings.gemini_model`) para
+  operações automáticas de IA; a distinção de papel continua sendo só de
+  permissão/autorização, nunca de modelo. Fallback só por disponibilidade:
+  Gemini Flash → Groq → outros já aprovados, nunca dois modelos Gemini
+  equivalentes em sequência.
+- **Classificação:** Implementar agora (dentro do escopo já aprovado da
+  TASK-064; não é ampliação — é simplificação de infraestrutura de IA já
+  existente, TASK-059/`DEC-016`).
+- **Justificativa técnica:** `AdminDevAIProviderManager` hoje monta 3
+  camadas (premium, Groq opcional, gratuito), sendo as camadas 1 e 3 sobre
+  a mesma chave `gemini_api_key_admin_dev`. Removendo a camada "Pro", elas
+  ficam idênticas — a simplificação correta é colapsá-las numa cascata de
+  2 camadas (`gemini_model` → Groq), eliminando
+  `gemini_premium_model`/`AISHOPPING_GEMINI_PREMIUM_MODEL` do config e a
+  tentativa redundante contra o mesmo modelo duas vezes. Afeta tanto as
+  chamadas automáticas da TASK-063 (`collection_worker`) quanto as
+  chamadas interativas de ADMIN/DEV via Telegram, que compartilham o mesmo
+  `AdminDevAIProviderManager` — ambas se beneficiam de não gastar uma
+  tentativa garantidamente perdida. `UserAIProviderManager` não muda (já
+  usa só `gemini_model`, sem fallback). Memória de projeto registrada:
+  `project_gemini_flash_only_v1.md`.
+- **Próxima ação:** `docs/tasks/TASK-064.md` atualizado com o plano de
+  implementação decorrente (cascata de 2 camadas) e os testes/validação
+  necessários. Implementação aguarda autorização explícita do usuário.
+  TASK-054/`v1.0.0` continua suspensa até a TASK-064 fechar.
+
 ### DEC-049 — Criar a TASK-064 para revisar disponibilidade/fallback dos provedores de IA
 
 - **Data:** 2026-08-09

@@ -1,7 +1,8 @@
 # TASK-064 — Revisar disponibilidade e fallback dos provedores de IA
 
-Status: Auditoria concluída em 2026-08-09; aguardando autorização explícita
-do usuário para implementar. **Não implementado ainda.**
+Status: Auditoria concluída e escopo final decidido pelo usuário em
+2026-08-09 (ver "Decisão final do usuário" abaixo); aguardando autorização
+explícita para implementar. **Não implementado ainda.**
 
 Dependência: TASK-063 funcionalmente concluída (relevância, identidade da
 oferta, formatação). A TASK-054/`v1.0.0` continua suspensa como release
@@ -149,47 +150,71 @@ um único offer também falharia. Sem corrigir isso primeiro, qualquer
 avaliação de batching ficaria contaminada pela mesma causa raiz. Adiado
 para depois da correção de cascata/modelo, conforme pedido.
 
-## Proposta de nova ordem de cascata (aguardando aprovação, nada implementado)
+## Decisão final do usuário (2026-08-09) — substitui a proposta de Opção A/B
 
-Duas opções, dependendo da resposta à pergunta sobre faturamento:
+O usuário rejeitou explicitamente qualquer busca por modelo Gemini
+Pro/premium alternativo (`gemini-pro-latest` incluído) e fechou a decisão
+sem depender da pergunta sobre faturamento:
 
-**Opção A — se a chave não tem/não vai ter acesso real ao nível "Pro":**
+- **USER, ADMIN e DEV usam o mesmo modelo Gemini Flash** (o gratuito já
+  configurado do projeto, `Settings.gemini_model`) para as operações
+  automáticas (classificação/normalização da TASK-063). A distinção
+  USER/ADMIN/DEV continua sendo só de permissão/autorização do resto do
+  sistema, nunca de modelo de IA para essas tarefas.
+- **Nenhum nível "Pro"/preview** entra na cascata — nem o atual
+  (`gemini-3.1-pro-preview`), nem `gemini-pro-latest`, nem qualquer outro
+  candidato "Pro". Não procurar mais alternativas nessa família.
+- **Fallback só por disponibilidade, não por qualidade**: Gemini Flash →
+  Groq → outros fallbacks já aprovados, se existirem e fizerem sentido —
+  nunca dois modelos Gemini equivalentes em sequência sem necessidade.
+- Memória de projeto registrada:
+  `project_gemini_flash_only_v1.md` (índice em `MEMORY.md`).
+
+### Plano de implementação decorrente (ainda não implementado)
+
+`AdminDevAIProviderManager`/`build_admin_dev_ai_provider_manager`
+(`backend/app/ai_provider/manager.py`) hoje monta 3 camadas (premium via
+`gemini_premium_model`, Groq opcional, gratuito via `gemini_model`) — as
+camadas 1 e 3 usam a mesma chave `gemini_api_key_admin_dev`, então depois
+de remover a camada "Pro" elas ficariam idênticas. A simplificação correta
+não é só trocar o nome do modelo premium — é **colapsar as camadas 1 e 3
+em uma só**, resultando numa cascata de 2 camadas:
+
 ```
-gemini-3.5-flash (estável, 1ª tentativa)
-→ Groq llama-3.3-70b-versatile (já configurado)
-→ gemini-3.6-flash (gratuito atual, última tentativa)
+Gemini Flash (gemini_model, via gemini_api_key_admin_dev)
+→ Groq (groq_model, se AISHOPPING_GROQ_API_KEY estiver configurada)
 ```
-Duas chaves/modelos Flash distintos como 1ª e 3ª camada dão alguma
-diversificação de cota mesmo sendo a mesma família, sem depender de "Pro"
-que hoje não responde.
 
-**Opção B — se o usuário confirmar/ativar faturamento e quiser manter uma
-camada "Pro" de verdade:**
-```
-gemini-pro-latest (GA, sem sufixo "preview"; reteste após confirmar cota)
-→ Groq llama-3.3-70b-versatile
-→ gemini-3.6-flash
-```
-Mesma estrutura de 3 camadas atual, só trocando o nome do modelo preview
-pelo GA equivalente — menor mudança possível, mas só funciona se a cota
-"Pro" existir de verdade.
+Isso elimina `gemini_premium_model`/`AISHOPPING_GEMINI_PREMIUM_MODEL` do
+config (deixa de existir uma "camada premium" separada) e remove a
+tentativa redundante contra o mesmo modelo Gemini duas vezes na mesma
+chamada — exatamente o pedido de "auditar a cascata atual e simplificar
+para evitar tentativas redundantes". `UserAIProviderManager` não muda (já
+usa só `gemini_model` via `gemini_api_key_user`, sem fallback, perfil
+`USER` já usa Flash hoje). Esta mudança é no `AdminDevAIProviderManager`
+compartilhado — afeta tanto as chamadas automáticas da TASK-063
+(`collection_worker`) quanto as chamadas interativas de ADMIN/DEV via
+Telegram (`IntentInterpreter`, confirmação sim/não) que já usam essa mesma
+cascata; ambas se beneficiam igualmente de não gastar uma tentativa
+garantidamente perdida contra um modelo Pro/preview sem cota.
 
-Em ambos os casos: `AISHOPPING_GEMINI_PREMIUM_MODEL` já é configurável via
-`Settings.gemini_premium_model` — a troca é só uma env var, sem alterar
-`AdminDevAIProviderManager` nem `GeminiProvider`.
+### Testes/validação a fazer (sem carga artificial)
 
-## Pergunta para o usuário antes de implementar
-
-**A chave Gemini ADMIN/DEV (`AISHOPPING_GEMINI_API_KEY_ADMIN_DEV`) tem
-faturamento habilitado no projeto Google, ou é uma chave gratuita sem
-billing?** Isso decide entre a Opção A (assumir que "Pro" não é viável e
-usar dois modelos Flash estáveis) e a Opção B (manter uma camada "Pro" GA,
-já que a mudança de preview→GA é a menor possível). Se não tiver certeza,
-a Opção A é a mais segura para aplicar já, sem depender de uma resposta.
+- Cada camada isoladamente (Flash sozinho; Groq sozinho via mock/força de
+  falha do Flash).
+- Fallback Flash→Groq quando a primeira camada falha.
+- `quota_exceeded`/`unavailable` tratados como já são (sem mudança de
+  taxonomia, só menos camadas).
+- Uma coleta pequena e representativa (não repetir o volume da validação
+  anterior) confirmando que a taxa de classificação melhora de fato.
+- Sem alterar a semântica `MATCH`/`POSSIBLE_MATCH`/`NO_MATCH` da TASK-063.
+- Sem implementar batching nesta TASK.
 
 ## Fora do escopo desta TASK
 
 - Alterar a tag `v1.0.0` ou tocar em `main`/`origin/main`;
-- Implementar batching (só proposta, se necessário, depois da correção);
+- Qualquer modelo Gemini Pro/preview, novo ou existente;
+- Implementar batching (fica para decisão futura, só com evidência real de
+  pressão de quota depois desta correção);
 - Alterar a semântica MATCH/POSSIBLE_MATCH/NO_MATCH da TASK-063;
 - Qualquer implementação antes da autorização explícita do usuário.
