@@ -131,9 +131,17 @@ explícita do usuário.
 
 O escopo obrigatório da V1 está em `docs/MVP.md`. Evoluções futuras devem ser registradas em `docs/BACKLOG.md`, e exclusões explícitas da V1 estão em `docs/OUT_OF_SCOPE.md`. Uma lista priorizada de evoluções para depois da V1 e antes da V2 está em `docs/V1_2.md` (`DEC-021`); a TASK-061 não faz mais parte dessa lista (`DEC-033`).
 
-Ordem de versões registrada: `v1.0.1` (release atual, em preparação para
-produção) → `v1.0.2` (release corretiva de configuração/infraestrutura, sem
-funcionalidade nova — dois ajustes encontrados na preparação de
-`docs/PRODUCTION_SETUP.md`, registrados em `docs/V1_2.md`/`DEC-052`,
-nenhuma TASK criada ainda) → V1.2 (evolução funcional já listada em
-`docs/V1_2.md`) → V2.
+Ordem de versões registrada: `v1.0.1` (release atual, **já implantada em
+produção real** — 7 serviços, migrations no head, Telegram ativo,
+proprietário promovido a `DEV`) → `v1.0.2` (release corretiva, documento
+próprio `docs/V1_0_2.md` — não confundir com V1.2 —, cinco itens: dois de
+configuração/infraestrutura originais — `DEC-052` — e três adicionados
+depois por pedido explícito do usuário apesar de fugirem desse escopo
+original, sinalizado no próprio doc — editar missão existente
+(`DEC-057`), categorias numeradas no `/cadastro` (`DEC-055`) e pré-lista
+de preços sem IA, um preço por loja (`DEC-058`); nenhuma TASK criada
+ainda) → V1.2 (evolução funcional, documento `docs/V1_2.md`, 12 itens,
+incluindo Magalu como quinta loja, redução de `PriceObservation`
+redundante, e comparação de menor preço histórico externo/interno estilo
+Steam Inventory Helper (a mesma pré-lista da `v1.0.2`, com IA por cima) e
+pesquisa de ofertas em lives — `DEC-053`/`DEC-054`/`DEC-056`) → V2.

@@ -302,8 +302,10 @@ da validação original da TASK-063; as falhas restantes do Flash por cota
 ficam registradas como condição operacional externa, não como falha da
 TASK-064. **A condição que suspendia a release como definitiva está
 resolvida** (`docs/RELEASE_CHECKLIST.md`, 65/65) — o tag `v1.0.0`
-permanece publicado sem alteração; deploy real segue fora do escopo até
-decisão explícita futura.
+permanece publicado sem alteração. Ver atualização ao final deste
+documento: a `v1.0.0` foi auditada como desatualizada (não continha
+TASK-063/TASK-064), levando à tag corretiva `v1.0.1`, hoje já implantada em
+produção real.
 
 A TASK-058 (`DEC-015`) está **concluída**: `create_mission` e
 `mission_command` não executam mais direto — ficam encenados em
@@ -549,9 +551,52 @@ persistente significa somente consentimento registrado.
   material ou `confirm` expirado produz `stale`, enquanto `cancel` independe do
   TTL. Solicitação e trilha são imutáveis/append-only, idempotentes e protegidas
   por índice único terminal, sem autorizar ação financeira (TASKs 040 e 041).
-- Módulos da aplicação acessam IA somente por `AIProviderManager`; USER usa apenas
-  Gemini gratuito, sem fallback. ADMIN/DEV tenta Gemini premium, depois o Groq
-  (opcional, TASK-059, só se configurado) e por fim o Gemini gratuito. OpenAI,
-  Claude e usuário pago ficam para a V2 — o Groq é fallback interno de
-  infraestrutura, nunca escolha exposta ao usuário. Credenciais nunca são
-  versionadas.
+- Módulos da aplicação acessam IA somente por `AIProviderManager`; USER, ADMIN e
+  DEV usam o mesmo Gemini Flash (`Settings.gemini_model`) para as operações
+  automáticas de IA, com Groq como fallback só de disponibilidade quando
+  configurado (opcional, TASK-059) — nenhum nível Gemini Pro/preview participa
+  da cascata (TASK-064/`DEC-050`). Papel continua sendo só permissão/
+  autorização, nunca escolha de modelo. OpenAI, Claude e usuário pago ficam
+  para a V2 — o Groq é fallback interno de infraestrutura, nunca escolha
+  exposta ao usuário. Credenciais nunca são versionadas.
+
+**Atualização 2026-08-10:** auditoria confirmou que a tag `v1.0.0`
+(`85b56c6`) nunca foi movida e não contém as correções da TASK-063 nem da
+TASK-064 — checklist `65/65` descrevia o código corrente, não o conteúdo
+tagueado. Por decisão do usuário (`DEC-051`), `v1.0.0` permanece **intocada**
+como marco histórico; a tag corretiva **`v1.0.1`** (`578dc29`, inclui
+TASK-063 e TASK-064) passou a ser a referência de release atual.
+`docs/PRODUCTION_SETUP.md` foi escrito como manual completo de instalação em
+Ubuntu Server a partir dela. A **`v1.0.1` foi implantada em um servidor de
+produção real** nesta mesma sessão: os 7 serviços do `compose.yaml` sobem e
+ficam saudáveis, as 26 migrations foram aplicadas até `20260809_0004`
+(head), o webhook do Telegram foi registrado sobre uma URL HTTPS pública
+real (túnel próprio do operador, sem CI/CD nem reverse proxy dedicado — a
+V1 não define essa infraestrutura), cadastro/senha/login e criação de
+missão por texto livre foram validados ao vivo, e o proprietário foi
+promovido a `DEV` pelo mesmo procedimento manual documentado na seção 9 do
+manual. Um problema real de implantação foi encontrado e corrigido durante
+o processo: os containers da aplicação rodam como usuário não-root (UID 999
+dentro da imagem), e os arquivos de `.secrets/` inicialmente ficaram com
+dono do usuário do host — ilegíveis para o container. Corrigido só com
+permissão de arquivo no servidor (`chown` para o UID do container), sem
+tocar em `compose.yaml`, `Dockerfile` nem em nenhum código — não acontecia
+em desenvolvimento porque o Docker Desktop no Windows não aplica
+UID/permissão POSIX real em bind mounts como um host Linux real aplica.
+
+Depois da implantação, o usuário registrou, só como planejamento (nenhuma
+TASK criada, nenhum código alterado) seis novos itens, divididos em dois
+documentos separados para não confundir as versões (`DEC-059`):
+**`docs/V1_0_2.md`** (release corretiva `v1.0.2`) ganhou edição de missão
+existente, categorias numeradas no `/cadastro` e pré-lista de preços
+encontrados sem IA (um preço por loja) — `DEC-057`/`DEC-055`/`DEC-058`.
+**`docs/V1_2.md`** (evolução funcional V1.2) ganhou redução de
+`PriceObservation` redundante (gravar só mudança material de estado,
+nunca apagar histórico já gravado), Magalu como quinta loja, e comparação
+de menor preço histórico externo/interno estilo Steam Inventory Helper —
+a mesma pré-lista da `v1.0.2`, com IA por cima — mais pesquisa de ofertas
+em lives (YouTube e Shopee Live) — `DEC-053`/`DEC-054`/`DEC-056`. A ordem
+de versões da V1 continua: `v1.0.1` (atual, em produção) → `v1.0.2`
+(`docs/V1_0_2.md`, corretiva, sem funcionalidade nova exceto três
+exceções já sinalizadas explicitamente) → V1.2 (`docs/V1_2.md`, evolução
+funcional) → V2.

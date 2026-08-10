@@ -25,6 +25,229 @@ Após a classificação, registrar a decisão neste arquivo e atualizar a docume
 - **Justificativa:** impacto avaliado e motivo da classificação.
 - **Próxima ação:** documento a atualizar, TASK a criar quando aplicável, ou ação de não implementação.
 
+### DEC-059 — Separar `v1.0.2` de V1.2 em documentos distintos
+
+- **Data:** 2026-08-10
+- **Ideia:** o usuário notou que `docs/V1_2.md` continha a seção da
+  `v1.0.2` dentro de um arquivo cujo título e propósito declarado são só
+  sobre V1.2 — mistura estrutural entre duas versões distintas (`v1.0.2`
+  é release *patch* dentro da V1; V1.2 é fase funcional maior, numerada à
+  parte), mesmo com as seções fisicamente separadas dentro do arquivo.
+- **Classificação:** Implementar agora (correção de organização
+  documental, sem mudança de conteúdo/decisão nenhuma — só o arquivo onde
+  cada uma vive).
+- **Justificativa técnica:** manter as duas em arquivos separados evita
+  confundir as versões e deixa cada documento com um título e propósito
+  únicos, sem exigir leitura de seções internas para saber a qual versão
+  um item pertence.
+- **Próxima ação:** conteúdo da `v1.0.2` movido para `docs/V1_0_2.md`
+  (novo arquivo); `docs/V1_2.md` passa a conter só a V1.2 de verdade.
+  Todas as referências cruzadas em `AGENTS.md`, `docs/ROADMAP.md`,
+  `docs/CHANGELOG.md`, `docs/tasks/README.md`, `docs/HANDOFF_V1_0_2.md` e
+  nas próprias entradas deste log (`DEC-052`, `DEC-055`, `DEC-057`)
+  atualizadas para apontar para o arquivo certo.
+
+### DEC-058 — Registrar pré-lista de preços sem IA como item 5 da `v1.0.2`
+
+- **Data:** 2026-08-10
+- **Ideia:** o usuário decidiu dividir a ideia original de "pré-lista de
+  preços encontrados" (levantada durante a discussão do item de menor
+  preço histórico) em duas fases: uma primeira versão simples, sem IA,
+  mostrando só 1 preço por loja selecionada, na `v1.0.2`; e a versão com
+  IA (julgamento de "vale a pena", comparação com histórico
+  externo/interno) permanece só na V1.2, como já estava registrado no
+  item 11 (`DEC-056`) — nada do que já tinha sido combinado para a V1.2
+  foi removido ou reduzido, só ganhou uma fase anterior mais simples.
+- **Classificação:** Versão futura (item 5 da `v1.0.2`, `docs/V1_0_2.md`;
+  nenhuma TASK criada, nenhuma implementação autorizada agora). Mesma nota
+  dos itens 3 e 4 dessa release: é funcionalidade nova, não infra,
+  registrada em `v1.0.2` por decisão explícita do usuário.
+- **Justificativa técnica:** hoje o usuário só recebe alerta quando o
+  preço cai ou atinge o alvo (`app/alerts/evaluator.py`) — nenhuma
+  mensagem confirma que a missão está rodando nem mostra o que já foi
+  encontrado. A versão sem IA é puramente informativa (apresenta dado já
+  coletado, sem julgamento), preparando o terreno pra fase com IA da V1.2
+  sem depender dela. Gatilho exato, formato da mensagem e template não
+  decididos agora — ficam para a TASK.
+- **Próxima ação:** `docs/V1_0_2.md` atualizado com o item 5; item 11 de
+  `docs/V1_2.md` (`DEC-056`) atualizado só para referenciar essa fase
+  anterior, sem alterar seu próprio conteúdo. Nenhuma TASK criada;
+  implementação aguarda solicitação explícita futura.
+
+### DEC-057 — Registrar edição de missão existente como item 3 da `v1.0.2`
+
+- **Data:** 2026-08-10
+- **Ideia:** o usuário perguntou se dá para editar uma missão já criada
+  (trocar lojas ou preço-alvo sem recriar). Auditoria confirmou em
+  `backend/app/missions/models.py`/`service.py`: `MissionCommand` só cobre
+  transições de ciclo de vida (`activate`/`pause`/`resume`/`complete`/
+  `cancel`/`expire`); não existe nenhum comando para alterar
+  `MissionCriteria.target_amount`/`target_currency` nem as fontes
+  selecionadas (`MissionSource`) — hoje só criando uma missão nova. O
+  usuário pediu para registrar essa capacidade especificamente na
+  `v1.0.2`, não na V1.2. Posicionada como item 3 (antes do item de
+  categorias, `DEC-055`), por pedido explícito do usuário.
+- **Classificação:** Versão futura (item 3 da `v1.0.2`, `docs/V1_0_2.md`;
+  nenhuma TASK criada, nenhuma implementação autorizada agora). Registrada
+  em `v1.0.2` por decisão explícita do usuário, embora seja
+  funcionalidade nova de verdade — mais distante do escopo original de
+  "configuração/infraestrutura, sem funcionalidade nova" da `v1.0.2`
+  (`DEC-052`) do que qualquer item anterior dessa mesma release (inclusive
+  o item de categorias, `DEC-055`, que já era só um ajuste de UX).
+  Diferença sinalizada explicitamente no `docs/V1_0_2.md` para não
+  confundir escopo nem apagar o registro da decisão original.
+- **Justificativa técnica:** o mecanismo exato (novo `MissionCommand`,
+  fluxo de confirmação no Telegram, efeito sobre `mission_schedules` e
+  sobre o histórico já coletado ao trocar fontes) não foi decidido —
+  fica para quando a TASK for desenhada.
+- **Próxima ação:** `docs/V1_0_2.md` atualizado com o item 3 da `v1.0.2`
+  (arquivo separado de `docs/V1_2.md`, para não confundir as duas
+  versões). Nenhuma TASK criada; implementação aguarda solicitação
+  explícita futura.
+
+### DEC-056 — Registrar comparação de menor preço histórico externo (itens 11 e 12 da V1.2)
+
+- **Data:** 2026-08-10
+- **Ideia:** o usuário pediu inicialmente um "pré-aviso" de valores
+  encontrados e perguntou se a IA já analisa preços comparando com
+  histórico — resposta confirmada por auditoria de código
+  (`backend/app/alerts/evaluator.py`, `backend/app/purchase/`): nenhum dos
+  dois módulos importa `AIProviderManager`; a decisão de alerta hoje é
+  100% determinística (queda vs. observação anterior; alvo definido pelo
+  usuário). A partir dessa resposta, o usuário ampliou o pedido para uma
+  capacidade nos moldes do Steam Inventory Helper: mostrar preço atual,
+  menor preço histórico **externo** (independente do ano, com fonte/URL/
+  data verificáveis), menor preço histórico **interno** (já existe em
+  `price_observations`), e comparação percentual entre os três, com regra
+  explícita e sem exceção de que a IA nunca inventa preço/data/loja/fonte/
+  URL — só interpreta fatos já encontrados por pesquisa externa real ou
+  pelo próprio banco. Pediu também validação de identidade de produto
+  antes de comparar (mesmo exemplo já validado em produção pela TASK-063:
+  "Logitech G PRO 2" ≠ "Logitech G Pro X Superlight 2") e um template de
+  apresentação fixo (fornecido por ele). Separadamente, pediu para
+  registrar também pesquisa de ofertas anunciadas em lives — por enquanto
+  só YouTube e Shopee Live —, ainda sem nenhum registro anterior no
+  projeto.
+- **Classificação:** Versão futura (itens 11 e 12 da V1.2, `docs/V1_2.md`;
+  nenhuma TASK criada, nenhuma API/motor de busca escolhido, nenhuma
+  implementação autorizada agora).
+- **Justificativa técnica:** a regra "IA nunca inventa dado factual, só
+  interpreta" já é o princípio em produção desde a TASK-063
+  (`app.collection.relevance`) e o padrão de template fixo no código já é
+  usado por `app/telegram/formatting.py` — o item 11 estende os dois
+  padrões já aprovados para uma nova capacidade (pesquisa externa de
+  histórico de preço) em vez de introduzir uma exceção a eles. A validação
+  de identidade de produto reaproveita o mesmo tipo de verificação já
+  validado em produção pela TASK-063, não um mecanismo novo. Pesquisa
+  externa exige uma ferramenta/capacidade nova de busca (a API/motor fica
+  para quando a TASK for desenhada) e deve continuar passando pela porta
+  única de IA (`AIProviderManager`, `CLAUDE.md`) ou por uma ferramenta
+  dedicada a desenhar então. O item 12 (lives) é uma fonte de dado
+  estruturalmente diferente das páginas estáticas dos Store Providers
+  atuais (Playwright sobre HTML) e foi mantido como item separado, sem
+  detalhamento, por não ter escopo definido ainda.
+- **Próxima ação:** `docs/V1_2.md` atualizado com os itens 11 e 12. Nenhuma
+  TASK criada; implementação, escolha de API/motor de busca e desenho da
+  separação arquitetural (coleta / histórico interno / pesquisa externa /
+  validação de identidade / dados estruturados / interpretação por IA /
+  template final) ficam para quando a TASK for solicitada explicitamente.
+
+### DEC-055 — Registrar lista numerada de categorias no `/cadastro` como item 4 da `v1.0.2`
+
+- **Data:** 2026-08-10
+- **Ideia:** o usuário pediu para trocar o texto livre de "quais categorias
+  você compra" no `/cadastro` por uma lista numerada das categorias
+  conhecidas dos sites, permitindo resposta por números (ex.: `1,2,7,8,11`),
+  no mesmo padrão já usado pelo passo de lojas favoritas
+  (`favorite_stores`). Auditoria confirmou em
+  `backend/app/users/registration.py`: `preferred_categories` hoje é texto
+  livre parseado por `_parse_categories`, sem lista fechada;
+  `favorite_stores`, passo anterior no mesmo fluxo, já usa exatamente o
+  padrão pedido (`1 Kabum`/`2 Pichau`/`3 Terabyte`/`4 Amazon`/`5 Todas`,
+  resposta por números separados por vírgula). Posicionada como item 4
+  (depois do item de edição de missão, `DEC-057`), por pedido explícito do
+  usuário.
+- **Classificação:** Versão futura (item 4 da `v1.0.2`, `docs/V1_0_2.md`;
+  nenhuma TASK criada, nenhuma implementação autorizada agora). Registrado
+  em `v1.0.2` por pedido explícito do usuário, embora seja um ajuste de
+  UX/comportamento do cadastro, não de configuração/infraestrutura pura
+  como os itens 1 e 2 dessa mesma release — diferença sinalizada no próprio
+  `docs/V1_0_2.md` para não confundir o escopo original da `v1.0.2`
+  (DEC-052).
+- **Justificativa técnica:** o padrão já existe e já é usado com sucesso no
+  passo imediatamente anterior do mesmo fluxo (`favorite_stores`) — replicar
+  para categorias é consistência de UX, não uma capacidade nova. A lista
+  real de categorias por loja (Kabum/Pichau/Terabyte/Amazon) precisa de
+  levantamento próprio contra os quatro sites e fica para quando a TASK for
+  criada, não decidida agora.
+- **Próxima ação:** `docs/V1_0_2.md` atualizado com o item 4 da `v1.0.2`
+  (arquivo separado de `docs/V1_2.md`, para não confundir as duas
+  versões). Nenhuma TASK criada; implementação aguarda solicitação
+  explícita futura.
+
+### DEC-054 — Registrar Magalu como quinta fonte de oferta, item 10 da V1.2
+
+- **Data:** 2026-08-10
+- **Ideia:** o usuário pediu para registrar a Magazine Luiza (Magalu) como
+  nova loja pesquisável na V1.2, além das quatro já selecionáveis na V1
+  (Pichau, Terabyte, Amazon, Kabum). Auditoria confirmou que a Magalu não
+  era mencionada em nenhum documento do projeto até agora — sem conflito
+  com o texto fixo da V1 (`CLAUDE.md`/`docs/PROJECT_CONTEXT.md`), que só
+  cita Mercado Livre/Shopee/AliExpress como "Futuro" apresentado pelo bot;
+  a Magalu é uma inclusão nova, independente dessas três.
+- **Classificação:** Versão futura (item 10 da V1.2, `docs/V1_2.md`; nenhuma
+  TASK criada, nenhuma implementação autorizada agora).
+- **Justificativa técnica:** mesma arquitetura de Store Provider já
+  aprovada e usada pelas quatro fontes existentes (Playwright, normalização
+  de preço/disponibilidade, integração com o filtro de relevância da
+  TASK-063) — não introduz mecanismo novo, só mais uma fonte selecionável.
+  Pesquisa de seletores/estrutura real do site, eventual tratamento
+  anti-bot e ajuste da lista numerada de lojas do `/cadastro` ficam para a
+  TASK, quando solicitada.
+- **Próxima ação:** `docs/V1_2.md` atualizado com o item 10. Nenhuma TASK
+  criada; implementação aguarda solicitação explícita futura.
+
+### DEC-053 — Registrar redução de `PriceObservation` redundante como item 9 da V1.2
+
+- **Data:** 2026-08-10
+- **Ideia:** com a `v1.0.1` em produção real (coleta a cada 30 min por
+  missão ativa, `DEC-046`), o usuário observou que o volume de
+  `price_observations` vai crescer proporcional à frequência de polling,
+  não à frequência real de mudança de preço — cada coleta grava uma linha
+  nova mesmo quando o estado da oferta não mudou. Propôs uma regra para
+  evitar observações redundantes da mesma oferta, cobrindo no mínimo preço
+  e disponibilidade, pedindo antes uma auditoria dos campos reais de
+  `PriceObservation` para decidir a comparação com precisão. Auditoria
+  feita (`backend/app/collection/models.py`): campos comparáveis são
+  `amount`, `currency`, `shipping_amount`, `availability` e `fulfillment`;
+  `total_amount` é derivado, `observed_at`/`recorded_at` são timestamps,
+  `raw_evidence` é evidência bruta e não deve gatear a comparação. Decisão
+  final do usuário: só criar `PriceObservation` nova quando pelo menos um
+  campo comparável mudar (usando `get_latest_price_observation`, já
+  existente); coleta com o mesmo estado não grava linha nova, mas a oferta
+  precisa continuar registrando que foi vista de novo sem gerar observação
+  redundante — forma exata (`last_seen_at` ou equivalente) fica para a
+  TASK. Histórico já gravado nunca é apagado nem compactado por este item.
+  Compactação/arquivamento de histórico antigo já existente fica só como
+  ideia futura registrada, sem decisão de implementação — exigiria abrir
+  exceção explícita à regra de preservação de histórico do `CLAUDE.md`,
+  decisão própria e separada desta.
+- **Classificação:** Versão futura (item 9 da V1.2, `docs/V1_2.md`;
+  nenhuma TASK criada, nenhuma implementação autorizada agora).
+- **Justificativa técnica:** o histórico deve representar mudanças reais de
+  estado da oferta, não a cadência de polling do `collection_worker`; a
+  regra não altera o desenho append-only de `PriceObservation` (nenhuma
+  linha existente é apagada ou reescrita, só deixa de criar linhas
+  redundantes daqui pra frente) e não conflita com a preservação de
+  histórico do `CLAUDE.md`, já que nada gravado é descartado. A ideia de
+  compactar observações antigas já existentes é uma exceção real a essa
+  regra e foi deliberadamente separada, para não comprometer a decisão mais
+  simples e não controversa (parar de gravar duplicata) com uma decisão
+  mais sensível que ainda não tem justificativa de necessidade real.
+- **Próxima ação:** `docs/V1_2.md` atualizado com o item 9, ordem de
+  execução após os itens já existentes. Nenhuma TASK criada; implementação
+  aguarda solicitação explícita futura.
+
 ### DEC-052 — Registrar `v1.0.2` como release corretiva de configuração/infraestrutura, antes da V1.2
 
 - **Data:** 2026-08-10
@@ -41,9 +264,10 @@ Após a classificação, registrar a decisão neste arquivo e atualizar a docume
   sem funcionalidade nova, só configuração/infraestrutura — que deve
   acontecer depois da `v1.0.1` estar em produção e observada, e **antes**
   da V1.2 funcional já listada em `docs/V1_2.md`.
-- **Classificação:** Versão futura (`v1.0.2`, registrada em
-  `docs/V1_2.md`, à frente da lista funcional da V1.2; nenhuma TASK criada,
-  nenhuma implementação autorizada agora).
+- **Classificação:** Versão futura (`v1.0.2`, inicialmente registrada
+  dentro de `docs/V1_2.md`; posteriormente movida para o documento próprio
+  `docs/V1_0_2.md` para não misturar as duas versões no mesmo arquivo —
+  nenhuma TASK criada, nenhuma implementação autorizada agora).
 - **Justificativa técnica:** os dois achados são reais (confirmados por
   auditoria de `compose.yaml` durante a TASK-064/preparação do manual de
   produção) mas de baixo risco e não funcionais — remoção de configuração
@@ -53,10 +277,11 @@ Após a classificação, registrar a decisão neste arquivo e atualizar a docume
   subida real em produção da `v1.0.1`, e evita competir com o escopo
   funcional já priorizado da V1.2. A cascata `Gemini Flash → Groq`
   (`DEC-050`) não é alterada por nenhum dos dois itens.
-- **Próxima ação:** `docs/V1_2.md` registra os dois itens com ordem de
-  execução (`v1.0.2` antes da V1.2). `docs/PRODUCTION_SETUP.md` atualizado
-  para deixar explícito, no comportamento real da `v1.0.1`, que ambos os
-  pontos estão planejados para correção na `v1.0.2`. Nenhuma TASK criada
+- **Próxima ação:** `docs/V1_0_2.md` (documento próprio, separado de
+  `docs/V1_2.md`) registra os itens com ordem de execução (`v1.0.2` antes
+  da V1.2). `docs/PRODUCTION_SETUP.md` atualizado para deixar explícito,
+  no comportamento real da `v1.0.1`, que ambos os pontos estão planejados
+  para correção na `v1.0.2`. Nenhuma TASK criada
   ainda; implementação aguarda solicitação explícita futura, depois da
   `v1.0.1` estar em produção.
 

@@ -1,5 +1,54 @@
 # Changelog
 
+## 2026-08-10 — `v1.0.1` implantada em produção real; planejamento de `v1.0.2`/V1.2 ampliado
+
+- **`v1.0.1` implantada num servidor de produção real**: build das imagens,
+  PostgreSQL subido, 26 migrations aplicadas até `20260809_0004` (head), os
+  7 serviços do `compose.yaml` saudáveis. Webhook do Telegram registrado
+  sobre uma URL HTTPS pública real; cadastro, criação de senha, login e
+  criação de missão por texto livre validados ao vivo, com IA (Gemini
+  Flash e fallback Groq) respondendo corretamente e sem carga alta. O
+  proprietário foi promovido a `DEV` pelo procedimento manual documentado
+  em `docs/PRODUCTION_SETUP.md` (seção 9).
+- **Achado real de implantação, corrigido**: os containers da aplicação
+  rodam como usuário não-root (UID 999 dentro da imagem); os arquivos de
+  `.secrets/` inicialmente ficaram com dono do usuário do host e ficaram
+  ilegíveis para os containers. Corrigido só com permissão de arquivo no
+  servidor (`chown` para o UID do container) — nenhum código,
+  `compose.yaml` ou `Dockerfile` alterado. Não aparecia em desenvolvimento
+  porque o Docker Desktop no Windows não aplica permissão POSIX real em
+  bind mounts como um host Linux real aplica; vale registrar como nota
+  operacional futura em `docs/PRODUCTION_SETUP.md`.
+- **`docs/V1_0_2.md` criado**, separado de `docs/V1_2.md` — a `v1.0.2`
+  (release *patch* corretiva) e a V1.2 (fase funcional maior) são versões
+  distintas e agora vivem em documentos próprios, para não confundir uma
+  com a outra (`DEC-059`). Nenhuma TASK criada, nenhum código alterado em
+  nenhum dos seis itens novos desta sessão:
+  - **`docs/V1_0_2.md`** ganhou três itens além dos dois originais do
+    `DEC-052`: editar missão existente sem precisar recriá-la — lojas
+    e/ou preço-alvo (`DEC-057`); trocar o texto livre de categorias do
+    `/cadastro` por lista numerada, no mesmo padrão já usado pelas lojas
+    favoritas (`DEC-055`); e uma pré-lista de preços encontrados **sem
+    IA**, mostrando só 1 preço por loja selecionada, puramente
+    informativa (`DEC-058`). Todos os três sinalizados explicitamente no
+    documento como fora do escopo original "configuração/infraestrutura,
+    sem funcionalidade nova" — registrados mesmo assim por pedido
+    explícito do usuário.
+  - **`docs/V1_2.md`** (evolução funcional) ganhou três itens: reduzir
+    `PriceObservation` redundante gravando só quando o estado observado da
+    oferta mudar de verdade (preço, disponibilidade, frete, moeda,
+    modalidade de envio), nunca apagando histórico já gravado
+    (`DEC-053`); Magalu como quinta loja pesquisável, mesma arquitetura de
+    Store Provider já aprovada (`DEC-054`); e uma capacidade de comparação
+    de menor preço histórico — externo (pesquisa fora do que o app já
+    coleta, com fonte/URL/data verificáveis) e interno
+    (`price_observations`) — com regra fundamental de que a IA nunca
+    inventa preço/data/loja/fonte/URL, só interpreta fatos encontrados;
+    essa é a "fase com IA" por cima da pré-lista sem IA da `v1.0.2`; mais
+    pesquisa de ofertas em lives, por enquanto limitada a YouTube e Shopee
+    Live (`DEC-056`).
+- `v1.0.0` permanece intocada; `v1.0.1` continua sendo a release corrente.
+
 ## 2026-08-10 — Release `v1.0.1` preparada — corrige a divergência da `v1.0.0`
 
 - Auditoria identificou que a tag `v1.0.0` (`85b56c6`) permaneceu apontando

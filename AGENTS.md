@@ -163,8 +163,33 @@ representativa (missão descartável, uma fonte) obteve 15/20 sucesso em
 classificação e em normalização; as falhas restantes do Flash por cota
 ficam registradas como condição operacional externa, não como falha da
 TASK-064. Batching não implementado (fora do escopo). Com a TASK-064
-fechada, **a condição que suspendia `v1.0.0` como release final está
-resolvida** (`docs/RELEASE_CHECKLIST.md`, 65/65, todos os 8 critérios do
-MVP `✅ Atendido`) — o tag `v1.0.0` não foi alterado nem recriado; deploy
-real num Ubuntu Server continua fora do escopo até decisão explícita
-futura. Não iniciar qualquer TASK de V1.2/V2 sem pedido explícito.
+fechada, a condição que suspendia `v1.0.0` como release final ficou
+resolvida quanto ao código (`docs/RELEASE_CHECKLIST.md`, 65/65) — mas
+auditoria posterior (`DEC-051`) mostrou que a tag `v1.0.0` (`85b56c6`)
+nunca foi movida e não continha TASK-063/TASK-064: o checklist "65/65"
+descrevia o código corrente, não o que estava tagueado. `v1.0.0` permanece
+**intocada** como marco histórico; a tag corretiva **`v1.0.1`** (`578dc29`)
+passou a ser a referência de release. `docs/PRODUCTION_SETUP.md` documenta
+a instalação completa em Ubuntu Server a partir dela, e a **`v1.0.1` já
+foi implantada num servidor de produção real** — 7 serviços saudáveis,
+migrations no head `20260809_0004`, webhook do Telegram ativo sobre HTTPS
+pública, cadastro/login/missão validados ao vivo, proprietário promovido a
+`DEV`. Achado real do deploy: os containers rodam como usuário não-root
+(UID 999) e os arquivos de `.secrets/` precisaram ser `chown`ados pra esse
+UID no servidor — bind mounts em host Linux real aplicam permissão POSIX
+que o Docker Desktop no Windows não aplicava; corrigido só com permissão
+de arquivo, nenhum código/compose alterado. Depois do deploy, o usuário
+registrou seis novos itens de planejamento (nenhuma TASK criada, nenhum
+código alterado), divididos em dois documentos separados para não
+confundir as versões: **`docs/V1_0_2.md`** (release corretiva `v1.0.2`,
+5 itens) — editar missão existente, categorias numeradas no `/cadastro` e
+pré-lista de preços encontrados sem IA, um preço por loja
+(`DEC-057`/`DEC-055`/`DEC-058`), além dos dois originais do `DEC-052`; e
+**`docs/V1_2.md`** (evolução funcional V1.2, 12 itens) — redução de
+`PriceObservation` redundante, Magalu como quinta loja, e comparação de
+menor preço histórico externo/interno (estilo Steam Inventory Helper, a
+mesma pré-lista acima com IA por cima) mais pesquisa de ofertas em lives
+(YouTube/Shopee Live) (`DEC-053`/`DEC-054`/`DEC-056`). Ordem de versões
+vigente: `v1.0.1` (atual, em produção) → `v1.0.2` (`docs/V1_0_2.md`,
+corretiva) → V1.2 (`docs/V1_2.md`, funcional) → V2. Não iniciar qualquer
+TASK de `v1.0.2`/V1.2/V2 sem pedido explícito.
