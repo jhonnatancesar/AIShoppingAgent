@@ -137,8 +137,8 @@ def test_stage_and_describe_create_mission_with_target_and_sources() -> None:
     }
     description = describe_create_mission(payload)
     assert "notebook gamer" in description
-    assert "5000.00 BRL" in description
-    assert "pichau, kabum" in description
+    assert "R$ 5.000,00" in description
+    assert "Pichau, Kabum" in description
     assert "sim" in description.lower()
     assert "não" in description.lower()
 

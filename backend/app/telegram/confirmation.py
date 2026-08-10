@@ -11,6 +11,7 @@ nem texto livre da mensagem original.
 
 import json
 from datetime import UTC, datetime
+from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -22,6 +23,7 @@ from app.ai_provider import (
     AIRequest,
 )
 from app.missions.models import MissionCommand
+from app.telegram.formatting import format_money, format_store_list
 from app.users.models import UserRole
 
 PURPOSE = "interpret_confirmation_reply"
@@ -137,18 +139,21 @@ def stage_mission_command(
 
 
 def describe_create_mission(payload: dict[str, Any]) -> str:
-    parts = [f'criar a missão "{payload["search_query"]}"']
+    lines = ["🔎 Confirmar nova missão?", "", f'Produto: "{payload["search_query"]}"']
     amount, currency = payload.get("target_amount"), payload.get("target_currency")
     if amount and currency:
-        parts.append(f"até {amount} {currency}")
+        lines.append(f"🎯 Alvo: {format_money(Decimal(amount), currency)}")
     sources = payload.get("sources") or []
-    if sources:
-        parts.append(f"em: {', '.join(sources)}")
-    else:
-        parts.append("em todas as lojas disponíveis")
-    return f"Posso {' '.join(parts)}? {_CONFIRMATION_SUFFIX}"
+    lines.append(
+        f"🏪 Lojas: {format_store_list(sources)}"
+        if sources
+        else "🏪 Lojas: todas as lojas disponíveis"
+    )
+    lines.extend(["", _CONFIRMATION_SUFFIX])
+    return "\n".join(lines)
 
 
 def describe_mission_command(payload: dict[str, Any]) -> str:
     verb = _COMMAND_VERBS[MissionCommand(payload["command"])]
-    return f'Posso {verb} a missão "{payload["mission_title"]}"? {_CONFIRMATION_SUFFIX}'
+    title = payload["mission_title"]
+    return f'Confirmar: {verb} a missão "{title}"?\n\n{_CONFIRMATION_SUFFIX}'

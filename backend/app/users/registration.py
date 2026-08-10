@@ -51,7 +51,9 @@ _PROMPTS: Final[dict[str, str]] = {
     ),
 }
 
-_COMPLETION_MESSAGE = "Cadastro confirmado! Agora crie sua senha pelo link seguro."
+_COMPLETION_MESSAGE = (
+    "✅ Cadastro confirmado!\n\nAgora crie sua senha pelo link abaixo."
+)
 
 
 class RegistrationError(ValueError):

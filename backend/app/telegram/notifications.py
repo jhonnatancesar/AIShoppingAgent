@@ -33,6 +33,7 @@ from app.telegram.bot_api import (
     send_message,
 )
 from app.telegram.contracts import TelegramChatType, TelegramMessage
+from app.telegram.formatting import format_money
 from app.telegram.preferences import notification_is_enabled
 from app.users.models import User
 
@@ -342,30 +343,31 @@ def _render_authentication_message(
             raise TelegramNotificationError("notification_payload_invalid") from None
         return {
             CredentialAction.SET_PASSWORD: (
-                "✅ Senha criada com sucesso.\nAgora use /entrar para fazer login."
+                "✅ Senha criada com sucesso!\n\nAgora use /entrar para fazer login."
             ),
             CredentialAction.LOGIN: (
-                "✅ Login realizado com sucesso.\nSua sessão ficará ativa por 12 horas."
+                "✅ Login realizado com sucesso!\n\n"
+                "Sua sessão ficará ativa por 12 horas."
             ),
             CredentialAction.CHANGE_PASSWORD: (
-                "✅ Senha alterada com sucesso.\n"
-                "As sessões anteriores foram encerradas. Use /entrar novamente."
+                "✅ Senha alterada com sucesso!\n\n"
+                "As sessões anteriores foram encerradas — use /entrar novamente."
             ),
             CredentialAction.RECOVER_PASSWORD: (
-                "✅ Senha recuperada com sucesso.\n"
-                "As sessões anteriores foram encerradas. Use /entrar novamente."
+                "✅ Senha recuperada com sucesso!\n\n"
+                "As sessões anteriores foram encerradas — use /entrar novamente."
             ),
         }[action]
     expires_at = _required_datetime(payload, "expires_at")
     if event_type is EventType.AUTHENTICATION_SESSION_EXPIRING_V1:
         local_expiry = expires_at.astimezone(_BRAZIL_TIMEZONE)
         return (
-            "⏳ Sua sessão expira em breve, em "
-            f"{local_expiry:%d/%m/%Y às %H:%M} (horário de Brasília).\n"
-            "Depois da expiração, use /entrar para autenticar novamente."
+            "⏳ Sua sessão expira em breve\n\n"
+            f"{local_expiry:%d/%m/%Y às %H:%M} (horário de Brasília). "
+            "Depois disso, use /entrar para autenticar novamente."
         )
     if event_type is EventType.AUTHENTICATION_SESSION_EXPIRED_V1:
-        return "🔒 Sua sessão expirou. Use /entrar para autenticar novamente."
+        return "🔒 Sua sessão expirou.\n\nUse /entrar para autenticar novamente."
     raise TelegramNotificationError("notification_payload_invalid")
 
 
@@ -401,8 +403,8 @@ def _render_alert(
                 "📉 QUEDA DE PREÇO\n\n"
                 f"{display_name}\n\n"
                 f"🏪 {store.name}\n"
-                f"💰 {_format_money(current_total, currency)} "
-                f"(antes: {_format_money(previous_total, currency)})\n"
+                f"💰 {format_money(current_total, currency)} "
+                f"(antes: {format_money(previous_total, currency)})\n"
                 f"🔎 Missão: {mission_title}\n\n"
                 "🔗 Ver anúncio\n"
                 f"{offer.url}"
@@ -415,8 +417,8 @@ def _render_alert(
                 "🔥 PREÇO ENCONTRADO\n\n"
                 f"{display_name}\n\n"
                 f"🏪 {store.name}\n"
-                f"💰 {_format_money(current_total, currency)}\n"
-                f"🎯 Alvo: {_format_money(target_total, currency)}\n"
+                f"💰 {format_money(current_total, currency)}\n"
+                f"🎯 Alvo: {format_money(target_total, currency)}\n"
                 f"🔎 Missão: {mission_title}\n\n"
                 "🔗 Ver anúncio\n"
                 f"{offer.url}"
@@ -467,12 +469,6 @@ def _currency(payload: dict) -> str:
     ):
         raise TelegramNotificationError("notification_payload_invalid")
     return currency
-
-
-def _format_money(amount: Decimal, currency: str) -> str:
-    formatted = f"{amount:,.2f}".replace(",", "_").replace(".", ",").replace("_", ".")
-    prefix = "R$" if currency == "BRL" else currency
-    return f"{prefix} {formatted}"
 
 
 def _retry_delay(

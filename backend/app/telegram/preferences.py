@@ -8,7 +8,7 @@ from app.users.models import User
 PREFERENCES_COMMAND: Final = "/preferencias"
 
 _USAGE: Final = (
-    "Use um destes comandos:\n"
+    "Use um destes comandos:\n\n"
     "• /preferencias — consultar\n"
     "• /preferencias quedas ativar|desativar\n"
     "• /preferencias alvo ativar|desativar"
@@ -38,8 +38,9 @@ def handle_preferences_command(user: User, command: str) -> str:
     else:
         return f"A preferência deve ser quedas ou alvo.\n\n{_USAGE}"
 
+    icon = "✅" if enabled else "🔕"
     state = "ativadas" if enabled else "desativadas"
-    return f"{label}: notificações {state}.\n\n{_render_preferences(user)}"
+    return f"{icon} {label}: notificações {state}.\n\n{_render_preferences(user)}"
 
 
 def notification_is_enabled(user: User, event_type: str) -> bool:
@@ -53,12 +54,18 @@ def notification_is_enabled(user: User, event_type: str) -> bool:
 
 def _render_preferences(user: User) -> str:
     return (
-        "Suas preferências de notificações:\n"
-        f"• Quedas de preço: {_state(user.notify_price_decreases)}\n"
-        f"• Preço-alvo atingido: {_state(user.notify_target_reached)}\n\n"
+        "🔔 Suas preferências de notificações\n\n"
+        f"{_state_icon(user.notify_price_decreases)} Quedas de preço: "
+        f"{_state(user.notify_price_decreases)}\n"
+        f"{_state_icon(user.notify_target_reached)} Preço-alvo atingido: "
+        f"{_state(user.notify_target_reached)}\n\n"
         f"{_USAGE}"
     )
 
 
 def _state(enabled: bool) -> str:
     return "ativadas" if enabled else "desativadas"
+
+
+def _state_icon(enabled: bool) -> str:
+    return "✅" if enabled else "🔕"

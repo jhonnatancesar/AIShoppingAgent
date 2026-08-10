@@ -77,6 +77,12 @@ from app.telegram.contracts import (
     TelegramContractError,
     TelegramMessage,
 )
+from app.telegram.formatting import (
+    MISSION_STATUS_ICONS,
+    format_mission_status,
+    format_money,
+    format_store_list,
+)
 from app.telegram.limits import reserve_telegram_update
 from app.telegram.models import TelegramUpdateDisposition
 from app.telegram.notifications import remember_private_notification_chat
@@ -110,8 +116,8 @@ _LOGIN_COMMAND = "/entrar"
 _LOGOUT_COMMAND = "/sair"
 _RECOVERY_COMMAND = "/recuperar"
 _SESSION_REQUIRED_REPLY = (
-    "Sua sessão por senha não está ativa. Use /entrar. "
-    "Se ainda não criou uma senha, use /senha."
+    "🔒 Sua sessão não está ativa.\n\n"
+    "Use /entrar para autenticar, ou /senha se ainda não criou uma senha."
 )
 
 
@@ -357,7 +363,7 @@ async def _handle_message(
         return _SESSION_REQUIRED_REPLY
     if lowered == _LOGOUT_COMMAND:
         logout(session, user=user)
-        return "Sessão encerrada. Use /entrar quando quiser acessar novamente."
+        return "👋 Sessão encerrada.\n\nUse /entrar quando quiser acessar novamente."
     if lowered == _UPGRADE_COMMAND:
         authorize(session, user, Permission.PROFILE_MANAGE)
         return _UPGRADE_REPLY
@@ -420,13 +426,14 @@ def _authentication_link_reply(
     except AuthenticationError:
         return "Não foi possível gerar o link. Verifique seu cadastro."
     labels = {
-        CredentialAction.LOGIN: "Entrar",
-        CredentialAction.SET_PASSWORD: "Criar senha",
-        CredentialAction.CHANGE_PASSWORD: "Alterar senha",
-        CredentialAction.RECOVER_PASSWORD: "Recuperar senha",
+        CredentialAction.LOGIN: ("🔑", "Entrar"),
+        CredentialAction.SET_PASSWORD: ("🔐", "Criar senha"),
+        CredentialAction.CHANGE_PASSWORD: ("🔐", "Alterar senha"),
+        CredentialAction.RECOVER_PASSWORD: ("🔐", "Recuperar senha"),
     }
+    icon, label = labels[action]
     return (
-        f"{labels[action]}: {issued.url}\n\n"
+        f"{icon} {label}\n{issued.url}\n\n"
         "O link é pessoal, de uso único e expira em 10 minutos."
     )
 
@@ -522,7 +529,12 @@ def _handle_query_mission(intent: Intent, *, session: Session, user: User) -> st
 
     if not missions:
         return "Você ainda não tem nenhuma missão registrada."
-    lines = [f"• {mission.title} — {mission.status.value}" for mission in missions]
+    lines = ["📋 Suas missões:", ""]
+    lines.extend(
+        f"{MISSION_STATUS_ICONS[mission.status]} {mission.title} — "
+        f"{format_mission_status(mission.status)}"
+        for mission in missions
+    )
     return "\n".join(lines)
 
 
@@ -570,9 +582,14 @@ def _execute_create_mission(
         schedule_interval_minutes=get_settings().collection_schedule_interval_minutes,
         schedule_stagger_seconds=get_settings().collection_schedule_stagger_seconds,
     )
-    return (
-        f'Missão "{mission.title}" criada e ativa! Buscando em: {", ".join(sources)}.'
-    )
+    lines = ["✅ Missão criada!", "", f"🔎 Produto: {mission.title}"]
+    if target_amount is not None and payload["target_currency"] is not None:
+        lines.append(
+            f"🎯 Alvo: {format_money(target_amount, payload['target_currency'])}"
+        )
+    lines.append(f"🏪 Lojas: {format_store_list(sources)}")
+    lines.extend(["", "Vou começar a monitorar os preços para você."])
+    return "\n".join(lines)
 
 
 def _execute_mission_command(
@@ -603,7 +620,9 @@ def _execute_mission_command(
         actor_type="telegram",
         actor_id=user.id,
     )
-    return f'"{payload["mission_title"]}" agora está {transition.to_status.value}.'
+    icon = MISSION_STATUS_ICONS[transition.to_status]
+    status = format_mission_status(transition.to_status)
+    return f'{icon} "{payload["mission_title"]}" agora está {status}.'
 
 
 def _log_authorization_denial(error: AuthorizationDenied, user: User) -> None:

@@ -10,6 +10,7 @@ from app.ai_provider import AIProviderQuotaExceeded, AIProviderUnavailable
 from app.core.config import Settings
 from app.intent import Intent, IntentKind, IntentParameters
 from app.main import app
+from app.missions.models import MissionStatus
 from app.missions.query import MissionReferenceError
 from app.missions.service import MissionCreationError, MissionTransitionConditionError
 from app.telegram.confirmation import ConfirmationError
@@ -644,9 +645,7 @@ async def test_create_mission_intent_without_search_query_is_a_known_error(
 async def test_query_mission_intent_lists_missions_found(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    fake_mission = SimpleNamespace(
-        title="notebook gamer", status=SimpleNamespace(value="active")
-    )
+    fake_mission = SimpleNamespace(title="notebook gamer", status=MissionStatus.ACTIVE)
 
     _patch_user(monkeypatch, _fake_user())
     monkeypatch.setattr(
@@ -668,6 +667,9 @@ async def test_query_mission_intent_lists_missions_found(
 
     assert response.status_code == 204
     assert "notebook gamer" in send_calls[0][1]
+    # TASK-063: rótulo em português, nunca o valor bruto do enum ("active")
+    assert "ativa" in send_calls[0][1]
+    assert "active" not in send_calls[0][1]
 
 
 @pytest.mark.anyio
@@ -721,8 +723,6 @@ async def test_mission_command_intent_stages_confirmation_without_transitioning(
 async def test_confirmed_pending_mission_command_executes_and_clears_step(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from app.missions.models import MissionStatus
-
     mission_id = uuid4()
     fake_user = _fake_user(
         pending_intent={
@@ -764,7 +764,7 @@ async def test_confirmed_pending_mission_command_executes_and_clears_step(
     assert response.status_code == 204
     assert adapter.calls == []
     assert fake_user.pending_intent is None
-    assert "paused" in send_calls[0][1]
+    assert "pausada" in send_calls[0][1]
 
 
 @pytest.mark.anyio
@@ -1245,7 +1245,7 @@ async def test_sensitive_message_is_blocked_without_password_session(
         session=MagicMock(),
     )
 
-    assert "sessão por senha" in sends[0][1]
+    assert "sessão não está ativa" in sends[0][1].lower()
     assert adapter.calls == []
 
 
