@@ -4,26 +4,31 @@
 
 Este é um **retrato do estado real do repositório**, não um plano. Ele
 cruza os 8 critérios objetivos de conclusão do MVP (`docs/MVP.md`) e o
-inventário completo das 63 tarefas planejadas (`docs/tasks/`) com o que
+inventário completo das 64 tarefas planejadas (`docs/tasks/`) com o que
 está de fato implementado hoje. `docs/MVP.md` já prevê "checklist de
 release" como parte do critério 8 — este arquivo é esse checklist, e a
 TASK-054 o fechou publicando o tag `v1.0.0` sobre o commit revisado.
 
 Atualizar este documento sempre que uma TASK relevante para produção for
-concluída ou revisada. Snapshot revisado em **2026-08-09**, após a TASK-054
-fechar o checklist de release e publicar o tag `v1.0.0` em `origin`.
+concluída ou revisada. Snapshot revisado em **2026-08-09**, após a TASK-063
+fechar e a TASK-064 ser registrada.
 
 ## Resumo executivo
 
 **MVP funcionalmente completo, mas `v1.0.0` suspensa como release final
-(2026-08-09).** 63 das 63 tarefas originalmente planejadas estão
-concluídas, mas a TASK-063 (`DEC-048`) — registrada depois deste snapshot —
-encontrou defeitos reais de relevância e apresentação nos alertas de preço
-(nome da missão em vez do anúncio real, sem link direto, sem filtro de
-correspondência produto-missão) antes da V1 ser tratada como definitiva. O
-critério 4 abaixo precisa ser revisto à luz disso. O tag `v1.0.0` continua
-publicado sem alteração; deploy real num Ubuntu Server continua fora do
-escopo até então.
+(2026-08-09).** A TASK-063 (`DEC-048`) fechou os defeitos reais de
+relevância e apresentação nos alertas de preço encontrados antes deste
+snapshot (nome da missão em vez do anúncio real, sem link direto, sem
+filtro de correspondência produto-missão) — critério 4 abaixo voltou a
+`✅ Atendido`. A validação real dessa correção revelou um problema
+separado: a camada premium da cascata ADMIN/DEV do `AIProviderManager`
+(`gemini-3.1-pro-preview`) teve 0% de sucesso sob carga real, o que pode
+fazer o monitor perder classificações válidas por indisponibilidade de
+IA, não por decisão de produto. Isso foi desmembrado para a TASK-064
+(`DEC-049`), registrada e ainda pendente — por isso a release continua sem
+ser tratada como definitiva. O tag `v1.0.0` continua publicado sem
+alteração; deploy real num Ubuntu Server continua fora do escopo até
+então.
 
 ## Critérios objetivos do MVP (`docs/MVP.md`) — status real
 
@@ -32,9 +37,9 @@ escopo até então.
 | 1 | Ambiente local sobe de forma documentada e reproduzível | ✅ Atendido | Docker Compose, `docs/DEPENDENCIES.md`, `scripts\check.cmd` |
 | 2 | Usuário autorizado cria e consulta missão pelo Telegram | ✅ Atendido | TASK-046 autentica transporte/identidade; TASK-047 aplica RBAC/ownership; TASK-061 exige sessão por senha com Argon2id, TTL e recuperação segura |
 | 3 | Sistema pesquisa todas as fontes selecionadas, normaliza e preserva histórico | ✅ Atendido | TASK-062 agenda e executa automaticamente as fontes selecionadas, persiste observações append-only e isola falhas por loja |
-| 4 | Condição de preço produz evento e notificação rastreáveis | ⚠️ Parcial (reaberto) | TASK-062/TASK-053 comprovaram entrega mecânica (11 eventos reais, 11 notificações `succeeded`); TASK-063 (`DEC-048`) encontrou que o alerta não é rastreável ao anúncio real (usa nome da missão, sem link, sem filtro de relevância produto-missão) — correção pendente de autorização |
+| 4 | Condição de preço produz evento e notificação rastreáveis | ✅ Atendido | TASK-063 (`DEC-048`) corrigiu o alerta para mostrar o anúncio real (título/loja/link), com filtro de relevância `(mission_id, offer_id)` — só `MATCH` alerta; validado com missão real no Telegram |
 | 5 | Recomendação/comparação básica com evidências históricas | ✅ Atendido | TASK-038 recomenda uma oferta com regras monetárias seguras e histórico identificável; TASK-039 compara as mesmas evidências, mantém a posição 1 invariável e não inventa total para frete desconhecido |
-| 6 | Todo uso de IA passa pelo AI Provider Manager | ✅ Atendido | Invariante reforçada e validada em todas as tarefas de IA (TASK-028 a TASK-032, TASK-057 a TASK-060) |
+| 6 | Todo uso de IA passa pelo AI Provider Manager | ⚠️ Parcial (reaberto) | Invariante arquitetural continua válida (TASK-028 a TASK-032, TASK-057 a TASK-060, TASK-063); TASK-064 (`DEC-049`) encontrou a camada premium da cascata ADMIN/DEV com 0% de sucesso sob carga real — disponibilidade prática da cascata, não violação da porta única, correção pendente de autorização |
 | 7 | Fluxos críticos com testes de integração e ponta a ponta | ✅ Atendido | Integração, E2E reproduzível e E2E externo aprovados (`PASS`, 2026-08-09); quatro fontes reais, Telegram real, Pichau isolada por instabilidade externa sem contaminar as demais |
 | 8 | Documentação operacional, segurança mínima e checklist de release concluídos | ✅ Atendido | TASK-051 entregou runbook, binds privados e restauração validada; TASK-054 fechou este checklist e publicou o tag `v1.0.0` |
 
@@ -96,19 +101,24 @@ Além dos critérios formais do MVP:
 | Orquestração automática do fluxo principal | TASK-062 | 1/1 | — |
 | Store Providers e identidade | TASK-055, TASK-056 | 2/2 | — |
 | Robustez, confirmação e IA (V1.2 antecipado) | TASK-057 a TASK-060 | 4/4 | — |
-| Relevância e apresentação de alertas | TASK-063 | 0/1 | TASK-063 |
+| Relevância e apresentação de alertas | TASK-063 | 1/1 | — |
+| Disponibilidade e fallback dos provedores de IA | TASK-064 | 0/1 | TASK-064 |
 
-**Total: 63 concluídas, 1 pendente (TASK-063, registrada em 2026-08-09 antes
+**Total: 64 concluídas, 1 pendente (TASK-064, registrada em 2026-08-09 antes
 da release ser tratada como definitiva).**
 
 ## Recomendação
 
-O MVP da V1 está funcionalmente completo e taggeado (`v1.0.0`), mas a
-release **não deve ser tratada como definitiva** até a TASK-063 corrigir a
-rastreabilidade dos alertas (critério 4). Continuar validando manualmente
-por sessão (como já vem sendo feito) é seguro para uso próprio sem deploy
-real. Colocar um usuário real dependendo do sistema em produção ainda exige
-provisionar um Ubuntu Server real e executar `docs/OPERATIONS.md`
-integralmente (domínio, TLS, deploy) — deliberadamente fora do escopo da
-TASK-054 — **e** fechar a TASK-063 primeiro. Evoluções além disso ficam em
-`docs/V1_2.md` e `docs/BACKLOG.md`, sob decisão explícita futura.
+O MVP da V1 está funcionalmente completo e taggeado (`v1.0.0`); a TASK-063
+fechou a rastreabilidade dos alertas (critério 4). A release **ainda não
+deve ser tratada como definitiva** até a TASK-064 corrigir a disponibilidade
+prática da cascata de IA (critério 6) — hoje a camada premium falha 100%
+sob carga real, o que pode fazer o monitor perder classificações válidas
+por indisponibilidade, não por decisão de produto. Continuar validando
+manualmente por sessão (como já vem sendo feito) é seguro para uso próprio
+sem deploy real. Colocar um usuário real dependendo do sistema em produção
+ainda exige provisionar um Ubuntu Server real e executar
+`docs/OPERATIONS.md` integralmente (domínio, TLS, deploy) —
+deliberadamente fora do escopo da TASK-054 — **e** fechar a TASK-064
+primeiro. Evoluções além disso ficam em `docs/V1_2.md` e
+`docs/BACKLOG.md`, sob decisão explícita futura.

@@ -110,7 +110,8 @@ Nunca iniciar automaticamente a próxima TASK. Encerrar apresentando resumo da i
 
 ## Estado atual
 
-TASKs 000 a 054 e TASK-055 a TASK-062 concluídas — MVP da V1 completo. A observabilidade da
+TASKs 000 a 054, TASK-055 a TASK-062 e TASK-063 concluídas — MVP da V1
+completo, com a TASK-064 registrada e aguardando autorização. A observabilidade da
 TASK-045 (`DEC-031`) foi validada com PostgreSQL, API, worker, Collector,
 Prometheus e Jaeger reais, incluindo falha/recuperação e privacidade. A
 TASK-046 autentica a identidade mínima do canal Telegram (`DEC-032`). A
@@ -139,11 +140,18 @@ pendente. A TASK-054 (`docs/tasks/TASK-054.md`) fechou o checklist de
 release (`docs/RELEASE_CHECKLIST.md`, 63/63) e publicou o tag Git anotado
 `v1.0.0` em `origin`, por decisão explícita do usuário só como marco
 revisado — sem deploy real num Ubuntu Server ainda, sem CI/CD e sem GitHub
-Release pública. **A release deixou de ser tratada como definitiva em
-2026-08-09**: a TASK-063 (`docs/tasks/TASK-063.md`, `DEC-048`) foi
-registrada depois de o usuário identificar, no Telegram real, que alertas
-de preço podiam não corresponder ao produto pedido, mostravam o nome da
-missão em vez do anúncio real e sem link direto. Auditoria concluída,
-implementação **aguarda autorização explícita**; o tag `v1.0.0` não foi
-alterado nem recriado. Não iniciar a implementação da TASK-063 nem
-qualquer TASK de V1.2/V2 sem pedido explícito.
+Release pública. A TASK-063 (`docs/tasks/TASK-063.md`, `DEC-048`), aberta
+depois de o usuário identificar no Telegram real que alertas podiam não
+corresponder ao produto pedido, mostravam o nome da missão em vez do
+anúncio real e sem link direto, está **concluída**: relevância
+`MATCH`/`POSSIBLE_MATCH`/`NO_MATCH` (só `MATCH` alerta), correção do bug de
+`previous` compartilhado entre missões, título/loja/link reais no alerta e
+formatação revisada das mensagens principais, tudo validado (pipeline, E2E
+reproduzível, missão real) e aprovado explicitamente. Durante essa
+validação, a camada premium do `AdminDevAIProviderManager`
+(`gemini-3.1-pro-preview`) mostrou 0% de sucesso sob carga real — isso foi
+desmembrado para a TASK-064 (`docs/tasks/TASK-064.md`, `DEC-049`),
+auditoria concluída, implementação **aguarda autorização explícita**. O
+tag `v1.0.0` não foi alterado nem recriado; a release **continua suspensa
+como definitiva** até a TASK-064 fechar. Não iniciar a implementação da
+TASK-064 nem qualquer TASK de V1.2/V2 sem pedido explícito.

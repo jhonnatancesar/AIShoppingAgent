@@ -1,5 +1,29 @@
 # Changelog
 
+## 2026-08-09 — TASK-063 concluída; TASK-064 registrada — release segue suspensa
+
+- TASK-063 (relevância dos alertas e formatação do Telegram) **concluída**
+  com aprovação explícita do usuário: classificador
+  `MATCH`/`POSSIBLE_MATCH`/`NO_MATCH` por `(mission_id, offer_id)` (só
+  `MATCH` alerta), correção do bug de `previous` compartilhado entre
+  missões, `products.display_name` normalizado por IA, título/loja/link
+  reais no alerta (nunca o nome da missão) e formatação revisada das
+  mensagens principais do Telegram (`app/telegram/formatting.py`,
+  `MissionStatus` deixou de vazar em inglês). Migration `20260809_0004`.
+  Pipeline (753 testes, 90,64% cobertura, 14 integrações reais), E2E
+  reproduzível (2/2) e missão real no Telegram validados.
+- A validação real revelou a camada premium da cascata ADMIN/DEV
+  (`gemini-3.1-pro-preview`) com 0% de sucesso em 248 tentativas reais.
+  TASK-064 criada (`DEC-049`) para revisar disponibilidade/fallback dos
+  provedores de IA. Auditoria concluída: o modelo é oficialmente
+  `preview`; teste mínimo mostrou um candidato GA "Pro"
+  (`gemini-pro-latest`) também falhando com `quota_exceeded`, enquanto um
+  GA "Flash" (`gemini-3.5-flash`) respondeu normalmente — mais consistente
+  com falta de cota "Pro" na chave do que com um problema pontual do
+  modelo. Duas propostas de cascata registradas; nenhum código alterado.
+- `v1.0.0` (TASK-054) não foi tocada. A release continua sem ser tratada
+  como definitiva até a TASK-064 fechar.
+
 ## 2026-08-09 — TASK-063: registrada e auditada — release deixa de ser definitiva
 
 - Usuário identificou no Telegram real que alertas de preço podiam ser

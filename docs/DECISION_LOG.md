@@ -25,6 +25,45 @@ Após a classificação, registrar a decisão neste arquivo e atualizar a docume
 - **Justificativa:** impacto avaliado e motivo da classificação.
 - **Próxima ação:** documento a atualizar, TASK a criar quando aplicável, ou ação de não implementação.
 
+### DEC-049 — Criar a TASK-064 para revisar disponibilidade/fallback dos provedores de IA
+
+- **Data:** 2026-08-09
+- **Ideia:** a validação real da TASK-063 (`DEC-048`) revelou um problema
+  separado: `gemini-3.1-pro-preview` (camada premium do
+  `AdminDevAIProviderManager`) teve 0 sucessos em 248 tentativas reais. O
+  usuário pediu para tratar isso como TASK própria — auditar a cascata
+  ADMIN/DEV, validar com chamadas mínimas quais modelos a chave atual
+  realmente consegue usar, propor (sem implementar ainda) a melhor ordem
+  de fallback, e só considerar batching depois, com evidência real.
+- **Classificação:** Nova TASK do MVP (a cascata ADMIN/DEV já é
+  infraestrutura aprovada da V1, TASK-059/DEC-016; esta TASK corrige sua
+  disponibilidade prática, não amplia escopo — nenhum provedor novo, nenhum
+  canal novo).
+- **Justificativa técnica:** auditoria (`docs/tasks/TASK-064.md`) confirmou
+  que `gemini-3.1-pro-preview` é oficialmente `preview` (`stable=False` na
+  própria listagem da API). Um teste mínimo (uma chamada de
+  `client.models.list()` mais duas chamadas reais de `generateContent`,
+  sem carga adicional) mostrou que um candidato GA "Pro" (`gemini-pro-latest`)
+  também falha com `quota_exceeded` de imediato, enquanto um modelo GA
+  "Flash" (`gemini-3.5-flash`) responde normalmente — mais consistente com
+  a chave não ter cota real de nível "Pro" do que com um problema
+  específico do modelo preview escolhido. A taxonomia de erro
+  (quota/indisponibilidade/timeout/autenticação/rejeição) já está separada
+  corretamente no código (`_translate_api_error` idêntica em
+  `gemini.py`/`groq.py`); o único gap de observabilidade encontrado é
+  cosmético (falha de parsing de resposta não se correlaciona automaticamente
+  com a tentativa de provedor bem-sucedida que a originou). Volume real por
+  coleta é 2 operações lógicas de IA por oferta nova (nunca recorrente —
+  cache permanente por `(mission_id, offer_id)`/`Product`); o pico de 248
+  chamadas visto na validação veio de várias missões ficando due ao mesmo
+  tempo após um restart do worker, não de uma única coleta.
+- **Próxima ação:** `docs/tasks/TASK-064.md` criado com a auditoria e duas
+  propostas de nova cascata (Opção A: dois modelos Flash estáveis, sem
+  depender de "Pro"; Opção B: manter uma camada "Pro" GA, se o usuário
+  confirmar faturamento habilitado na chave). Implementação aguarda
+  autorização explícita, incluindo a resposta à pergunta sobre faturamento.
+  TASK-054/`v1.0.0` permanece suspensa até esta TASK fechar.
+
 ### DEC-048 — Criar a TASK-063 para relevância de resultados e apresentação de alertas
 
 - **Data:** 2026-08-09

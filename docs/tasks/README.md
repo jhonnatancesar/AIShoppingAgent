@@ -2,8 +2,9 @@
 
 Cada arquivo descreve uma unidade de trabalho. Antes de executar uma tarefa, leia os documentos obrigatórios definidos em `AGENTS.md`.
 
-As TASKs 000 a 054 e as TASKs 055 a 062 estão concluídas — MVP da V1
-completo. A TASK-038 recomenda
+As TASKs 000 a 054, as TASKs 055 a 062 e a TASK-063 estão concluídas — MVP
+da V1 completo, com a TASK-064 registrada e aguardando autorização. A
+TASK-038 recomenda
 deterministicamente (`DEC-026`), a TASK-039 compara as mesmas evidências
 (`DEC-027`), a TASK-040 define a confirmação com TTL (`DEC-028`) e a TASK-041
 persiste sua solicitação imutável e resolução append-only (`DEC-029`). A
@@ -25,10 +26,15 @@ explícita do usuário. A falha isolada da Pichau no E2E externo é uma
 condição externa observada, não um bug interno pendente. A TASK-054 fechou
 `docs/RELEASE_CHECKLIST.md` (63/63) e publicou o tag `v1.0.0` em `origin`
 como marco revisado da V1 — sem deploy real, CI/CD ou GitHub Release
-pública, por decisão explícita do usuário. **A release deixou de ser
-tratada como definitiva em 2026-08-09**: a TASK-063 (`docs/tasks/TASK-063.md`,
-`DEC-048`) foi registrada depois de o usuário identificar, no Telegram
-real, alertas possivelmente irrelevantes ao produto pedido, mostrando o
-nome da missão em vez do anúncio real e sem link direto. Auditoria
-concluída com causa raiz confirmada em código; implementação aguarda
-autorização explícita. O tag `v1.0.0` permanece publicado sem alteração.
+pública, por decisão explícita do usuário. A TASK-063
+(`docs/tasks/TASK-063.md`, `DEC-048`), aberta depois de o usuário
+identificar no Telegram real alertas possivelmente irrelevantes ao produto
+pedido, mostrando o nome da missão em vez do anúncio real e sem link
+direto, está **concluída**: relevância, correção do bug de `previous`
+compartilhado, título/loja/link reais e formatação das mensagens
+principais, tudo validado e aprovado. A validação revelou a camada premium
+da cascata ADMIN/DEV com 0% de sucesso sob carga — desmembrado para a
+TASK-064 (`docs/tasks/TASK-064.md`, `DEC-049`), auditoria concluída,
+implementação aguardando autorização explícita. **A release continua sem
+ser tratada como definitiva** até a TASK-064 fechar; o tag `v1.0.0`
+permanece publicado sem alteração.

@@ -263,14 +263,30 @@ da V1 está completo; não há próxima TASK do roadmap pendente. Evoluções
 (V1.2 em `docs/V1_2.md`, V2 em `docs/BACKLOG.md`) exigem decisão explícita
 antes de qualquer TASK nova.
 
-**Atualização 2026-08-09:** a release deixou de ser tratada como definitiva.
-A TASK-063 (`DEC-048`, `docs/tasks/TASK-063.md`) foi registrada depois de o
-usuário identificar, no Telegram real, alertas de preço possivelmente
-irrelevantes ao produto pedido, exibindo o nome da missão em vez do anúncio
-real e sem link direto. Auditoria do fluxo completo
-(`StoreProvider → Product/Offer → PriceObservation → evaluator → evento →
-telegram_notifier`) concluída, com causa raiz confirmada em código; a
-implementação aguarda autorização explícita do usuário. O tag `v1.0.0`
+**Atualização 2026-08-09:** a TASK-063 (`DEC-048`, `docs/tasks/TASK-063.md`),
+registrada depois de o usuário identificar no Telegram real alertas de
+preço possivelmente irrelevantes ao produto pedido (nome da missão em vez
+do anúncio real, sem link direto), está **concluída**: classificador de
+relevância `MATCH`/`POSSIBLE_MATCH`/`NO_MATCH` por `(mission_id, offer_id)`
+(só `MATCH` alerta), correção do bug de `previous` compartilhado entre
+missões, `products.display_name`, título/loja/link reais no alerta e
+formatação revisada das mensagens principais do Telegram — tudo validado
+(pipeline oficial, E2E reproduzível, missão real) e aprovado explicitamente
+pelo usuário.
+
+A validação real da TASK-063 revelou um problema separado: a camada
+premium da cascata `AdminDevAIProviderManager` (`gemini-3.1-pro-preview`)
+teve 0% de sucesso em 248 tentativas reais, sempre `unavailable`/
+`quota_exceeded`. Desmembrado para a **TASK-064** (`DEC-049`,
+`docs/tasks/TASK-064.md`): auditoria confirmou que o modelo configurado é
+oficialmente `preview`, e um teste mínimo mostrou que mesmo um candidato
+GA "Pro" (`gemini-pro-latest`) falha com `quota_exceeded` de imediato,
+enquanto um modelo GA "Flash" (`gemini-3.5-flash`) responde normalmente —
+mais consistente com a chave não ter cota real de nível "Pro" do que com
+um problema pontual do modelo escolhido. Duas propostas de nova cascata
+registradas, implementação aguardando autorização explícita (inclusive
+confirmação sobre faturamento habilitado na chave). **A release continua
+sem ser tratada como definitiva** até a TASK-064 fechar; o tag `v1.0.0`
 permanece publicado sem alteração.
 
 A TASK-058 (`DEC-015`) está **concluída**: `create_mission` e

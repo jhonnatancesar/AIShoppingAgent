@@ -1,8 +1,14 @@
 # TASK-063 — Corrigir relevância dos resultados e apresentação dos alertas
 
-Status: Implementada e validada em 2026-08-09 (pipeline oficial, E2E
-reproduzível e missão real via Telegram); **aguardando aprovação explícita
-do usuário para encerrar formalmente.**
+Status: **Concluída** em 2026-08-09 — pipeline oficial, E2E reproduzível e
+missão real via Telegram validados; formatação das mensagens principais
+revisada; encerramento administrativo aprovado explicitamente pelo usuário.
+
+O diagnóstico de disponibilidade dos provedores de IA (achado durante a
+validação real desta TASK) foi desmembrado para a TASK-064
+(`docs/tasks/TASK-064.md`, `DEC-049`) — a TASK-054/`v1.0.0` permanece
+suspensa como release final até a TASK-064 fechar, não mais por causa
+desta TASK.
 
 Dependência: TASK-054 concluída (`v1.0.0`), mas a release deixa de ser
 considerada definitiva até esta TASK fechar — ver "Relação com a
@@ -353,11 +359,60 @@ notifier. O que exige desenho novo é: (a) normalização do título via IA
   recebidas mostraram o nome real do anúncio, a loja Kabum, preço e link
   clicável — nunca o nome da missão como nome do produto.
 
+## Formatação das mensagens principais do Telegram (2026-08-09, revisão adicional)
+
+Depois da validação acima, o usuário pediu explicitamente que o item 5 do
+escopo original ("revisar a apresentação das mensagens principais")
+recebesse uma passada própria, além dos alertas de preço já corrigidos.
+
+- **Auditoria completa** de toda mensagem enviada ao usuário
+  (`router.py`, `confirmation.py`, `preferences.py`, `registration.py`,
+  `privacy/notice.py`, `notifications.py`). O que já lia bem (prompts de
+  cadastro, lista de ajuda do `/preferencias`, sufixo de confirmação
+  sim/não, aviso de rate limit, `_UNKNOWN_REPLY`, `privacy_notice()`) foi
+  mantido intacto — nenhuma mudança "só por mudar".
+- **Achado objetivo, não estético**: `MissionStatus.value` (enum bruto em
+  inglês/`snake_case`) vazava direto em duas frases em português — lista de
+  missões (`"... — active"`) e resultado de comando
+  (`'"..." agora está paused.'`). Um teste existente chegava a afirmar essa
+  saída como esperada (`assert "paused" in ...`), confirmando que era um
+  defeito real, não só uma opinião de estilo.
+- **Novo módulo `app/telegram/formatting.py`** (templates fixos, nenhuma
+  IA): `MISSION_STATUS_LABELS`/`MISSION_STATUS_ICONS` (rótulo/ícone em
+  português por status), `format_money` (promovido de
+  `telegram/notifications.py`, agora compartilhado) e `format_store_list`
+  (nomes de loja capitalizados). Usado por `router.py`, `confirmation.py`
+  e `notifications.py` para manter o mesmo formato em toda mensagem que
+  envolve dinheiro, loja ou status de missão.
+- **Hierarquia visual moderada** (quebras de linha, um emoji por mensagem
+  quando fizer sentido, nunca por linha indiscriminadamente) aplicada à
+  lista priorizada pelo usuário: cadastro concluído + link de senha, as
+  quatro confirmações de ação de credencial, aviso de sessão
+  expirando/expirada, confirmação e execução de criação de missão, lista
+  de missões, resultado de comando, preferências e a mensagem de sessão
+  não ativa.
+- **Validação**: pipeline oficial (753 testes, 90,64% cobertura, 14
+  integrações PostgreSQL reais), E2E reproduzível 2/2. Exemplos antes/depois
+  apresentados e aprovados pelo usuário.
+
+## Encerramento
+
+Aprovado explicitamente pelo usuário em 2026-08-09: relevância
+(`MATCH`/`POSSIBLE_MATCH`/`NO_MATCH`, só `MATCH` alerta), correção do bug
+do `previous` compartilhado entre missões, `products.display_name`, título
+real do anúncio/loja/URL no alerta, dados factuais nunca vindos da IA,
+migration, testes, E2E reproduzível, validação real no Telegram e a
+formatação revisada das mensagens principais — tudo aprovado sem
+pendências dentro do escopo desta TASK. **TASK-063 concluída.**
+
+O achado sobre disponibilidade da cascata de IA (premium com 0% de sucesso
+sob carga real) foi desmembrado para a TASK-064 — não é uma pendência desta
+TASK, é uma nova TASK própria.
+
 ## Relação com a TASK-054/`v1.0.0`
 
 Por instrução explícita do usuário: a tag `v1.0.0` **não foi alterada nem
-recriada**, e `main`/`origin/main` não foram tocados nesta TASK. A TASK-054
-fica **suspensa como release final**: o tag existe e continua publicado tal
-como está, mas não deve ser tratado como o estado definitivo da V1 até esta
-TASK-063 fechar — ver nota em `docs/tasks/TASK-054.md` e
-`docs/RELEASE_CHECKLIST.md`.
+recriada**, e `main`/`origin/main` não foram tocados nesta TASK. A
+TASK-054 continua **suspensa como release final** — não mais por causa
+desta TASK (concluída), mas até a TASK-064 (`docs/tasks/TASK-064.md`)
+fechar. O tag existe e continua publicado tal como está.

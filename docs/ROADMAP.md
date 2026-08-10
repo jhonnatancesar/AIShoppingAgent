@@ -23,6 +23,7 @@
 | Orquestração automática das coletas | TASK-062 | Liga agendas, fontes, providers, histórico, avaliação e event log antes dos E2E (`DEC-041`) |
 | Testes E2E e lançamento | TASK-053 e TASK-054 | Validação ponta a ponta do fluxo real e preparação da release |
 | Relevância e apresentação de alertas | TASK-063 | Corrige rastreabilidade do alerta ao anúncio real e filtro de correspondência produto-missão, antes da release ser definitiva (`DEC-048`) |
+| Disponibilidade e fallback dos provedores de IA | TASK-064 | Revisa a cascata ADMIN/DEV do `AIProviderManager` (modelos, ordem, taxonomia de erro) achada degradada durante a validação da TASK-063, antes da release ser definitiva (`DEC-049`) |
 | Expansão de fontes (futuro) | Tarefas a definir | Mercado Livre, Shopee, AliExpress e outras fontes futuras |
 
 As TASKs 000 a 053 e as TASKs 055 a 062 estão
@@ -74,9 +75,16 @@ marco revisado (sem deploy real, sem CI/CD, sem GitHub Release pública, por
 decisão explícita do usuário). A TASK-063 (`DEC-048`) foi registrada em
 seguida, ainda em 2026-08-09, depois de o usuário identificar no Telegram
 real que alertas podiam ser irrelevantes ao produto pedido e usavam o nome
-da missão em vez do anúncio real, sem link direto — auditoria concluída,
-implementação aguardando autorização explícita; `v1.0.0` continua publicada
-sem alteração, mas deixou de ser tratada como estado final da V1. A
+da missão em vez do anúncio real, sem link direto. A TASK-063 está
+**concluída**: relevância `MATCH`/`POSSIBLE_MATCH`/`NO_MATCH`, correção do
+bug de `previous` compartilhado entre missões, título/loja/link reais no
+alerta e formatação revisada das mensagens principais, tudo validado
+(pipeline, E2E reproduzível, missão real) e aprovado explicitamente. A
+validação real revelou que a camada premium da cascata ADMIN/DEV
+(`gemini-3.1-pro-preview`) teve 0% de sucesso sob carga — desmembrado para
+a TASK-064 (`DEC-049`), auditoria concluída, implementação aguardando
+autorização explícita. `v1.0.0` continua publicada sem alteração, mas
+segue sem ser tratada como estado final da V1 até a TASK-064 fechar. A
 TASK-057 (`DEC-017`): validação real contra o
 `USER`/Gemini cobre 3 dos 4 `IntentKind`, e o usuário aceitou explicitamente
 encerrar nesse estado, adiando mais variedade de linguagem para a V2
