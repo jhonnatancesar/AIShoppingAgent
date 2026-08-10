@@ -134,20 +134,25 @@ O escopo obrigatório da V1 está em `docs/MVP.md`. Evoluções futuras devem se
 Ordem de versões registrada: `v1.0.1` (release atual, **já implantada em
 produção real** — 7 serviços, migrations no head, Telegram ativo,
 proprietário promovido a `DEV`) → `v1.0.2` (release corretiva, documento
-próprio `docs/V1_0_2.md` — não confundir com V1.2 —, cinco itens: dois de
-configuração/infraestrutura originais — `DEC-052` — e três adicionados
-depois por pedido explícito do usuário apesar de fugirem desse escopo
-original, sinalizado no próprio doc — editar missão existente
-(`DEC-057`), categorias numeradas no `/cadastro` (`DEC-055`) e pré-lista
-de preços sem IA, um preço por loja (`DEC-058`); **status 2026-08-10: os
-5 itens estão implementados e validados** — TASK-065 (item 1), TASK-066
-(item 2, restart policy), TASK-067 (item 4, categorias numeradas),
-TASK-068 (item 5, pré-lista — escopo final revisado para top-2 mais
-baratas + correção única, ver `docs/tasks/TASK-068.md`) e TASK-069 (item
-3, editar missão existente — só `PAUSED` é editável, `ACTIVE` oferece
-pausar primeiro, ver `docs/tasks/TASK-069.md`) **estão concluídas**;
-nenhuma tag `v1.0.2` criada, publicação final pendente de decisão
-explícita do usuário) → V1.2 (evolução funcional, documento `docs/V1_2.md`, 12 itens,
+próprio `docs/V1_0_2.md` — não confundir com V1.2 —, escopo original de
+cinco itens: dois de configuração/infraestrutura — `DEC-052` — e três
+adicionados depois por pedido explícito do usuário apesar de fugirem
+desse escopo original, sinalizado no próprio doc — editar missão
+existente (`DEC-057`), categorias numeradas no `/cadastro` (`DEC-055`) e
+pré-lista de preços sem IA, um preço por loja (`DEC-058`); **status
+2026-08-10: os 5 itens do planejamento original estão implementados e
+validados** — TASK-065 (item 1), TASK-066 (item 2, restart policy),
+TASK-067 (item 4, categorias numeradas), TASK-068 (item 5, pré-lista —
+escopo final revisado para top-2 mais baratas + correção única, ver
+`docs/tasks/TASK-068.md`) e TASK-069 (item 3, editar missão existente —
+só `PAUSED` é editável, `ACTIVE` oferece pausar primeiro, ver
+`docs/tasks/TASK-069.md`) **estão concluídas, mas a `v1.0.2` continua
+aberta**: logo depois de aprovar a publicação da TASK-069, o usuário
+ampliou o escopo com mais dois itens (`DEC-060`) — impedir `/cadastro`
+para usuário já autenticado e perguntar as lojas por lista numerada
+quando uma missão for criada sem nenhuma informada — registrados em
+`docs/V1_0_2.md` como itens 6 e 7, nenhuma TASK aberta ainda; nenhuma tag
+`v1.0.2` criada) → V1.2 (evolução funcional, documento `docs/V1_2.md`, 12 itens,
 incluindo Magalu como quinta loja, redução de `PriceObservation`
 redundante, e comparação de menor preço histórico externo/interno estilo
 Steam Inventory Helper (a mesma pré-lista da `v1.0.2`, com IA por cima) e

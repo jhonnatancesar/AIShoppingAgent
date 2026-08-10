@@ -331,6 +331,14 @@ como um único passo automático. A edição nunca toca `status`,
 coleta de uma loja removida nunca é apagado (confirmado por teste de
 integração real). Nenhuma IA nova envolvida — reusa o classificador de
 intenção (vocabulário fechado estendido) e o classificador de
-confirmação já existentes. Com esta TASK, os 5 itens de `docs/V1_0_2.md`
-estão implementados e validados; produção da `v1.0.1` intocada; nenhuma
-tag `v1.0.2` criada.
+confirmação já existentes. Com esta TASK, os 5 itens do **planejamento
+original** de `docs/V1_0_2.md` estão implementados e validados; produção
+da `v1.0.1` intocada; nenhuma tag `v1.0.2` criada.
+
+**Nota pós-conclusão (2026-08-10):** ao aprovar a publicação desta TASK,
+o usuário ampliou o escopo da `v1.0.2` com mais dois itens (`DEC-060`,
+registrados em `docs/V1_0_2.md` como 6 e 7 — bloquear `/cadastro` para
+usuário já autenticado e perguntar as lojas por lista numerada quando
+uma missão for criada sem nenhuma informada), sem implementação e sem
+TASK aberta. **A `v1.0.2` continua aberta** — esta nota não altera nada
+do que a TASK-069 implementou ou validou.

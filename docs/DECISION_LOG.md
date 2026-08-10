@@ -25,6 +25,38 @@ Após a classificação, registrar a decisão neste arquivo e atualizar a docume
 - **Justificativa:** impacto avaliado e motivo da classificação.
 - **Próxima ação:** documento a atualizar, TASK a criar quando aplicável, ou ação de não implementação.
 
+### DEC-060 — Ampliar o escopo da `v1.0.2` com dois itens depois da TASK-069
+
+- **Data:** 2026-08-10
+- **Ideia:** depois de aprovar a publicação da TASK-069 (que concluiu os 5
+  itens do planejamento original da `v1.0.2`), o usuário pediu para
+  registrar mais dois itens na mesma versão, antes do push: (1) impedir
+  `/cadastro` para um usuário já autenticado/logado; (2) quando uma
+  missão for criada sem nenhuma loja informada, perguntar as lojas por
+  lista numerada (`1 Pichau`, `2 Terabyte`, `3 Amazon`, `4 Kabum`,
+  `5 Todas`). Instrução explícita: não implementar agora, não abrir TASK
+  automaticamente — só garantir que a documentação não afirme a `v1.0.2`
+  inteira como concluída.
+- **Classificação:** Nova TASK do MVP (dois itens registrados, escopo
+  aberto — mesma classificação usada para os itens 3/4/5 adicionados por
+  `DEC-057`/`DEC-055`/`DEC-058`).
+- **Justificativa técnica:** mesma decisão de organização já usada nesta
+  versão — o usuário prefere registrar pedidos pontuais na `v1.0.2` (release
+  corretiva já em andamento) a abrir um novo documento de versão só para
+  dois itens. Nenhum dos dois é infraestrutura/configuração pura, mas
+  ambos já têm precedente estrutural direto: `/cadastro` já sabe detectar
+  sessão ativa (`has_active_session`, TASK-046/061) e a lista numerada de
+  lojas já existe em `favorite_stores`/`preferred_categories`
+  (TASK-067) — nenhum dos dois exige mecanismo novo do zero.
+- **Próxima ação:** itens 6 e 7 registrados em `docs/V1_0_2.md`; status da
+  versão corrigido em todos os documentos que a citavam como "concluída"
+  (`docs/V1_0_2.md`, `docs/ROADMAP.md`, `docs/tasks/README.md`,
+  `docs/PROJECT_CONTEXT.md`, `AGENTS.md`, `docs/CHANGELOG.md`,
+  `docs/tasks/TASK-069.md`) para deixar claro que só o planejamento
+  *original* de 5 itens está concluído — a `v1.0.2` continua aberta.
+  Nenhuma TASK criada para os dois itens novos; nenhuma implementação
+  realizada.
+
 ### DEC-059 — Separar `v1.0.2` de V1.2 em documentos distintos
 
 - **Data:** 2026-08-10

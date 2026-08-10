@@ -248,7 +248,15 @@ não é tocada (missão pausada nunca é reivindicada por
 `PriceObservation`) de lojas removidas nunca é apagado. Nenhuma IA nova —
 reusa `IntentInterpreter` e `interpret_confirmation_reply` já existentes.
 Validado com pipeline oficial (815 testes, 90,69% cobertura) e testes de
-integração real (PostgreSQL). Com esta TASK, os 5 itens da `v1.0.2` estão
-implementados e validados; nenhuma tag `v1.0.2` criada; produção da
-`v1.0.1` intocada; publicação final pendente de decisão explícita do
-usuário.
+integração real (PostgreSQL). Com esta TASK, os 5 itens do
+**planejamento original** da `v1.0.2` estão implementados e validados;
+nenhuma tag `v1.0.2` criada; produção da `v1.0.1` intocada.
+
+Logo depois de aprovar a publicação da TASK-069, o usuário ampliou o
+escopo da `v1.0.2` com mais dois itens (`DEC-060`, registrados em
+`docs/V1_0_2.md` como itens 6 e 7): impedir `/cadastro` para usuário já
+autenticado/logado; e perguntar as lojas por lista numerada
+(`1 Pichau`/`2 Terabyte`/`3 Amazon`/`4 Kabum`/`5 Todas`) quando uma
+missão for criada sem nenhuma informada. **Sem implementação e sem TASK
+aberta** — pedido explícito de só registrar. **A `v1.0.2` continua
+aberta.**

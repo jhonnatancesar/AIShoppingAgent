@@ -102,6 +102,15 @@ edição via `/editar-missao` depois de pausada. `MissionSchedule` e o
 histórico de coleta de lojas removidas nunca são tocados. Validado com
 pipeline oficial (815 testes, 90,69% cobertura) e testes de integração
 real (PostgreSQL), incluindo um cenário dedicado a provar que remover
-uma loja não apaga seu `CollectionRun`. Com esta TASK, os 5 itens da
-`v1.0.2` estão implementados e validados; nenhuma tag `v1.0.2` criada,
-publicação final pendente de decisão explícita do usuário.
+uma loja não apaga seu `CollectionRun`. Com esta TASK, os 5 itens do
+**planejamento original** da `v1.0.2` estão implementados e validados;
+nenhuma tag `v1.0.2` criada.
+
+**Atualização 2026-08-10 (8):** logo depois de aprovar a publicação da
+TASK-069, o usuário ampliou o escopo da `v1.0.2` com mais dois itens
+(`DEC-060`) — impedir `/cadastro` para usuário já autenticado/logado, e
+perguntar as lojas por lista numerada (`1 Pichau`, `2 Terabyte`,
+`3 Amazon`, `4 Kabum`, `5 Todas`) quando uma missão for criada sem
+nenhuma informada. Registrados como itens 6 e 7 em `docs/V1_0_2.md`,
+**sem implementação e sem TASK aberta** — pedido explícito de não
+implementar agora. **A `v1.0.2` continua aberta.**

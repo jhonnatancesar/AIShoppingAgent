@@ -47,8 +47,16 @@
   `ACTIVE`/versão desatualizada, rejeição de zerar todas as lojas, e a
   preservação do histórico de coleta de uma loja removida. Nenhuma tag
   `v1.0.2` criada; produção da `v1.0.1` intocada. Com esta TASK, os 5
-  itens de `docs/V1_0_2.md` estão implementados e validados; publicação
-  final da `v1.0.2` pendente de decisão explícita do usuário.
+  itens do **planejamento original** de `docs/V1_0_2.md` estão
+  implementados e validados.
+- **Escopo da `v1.0.2` ampliado logo em seguida (`DEC-060`):** ao aprovar
+  a publicação da TASK-069, o usuário pediu para registrar mais dois
+  itens na mesma versão, **sem implementar agora e sem abrir TASK**:
+  impedir `/cadastro` para um usuário já autenticado/logado; e, quando
+  uma missão for criada sem nenhuma loja informada, perguntar as lojas
+  por lista numerada (`1 Pichau`, `2 Terabyte`, `3 Amazon`, `4 Kabum`,
+  `5 Todas`). Registrados em `docs/V1_0_2.md` como itens 6 e 7. **A
+  `v1.0.2` continua aberta.**
 
 ## 2026-08-10 (5) — TASK-068 concluída: pré-lista de preços sem IA
 

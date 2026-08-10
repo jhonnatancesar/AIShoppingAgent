@@ -711,6 +711,17 @@ necessária; nenhuma IA nova — reusa `IntentInterpreter` (vocabulário
 fechado estendido) e `interpret_confirmation_reply` já existentes.
 Validado com pipeline oficial (815 testes, 90,69% cobertura, migration
 head `20260810_0001` sem alteração, 21 integrações PostgreSQL reais).
-Com esta TASK, os 5 itens de `docs/V1_0_2.md` estão implementados e
-validados; produção da `v1.0.1` intocada; nenhuma tag `v1.0.2` criada —
-publicação final pendente de decisão explícita do usuário.
+Com esta TASK, os 5 itens do **planejamento original** de
+`docs/V1_0_2.md` estão implementados e validados; produção da `v1.0.1`
+intocada; nenhuma tag `v1.0.2` criada.
+
+**Atualização 2026-08-10 (8):** logo depois de aprovar a publicação da
+TASK-069, o usuário ampliou o escopo da `v1.0.2` (`DEC-060`) com mais
+dois itens, registrados em `docs/V1_0_2.md` como 6 e 7, **sem
+implementação e sem TASK aberta** (pedido explícito de não implementar
+agora, só registrar): impedir `/cadastro` para um usuário já
+autenticado/logado; e, quando uma missão for criada sem nenhuma loja
+informada, perguntar as lojas por lista numerada (`1 Pichau`,
+`2 Terabyte`, `3 Amazon`, `4 Kabum`, `5 Todas`). **A `v1.0.2` continua
+aberta** — só o planejamento original de 5 itens está concluído.
+Nenhuma tag `v1.0.2` criada; produção da `v1.0.1` intocada.
