@@ -600,3 +600,14 @@ de versões da V1 continua: `v1.0.1` (atual, em produção) → `v1.0.2`
 (`docs/V1_0_2.md`, corretiva, sem funcionalidade nova exceto três
 exceções já sinalizadas explicitamente) → V1.2 (`docs/V1_2.md`, evolução
 funcional) → V2.
+
+**Atualização 2026-08-10 (2):** por pedido explícito do usuário, a
+`v1.0.2` entrou em **planejamento ativo**: os 5 itens de
+`docs/V1_0_2.md` foram convertidos em propostas de TASK (TASK-065 a
+TASK-069, uma por responsabilidade), com numeração, nome, objetivo,
+dependências e ordem recomendada apresentados ao usuário para aprovação.
+Nenhum arquivo `docs/tasks/TASK-06X.md` foi criado, nenhuma TASK foi
+iniciada e nenhum código foi alterado — a implementação só começa após
+aprovação explícita, item por item, seguindo o workflow oficial (TASK →
+implementação → validação → commit → aprovação → push). A `v1.0.1` em
+produção não foi tocada por este planejamento.

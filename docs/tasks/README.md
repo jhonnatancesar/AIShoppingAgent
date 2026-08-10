@@ -48,9 +48,16 @@ publicado sem alteração.
 **Atualização 2026-08-10:** auditoria mostrou que `v1.0.0` nunca foi
 movida e não contém TASK-063/TASK-064 — a tag corretiva **`v1.0.1`**
 (`578dc29`) é a referência de release atual e **já foi implantada em
-produção real** (`docs/PRODUCTION_SETUP.md`). Nenhuma TASK nova foi
-criada desde a TASK-064; o planejamento de `v1.0.2` (release corretiva,
-5 itens, `docs/V1_0_2.md`) e V1.2 (evolução funcional, 12 itens,
-`docs/V1_2.md` — documento separado, não confundir as duas versões) está
-registrado com `docs/DECISION_LOG.md` (`DEC-052` a `DEC-059`), sem nenhuma
-TASK aberta e sem nenhum código alterado.
+produção real** (`docs/PRODUCTION_SETUP.md`). O planejamento de `v1.0.2`
+(release corretiva, 5 itens, `docs/V1_0_2.md`) e V1.2 (evolução
+funcional, 12 itens, `docs/V1_2.md` — documento separado, não confundir
+as duas versões) está registrado com `docs/DECISION_LOG.md` (`DEC-052` a
+`DEC-059`).
+
+**Atualização 2026-08-10 (2):** a `v1.0.2` entrou em **planejamento
+ativo** por pedido explícito do usuário. Os 5 itens de `docs/V1_0_2.md`
+foram propostos como TASK-065 a TASK-069 (numeração, nome, objetivo e
+dependências apresentados ao usuário, ordem recomendada sugerida),
+aguardando aprovação explícita antes de qualquer arquivo `TASK-06X.md`
+ser criado ou qualquer código alterado. V1.2 permanece só planejamento,
+sem nenhuma TASK.

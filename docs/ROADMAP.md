@@ -139,8 +139,10 @@ configuração/infraestrutura originais — `DEC-052` — e três adicionados
 depois por pedido explícito do usuário apesar de fugirem desse escopo
 original, sinalizado no próprio doc — editar missão existente
 (`DEC-057`), categorias numeradas no `/cadastro` (`DEC-055`) e pré-lista
-de preços sem IA, um preço por loja (`DEC-058`); nenhuma TASK criada
-ainda) → V1.2 (evolução funcional, documento `docs/V1_2.md`, 12 itens,
+de preços sem IA, um preço por loja (`DEC-058`); **status 2026-08-10: em
+planejamento ativo** — os 5 itens foram propostos como TASK-065 a
+TASK-069, ainda aguardando aprovação explícita do usuário, nenhuma
+implementação iniciada) → V1.2 (evolução funcional, documento `docs/V1_2.md`, 12 itens,
 incluindo Magalu como quinta loja, redução de `PriceObservation`
 redundante, e comparação de menor preço histórico externo/interno estilo
 Steam Inventory Helper (a mesma pré-lista da `v1.0.2`, com IA por cima) e
