@@ -18,6 +18,7 @@ class Permission(StrEnum):
     MISSION_CREATE = "mission.create"
     MISSION_READ = "mission.read"
     MISSION_TRANSITION = "mission.transition"
+    MISSION_EDIT = "mission.edit"
     PURCHASE_RECOMMEND = "purchase.recommend"
     PURCHASE_COMPARE = "purchase.compare"
     PURCHASE_CONFIRM = "purchase.confirm"
@@ -58,6 +59,7 @@ _USER_PERMISSIONS = frozenset(
         Permission.MISSION_CREATE,
         Permission.MISSION_READ,
         Permission.MISSION_TRANSITION,
+        Permission.MISSION_EDIT,
         Permission.PURCHASE_RECOMMEND,
         Permission.PURCHASE_COMPARE,
         Permission.PURCHASE_CONFIRM,

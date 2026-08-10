@@ -684,4 +684,33 @@ correção única, sem segunda correção) e um cenário dedicado onde
 provando que a implementação ranqueia pela base correta.
 `evaluate_price_alerts`, preferências de queda/alvo e a semântica
 MATCH/POSSIBLE_MATCH/NO_MATCH da TASK-063 intocadas. Produção da
-`v1.0.1` intocada; TASK-069 não foi iniciada.
+`v1.0.1` intocada.
+
+**Atualização 2026-08-10 (7):** aprovada e concluída a **TASK-069**
+(`docs/tasks/TASK-069.md`, item 3 da `v1.0.2`) — última TASK planejada da
+`v1.0.2`. Novo `IntentKind.EDIT_MISSION` (não um `MissionCommand` novo —
+edição de critérios não muda `status`) edita `MissionCriteria.target_amount`/
+`target_currency` e/ou as fontes selecionadas (`MissionSource`) de uma
+missão já criada, sem precisar recriá-la. Só missões `PAUSED` são
+editáveis (decisão explícita do usuário, mais estrita que a proposta
+inicial). Durante o desenho, o usuário acrescentou uma instrução: se a
+missão estiver `ACTIVE`, o bot não rejeita — pergunta se o usuário quer
+pausar agora (mesmo par confirmar/cancelar "1"/"2" já usado em toda
+confirmação); confirmado, pausa de verdade (`transition_mission` com
+`PAUSE`) e orienta reenviar o pedido via novo comando `/editar-missao`;
+pausar e editar nunca acontecem como um único passo automático. A missão
+permanece `PAUSED` depois de editada — só volta a coletar quando o
+usuário retomar. `find_due_schedules` já filtra `Mission.status ==
+ACTIVE`, então uma missão pausada nunca é reivindicada por
+`claim_due_collections` — editar é estruturalmente seguro, sem coleta em
+andamento para coordenar. Preço-alvo pode ser limpo (par `NULL`/`NULL`);
+remover uma loja apaga só a linha de `MissionSource` — o histórico
+(`CollectionRun`/`PriceObservation`) daquela loja nunca é apagado
+(confirmado por teste de integração real dedicado). Nenhuma migration
+necessária; nenhuma IA nova — reusa `IntentInterpreter` (vocabulário
+fechado estendido) e `interpret_confirmation_reply` já existentes.
+Validado com pipeline oficial (815 testes, 90,69% cobertura, migration
+head `20260810_0001` sem alteração, 21 integrações PostgreSQL reais).
+Com esta TASK, os 5 itens de `docs/V1_0_2.md` estão implementados e
+validados; produção da `v1.0.1` intocada; nenhuma tag `v1.0.2` criada —
+publicação final pendente de decisão explícita do usuário.

@@ -139,13 +139,15 @@ configuração/infraestrutura originais — `DEC-052` — e três adicionados
 depois por pedido explícito do usuário apesar de fugirem desse escopo
 original, sinalizado no próprio doc — editar missão existente
 (`DEC-057`), categorias numeradas no `/cadastro` (`DEC-055`) e pré-lista
-de preços sem IA, um preço por loja (`DEC-058`); **status 2026-08-10: em
-planejamento ativo** — os 5 itens foram propostos como TASK-065 a
-TASK-069; **TASK-065 (item 1), TASK-066 (item 2, restart policy),
-TASK-067 (item 4, categorias numeradas) e TASK-068 (item 5, pré-lista —
-escopo final revisado para top-2 mais baratas + correção única, ver
-`docs/tasks/TASK-068.md`) estão concluídas**, só TASK-069 aguarda
-aprovação explícita) → V1.2 (evolução funcional, documento `docs/V1_2.md`, 12 itens,
+de preços sem IA, um preço por loja (`DEC-058`); **status 2026-08-10: os
+5 itens estão implementados e validados** — TASK-065 (item 1), TASK-066
+(item 2, restart policy), TASK-067 (item 4, categorias numeradas),
+TASK-068 (item 5, pré-lista — escopo final revisado para top-2 mais
+baratas + correção única, ver `docs/tasks/TASK-068.md`) e TASK-069 (item
+3, editar missão existente — só `PAUSED` é editável, `ACTIVE` oferece
+pausar primeiro, ver `docs/tasks/TASK-069.md`) **estão concluídas**;
+nenhuma tag `v1.0.2` criada, publicação final pendente de decisão
+explícita do usuário) → V1.2 (evolução funcional, documento `docs/V1_2.md`, 12 itens,
 incluindo Magalu como quinta loja, redução de `PriceObservation`
 redundante, e comparação de menor preço histórico externo/interno estilo
 Steam Inventory Helper (a mesma pré-lista da `v1.0.2`, com IA por cima) e

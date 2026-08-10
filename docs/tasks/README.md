@@ -92,4 +92,16 @@ depois se uma loja mais lenta encontrar algo mais barato. Consumer
 Telegram dedicado (`telegram_prelist_v1`), sem afetar alertas de
 queda/alvo (TASK-027/037). Validado com pipeline oficial e um teste de
 integração real (PostgreSQL) cobrindo as 3 rodadas do cenário completo.
-TASK-069 continua aguardando aprovação explícita.
+
+**Atualização 2026-08-10 (7):** a **TASK-069** (`docs/tasks/TASK-069.md`)
+está **concluída**: novo `IntentKind.EDIT_MISSION` permite editar lojas
+e/ou preço-alvo de uma missão já criada, mas só enquanto `PAUSED`; uma
+missão `ACTIVE` recebe, em vez disso, uma oferta de pausar primeiro
+(confirmação "1"/"2", pedido durante o desenho), e o usuário reenvia a
+edição via `/editar-missao` depois de pausada. `MissionSchedule` e o
+histórico de coleta de lojas removidas nunca são tocados. Validado com
+pipeline oficial (815 testes, 90,69% cobertura) e testes de integração
+real (PostgreSQL), incluindo um cenário dedicado a provar que remover
+uma loja não apaga seu `CollectionRun`. Com esta TASK, os 5 itens da
+`v1.0.2` estão implementados e validados; nenhuma tag `v1.0.2` criada,
+publicação final pendente de decisão explícita do usuário.

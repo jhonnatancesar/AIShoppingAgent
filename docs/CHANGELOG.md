@@ -1,5 +1,55 @@
 # Changelog
 
+## 2026-08-10 (6) — TASK-069 concluída: editar missão existente (lojas e/ou preço-alvo)
+
+- **TASK-069** (`docs/tasks/TASK-069.md`, item 3 da `v1.0.2`) concluída:
+  novo `IntentKind.EDIT_MISSION` permite editar as lojas selecionadas
+  (`MissionSource`) e/ou o preço-alvo (`MissionCriteria.target_amount`/
+  `target_currency`) de uma missão já criada, sem precisar recriá-la.
+  Não edita `search_query`/`title`. Não é um `MissionCommand` novo —
+  edição de critérios não muda `status`.
+- **Só missões `PAUSED` são editáveis** (decisão explícita do usuário).
+  Uma missão `ACTIVE` recebe, em vez de rejeição direta, uma pergunta se
+  quer pausar agora (mesmo par confirmar/cancelar "1"/"2" já usado em
+  toda confirmação — instrução acrescentada pelo usuário durante o
+  desenho); confirmado, o bot pausa de verdade (`transition_mission` com
+  `PAUSE`) e orienta reenviar o pedido via novo comando `/editar-missao`.
+  Pausar e editar nunca acontecem como um único passo automático. Missões
+  `DRAFT` e em status terminal são rejeitadas direto, sem nada para
+  confirmar.
+- A missão permanece `PAUSED` depois de editada — só volta a coletar
+  quando o usuário a retomar. `find_due_schedules` já filtra
+  `Mission.status == ACTIVE`, então uma missão pausada nunca é
+  reivindicada por `claim_due_collections`: editar é estruturalmente
+  seguro, sem coleta em andamento para coordenar. `MissionSchedule` não é
+  tocada por esta TASK.
+- Preço-alvo pode ser limpo (par `target_amount`/`target_currency` →
+  `NULL`/`NULL`, mesma regra "par ou nenhum" já usada na criação).
+  Remover uma loja apaga só a linha de `MissionSource` — o histórico
+  (`CollectionRun`/`PriceObservation`) daquela loja nunca é apagado,
+  confirmado por um teste de integração real dedicado
+  (`test_removing_a_store_never_touches_its_price_history`). Edição
+  rejeita zerar todas as lojas selecionadas.
+- Confirmação segue o mesmo padrão da TASK-058: `stage_edit_mission`/
+  `describe_edit_mission` (mostra "antes → depois" de alvo e lojas) e
+  `stage_pause_for_edit`/`describe_pause_for_edit` (novos, em
+  `backend/app/telegram/confirmation.py`). Nova `Permission.MISSION_EDIT`
+  e `MissionEditConditionError` (nova, em `_KNOWN_DISPATCH_ERRORS`).
+  Nenhuma IA nova — reusa `IntentInterpreter` (vocabulário fechado
+  estendido com `edit_mission`/`clear_target`) e
+  `interpret_confirmation_reply` (`resolve_answer`) já existentes.
+- Nenhuma migration necessária: `MissionCriteria`/`MissionSource` já
+  suportavam `UPDATE`/`DELETE` no nível do banco. Head do banco
+  permanece `20260810_0001`.
+- Validado com pipeline oficial completo (815 testes, 90,69% cobertura,
+  21 integrações PostgreSQL reais) e testes de integração reais cobrindo
+  edição de alvo + lojas junto, limpeza de alvo, rejeição de missão
+  `ACTIVE`/versão desatualizada, rejeição de zerar todas as lojas, e a
+  preservação do histórico de coleta de uma loja removida. Nenhuma tag
+  `v1.0.2` criada; produção da `v1.0.1` intocada. Com esta TASK, os 5
+  itens de `docs/V1_0_2.md` estão implementados e validados; publicação
+  final da `v1.0.2` pendente de decisão explícita do usuário.
+
 ## 2026-08-10 (5) — TASK-068 concluída: pré-lista de preços sem IA
 
 - **TASK-068** (`docs/tasks/TASK-068.md`, item 5 da `v1.0.2`) concluída:

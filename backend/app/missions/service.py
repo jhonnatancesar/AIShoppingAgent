@@ -5,7 +5,7 @@ from datetime import datetime
 from decimal import Decimal
 from uuid import UUID, uuid4
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.database.time import utc_now
@@ -49,6 +49,10 @@ class InvalidMissionTransitionError(MissionTransitionError):
 
 class MissionTransitionConditionError(MissionTransitionError):
     """Uma condição obrigatória da transição não foi satisfeita."""
+
+
+class MissionEditConditionError(MissionTransitionError):
+    """Uma condição obrigatória da edição de critérios não foi satisfeita."""
 
 
 TRANSITIONS: dict[tuple[MissionStatus, MissionCommand], MissionStatus] = {
@@ -235,5 +239,107 @@ def create_mission_from_criteria(
             updated_at=requested_at,
         )
     )
+    session.flush()
+    return mission, effective_codes
+
+
+def edit_mission_criteria(
+    session: Session,
+    *,
+    mission_id: UUID,
+    expected_state_version: int,
+    target_update: tuple[Decimal | None, str | None] | None,
+    source_codes: Sequence[str] | None,
+    edited_at: datetime | None = None,
+) -> tuple[Mission, tuple[str, ...]]:
+    """Edita preço-alvo e/ou lojas de uma missão `PAUSED` já criada (TASK-069).
+
+    Nunca cria uma `Mission` nova nem toca `status`/`state_version`/
+    `MissionTransition`/`MissionSchedule` -- edição de critérios é
+    conceitualmente distinta de transição de ciclo de vida. Histórico já
+    coletado (`CollectionRun`/`PriceObservation`) nunca é tocado, mesmo
+    para lojas removidas.
+
+    `target_update=None` deixa o preço-alvo intocado; um par
+    `(amount, currency)` -- incluindo `(None, None)` para limpar o alvo --
+    sobrescreve. `source_codes=None` deixa as lojas intocadas; uma
+    sequência não vazia substitui inteiramente o conjunto de
+    `MissionSource` (insere as novas, remove as que saíram). Pelo menos um
+    dos dois precisa ser fornecido; devolve a missão e o conjunto de
+    lojas efetivamente selecionado após a edição.
+    """
+    if target_update is None and source_codes is None:
+        raise ValueError("target_update or source_codes must be provided")
+    if target_update is not None and (target_update[0] is None) != (
+        target_update[1] is None
+    ):
+        raise ValueError("target_update amount and currency must be paired")
+    if source_codes is not None and not source_codes:
+        raise MissionEditConditionError(
+            "A missão precisa manter ao menos uma loja selecionada."
+        )
+    if expected_state_version < 0:
+        raise ValueError("expected_state_version não pode ser negativo.")
+
+    accepted_at = edited_at or utc_now()
+    if accepted_at.tzinfo is None or accepted_at.utcoffset() is None:
+        raise ValueError("edited_at deve possuir fuso horário.")
+
+    mission = session.scalar(
+        select(Mission).where(Mission.id == mission_id).with_for_update()
+    )
+    if mission is None:
+        raise MissionNotFoundError("Missão não encontrada.")
+    if mission.state_version != expected_state_version:
+        raise MissionVersionConflictError("Versão de estado desatualizada.")
+    if mission.status is not MissionStatus.PAUSED:
+        raise MissionEditConditionError(
+            "Só é possível editar uma missão pausada. Pause a missão primeiro."
+        )
+
+    if target_update is not None:
+        criteria = session.scalar(
+            select(MissionCriteria).where(MissionCriteria.mission_id == mission.id)
+        )
+        if criteria is None:
+            raise MissionEditConditionError("A missão não tem critérios válidos.")
+        criteria.target_amount = target_update[0]
+        criteria.target_currency = target_update[1]
+        criteria.updated_at = accepted_at
+
+    effective_codes: tuple[str, ...] = ()
+    if source_codes is not None:
+        codes = tuple(dict.fromkeys(source_codes))
+        stores_by_code = {
+            store.code: store
+            for store in session.scalars(select(Store).where(Store.code.in_(codes)))
+        }
+        missing_codes = set(codes) - stores_by_code.keys()
+        if missing_codes:
+            raise MissionEditConditionError(
+                f"Loja(s) não reconhecida(s): {', '.join(sorted(missing_codes))}."
+            )
+        current_store_ids = set(
+            session.scalars(
+                select(MissionSource.store_id).where(
+                    MissionSource.mission_id == mission.id
+                )
+            )
+        )
+        target_store_ids = {stores_by_code[code].id for code in codes}
+        removed_store_ids = current_store_ids - target_store_ids
+        if removed_store_ids:
+            session.execute(
+                delete(MissionSource).where(
+                    MissionSource.mission_id == mission.id,
+                    MissionSource.store_id.in_(removed_store_ids),
+                )
+            )
+        for store_id in target_store_ids - current_store_ids:
+            session.add(MissionSource(mission_id=mission.id, store_id=store_id))
+        session.flush()
+        effective_codes = codes
+
+    mission.updated_at = accepted_at
     session.flush()
     return mission, effective_codes

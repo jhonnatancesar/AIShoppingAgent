@@ -17,8 +17,8 @@ consumir a cota gratuita compartilhada com usuários reais do `USER`.
 
 - `Intent` é imutável e carrega correlação, `kind`, mensagem original,
   instante de interpretação, comando opcional e parâmetros.
-- `IntentKind` é um vocabulário fechado com quatro valores: `create_mission`,
-  `query_mission`, `mission_command` e `unknown`.
+- `IntentKind` é um vocabulário fechado com cinco valores: `create_mission`,
+  `query_mission`, `mission_command`, `edit_mission` (TASK-069) e `unknown`.
 - `command` só é aceito quando `kind` é `mission_command` e reaproveita
   diretamente `MissionCommand` de `docs/MISSION_SYSTEM.md`
   (`activate`, `pause`, `resume`, `complete`, `cancel`, `expire`); nenhum
@@ -28,8 +28,13 @@ consumir a cota gratuita compartilhada com usuários reais do `USER`.
   (`docs/MISSION_CRITERIA.md`), `sources` aceita somente as quatro fontes
   selecionáveis da V1 (`pichau`, `terabyte`, `amazon`, `kabum`, conforme
   `docs/TELEGRAM.md`) e `mission_reference` é um texto livre para identificar
-  a missão alvo de uma consulta ou comando, já que a V1 não expõe API nem
-  identificador numérico ao usuário.
+  a missão alvo de uma consulta, comando ou edição, já que a V1 não expõe API
+  nem identificador numérico ao usuário.
+- `clear_target: bool` (TASK-069, default `false`) só faz sentido para
+  `edit_mission` — distingue "não mexer no alvo" de "remover o alvo
+  existente"; é mutuamente exclusivo com `target_amount`/`target_currency`
+  preenchidos. `edit_mission` exige `mission_reference` e pelo menos uma
+  mudança real (`clear_target`, `target_amount` ou `sources`).
 - `create_mission` e `query_mission` cobrem exatamente a exigência de
   `docs/MVP.md`: "Um usuário autorizado consegue criar e consultar uma missão
   pelo canal Telegram".

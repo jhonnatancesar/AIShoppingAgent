@@ -5,8 +5,10 @@ próprios, isolados do `IntentInterpreter` — não altera o vocabulário
 fechado de `IntentKind`/`MissionCommand`; o vocabulário de resposta desta
 classificação (`confirm`/`cancel`/`unclear`) é novo e exclusivo deste
 módulo. Guarda só os dados mínimos necessários para executar uma
-`create_mission` ou `mission_command` já validada, nunca o `Intent` bruto
-nem texto livre da mensagem original.
+`create_mission`, `mission_command` ou `edit_mission` (TASK-069) já
+validada -- `pause_for_edit` (TASK-069) reusa o mesmo par confirmar/
+cancelar para pausar uma missão ativa antes de editar. Nunca guarda o
+`Intent` bruto nem texto livre da mensagem original.
 """
 
 import json
@@ -157,3 +159,97 @@ def describe_mission_command(payload: dict[str, Any]) -> str:
     verb = _COMMAND_VERBS[MissionCommand(payload["command"])]
     title = payload["mission_title"]
     return f'Confirmar: {verb} a missão "{title}"?\n\n{_CONFIRMATION_SUFFIX}'
+
+
+def stage_edit_mission(
+    *,
+    mission_id: UUID,
+    mission_title: str,
+    expected_state_version: int,
+    previous_target_amount: object,
+    previous_target_currency: str | None,
+    previous_sources: tuple[str, ...],
+    target_amount: object,
+    target_currency: str | None,
+    clear_target: bool,
+    sources: tuple[str, ...],
+) -> dict[str, Any]:
+    """TASK-069: monta o payload de edição -- só chamado quando a missão já
+    está `PAUSED` no momento do *stage*; `expected_state_version` garante
+    que a execução rejeita a confirmação se isso mudar antes de confirmar."""
+    changes_target = clear_target or target_amount is not None
+    changes_sources = bool(sources)
+    return {
+        "kind": "edit_mission",
+        "mission_id": str(mission_id),
+        "mission_title": mission_title,
+        "expected_state_version": expected_state_version,
+        "changes_target": changes_target,
+        "target_amount": str(target_amount) if target_amount is not None else None,
+        "target_currency": target_currency,
+        "changes_sources": changes_sources,
+        "sources": list(sources) if changes_sources else [],
+        "previous_target_amount": (
+            str(previous_target_amount) if previous_target_amount is not None else None
+        ),
+        "previous_target_currency": previous_target_currency,
+        "previous_sources": list(previous_sources),
+    }
+
+
+def describe_edit_mission(payload: dict[str, Any]) -> str:
+    title = payload["mission_title"]
+    lines = ["✏️ Confirmar edição da missão?", "", f'Missão: "{title}"']
+    if payload["changes_target"]:
+        before = _format_target(
+            payload["previous_target_amount"], payload["previous_target_currency"]
+        )
+        after = _format_target(payload["target_amount"], payload["target_currency"])
+        lines.append(f"🎯 Alvo: {before} → {after}")
+    if payload["changes_sources"]:
+        before_stores = (
+            format_store_list(payload["previous_sources"])
+            if payload["previous_sources"]
+            else "nenhuma"
+        )
+        after_stores = format_store_list(payload["sources"])
+        lines.append(f"🏪 Lojas: {before_stores} → {after_stores}")
+    lines.extend(
+        [
+            "",
+            "A missão continua pausada depois da edição — use /retomar quando "
+            "quiser voltar a coletar.",
+            "",
+            _CONFIRMATION_SUFFIX,
+        ]
+    )
+    return "\n".join(lines)
+
+
+def _format_target(amount: str | None, currency: str | None) -> str:
+    if amount is None or currency is None:
+        return "sem alvo"
+    return format_money(Decimal(amount), currency)
+
+
+def stage_pause_for_edit(
+    *, mission_id: UUID, mission_title: str, expected_state_version: int
+) -> dict[str, Any]:
+    """TASK-069: pausa é pré-requisito para editar uma missão `ACTIVE` --
+    encenada com o mesmo par confirmar/cancelar, sem vocabulário de IA
+    novo."""
+    return {
+        "kind": "pause_for_edit",
+        "mission_id": str(mission_id),
+        "mission_title": mission_title,
+        "expected_state_version": expected_state_version,
+    }
+
+
+def describe_pause_for_edit(payload: dict[str, Any]) -> str:
+    title = payload["mission_title"]
+    return (
+        f'⏸️ A missão "{title}" está ativa -- preciso pausá-la antes de '
+        "editar. Quer que eu pause agora?\n\n"
+        f"{_CONFIRMATION_SUFFIX}"
+    )

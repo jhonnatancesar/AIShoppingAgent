@@ -2,6 +2,7 @@
 
 import json
 from datetime import UTC, datetime
+from decimal import Decimal
 from uuid import uuid4
 
 import pytest
@@ -10,10 +11,14 @@ from app.missions.models import MissionCommand
 from app.telegram.confirmation import (
     ConfirmationError,
     describe_create_mission,
+    describe_edit_mission,
     describe_mission_command,
+    describe_pause_for_edit,
     resolve_answer,
     stage_create_mission,
+    stage_edit_mission,
     stage_mission_command,
+    stage_pause_for_edit,
 )
 from app.users.models import UserRole
 
@@ -201,3 +206,105 @@ def test_describe_mission_command_covers_every_command(
     )
 
     assert verb in describe_mission_command(payload)
+
+
+def test_stage_and_describe_edit_mission_target_change_only() -> None:
+    mission_id = uuid4()
+
+    payload = stage_edit_mission(
+        mission_id=mission_id,
+        mission_title="teclado mecanico",
+        expected_state_version=2,
+        previous_target_amount=Decimal("500.00"),
+        previous_target_currency="BRL",
+        previous_sources=("kabum",),
+        target_amount=Decimal("300.00"),
+        target_currency="BRL",
+        clear_target=False,
+        sources=(),
+    )
+
+    assert payload == {
+        "kind": "edit_mission",
+        "mission_id": str(mission_id),
+        "mission_title": "teclado mecanico",
+        "expected_state_version": 2,
+        "changes_target": True,
+        "target_amount": "300.00",
+        "target_currency": "BRL",
+        "changes_sources": False,
+        "sources": [],
+        "previous_target_amount": "500.00",
+        "previous_target_currency": "BRL",
+        "previous_sources": ["kabum"],
+    }
+    description = describe_edit_mission(payload)
+    assert "teclado mecanico" in description
+    assert "R$ 500,00" in description
+    assert "R$ 300,00" in description
+    assert "continua pausada" in description
+    assert "sim" in description.lower()
+
+
+def test_stage_and_describe_edit_mission_clears_target() -> None:
+    payload = stage_edit_mission(
+        mission_id=uuid4(),
+        mission_title="monitor curvo",
+        expected_state_version=0,
+        previous_target_amount=Decimal("1000.00"),
+        previous_target_currency="BRL",
+        previous_sources=("pichau",),
+        target_amount=None,
+        target_currency=None,
+        clear_target=True,
+        sources=(),
+    )
+
+    assert payload["changes_target"] is True
+    assert payload["target_amount"] is None
+    description = describe_edit_mission(payload)
+    assert "R$ 1.000,00" in description
+    assert "sem alvo" in description
+
+
+def test_stage_and_describe_edit_mission_sources_change_only() -> None:
+    payload = stage_edit_mission(
+        mission_id=uuid4(),
+        mission_title="notebook gamer",
+        expected_state_version=1,
+        previous_target_amount=None,
+        previous_target_currency=None,
+        previous_sources=(),
+        target_amount=None,
+        target_currency=None,
+        clear_target=False,
+        sources=("kabum", "pichau"),
+    )
+
+    assert payload["changes_target"] is False
+    assert payload["changes_sources"] is True
+    description = describe_edit_mission(payload)
+    assert "🎯" not in description
+    assert "nenhuma" in description
+    assert "Kabum, Pichau" in description
+
+
+def test_stage_and_describe_pause_for_edit() -> None:
+    mission_id = uuid4()
+
+    payload = stage_pause_for_edit(
+        mission_id=mission_id,
+        mission_title="ssd nvme",
+        expected_state_version=4,
+    )
+
+    assert payload == {
+        "kind": "pause_for_edit",
+        "mission_id": str(mission_id),
+        "mission_title": "ssd nvme",
+        "expected_state_version": 4,
+    }
+    description = describe_pause_for_edit(payload)
+    assert "ssd nvme" in description
+    assert "ativa" in description
+    assert "sim" in description.lower()

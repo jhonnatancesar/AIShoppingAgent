@@ -234,5 +234,21 @@ Reaproveita a classificação `MATCH` já calculada pela TASK-063 (nenhuma
 IA nova); consumer Telegram dedicado (`telegram_prelist_v1`), sem afetar
 alertas de queda/alvo (TASK-027/037). Validado com pipeline oficial e um
 teste de integração real (PostgreSQL) cobrindo o cenário completo em 3
-rodadas. TASK-069 não foi iniciada automaticamente; aguarda aprovação
-explícita.
+rodadas.
+
+A **TASK-069** (`docs/tasks/TASK-069.md`) está **concluída**: novo
+`IntentKind.EDIT_MISSION` edita lojas e/ou preço-alvo de uma missão já
+criada, mas só enquanto `PAUSED`. Durante o desenho, o usuário pediu que
+uma missão `ACTIVE` não seja rejeitada direto: o bot pergunta se quer
+pausar agora (mesmo par confirmar/cancelar "1"/"2"), pausa se confirmado,
+e orienta reenviar o pedido via novo comando `/editar-missao` — pausar e
+editar nunca acontecem como um único passo automático. `MissionSchedule`
+não é tocada (missão pausada nunca é reivindicada por
+`claim_due_collections`) e o histórico (`CollectionRun`/
+`PriceObservation`) de lojas removidas nunca é apagado. Nenhuma IA nova —
+reusa `IntentInterpreter` e `interpret_confirmation_reply` já existentes.
+Validado com pipeline oficial (815 testes, 90,69% cobertura) e testes de
+integração real (PostgreSQL). Com esta TASK, os 5 itens da `v1.0.2` estão
+implementados e validados; nenhuma tag `v1.0.2` criada; produção da
+`v1.0.1` intocada; publicação final pendente de decisão explícita do
+usuário.

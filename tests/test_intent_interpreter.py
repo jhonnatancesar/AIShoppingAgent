@@ -152,10 +152,66 @@ async def test_interpret_parses_every_existing_mission_command(
     assert intent.command is command
 
 
+@pytest.mark.anyio
+async def test_interpret_parses_edit_mission_with_target_and_sources() -> None:
+    manager = _FakeManager(
+        _response(
+            kind="edit_mission",
+            parameters={
+                "search_query": None,
+                "target_amount": "300.00",
+                "target_currency": "BRL",
+                "sources": ["kabum", "pichau"],
+                "mission_reference": "teclado",
+                "clear_target": False,
+            },
+        )
+    )
+    interpreter = IntentInterpreter(manager)
+
+    intent = await interpreter.interpret("troca a missao do teclado pra kabum e pichau")
+
+    assert intent.kind is IntentKind.EDIT_MISSION
+    assert intent.command is None
+    assert intent.parameters.mission_reference == "teclado"
+    assert intent.parameters.target_amount == Decimal("300.00")
+    assert intent.parameters.sources == ("kabum", "pichau")
+    assert intent.parameters.clear_target is False
+
+
+@pytest.mark.anyio
+async def test_interpret_parses_edit_mission_clearing_the_target() -> None:
+    manager = _FakeManager(
+        _response(
+            kind="edit_mission",
+            parameters={
+                "search_query": None,
+                "target_amount": None,
+                "target_currency": None,
+                "sources": [],
+                "mission_reference": "monitor",
+                "clear_target": True,
+            },
+        )
+    )
+    interpreter = IntentInterpreter(manager)
+
+    intent = await interpreter.interpret("tira o alvo da missao do monitor")
+
+    assert intent.kind is IntentKind.EDIT_MISSION
+    assert intent.parameters.clear_target is True
+    assert intent.parameters.target_amount is None
+
+
 def test_system_prompt_instructs_robustness_to_informal_writing() -> None:
     assert "gírias" in _SYSTEM_PROMPT
     assert "ordem das" in _SYSTEM_PROMPT
     assert "erros de digitação" in _SYSTEM_PROMPT
+
+
+def test_system_prompt_documents_edit_mission_and_clear_target() -> None:
+    assert "edit_mission" in _SYSTEM_PROMPT
+    assert "clear_target" in _SYSTEM_PROMPT
 
 
 @pytest.mark.anyio
@@ -270,3 +326,72 @@ def test_parse_accepts_explicit_unknown_response_from_the_model() -> None:
 
     assert intent.kind is IntentKind.UNKNOWN
     assert intent.parameters.search_query is None
+
+
+def test_parse_falls_back_to_unknown_on_non_bool_clear_target() -> None:
+    intent = _parsed(
+        json.dumps(
+            {
+                "kind": "edit_mission",
+                "command": None,
+                "parameters": {
+                    "mission_reference": "teclado",
+                    "sources": ["kabum"],
+                    "clear_target": "yes",
+                },
+            }
+        )
+    )
+
+    assert intent.kind is IntentKind.UNKNOWN
+
+
+def test_parse_falls_back_to_unknown_when_clear_target_contradicts_target_amount() -> (
+    None
+):
+    intent = _parsed(
+        json.dumps(
+            {
+                "kind": "edit_mission",
+                "command": None,
+                "parameters": {
+                    "mission_reference": "teclado",
+                    "target_amount": "300.00",
+                    "target_currency": "BRL",
+                    "clear_target": True,
+                },
+            }
+        )
+    )
+
+    assert intent.kind is IntentKind.UNKNOWN
+
+
+def test_parse_falls_back_to_unknown_on_edit_mission_without_mission_reference() -> (
+    None
+):
+    intent = _parsed(
+        json.dumps(
+            {
+                "kind": "edit_mission",
+                "command": None,
+                "parameters": {"sources": ["kabum"]},
+            }
+        )
+    )
+
+    assert intent.kind is IntentKind.UNKNOWN
+
+
+def test_parse_falls_back_to_unknown_on_edit_mission_with_no_actual_change() -> None:
+    intent = _parsed(
+        json.dumps(
+            {
+                "kind": "edit_mission",
+                "command": None,
+                "parameters": {"mission_reference": "teclado"},
+            }
+        )
+    )
+
+    assert intent.kind is IntentKind.UNKNOWN

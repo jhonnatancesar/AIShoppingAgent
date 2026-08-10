@@ -28,6 +28,7 @@ class IntentKind(StrEnum):
     CREATE_MISSION = "create_mission"
     QUERY_MISSION = "query_mission"
     MISSION_COMMAND = "mission_command"
+    EDIT_MISSION = "edit_mission"
     UNKNOWN = "unknown"
 
 
@@ -45,6 +46,11 @@ class IntentParameters:
     target_currency: str | None = None
     sources: tuple[str, ...] = ()
     mission_reference: str | None = None
+    clear_target: bool = False
+    """TASK-069: só tem sentido para `EDIT_MISSION` — distingue "não mexer no
+    alvo" (`clear_target=False`, `target_amount=None`) de "remover o alvo
+    existente" (`clear_target=True`), já que os dois casos compartilhariam
+    `target_amount=None` sem este campo."""
 
     def __post_init__(self) -> None:
         if self.search_query is not None and not self.search_query.strip():
@@ -67,6 +73,10 @@ class IntentParameters:
             raise IntentError("sources must belong to the selectable V1 sources")
         if self.mission_reference is not None and not self.mission_reference.strip():
             raise IntentError("mission_reference must not be blank when informed")
+        if not isinstance(self.clear_target, bool):
+            raise IntentError("clear_target must be a bool")
+        if self.clear_target and self.target_amount is not None:
+            raise IntentError("clear_target and target_amount are mutually exclusive")
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,6 +109,18 @@ class Intent:
             raise IntentError("command is only valid for the mission_command intent")
         if not isinstance(self.parameters, IntentParameters):
             raise IntentError("parameters must use IntentParameters")
+        if self.kind is IntentKind.EDIT_MISSION:
+            if not self.parameters.mission_reference:
+                raise IntentError("edit_mission intent requires a mission_reference")
+            wants_target_change = (
+                self.parameters.clear_target
+                or self.parameters.target_amount is not None
+            )
+            wants_source_change = bool(self.parameters.sources)
+            if not wants_target_change and not wants_source_change:
+                raise IntentError(
+                    "edit_mission intent requires a target or source change"
+                )
 
 
 def _is_iso4217(value: str) -> bool:

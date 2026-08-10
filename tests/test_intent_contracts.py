@@ -28,6 +28,15 @@ def test_intent_accepts_create_and_query_without_command() -> None:
     assert unknown.command is None
 
 
+def test_intent_accepts_edit_mission_without_command() -> None:
+    edit = _intent(
+        kind=IntentKind.EDIT_MISSION,
+        parameters=IntentParameters(mission_reference="teclado", sources=("kabum",)),
+    )
+
+    assert edit.command is None
+
+
 @pytest.mark.parametrize("command", list(MissionCommand))
 def test_intent_accepts_every_existing_mission_command(command: MissionCommand) -> None:
     intent = _intent(kind=IntentKind.MISSION_COMMAND, command=command)
@@ -41,9 +50,17 @@ def test_intent_rejects_mission_command_without_command() -> None:
 
 
 @pytest.mark.parametrize(
-    "kind", [IntentKind.CREATE_MISSION, IntentKind.QUERY_MISSION, IntentKind.UNKNOWN]
+    "kind",
+    [
+        IntentKind.CREATE_MISSION,
+        IntentKind.QUERY_MISSION,
+        IntentKind.EDIT_MISSION,
+        IntentKind.UNKNOWN,
+    ],
 )
 def test_intent_rejects_command_outside_mission_command_kind(kind: IntentKind) -> None:
+    # o cheque de `command` roda antes de qualquer validação específica de
+    # `EDIT_MISSION`, então parâmetros vazios já bastam para todo `kind`.
     with pytest.raises(IntentError, match="only valid for the mission_command"):
         _intent(kind=kind, command=MissionCommand.ACTIVATE)
 
@@ -112,3 +129,68 @@ def test_parameters_reject_blank_optional_text_fields() -> None:
         IntentParameters(search_query="   ")
     with pytest.raises(IntentError, match="mission_reference"):
         IntentParameters(mission_reference="")
+
+
+def test_parameters_reject_non_bool_clear_target() -> None:
+    with pytest.raises(IntentError, match="clear_target must be a bool"):
+        IntentParameters(clear_target="yes")  # type: ignore[arg-type]
+
+
+def test_parameters_reject_clear_target_with_target_amount() -> None:
+    with pytest.raises(IntentError, match="mutually exclusive"):
+        IntentParameters(
+            target_amount=Decimal("100"), target_currency="BRL", clear_target=True
+        )
+
+
+def test_parameters_default_clear_target_to_false() -> None:
+    assert IntentParameters().clear_target is False
+
+
+def test_edit_mission_requires_a_mission_reference() -> None:
+    with pytest.raises(IntentError, match="requires a mission_reference"):
+        _intent(
+            kind=IntentKind.EDIT_MISSION,
+            parameters=IntentParameters(sources=("kabum",)),
+        )
+
+
+def test_edit_mission_requires_a_target_or_source_change() -> None:
+    with pytest.raises(IntentError, match="requires a target or source change"):
+        _intent(
+            kind=IntentKind.EDIT_MISSION,
+            parameters=IntentParameters(mission_reference="teclado"),
+        )
+
+
+def test_edit_mission_accepts_source_change_alone() -> None:
+    intent = _intent(
+        kind=IntentKind.EDIT_MISSION,
+        parameters=IntentParameters(
+            mission_reference="teclado", sources=("kabum", "pichau")
+        ),
+    )
+
+    assert intent.parameters.sources == ("kabum", "pichau")
+
+
+def test_edit_mission_accepts_target_change_alone() -> None:
+    intent = _intent(
+        kind=IntentKind.EDIT_MISSION,
+        parameters=IntentParameters(
+            mission_reference="teclado",
+            target_amount=Decimal("300"),
+            target_currency="BRL",
+        ),
+    )
+
+    assert intent.parameters.target_amount == Decimal("300")
+
+
+def test_edit_mission_accepts_clear_target_alone() -> None:
+    intent = _intent(
+        kind=IntentKind.EDIT_MISSION,
+        parameters=IntentParameters(mission_reference="teclado", clear_target=True),
+    )
+
+    assert intent.parameters.clear_target is True

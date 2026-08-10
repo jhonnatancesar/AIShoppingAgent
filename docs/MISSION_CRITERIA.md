@@ -21,12 +21,25 @@ como `BRL`.
 
 Uma missão em `draft` pode existir sem critérios. A ativação e a retomada exigem
 um registro válido; essa validação e a mudança atômica de estado foram
-implementadas na TASK-021. Critérios continuam editáveis e `updated_at` não
-substitui a auditoria das ações relevantes.
+implementadas na TASK-021.
+
+`target_amount`/`target_currency` e as fontes selecionadas de uma missão já
+criada são editáveis de verdade via `edit_mission_criteria`
+(`backend/app/missions/service.py`, TASK-069) — só quando a missão está
+`PAUSED`. Uma missão `ACTIVE` precisa ser pausada antes (o bot oferece pausar
+automaticamente ao receber um pedido de edição); depois de editada, a missão
+permanece `PAUSED` e só volta a coletar quando o usuário a retomar. A edição
+pode limpar o preço-alvo (par `NULL`/`NULL`) ou trocar as fontes, mas nunca
+`search_query`/`title`, nunca `status`/`state_version`, e nunca a agenda
+(`MissionSchedule`). `updated_at` é tocado a cada edição e não substitui a
+auditoria das ações relevantes.
 
 As fontes de busca são relações tipadas em `mission_sources`, não filtros JSONB.
 Uma missão pode selecionar Pichau, Terabyte, Amazon e/ou Kabum; ativação e
-retomada exigem pelo menos uma fonte persistida.
+retomada exigem pelo menos uma fonte persistida, e a edição rejeita zerar todas
+as fontes selecionadas. Remover uma fonte apaga só a relação `MissionSource`
+— o histórico de `CollectionRun`/`PriceObservation` daquela loja nunca é
+apagado.
 
 ## Limites
 

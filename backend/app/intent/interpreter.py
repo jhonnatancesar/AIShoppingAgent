@@ -29,7 +29,14 @@ _PARSING_ERRORS = (IntentError, ValueError, TypeError, KeyError, ArithmeticError
 
 _ALLOWED_RESPONSE_KEYS = frozenset({"kind", "command", "parameters"})
 _ALLOWED_PARAMETER_KEYS = frozenset(
-    {"search_query", "target_amount", "target_currency", "sources", "mission_reference"}
+    {
+        "search_query",
+        "target_amount",
+        "target_currency",
+        "sources",
+        "mission_reference",
+        "clear_target",
+    }
 )
 
 _SYSTEM_PROMPT = (
@@ -38,23 +45,34 @@ _SYSTEM_PROMPT = (
     "apenas classifica a mensagem.\n\n"
     "Responda somente com um objeto JSON válido, sem texto adicional, "
     "comentários ou blocos de código, exatamente neste formato:\n"
-    '{"kind": "create_mission" | "query_mission" | "mission_command" | "unknown", '
+    '{"kind": "create_mission" | "query_mission" | "mission_command" | '
+    '"edit_mission" | "unknown", '
     '"command": "activate" | "pause" | "resume" | "complete" | "cancel" | "expire" | null, '
     '"parameters": {'
     '"search_query": string ou null, '
     '"target_amount": string decimal (ex.: "1500.00") ou null, '
     '"target_currency": string ISO 4217 de 3 letras maiúsculas (ex.: "BRL") ou null, '
     '"sources": lista com zero ou mais valores entre "pichau", "terabyte", "amazon", "kabum", '
-    '"mission_reference": string ou null}}\n\n'
+    '"mission_reference": string ou null, '
+    '"clear_target": true ou false}}\n\n'
     'Use "kind": "mission_command" somente com um "command" entre os seis '
     "listados, que representam comandos já existentes do ciclo de vida da "
     'missão. Use "kind": "create_mission" para pedidos de criar ou iniciar '
     'uma nova missão de compra. Use "kind": "query_mission" para pedidos de '
     "consultar, listar ou acompanhar missões existentes. Use "
+    '"kind": "edit_mission" para pedidos de mudar as lojas e/ou o '
+    "preço-alvo de uma missão que já existe, sem criar uma nova — sempre "
+    'preencha "mission_reference" e ao menos um de "sources" '
+    "(a nova lista completa de lojas desejadas, não só a diferença), "
+    '"target_amount"/"target_currency" (o novo alvo) ou '
+    '"clear_target": true (quando a pessoa pede para remover o alvo e só '
+    'acompanhar preços). Nunca use "true" em "clear_target" ao mesmo tempo '
+    'que preenche "target_amount" — são pedidos contraditórios; prefira '
+    '"unknown" nesse caso. Use '
     '"kind": "unknown" sempre que a mensagem não corresponder com segurança '
     "a nenhuma dessas opções. Nunca invente um comando, fonte, valor ou "
     "moeda que não esteja claramente presente na mensagem; nesse caso, "
-    "prefira null ou uma lista vazia.\n\n"
+    "prefira null, uma lista vazia ou false.\n\n"
     "O usuário escreve como fala: erros de digitação, abreviações, gírias "
     "regionais, falta de acentuação ou de pontuação e qualquer ordem das "
     "informações na frase nunca impedem a classificação. Interprete o "
@@ -67,27 +85,38 @@ _SYSTEM_PROMPT = (
     'Mensagem: "eu qria uma rtx 4060 ate uns 2500 pila na kabum, bora"\n'
     'Resposta: {"kind": "create_mission", "command": null, "parameters": '
     '{"search_query": "rtx 4060", "target_amount": "2500.00", '
-    '"target_currency": "BRL", "sources": ["kabum"], "mission_reference": null}}\n\n'
+    '"target_currency": "BRL", "sources": ["kabum"], "mission_reference": null, '
+    '"clear_target": false}}\n\n'
     'Mensagem: "ate 3000 reais me acha um notebook gamer, comeca a procurar ai"\n'
     'Resposta: {"kind": "create_mission", "command": null, "parameters": '
     '{"search_query": "notebook gamer", "target_amount": "3000.00", '
-    '"target_currency": "BRL", "sources": [], "mission_reference": null}}\n\n'
+    '"target_currency": "BRL", "sources": [], "mission_reference": null, '
+    '"clear_target": false}}\n\n'
     'Mensagem: "e ai cade minha missao do notebook, achou algo?"\n'
     'Resposta: {"kind": "query_mission", "command": null, "parameters": '
     '{"search_query": null, "target_amount": null, "target_currency": null, '
-    '"sources": [], "mission_reference": "notebook"}}\n\n'
+    '"sources": [], "mission_reference": "notebook", "clear_target": false}}\n\n'
     'Mensagem: "pausa ai a missao do teclado mecanico pfvr"\n'
     'Resposta: {"kind": "mission_command", "command": "pause", "parameters": '
     '{"search_query": null, "target_amount": null, "target_currency": null, '
-    '"sources": [], "mission_reference": "teclado mecanico"}}\n\n'
+    '"sources": [], "mission_reference": "teclado mecanico", "clear_target": false}}\n\n'
     'Mensagem: "cancela essa busca do monitor curvo, nao quero mais nao"\n'
     'Resposta: {"kind": "mission_command", "command": "cancel", "parameters": '
     '{"search_query": null, "target_amount": null, "target_currency": null, '
-    '"sources": [], "mission_reference": "monitor curvo"}}\n\n'
+    '"sources": [], "mission_reference": "monitor curvo", "clear_target": false}}\n\n'
+    'Mensagem: "troca a missao do teclado pra kabum e pichau, deixa o alvo em 300"\n'
+    'Resposta: {"kind": "edit_mission", "command": null, "parameters": '
+    '{"search_query": null, "target_amount": "300.00", "target_currency": "BRL", '
+    '"sources": ["kabum", "pichau"], "mission_reference": "teclado", '
+    '"clear_target": false}}\n\n'
+    'Mensagem: "tira o preco alvo da missao do monitor, so quero acompanhar os precos"\n'
+    'Resposta: {"kind": "edit_mission", "command": null, "parameters": '
+    '{"search_query": null, "target_amount": null, "target_currency": null, '
+    '"sources": [], "mission_reference": "monitor", "clear_target": true}}\n\n'
     'Mensagem: "bom dia, tudo certo?"\n'
     'Resposta: {"kind": "unknown", "command": null, "parameters": '
     '{"search_query": null, "target_amount": null, "target_currency": null, '
-    '"sources": [], "mission_reference": null}}'
+    '"sources": [], "mission_reference": null, "clear_target": false}}'
 )
 
 
@@ -223,12 +252,17 @@ def _parse_parameters(raw: Any) -> IntentParameters:
     ):
         raise IntentError("sources must be a list of strings")
 
+    clear_target_raw = raw.get("clear_target", False)
+    if not isinstance(clear_target_raw, bool):
+        raise IntentError("clear_target must be a bool")
+
     return IntentParameters(
         search_query=search_query,
         target_amount=target_amount,
         target_currency=target_currency,
         sources=tuple(sources_raw),
         mission_reference=mission_reference,
+        clear_target=clear_target_raw,
     )
 
 

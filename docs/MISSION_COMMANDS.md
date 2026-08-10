@@ -10,7 +10,8 @@ evento, implementadas separadamente na TASK-036.
 
 Desde a TASK-058, `create_mission` e `mission_command` não executam mais
 direto: ficam **encenados** e só executam após confirmação explícita do
-usuário — ver "Confirmação antes de executar" abaixo.
+usuário — ver "Confirmação antes de executar" abaixo. `edit_mission`
+(TASK-069) segue o mesmo padrão.
 
 ## Despacho por `IntentKind`
 
@@ -36,15 +37,23 @@ usuário — ver "Confirmação antes de executar" abaixo.
   não um detalhe de implementação. Ao ser confirmado, `transition_mission`
   (TASK-021) executa o comando usando a versão de estado capturada no
   momento em que a confirmação foi encenada.
+- **`edit_mission`** (TASK-069): edita lojas e/ou preço-alvo de uma missão já
+  criada (nunca `search_query`/`title`). Só é encenada direto se a missão
+  resolvida já está `PAUSED`; se estiver `ACTIVE`, o webhook encena, em vez
+  disso, um pedido de pausa (`pause_for_edit`) — confirmar pausa a missão de
+  verdade e orienta reenviar o pedido via `/editar-missao`; pausar e editar
+  nunca acontecem como um único passo automático. Missões `DRAFT` ou em
+  status terminal são rejeitadas direto, sem nada para confirmar. O comando
+  `/editar-missao` (guia estático, sem IA) orienta o formato do pedido.
 - **`unknown`**: resposta fixa pedindo para o usuário reformular, deixando
   explícito que o bot não conversa sobre outros assuntos.
 
-## Confirmação antes de executar (TASK-058)
+## Confirmação antes de executar (TASK-058, estendida na TASK-069)
 
-Depois que `create_mission` ou `mission_command` é interpretado e validado
-(fonte presente, missão resolvida), o webhook não executa a ação — grava os
-dados mínimos necessários em `User.pending_intent` (JSONB) e responde
-descrevendo a ação em português, pedindo confirmação
+Depois que `create_mission`, `mission_command` ou `edit_mission` é
+interpretado e validado (fonte presente, missão resolvida), o webhook não
+executa a ação — grava os dados mínimos necessários em `User.pending_intent`
+(JSONB) e responde descrevendo a ação em português, pedindo confirmação
 (`backend/app/telegram/confirmation.py`). A mensagem seguinte do mesmo
 usuário é tratada como resposta a essa confirmação, **antes** de qualquer
 outro processamento (comandos `/cadastro`/`/upgrade`, cadastro em
@@ -66,11 +75,13 @@ Depois que o transporte e a identidade mínima do canal são autenticados
 
 - **Erros esperados e conhecidos de domínio/validação** —
   `MissionNotFoundError`, `MissionVersionConflictError`,
-  `InvalidMissionTransitionError`, `MissionTransitionConditionError`
-  (`backend/app/missions/service.py`), `MissionReferenceError`
-  (`backend/app/missions/query.py`) e `MissionIntentError` (um `Intent` de
-  criação sem `search_query`) — são registrados, respondidos ao usuário com
-  uma mensagem explicativa, e a rota ainda devolve `204`.
+  `InvalidMissionTransitionError`, `MissionTransitionConditionError`,
+  `MissionEditConditionError` (TASK-069, status não editável ou nenhuma
+  fonte restante) (`backend/app/missions/service.py`),
+  `MissionReferenceError` (`backend/app/missions/query.py`) e
+  `MissionIntentError` (um `Intent` de criação sem `search_query`) — são
+  registrados, respondidos ao usuário com uma mensagem explicativa, e a
+  rota ainda devolve `204`.
 - **Qualquer outra falha** — incluindo `IntegrityError` residual não tratada
   no serviço apropriado (a única corrida esperada com `IntegrityError` é a
   de `get_or_create_telegram_user`, contida internamente por `SAVEPOINT`,

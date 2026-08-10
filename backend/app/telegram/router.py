@@ -16,6 +16,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Header, status
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.ai_provider import (
@@ -41,7 +42,13 @@ from app.authorization import (
 from app.core.config import Settings, get_settings
 from app.database.dependency import get_session
 from app.intent import Intent, IntentInterpreter, IntentKind
-from app.missions.models import Mission, MissionCommand
+from app.missions.models import (
+    Mission,
+    MissionCommand,
+    MissionCriteria,
+    MissionSource,
+    MissionStatus,
+)
 from app.missions.query import (
     MissionReferenceError,
     find_missions_by_reference,
@@ -50,14 +57,17 @@ from app.missions.query import (
 )
 from app.missions.service import (
     InvalidMissionTransitionError,
+    MissionEditConditionError,
     MissionNotFoundError,
     MissionTransitionConditionError,
     MissionVersionConflictError,
     create_mission_from_criteria,
+    edit_mission_criteria,
     transition_mission,
 )
 from app.observability.metrics import observe_resilience_event
 from app.privacy.notice import PRIVACY_COMMAND, privacy_notice
+from app.stores.models import Store
 from app.telegram.adapter import TelegramIntentAdapter
 from app.telegram.authentication import (
     authenticate_telegram_user,
@@ -67,10 +77,14 @@ from app.telegram.bot_api import TelegramDeliveryError, send_message
 from app.telegram.confirmation import (
     ConfirmationError,
     describe_create_mission,
+    describe_edit_mission,
     describe_mission_command,
+    describe_pause_for_edit,
     resolve_answer,
     stage_create_mission,
+    stage_edit_mission,
     stage_mission_command,
+    stage_pause_for_edit,
 )
 from app.telegram.contracts import (
     TelegramChatType,
@@ -103,7 +117,8 @@ _UNKNOWN_REPLY = (
     "com suas missões de compra. Você pode:\n\n"
     '• Criar uma missão (ex.: "quero uma RTX 4060 até R$ 2500 na Kabum")\n'
     "• Consultar suas missões\n"
-    "• Dar um comando (pausar, retomar, concluir ou cancelar uma missão)"
+    "• Dar um comando (pausar, retomar, concluir ou cancelar uma missão)\n"
+    "• Editar lojas e/ou preço-alvo de uma missão pausada (/editar-missao)"
 )
 
 _CADASTRO_COMMAND = "/cadastro"
@@ -115,6 +130,15 @@ _PASSWORD_COMMAND = "/senha"
 _LOGIN_COMMAND = "/entrar"
 _LOGOUT_COMMAND = "/sair"
 _RECOVERY_COMMAND = "/recuperar"
+_EDIT_MISSION_COMMAND = "/editar-missao"
+_EDIT_MISSION_REPLY = (
+    "✏️ Descreva o que você quer mudar na missão pausada -- lojas e/ou "
+    "preço-alvo.\n\n"
+    'Ex.: "troca a missão do teclado pra kabum e pichau, alvo R$ 300" ou '
+    '"tira o alvo da missão do monitor".\n\n'
+    "Missões ativas precisam ser pausadas primeiro -- é só pedir a edição "
+    "que eu ofereço para pausar."
+)
 _SESSION_REQUIRED_REPLY = (
     "🔒 Sua sessão não está ativa.\n\n"
     "Use /entrar para autenticar, ou /senha se ainda não criou uma senha."
@@ -129,10 +153,20 @@ _KNOWN_DISPATCH_ERRORS = (
     MissionNotFoundError,
     MissionVersionConflictError,
     InvalidMissionTransitionError,
+    MissionEditConditionError,
     MissionTransitionConditionError,
     MissionReferenceError,
     MissionIntentError,
 )
+
+_PENDING_INTENT_PERMISSIONS: dict[str, Permission] = {
+    "create_mission": Permission.MISSION_CREATE,
+    "edit_mission": Permission.MISSION_EDIT,
+    # TASK-069: "pause_for_edit" executa um PAUSE de verdade -- mesma
+    # permissão de qualquer outro comando de ciclo de vida.
+    "pause_for_edit": Permission.MISSION_TRANSITION,
+}
+"""`"mission_command"` cai no default (`MISSION_TRANSITION`) do `.get`."""
 
 
 class _TelegramChat(BaseModel):
@@ -370,6 +404,9 @@ async def _handle_message(
     if lowered == PREFERENCES_COMMAND or lowered.startswith(f"{PREFERENCES_COMMAND} "):
         authorize(session, user, Permission.NOTIFICATION_PREFERENCES_MANAGE)
         return handle_preferences_command(user, lowered)
+    if lowered == _EDIT_MISSION_COMMAND:
+        authorize(session, user, Permission.MISSION_EDIT)
+        return _EDIT_MISSION_REPLY
     if user.pending_intent is not None:
         return await _resolve_pending_intent(
             message, adapters=adapters, session=session, user=user
@@ -445,10 +482,8 @@ async def _resolve_pending_intent(
     session: Session,
     user: User,
 ) -> str:
-    permission = (
-        Permission.MISSION_CREATE
-        if user.pending_intent.get("kind") == "create_mission"
-        else Permission.MISSION_TRANSITION
+    permission = _PENDING_INTENT_PERMISSIONS.get(
+        user.pending_intent.get("kind"), Permission.MISSION_TRANSITION
     )
     authorize(session, user, permission)
     profile = ai_profile_for_user(session, user)
@@ -485,10 +520,11 @@ async def _resolve_pending_intent(
 def _dispatch_intent(intent: Intent, *, session: Session, user: User) -> str:
     """Interpreta o `Intent` e decide a resposta.
 
-    `create_mission` e `mission_command` mudam estado — em vez de executar
-    direto, ficam "encenados" em `user.pending_intent` e só são executados
-    após confirmação explícita do usuário (TASK-058). `query_mission` é
-    somente leitura e continua respondendo direto.
+    `create_mission`, `mission_command` e `edit_mission` (TASK-069) mudam
+    estado — em vez de executar direto, ficam "encenados" em
+    `user.pending_intent` e só são executados após confirmação explícita
+    do usuário (TASK-058). `query_mission` é somente leitura e continua
+    respondendo direto.
     """
     if intent.kind is IntentKind.CREATE_MISSION:
         authorize(session, user, Permission.MISSION_CREATE)
@@ -499,6 +535,9 @@ def _dispatch_intent(intent: Intent, *, session: Session, user: User) -> str:
     if intent.kind is IntentKind.MISSION_COMMAND:
         authorize(session, user, Permission.MISSION_TRANSITION)
         return _stage_mission_command(intent, session=session, user=user)
+    if intent.kind is IntentKind.EDIT_MISSION:
+        authorize(session, user, Permission.MISSION_EDIT)
+        return _stage_edit_mission(intent, session=session, user=user)
     return _UNKNOWN_REPLY
 
 
@@ -554,11 +593,71 @@ def _stage_mission_command(intent: Intent, *, session: Session, user: User) -> s
     return describe_mission_command(payload)
 
 
+def _stage_edit_mission(intent: Intent, *, session: Session, user: User) -> str:
+    """TASK-069: só encena a edição direto se a missão já está `PAUSED`.
+
+    Uma missão `ACTIVE` encena, em vez disso, um pedido de pausa
+    (`pause_for_edit`) -- editar de verdade exige mandar o pedido de novo
+    (`/editar-missao`) depois que a missão estiver pausada. `DRAFT` e os
+    estados terminais rejeitam direto, sem nada para confirmar.
+    """
+    mission = resolve_mission_for_command(
+        session,
+        user_id=user.id,
+        reference=intent.parameters.mission_reference,
+    )
+    if mission.status is MissionStatus.ACTIVE:
+        payload = stage_pause_for_edit(
+            mission_id=mission.id,
+            mission_title=mission.title,
+            expected_state_version=mission.state_version,
+        )
+        user.pending_intent = payload
+        return describe_pause_for_edit(payload)
+    if mission.status is not MissionStatus.PAUSED:
+        raise MissionEditConditionError(
+            f'A missão "{mission.title}" não pode ser editada agora '
+            f"({format_mission_status(mission.status).lower()})."
+        )
+
+    criteria = session.scalar(
+        select(MissionCriteria).where(MissionCriteria.mission_id == mission.id)
+    )
+    current_sources = tuple(
+        sorted(
+            session.scalars(
+                select(Store.code)
+                .join(MissionSource, MissionSource.store_id == Store.id)
+                .where(MissionSource.mission_id == mission.id)
+            )
+        )
+    )
+    payload = stage_edit_mission(
+        mission_id=mission.id,
+        mission_title=mission.title,
+        expected_state_version=mission.state_version,
+        previous_target_amount=criteria.target_amount if criteria else None,
+        previous_target_currency=criteria.target_currency if criteria else None,
+        previous_sources=current_sources,
+        target_amount=intent.parameters.target_amount,
+        target_currency=intent.parameters.target_currency,
+        clear_target=intent.parameters.clear_target,
+        sources=intent.parameters.sources,
+    )
+    user.pending_intent = payload
+    return describe_edit_mission(payload)
+
+
 def _execute_pending_intent(
     payload: dict[str, Any], *, session: Session, user: User
 ) -> str:
-    if payload["kind"] == "create_mission":
+    kind = payload["kind"]
+    if kind == "create_mission":
         return _execute_create_mission(payload, session=session, user=user)
+    if kind == "edit_mission":
+        return _execute_edit_mission(payload, session=session, user=user)
+    if kind == "pause_for_edit":
+        return _execute_pause_for_edit(payload, session=session, user=user)
     return _execute_mission_command(payload, session=session, user=user)
 
 
@@ -623,6 +722,93 @@ def _execute_mission_command(
     icon = MISSION_STATUS_ICONS[transition.to_status]
     status = format_mission_status(transition.to_status)
     return f'{icon} "{payload["mission_title"]}" agora está {status}.'
+
+
+def _execute_edit_mission(
+    payload: dict[str, Any], *, session: Session, user: User
+) -> str:
+    mission_id = UUID(payload["mission_id"])
+    authorize(
+        session,
+        user,
+        Permission.MISSION_EDIT,
+        resource_type="mission",
+        resource_id=mission_id,
+    )
+    mission = session.get(Mission, mission_id)
+    if mission is None or mission.user_id != user.id:
+        deny_resource_unavailable(
+            session,
+            user,
+            Permission.MISSION_EDIT,
+            resource_type="mission",
+            resource_id=mission_id,
+        )
+    target_update = None
+    if payload["changes_target"]:
+        amount = payload["target_amount"]
+        target_update = (
+            Decimal(amount) if amount is not None else None,
+            payload["target_currency"],
+        )
+    source_codes = tuple(payload["sources"]) if payload["changes_sources"] else None
+    _mission, effective_codes = edit_mission_criteria(
+        session,
+        mission_id=mission_id,
+        expected_state_version=payload["expected_state_version"],
+        target_update=target_update,
+        source_codes=source_codes,
+    )
+    lines = ["✅ Missão atualizada!", "", f'🔎 Missão: "{payload["mission_title"]}"']
+    if payload["changes_target"]:
+        if payload["target_amount"] is not None:
+            lines.append(
+                "🎯 Alvo: "
+                f"{format_money(Decimal(payload['target_amount']), payload['target_currency'])}"
+            )
+        else:
+            lines.append("🎯 Alvo: removido — agora só acompanhando preços.")
+    if payload["changes_sources"]:
+        lines.append(f"🏪 Lojas: {format_store_list(effective_codes)}")
+    lines.extend(
+        ["", "A missão continua pausada — use /retomar quando quiser voltar a coletar."]
+    )
+    return "\n".join(lines)
+
+
+def _execute_pause_for_edit(
+    payload: dict[str, Any], *, session: Session, user: User
+) -> str:
+    mission_id = UUID(payload["mission_id"])
+    authorize(
+        session,
+        user,
+        Permission.MISSION_TRANSITION,
+        resource_type="mission",
+        resource_id=mission_id,
+    )
+    mission = session.get(Mission, mission_id)
+    if mission is None or mission.user_id != user.id:
+        deny_resource_unavailable(
+            session,
+            user,
+            Permission.MISSION_TRANSITION,
+            resource_type="mission",
+            resource_id=mission_id,
+        )
+    transition_mission(
+        session,
+        mission_id=mission_id,
+        command=MissionCommand.PAUSE,
+        expected_state_version=payload["expected_state_version"],
+        actor_type="telegram",
+        actor_id=user.id,
+    )
+    title = payload["mission_title"]
+    return (
+        f'⏸️ "{title}" está pausada agora.\n\n'
+        f"Para editar, envie {_EDIT_MISSION_COMMAND}."
+    )
 
 
 def _log_authorization_denial(error: AuthorizationDenied, user: User) -> None:
