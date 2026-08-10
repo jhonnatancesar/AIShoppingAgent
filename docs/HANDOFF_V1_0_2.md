@@ -2,19 +2,22 @@
 
 Este documento existe para abrir uma nova sessão sem depender do histórico
 de chat anterior. Reflete o estado **depois** do commit de consolidação
-desta sessão — não apenas o último estado publicado em `origin`.
+desta sessão, já publicado em `origin`.
 
 ## Estado do Git
 
-| Ref | Valor após este commit |
+| Ref | Valor |
 | --- | --- |
 | Branch atual | `task-064-ai-provider-cascade` |
-| `main` (local) | mesmo commit da branch atual (fast-forward automático) |
-| `origin/main` | **ainda no commit anterior** — este commit de consolidação não foi publicado |
+| `main` (local) | `a6dbb30` |
+| `origin/main` | `a6dbb30` — publicado por autorização explícita do usuário |
+| `origin/task-064-ai-provider-cascade` | `a6dbb30` — publicada junto |
 | Tag `v1.0.0` | `85b56c6` — **intocada**, marco histórico, não usar para deploy |
 | Tag `v1.0.1` | `578dc29` — release corrente, já implantada em produção |
 
-Nenhum push foi feito para este commit de consolidação; nenhuma tag nova
+O commit de consolidação `a6dbb30` foi publicado em `origin/main` e em
+`origin/task-064-ai-provider-cascade` por autorização explícita do usuário
+em sessão posterior à redação original deste documento; nenhuma tag nova
 foi criada.
 
 ## `v1.0.1` — já está em produção real
@@ -132,9 +135,10 @@ distintos).
 - O achado de UID/permissão de secrets no servidor **não foi documentado**
   como nota permanente em `docs/PRODUCTION_SETUP.md` ainda — só está
   registrado em `docs/CHANGELOG.md`/`docs/PROJECT_CONTEXT.md`.
-- Este commit de consolidação **não foi publicado** em `origin/main`;
-  nenhuma tag nova foi criada; o servidor de produção não foi tocado por
-  este commit.
+- Nenhuma tag nova foi criada; o servidor de produção não foi tocado por
+  este commit. (O commit de consolidação foi publicado em `origin/main`
+  em sessão posterior, por autorização explícita do usuário — ver seção
+  "Estado do Git" acima.)
 
 ## Prompt sugerido para abrir a próxima sessão
 
