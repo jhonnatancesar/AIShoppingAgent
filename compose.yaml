@@ -60,6 +60,7 @@ services:
     depends_on:
       database:
         condition: service_healthy
+    restart: unless-stopped
     healthcheck:
       test:
         - CMD
@@ -199,6 +200,7 @@ services:
       - postgres_data:/var/lib/postgresql
     secrets:
       - postgres_password
+    restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
@@ -217,6 +219,7 @@ services:
         condition: service_started
     ports:
       - "127.0.0.1:${OTEL_HEALTH_PORT:-13133}:13133"
+    restart: unless-stopped
 
   prometheus:
     logging: *bounded-logging
@@ -235,6 +238,7 @@ services:
     depends_on:
       api:
         condition: service_healthy
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:9090/-/healthy"]
       interval: 10s
@@ -250,6 +254,7 @@ services:
     mem_limit: 512m
     ports:
       - "${JAEGER_BIND_ADDRESS:-127.0.0.1}:${JAEGER_UI_PORT:-16686}:16686"
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:16686/api/services"]
       interval: 10s

@@ -65,5 +65,13 @@ foi aprovada, executada e está **concluída**: removeu
 `AISHOPPING_GEMINI_MODEL`/`AISHOPPING_GROQ_MODEL` de `.env.example`
 (raiz), `backend/.env.example` e do `backend/.env` local (limpeza não
 versionada), sem alterar `manager.py`, a cascata Flash→Groq, `compose.yaml`
-ou a produção da `v1.0.1`. TASK-066 a TASK-069 continuam aguardando
-aprovação explícita, uma de cada vez.
+ou a produção da `v1.0.1`.
+
+**Atualização 2026-08-10 (4):** a **TASK-066** (`docs/tasks/TASK-066.md`)
+está **concluída**: auditoria encontrou que a política parcial de restart
+já era contraditória (`collection_worker`/`telegram_notifier` com
+`unless-stopped` dependiam de `database`, que não tinha); usuário aprovou
+aplicar `restart: unless-stopped` aos 7 serviços; validado com pipeline
+oficial e um teste real de crash simulado (`docker exec ... kill -9 1`)
+confirmando recuperação automática. TASK-067 a TASK-069 continuam
+aguardando aprovação explícita, uma de cada vez.

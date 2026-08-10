@@ -207,5 +207,13 @@ propagação real em `compose.yaml` — de `.env.example` (raiz),
 `backend/.env.example` e do `backend/.env` local, e corrigiu a
 documentação (`docs/DEPENDENCIES.md`, `docs/PRODUCTION_SETUP.md`) que as
 descrevia como configuráveis. `manager.py`, a cascata Flash→Groq e a
-produção da `v1.0.1` não foram tocados. TASK-066 não foi iniciada
-automaticamente; aguarda aprovação explícita.
+produção da `v1.0.1` não foram tocados.
+
+A **TASK-066** (`docs/tasks/TASK-066.md`) está **concluída**: auditoria
+encontrou a política parcial de restart já contraditória
+(`collection_worker`/`telegram_notifier` com `unless-stopped` dependiam de
+`database`, sem a política) e o usuário aprovou aplicar
+`restart: unless-stopped` aos 7 serviços de `compose.yaml`. Validado com
+pipeline oficial e teste real de crash simulado (recuperação automática
+confirmada, ambiente local isolado, produção intocada). TASK-067 não foi
+iniciada automaticamente; aguarda aprovação explícita.

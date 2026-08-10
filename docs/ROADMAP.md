@@ -141,8 +141,8 @@ original, sinalizado no próprio doc — editar missão existente
 (`DEC-057`), categorias numeradas no `/cadastro` (`DEC-055`) e pré-lista
 de preços sem IA, um preço por loja (`DEC-058`); **status 2026-08-10: em
 planejamento ativo** — os 5 itens foram propostos como TASK-065 a
-TASK-069; a **TASK-065 (item 1, remover variáveis de modelo obsoletas)
-está concluída**, os outros quatro aguardam aprovação explícita antes de
+TASK-069; **TASK-065 (item 1) e TASK-066 (item 2, restart policy) estão
+concluídas**, os outros três aguardam aprovação explícita antes de
 iniciar) → V1.2 (evolução funcional, documento `docs/V1_2.md`, 12 itens,
 incluindo Magalu como quinta loja, redução de `PriceObservation`
 redundante, e comparação de menor preço histórico externo/interno estilo

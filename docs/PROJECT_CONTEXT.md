@@ -621,4 +621,18 @@ real em `compose.yaml` (zero ocorrências nos 7 serviços); removidas de
 como configuráveis. `Settings.gemini_model`/`Settings.groq_model`
 (`backend/app/core/config.py`) e `manager.py` **não foram alterados** — a
 cascata Flash→Groq (`DEC-050`) e a produção da `v1.0.1` seguem intocadas.
-TASK-066 não foi iniciada.
+
+**Atualização 2026-08-10 (4):** aprovada e concluída a **TASK-066**
+(`docs/tasks/TASK-066.md`, item 2 da `v1.0.2`) — a auditoria encontrou que
+a política parcial de restart já era contraditória
+(`collection_worker`/`telegram_notifier` com `unless-stopped` dependem de
+`database`, que não tinha a política, então o auto-restart deles já era
+parcialmente inútil após reboot real). O usuário aprovou explicitamente
+aplicar `restart: unless-stopped` aos 5 serviços restantes (`database`,
+`api`, `otel-collector`, `prometheus`, `jaeger`), deixando os 7 serviços
+consistentes. Validado com o pipeline oficial completo e com um teste real
+isolado (não produção): `database`/`jaeger` subidos localmente, crash
+interno simulado (`docker exec ... kill -9 1`, diferente de `docker
+stop`/`kill` no nível do Engine, que `unless-stopped` trata como parada
+intencional), recuperação automática confirmada em segundos. Produção da
+`v1.0.1` intocada; TASK-067 não foi iniciada.

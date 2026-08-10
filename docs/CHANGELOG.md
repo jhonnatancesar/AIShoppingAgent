@@ -1,5 +1,26 @@
 # Changelog
 
+## 2026-08-10 (3) — TASK-066 concluída: restart policy uniforme nos 7 serviços
+
+- **TASK-066** (`docs/tasks/TASK-066.md`, item 2 da `v1.0.2`) concluída:
+  auditoria serviço por serviço encontrou que a política parcial de
+  restart já era contraditória — `collection_worker`/`telegram_notifier`
+  tinham `restart: unless-stopped` mas dependem de `database`, que não
+  tinha, tornando o auto-restart deles parcialmente inútil após um reboot
+  real. O usuário aprovou explicitamente aplicar `restart: unless-stopped`
+  aos 5 serviços restantes (`database`, `api`, `otel-collector`,
+  `prometheus`, `jaeger`), deixando os 7 serviços de `compose.yaml`
+  consistentes.
+- **Validação real**: além do pipeline oficial completo, subi
+  `database`/`jaeger` localmente (ambiente isolado, sem tocar produção),
+  simulei um crash real do processo interno (`docker exec ... kill -9 1`,
+  distinto de um `stop` manual, que `unless-stopped` intencionalmente não
+  reinicia) e confirmei recuperação automática em segundos.
+- `docs/PRODUCTION_SETUP.md` atualizado (seções "Serviços" e "Inicialização
+  após reboot"). Produção da `v1.0.1` já implantada não foi alterada;
+  aplicar a mudança lá fica para uma atualização operacional futura.
+  Nenhuma tag `v1.0.2` criada; TASK-067 não iniciada.
+
 ## 2026-08-10 (2) — TASK-065 concluída: remoção de variáveis de modelo obsoletas
 
 - **`v1.0.2` entrou em planejamento ativo** e os 5 itens de

@@ -657,16 +657,19 @@ Serviços realmente presentes em `compose.yaml` (7, nenhum a mais):
 | `prometheus` | Coleta métricas por scrape | `api` (healthy) | `GET /-/healthy`, 10s |
 | `jaeger` | Armazena e exibe traces | — | `GET /api/services`, 10s |
 
-`collection_worker` e `telegram_notifier` têm `restart: unless-stopped`; os
-outros cinco serviços **não têm política de restart definida** — isso importa
-para a seção 15.
+Os sete serviços têm `restart: unless-stopped` — isso importa para a
+seção 15.
 
-> **Correção planejada:** uma auditoria serviço por serviço para aplicar
-> `restart: unless-stopped` só onde for tecnicamente apropriado (não
-> cegamente aos sete) está registrada para a release corretiva **`v1.0.2`**
-> (`docs/V1_2.md`, `DEC-052`) — depois da `v1.0.1` estar em produção. Não
-> altere `compose.yaml` agora; este documento continua descrevendo o
-> comportamento real da `v1.0.1`.
+> **Correção aplicada (TASK-066, 2026-08-10):** até a `v1.0.1`, só
+> `collection_worker` e `telegram_notifier` tinham `restart:
+> unless-stopped`; os outros cinco exigiam `docker compose up -d` manual
+> após reboot/crash. A auditoria da TASK-066 encontrou que essa política
+> parcial já era contraditória — `collection_worker`/`telegram_notifier`
+> dependem de `database`, que não voltava sozinho — e concluiu que os 7
+> serviços qualificam para `restart: unless-stopped` (nenhum é job
+> pontual, nenhum tem efeito colateral destrutivo em restart automático).
+> A produção da `v1.0.1` já implantada não foi alterada por esta TASK —
+> aplicar a mudança lá é uma atualização operacional separada.
 
 Ordem real de inicialização (já coberta na seção 8 para o banco/migrations):
 
@@ -764,12 +767,18 @@ não sobrevivem a um restart do container `jaeger`.
 
 - O Docker Engine está habilitado no boot (`sudo systemctl enable docker`,
   seção 3) — o daemon volta sozinho depois de reiniciar o Ubuntu.
-- Dos sete serviços do `compose.yaml`, **só `collection_worker` e
-  `telegram_notifier` têm `restart: unless-stopped`** — esses dois voltam a
-  subir sozinhos quando o Docker reinicia (a menos que tenham sido parados
-  manualmente antes do reboot). `database`, `api`, `otel-collector`,
-  `prometheus` e `jaeger` **não têm restart automático configurado** e
-  precisam ser subidos manualmente depois de um reboot.
+- **Desde a TASK-066 (`v1.0.2`), os sete serviços do `compose.yaml` têm
+  `restart: unless-stopped`** — todos voltam a subir sozinhos quando o
+  Docker reinicia (a menos que tenham sido parados manualmente antes do
+  reboot). Antes da TASK-066, só `collection_worker` e `telegram_notifier`
+  tinham essa política; a auditoria da TASK-066 encontrou que isso já
+  tornava o auto-restart deles parcialmente inútil, porque ambos dependem
+  de `database`, que não voltava sozinho — a política ficou uniforme para
+  os sete.
+- Mesmo assim, `docker compose up -d` continua sendo a forma recomendada
+  de confirmar/completar a subida depois de um reboot (ver abaixo) — o
+  restart automático do Docker Engine não substitui a verificação manual
+  do estado do stack.
 
 Depois de reiniciar o servidor:
 
