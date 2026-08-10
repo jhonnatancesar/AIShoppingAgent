@@ -12,7 +12,15 @@ funcional permanece definido em `docs/MISSION_SYSTEM.md`.
 - `status`: enum PostgreSQL `mission_status`, iniciado em `draft`;
 - `expires_at`: prazo opcional; ausência representa missão permanente;
 - `state_version`: versão concorrente não negativa, iniciada em zero;
-- `created_at` e `updated_at`: timestamps obrigatórios em UTC.
+- `created_at` e `updated_at`: timestamps obrigatórios em UTC;
+- `prelist_sent`/`prelist_errata_sent` (TASK-068): controlam a pré-lista
+  informativa sem IA — a primeira dispara uma única vez após a primeira
+  rodada completa de coleta (todas as `MissionSource` com pelo menos um
+  `CollectionRun` terminal); a segunda permite no máximo uma mensagem de
+  correção se uma coleta posterior encontrar algo mais barato;
+- `prelist_lowest_amount`/`prelist_lowest_currency` (TASK-068): base de
+  comparação da correção — o menor total já mostrado na pré-lista original,
+  `NULL` quando a rodada terminou sem nenhuma oferta `MATCH` para mostrar.
 
 Os únicos estados persistidos são `draft`, `active`, `paused`, `completed`,
 `cancelled` e `expired`. Quando informado, `expires_at` precisa ser posterior a

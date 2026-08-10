@@ -80,5 +80,16 @@ está **concluída**: pesquisa ao vivo da taxonomia real de Kabum, Pichau,
 Terabyte e Amazon.com.br, lista consolidada de 15 categorias + "Todas"
 aprovada pelo usuário, `/cadastro` passou a usar o mesmo padrão numerado
 de `favorite_stores`. `preferred_categories` segue sem consumidor além de
-metadado. TASK-068 e TASK-069 continuam aguardando aprovação explícita,
-uma de cada vez.
+metadado.
+
+**Atualização 2026-08-10 (6):** a **TASK-068** (`docs/tasks/TASK-068.md`)
+está **concluída**: pré-lista informativa sem IA, disparada uma única
+vez por missão após a primeira rodada completa de coleta, mostrando as
+2 ofertas mais baratas entre as lojas que já responderam (escopo
+revisado pelo usuário durante a TASK, diferente da proposta original de
+"1 preço por loja mostrando todas"); uma única correção pode ser enviada
+depois se uma loja mais lenta encontrar algo mais barato. Consumer
+Telegram dedicado (`telegram_prelist_v1`), sem afetar alertas de
+queda/alvo (TASK-027/037). Validado com pipeline oficial e um teste de
+integração real (PostgreSQL) cobrindo as 3 rodadas do cenário completo.
+TASK-069 continua aguardando aprovação explícita.

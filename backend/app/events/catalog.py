@@ -35,6 +35,8 @@ class EventType(StrEnum):
     AUTHENTICATION_COMPLETED_V1 = "authentication.completed.v1"
     AUTHENTICATION_SESSION_EXPIRING_V1 = "authentication.session_expiring.v1"
     AUTHENTICATION_SESSION_EXPIRED_V1 = "authentication.session_expired.v1"
+    MISSION_PRELIST_READY_V1 = "mission.prelist_ready.v1"
+    MISSION_PRELIST_ERRATA_V1 = "mission.prelist_errata.v1"
 
 
 @dataclass(frozen=True, slots=True)
@@ -152,6 +154,65 @@ class AvailabilityChangedPayload:
             raise EventCatalogError("availability must change")
 
 
+@dataclass(frozen=True, slots=True)
+class MissionPrelistReadyPayload:
+    """TASK-068: até 2 ofertas `MATCH` mais baratas encontradas na primeira
+    rodada de coleta da missão, sem nenhum julgamento de IA sobre elas."""
+
+    mission_id: UUID
+    first_offer_id: UUID
+    first_observation_id: UUID
+    first_total: Decimal
+    first_currency: str
+    second_offer_id: UUID | None = None
+    second_observation_id: UUID | None = None
+    second_total: Decimal | None = None
+    second_currency: str | None = None
+
+    def __post_init__(self) -> None:
+        _validate_money(self.first_total, self.first_currency)
+        has_second = self.second_offer_id is not None
+        second_complete = (
+            self.second_observation_id is not None
+            and self.second_total is not None
+            and self.second_currency is not None
+        )
+        if has_second != second_complete:
+            raise EventCatalogError(
+                "second offer fields must be complete or all absent"
+            )
+        if has_second:
+            _validate_money(self.second_total, self.second_currency)
+            if self.second_total < self.first_total:
+                raise EventCatalogError("first_total must be the lowest of the two")
+            if self.second_offer_id == self.first_offer_id:
+                raise EventCatalogError("first and second offers must differ")
+
+
+@dataclass(frozen=True, slots=True)
+class MissionPrelistErrataPayload:
+    """TASK-068: única correção permitida quando uma coleta posterior à
+    pré-lista encontra uma oferta `MATCH` mais barata que a base já
+    enviada -- `previous_lowest_total` é `None` só quando a pré-lista
+    original não teve nenhuma oferta para mostrar."""
+
+    mission_id: UUID
+    offer_id: UUID
+    observation_id: UUID
+    current_total: Decimal
+    currency: str
+    previous_lowest_total: Decimal | None
+
+    def __post_init__(self) -> None:
+        _validate_money(self.current_total, self.currency)
+        if self.previous_lowest_total is not None:
+            _validate_money(self.previous_lowest_total, self.currency)
+            if self.current_total >= self.previous_lowest_total:
+                raise EventCatalogError(
+                    "current_total must be lower than previous_lowest_total"
+                )
+
+
 type EventPayload = (
     MissionStatusChangedPayload
     | CollectionCompletedPayload
@@ -161,6 +222,8 @@ type EventPayload = (
     | AvailabilityChangedPayload
     | AuthenticationCompletedPayload
     | AuthenticationSessionPayload
+    | MissionPrelistReadyPayload
+    | MissionPrelistErrataPayload
 )
 
 
@@ -217,6 +280,16 @@ EVENT_CATALOG = MappingProxyType(
             EventType.AUTHENTICATION_SESSION_EXPIRED_V1,
             AggregateType.AUTH_SESSION,
             AuthenticationSessionPayload,
+        ),
+        EventType.MISSION_PRELIST_READY_V1: EventSpec(
+            EventType.MISSION_PRELIST_READY_V1,
+            AggregateType.MISSION,
+            MissionPrelistReadyPayload,
+        ),
+        EventType.MISSION_PRELIST_ERRATA_V1: EventSpec(
+            EventType.MISSION_PRELIST_ERRATA_V1,
+            AggregateType.MISSION,
+            MissionPrelistErrataPayload,
         ),
     }
 )

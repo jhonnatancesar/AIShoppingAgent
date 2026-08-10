@@ -1,5 +1,41 @@
 # Changelog
 
+## 2026-08-10 (5) — TASK-068 concluída: pré-lista de preços sem IA
+
+- **TASK-068** (`docs/tasks/TASK-068.md`, item 5 da `v1.0.2`) concluída:
+  pré-lista informativa sem IA, disparada uma única vez por missão
+  quando toda `MissionSource` já teve pelo menos um `CollectionRun`
+  terminal (sucesso ou falha) — nunca fica esperando para sempre por uma
+  loja bloqueada.
+- **Escopo final revisado pelo usuário durante a TASK**: em vez da
+  proposta original ("1 preço por loja, mostrando todas"), a mensagem
+  mostra as **2 ofertas mais baratas** entre as lojas que já responderam
+  (1 candidata por loja — a `MATCH` mais recente —, depois as 2 mais
+  baratas dessas candidatas), com texto deixando claro que a busca
+  continua. Uma única mensagem de correção pode ser enviada depois se
+  uma coleta posterior encontrar algo mais barato que a base já
+  mostrada.
+- Reaproveita a classificação `MATCH` já calculada pela TASK-063 —
+  nenhuma chamada de IA nova. Compara por `total_amount` (preço+frete),
+  deliberadamente diferente do `amount` que `evaluate_price_alerts`
+  (`DEC-045`) usa para a mesma oferta ao longo do tempo — aqui o
+  propósito é ranquear ofertas diferentes de lojas diferentes num
+  instante, não repetir a lógica de alerta.
+- Dois `EventType` novos (`mission.prelist_ready.v1`,
+  `mission.prelist_errata.v1`) com payload autocontido e validado;
+  consumer Telegram dedicado (`telegram_prelist_v1`), sem consultar
+  `notify_price_decreases`/`notify_target_reached` (TASK-037). Migration
+  `20260810_0001` adiciona 4 colunas a `missions`
+  (`prelist_sent`/`prelist_errata_sent`/`prelist_lowest_amount`/
+  `prelist_lowest_currency`).
+- Validado com pipeline oficial completo (771 testes, 90,49% cobertura,
+  15 integrações PostgreSQL reais) e um teste de integração real
+  cobrindo o cenário completo em 3 rodadas (pré-lista com 1 oferta só,
+  correção única, sem segunda correção). `evaluate_price_alerts`,
+  preferências de queda/alvo e a semântica MATCH/POSSIBLE_MATCH/NO_MATCH
+  da TASK-063 intocadas. Nenhuma tag `v1.0.2` criada; produção da
+  `v1.0.1` intocada; TASK-069 não iniciada.
+
 ## 2026-08-10 (4) — TASK-067 concluída: categorias numeradas no /cadastro
 
 - **TASK-067** (`docs/tasks/TASK-067.md`, item 4 da `v1.0.2`) concluída:

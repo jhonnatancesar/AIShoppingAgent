@@ -651,5 +651,31 @@ Validado com pipeline oficial (756 testes, 90,65% cobertura,
 `registration.py` a 100%) e o teste de fluxo completo real do `/cadastro`
 via `receive_telegram_webhook`; sem round-trip ao vivo contra a API do
 Telegram, por ser mudança de vocabulário fechado sem alterar a mecânica
-do webhook já validada em produção. Produção da `v1.0.1` intocada;
-TASK-068 não foi iniciada.
+do webhook já validada em produção. Produção da `v1.0.1` intocada.
+
+**Atualização 2026-08-10 (6):** aprovada e concluída a **TASK-068**
+(`docs/tasks/TASK-068.md`, item 5 da `v1.0.2`) — pré-lista informativa
+sem IA, disparada uma única vez por missão quando toda `MissionSource`
+já teve pelo menos um `CollectionRun` terminal (sucesso ou falha). O
+usuário revisou o desenho inicial ("1 preço por loja mostrando todas")
+durante a TASK e pediu uma versão diferente: comparar 1 oferta `MATCH`
+candidata por loja e mostrar as 2 mais baratas (nunca 2 da mesma loja),
+com um texto deixando claro que a busca continua, mais um mecanismo de
+correção — no máximo uma mensagem, se uma coleta posterior encontrar
+algo mais barato que a base já enviada. Reaproveita a classificação
+`MATCH` já calculada pela TASK-063 (nenhuma IA nova); comparação por
+`total_amount` (preço+frete), deliberadamente diferente do `amount` que
+`evaluate_price_alerts`/`DEC-045` usa para a mesma oferta ao longo do
+tempo — aqui o propósito é ranquear ofertas diferentes de lojas
+diferentes num instante, não comparar a mesma oferta consigo mesma.
+Dois `EventType` novos com payload autocontido
+(`MissionPrelistReadyPayload`/`MissionPrelistErrataPayload`), consumer
+Telegram dedicado (`telegram_prelist_v1`), sem consultar
+`notify_price_decreases`/`notify_target_reached` (TASK-037). Validado com
+pipeline oficial (771 testes, 90,49% cobertura, migration head
+`20260810_0001`, 15 integrações PostgreSQL reais) e um teste de
+integração real cobrindo as 3 rodadas do cenário completo (pré-lista com
+1 oferta, correção única, sem segunda correção). `evaluate_price_alerts`,
+preferências de queda/alvo e a semântica MATCH/POSSIBLE_MATCH/NO_MATCH da
+TASK-063 intocadas. Produção da `v1.0.1` intocada; TASK-069 não foi
+iniciada.

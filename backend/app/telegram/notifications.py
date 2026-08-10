@@ -41,6 +41,7 @@ logger = logging.getLogger("app.telegram.notifications")
 
 TELEGRAM_NOTIFICATION_CONSUMER = "telegram_price_alerts_v1"
 TELEGRAM_AUTH_NOTIFICATION_CONSUMER = "telegram_auth_notifications_v1"
+TELEGRAM_PRELIST_CONSUMER = "telegram_prelist_v1"
 _NOTIFICATION_EVENT_TYPES = (
     EventType.PRICE_DECREASED_V1.value,
     EventType.PRICE_TARGET_REACHED_V1.value,
@@ -49,6 +50,13 @@ _AUTHENTICATION_EVENT_TYPES = (
     EventType.AUTHENTICATION_COMPLETED_V1.value,
     EventType.AUTHENTICATION_SESSION_EXPIRING_V1.value,
     EventType.AUTHENTICATION_SESSION_EXPIRED_V1.value,
+)
+# TASK-068: consumer próprio, separado dos alertas de queda/alvo (TASK-037)
+# -- a pré-lista é informativa, não um alerta, e não fica sujeita às
+# preferências notify_price_decreases/notify_target_reached.
+_PRELIST_EVENT_TYPES = (
+    EventType.MISSION_PRELIST_READY_V1.value,
+    EventType.MISSION_PRELIST_ERRATA_V1.value,
 )
 _BRAZIL_TIMEZONE = ZoneInfo("America/Sao_Paulo")
 
@@ -219,6 +227,24 @@ async def process_telegram_authentication_notifications(
     )
 
 
+async def process_telegram_prelist_notifications(
+    session: Session,
+    *,
+    bot_token: SecretStr,
+    limit: int = 50,
+    **kwargs: object,
+) -> TelegramNotificationBatch:
+    """Entrega a pré-lista informativa (TASK-068) em consumidor próprio."""
+    return await process_telegram_notifications(
+        session,
+        bot_token=bot_token,
+        limit=limit,
+        _consumer_name=TELEGRAM_PRELIST_CONSUMER,
+        _event_types=_PRELIST_EVENT_TYPES,
+        **kwargs,
+    )
+
+
 def _prepare_notification(session: Session, event: Event) -> tuple[int, str]:
     try:
         event_type = EventType(event.event_type)
@@ -230,6 +256,11 @@ def _prepare_notification(session: Session, event: Event) -> tuple[int, str]:
         EventType.AUTHENTICATION_SESSION_EXPIRED_V1,
     }:
         return _prepare_authentication_notification(session, event, event_type)
+    if event_type in {
+        EventType.MISSION_PRELIST_READY_V1,
+        EventType.MISSION_PRELIST_ERRATA_V1,
+    }:
+        return _prepare_prelist_notification(session, event, event_type)
     if event.mission_id is None:
         raise TelegramNotificationError("notification_mission_missing")
     mission = session.get(Mission, event.mission_id)
@@ -276,6 +307,35 @@ def _resolve_offer_context(
     if product is None or store is None:
         raise TelegramNotificationError("notification_payload_invalid")
     return offer, product, store
+
+
+def _prepare_prelist_notification(
+    session: Session, event: Event, event_type: EventType
+) -> tuple[int, str]:
+    """TASK-068: nunca sujeita a `notification_is_enabled` -- a pré-lista
+    dispara no máximo uma vez (mais a correção, também no máximo uma vez),
+    fora das preferências de queda/alvo da TASK-037."""
+    if event.mission_id is None:
+        raise TelegramNotificationError("notification_mission_missing")
+    mission = session.get(Mission, event.mission_id)
+    if mission is None:
+        raise TelegramNotificationError("notification_mission_missing")
+    user = session.get(User, mission.user_id)
+    if user is None:
+        raise TelegramNotificationError("notification_recipient_missing")
+    if user.telegram_chat_id is None:
+        raise TelegramNotificationError(
+            "notification_recipient_missing", permanent=False
+        )
+    if not user.is_active:
+        raise TelegramNotificationError(
+            "notification_recipient_inactive", permanent=False
+        )
+    if event_type is EventType.MISSION_PRELIST_READY_V1:
+        text = _render_prelist_ready(session, event, mission.title)
+    else:
+        text = _render_prelist_errata(session, event, mission.title)
+    return user.telegram_chat_id, text
 
 
 def _prepare_authentication_notification(
@@ -428,6 +488,105 @@ def _render_alert(
     raise TelegramNotificationError("notification_payload_invalid")
 
 
+def _load_offer_context(
+    session: Session, offer_id: UUID
+) -> tuple[Offer, Product, Store]:
+    offer = session.get(Offer, offer_id)
+    if offer is None:
+        raise TelegramNotificationError("notification_payload_invalid")
+    product = session.get(Product, offer.product_id)
+    store = session.get(Store, offer.store_id)
+    if product is None or store is None:
+        raise TelegramNotificationError("notification_payload_invalid")
+    return offer, product, store
+
+
+def _render_prelist_block(
+    session: Session, offer_id: UUID, total: Decimal, currency: str
+) -> str:
+    offer, product, store = _load_offer_context(session, offer_id)
+    display_name = product.display_name or product.name
+    return (
+        f"🏪 {store.name}\n"
+        f"{display_name}\n"
+        f"💰 {format_money(total, currency)}\n"
+        "🔗 Ver anúncio\n"
+        f"{offer.url}"
+    )
+
+
+def _render_prelist_ready(session: Session, event: Event, mission_title: str) -> str:
+    """TASK-068: até 2 ofertas já encontradas, sem julgamento -- string fixa."""
+    payload = event.payload
+    if not isinstance(payload, dict):
+        raise TelegramNotificationError("notification_payload_invalid")
+    try:
+        first_offer_id = _required_uuid(payload, "first_offer_id")
+        first_total = _money(payload, "first_total")
+        first_currency = _currency(payload, "first_currency")
+        blocks = [
+            _render_prelist_block(session, first_offer_id, first_total, first_currency)
+        ]
+        if payload.get("second_offer_id") is not None:
+            second_offer_id = _required_uuid(payload, "second_offer_id")
+            second_total = _money(payload, "second_total")
+            second_currency = _currency(payload, "second_currency")
+            blocks.append(
+                _render_prelist_block(
+                    session, second_offer_id, second_total, second_currency
+                )
+            )
+    except InvalidOperation, TypeError, ValueError:
+        raise TelegramNotificationError("notification_payload_invalid") from None
+    return (
+        "🧾 MELHORES OFERTAS ENCONTRADAS ATÉ AGORA\n\n"
+        f"Missão: {mission_title}\n\n"
+        "Das lojas que você selecionou, essas são as melhores ofertas "
+        "encontradas até agora:\n\n"
+        + "\n\n".join(blocks)
+        + "\n\nAinda estamos buscando nas outras lojas -- você será avisado "
+        "se encontrarmos algo melhor."
+    )
+
+
+def _render_prelist_errata(session: Session, event: Event, mission_title: str) -> str:
+    """TASK-068: única correção da pré-lista -- string fixa, sem julgamento."""
+    payload = event.payload
+    if not isinstance(payload, dict):
+        raise TelegramNotificationError("notification_payload_invalid")
+    try:
+        offer_id = _required_uuid(payload, "offer_id")
+        current_total = _money(payload, "current_total")
+        currency = _currency(payload)
+        had_previous = payload.get("previous_lowest_total") is not None
+    except InvalidOperation, TypeError, ValueError:
+        raise TelegramNotificationError("notification_payload_invalid") from None
+    offer, product, store = _load_offer_context(session, offer_id)
+    display_name = product.display_name or product.name
+    if had_previous:
+        header = "✏️ CORREÇÃO DA PRÉ-LISTA\n\n"
+        note = (
+            "Uma das lojas que ainda estava buscando encontrou um preço "
+            "melhor do que o mostrado antes:"
+        )
+    else:
+        header = "🧾 PRIMEIRA OFERTA RELEVANTE ENCONTRADA\n\n"
+        note = (
+            "Ainda não tínhamos encontrado nenhuma oferta relevante para "
+            "essa missão -- aqui está a primeira:"
+        )
+    return (
+        f"{header}"
+        f"Missão: {mission_title}\n\n"
+        f"{note}\n\n"
+        f"🏪 {store.name}\n"
+        f"{display_name}\n"
+        f"💰 {format_money(current_total, currency)}\n"
+        "🔗 Ver anúncio\n"
+        f"{offer.url}"
+    )
+
+
 def _required_text(payload: dict[str, object], field: str) -> str:
     value = payload.get(field)
     if not isinstance(value, str) or not value.strip():
@@ -459,8 +618,8 @@ def _money(payload: dict, field: str) -> Decimal:
     return value
 
 
-def _currency(payload: dict) -> str:
-    currency = _required_text(payload, "currency")
+def _currency(payload: dict, field: str = "currency") -> str:
+    currency = _required_text(payload, field)
     if (
         len(currency) != 3
         or not currency.isascii()

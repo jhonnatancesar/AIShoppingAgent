@@ -181,6 +181,9 @@ def test_orchestrator_isolates_source_failure_and_publishes_real_events(
             EventType.COLLECTION_COMPLETED_V1.value,
             EventType.COLLECTION_FAILED_V1.value,
             EventType.PRICE_TARGET_REACHED_V1.value,
+            # TASK-068: os dois sources ficaram terminais nesta mesma rodada
+            # (pichau sucesso, kabum bloqueado) -- a pré-lista dispara junto.
+            EventType.MISSION_PRELIST_READY_V1.value,
         }
         failed = session.scalar(
             select(Event).where(
@@ -523,6 +526,154 @@ def test_all_sources_in_backoff_creates_no_run_and_schedule_stays_due(
             )
         )
         assert next_run_at == now
+
+
+class _KabumOfferProvider:
+    """Sempre `kabum`; preço configurável por instância (TASK-068)."""
+
+    source_code = "kabum"
+
+    def __init__(self, raw_price: str) -> None:
+        self._raw_price = raw_price
+
+    async def collect(self, request: CollectionRequest) -> CollectionResult:
+        completed = request.requested_at.replace(microsecond=500000)
+        return CollectionResult(
+            self.source_code,
+            request.requested_at,
+            completed,
+            (
+                RawCollectedOffer(
+                    source_code=self.source_code,
+                    url="https://example.invalid/task068-kabum-offer",
+                    title="TASK-068 synthetic GPU (kabum)",
+                    collected_at=completed,
+                    external_id="task068-kabum-offer",
+                    raw_price=self._raw_price,
+                    raw_currency="BRL",
+                    raw_shipping="Frete grátis",
+                    raw_availability="Em estoque",
+                    evidence={"card_text": "safe synthetic evidence"},
+                ),
+            ),
+        )
+
+
+def test_prelist_ready_fires_once_then_errata_corrects_a_cheaper_late_offer(
+    integration_database,
+) -> None:
+    """TASK-068: pré-lista dispara uma vez após a 1a rodada completa; uma
+    coleta posterior mais barata que a base já enviada gera uma única
+    correção -- nunca duas, nunca antes da rodada completar.
+    """
+    now = datetime.now(UTC).replace(microsecond=0)
+    mission_id, pichau_id, kabum_id = _seed_due_mission(
+        integration_database.sessions, now
+    )
+
+    # Rodada 1: pichau sucede (R$ 1.900,00), kabum leva bloqueio confirmado
+    # (403) -- a rodada conta como completa mesmo assim (falha é terminal).
+    orchestrator_round1 = CollectionOrchestrator(
+        integration_database.sessions,
+        CollectionAdapter((_SuccessfulProvider(), _FailingProvider())),
+        ai_manager=_AlwaysMatchAIManager(),
+    )
+    result1 = asyncio.run(orchestrator_round1.run_batch(now=now))
+    assert (result1.claimed, result1.succeeded, result1.failed) == (2, 1, 1)
+
+    with integration_database.sessions.begin() as session:
+        mission = session.get(Mission, mission_id)
+        assert mission.prelist_sent is True
+        assert mission.prelist_errata_sent is False
+        assert mission.prelist_lowest_amount == Decimal("1900.0000")
+        assert mission.prelist_lowest_currency == "BRL"
+        ready_event = session.scalar(
+            select(Event).where(
+                Event.mission_id == mission_id,
+                Event.event_type == EventType.MISSION_PRELIST_READY_V1.value,
+            )
+        )
+        assert ready_event is not None
+        assert Decimal(ready_event.payload["first_total"]) == Decimal("1900.00")
+        # kabum falhou -- nenhuma segunda oferta para mostrar ainda.
+        assert ready_event.payload["second_offer_id"] is None
+        errata_before = session.scalar(
+            select(func.count(Event.id)).where(
+                Event.mission_id == mission_id,
+                Event.event_type == EventType.MISSION_PRELIST_ERRATA_V1.value,
+            )
+        )
+        assert errata_before == 0
+
+    # Libera kabum do backoff e deixa a agenda due de novo, simulando a
+    # rodada seguinte -- desta vez kabum responde mais barato (R$ 1.500,00)
+    # que a base já enviada (R$ 1.900,00): deve gerar a única correção.
+    due_at = datetime.now(UTC).replace(microsecond=0)
+    with integration_database.sessions.begin() as session:
+        source = session.get(MissionSource, (mission_id, kabum_id))
+        source.next_eligible_at = due_at - timedelta(seconds=1)
+        schedule = session.scalar(
+            select(MissionSchedule).where(MissionSchedule.mission_id == mission_id)
+        )
+        schedule.next_run_at = due_at
+
+    orchestrator_round2 = CollectionOrchestrator(
+        integration_database.sessions,
+        CollectionAdapter((_SuccessfulProvider(), _KabumOfferProvider("R$ 1.500,00"))),
+        ai_manager=_AlwaysMatchAIManager(),
+    )
+    result2 = asyncio.run(orchestrator_round2.run_batch(now=due_at))
+    assert (result2.claimed, result2.succeeded, result2.failed) == (2, 2, 0)
+
+    with integration_database.sessions.begin() as session:
+        mission = session.get(Mission, mission_id)
+        assert mission.prelist_sent is True
+        assert mission.prelist_errata_sent is True
+        # a base de comparação (prelist_lowest_amount) não é reescrita pela
+        # correção -- continua registrando o valor original enviado.
+        assert mission.prelist_lowest_amount == Decimal("1900.0000")
+        errata_events = list(
+            session.scalars(
+                select(Event).where(
+                    Event.mission_id == mission_id,
+                    Event.event_type == EventType.MISSION_PRELIST_ERRATA_V1.value,
+                )
+            )
+        )
+        assert len(errata_events) == 1
+        assert Decimal(errata_events[0].payload["current_total"]) == Decimal("1500.00")
+        assert Decimal(errata_events[0].payload["previous_lowest_total"]) == Decimal(
+            "1900.00"
+        )
+        assert errata_events[0].aggregate_id == mission_id
+
+    # Rodada 3: kabum encontra um preço ainda mais barato (R$ 1.000,00) --
+    # a correção já foi usada; nenhuma segunda correção deve ser publicada.
+    due_at_3 = datetime.now(UTC).replace(microsecond=0)
+    with integration_database.sessions.begin() as session:
+        source = session.get(MissionSource, (mission_id, kabum_id))
+        source.next_eligible_at = due_at_3 - timedelta(seconds=1)
+        schedule = session.scalar(
+            select(MissionSchedule).where(MissionSchedule.mission_id == mission_id)
+        )
+        schedule.next_run_at = due_at_3
+
+    orchestrator_round3 = CollectionOrchestrator(
+        integration_database.sessions,
+        CollectionAdapter((_SuccessfulProvider(), _KabumOfferProvider("R$ 1.000,00"))),
+        ai_manager=_AlwaysMatchAIManager(),
+    )
+    result3 = asyncio.run(orchestrator_round3.run_batch(now=due_at_3))
+    assert (result3.claimed, result3.succeeded, result3.failed) == (2, 2, 0)
+
+    with integration_database.sessions.begin() as session:
+        errata_count = session.scalar(
+            select(func.count(Event.id)).where(
+                Event.mission_id == mission_id,
+                Event.event_type == EventType.MISSION_PRELIST_ERRATA_V1.value,
+            )
+        )
+        assert errata_count == 1  # continua uma única correção, nunca duas
 
 
 def test_backfill_runs_old_active_mission_but_ignores_paused(

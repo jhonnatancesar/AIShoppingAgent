@@ -222,5 +222,17 @@ vivo da taxonomia real de Kabum, Pichau, Terabyte e Amazon.com.br,
 consolidada em 15 categorias + "Todas" por critério objetivo (presente em
 pelo menos 2 das 4 lojas), aprovada pelo usuário sem alterações. O
 `/cadastro` passou a pedir `preferred_categories` pelo mesmo padrão
-numerado de `favorite_stores`. TASK-068 não foi iniciada automaticamente;
-aguarda aprovação explícita.
+numerado de `favorite_stores`.
+
+A **TASK-068** (`docs/tasks/TASK-068.md`) está **concluída**: pré-lista
+informativa sem IA, disparada uma única vez por missão após a primeira
+rodada completa de coleta. O usuário revisou o desenho inicial ("1 preço
+por loja mostrando todas") durante a TASK e pediu mostrar as 2 ofertas
+mais baratas entre as lojas que já responderam, mais uma única mensagem
+de correção se uma loja mais lenta encontrar depois algo mais barato.
+Reaproveita a classificação `MATCH` já calculada pela TASK-063 (nenhuma
+IA nova); consumer Telegram dedicado (`telegram_prelist_v1`), sem afetar
+alertas de queda/alvo (TASK-027/037). Validado com pipeline oficial e um
+teste de integração real (PostgreSQL) cobrindo o cenário completo em 3
+rodadas. TASK-069 não foi iniciada automaticamente; aguarda aprovação
+explícita.

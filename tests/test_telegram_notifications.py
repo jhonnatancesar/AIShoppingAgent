@@ -16,9 +16,11 @@ from app.telegram.contracts import TelegramChatType, TelegramMessage
 from app.telegram.notifications import (
     TELEGRAM_AUTH_NOTIFICATION_CONSUMER,
     TELEGRAM_NOTIFICATION_CONSUMER,
+    TELEGRAM_PRELIST_CONSUMER,
     TelegramNotificationError,
     process_telegram_authentication_notifications,
     process_telegram_notifications,
+    process_telegram_prelist_notifications,
     remember_private_notification_chat,
 )
 from app.users.models import User, UserRole
@@ -496,3 +498,271 @@ async def test_authentication_event_fails_closed_for_invalid_identity_or_action(
         "notification_payload_invalid",
         "notification_recipient_missing",
     }
+
+
+def _second_offer_context() -> tuple[Offer, Product, Store]:
+    product_id, store_id = uuid4(), uuid4()
+    offer = Offer(
+        id=uuid4(),
+        product_id=product_id,
+        store_id=store_id,
+        url="https://example.invalid/segundo-anuncio",
+    )
+    product = Product(id=product_id, name="Segundo produto")
+    store = Store(
+        id=store_id,
+        code="pichau",
+        name="Pichau",
+        base_url="https://pichau.example.invalid",
+    )
+    return offer, product, store
+
+
+def _ready_event(
+    mission: Mission,
+    offer: Offer,
+    *,
+    second_offer: Offer | None = None,
+) -> Event:
+    payload: dict[str, object] = {
+        "mission_id": str(mission.id),
+        "first_offer_id": str(offer.id),
+        "first_observation_id": str(uuid4()),
+        "first_total": "1900.00",
+        "first_currency": "BRL",
+        "second_offer_id": None,
+        "second_observation_id": None,
+        "second_total": None,
+        "second_currency": None,
+    }
+    if second_offer is not None:
+        payload.update(
+            second_offer_id=str(second_offer.id),
+            second_observation_id=str(uuid4()),
+            second_total="2100.00",
+            second_currency="BRL",
+        )
+    return Event(
+        id=uuid4(),
+        event_type="mission.prelist_ready.v1",
+        aggregate_type="mission",
+        aggregate_id=mission.id,
+        mission_id=mission.id,
+        payload=payload,
+        occurred_at=NOW,
+        recorded_at=NOW,
+    )
+
+
+def _errata_event(
+    mission: Mission, offer: Offer, *, previous_lowest_total: str | None
+) -> Event:
+    return Event(
+        id=uuid4(),
+        event_type="mission.prelist_errata.v1",
+        aggregate_type="mission",
+        aggregate_id=mission.id,
+        mission_id=mission.id,
+        payload={
+            "mission_id": str(mission.id),
+            "offer_id": str(offer.id),
+            "observation_id": str(uuid4()),
+            "current_total": "1500.00",
+            "currency": "BRL",
+            "previous_lowest_total": previous_lowest_total,
+        },
+        occurred_at=NOW,
+        recorded_at=NOW,
+    )
+
+
+@pytest.mark.anyio
+async def test_prelist_ready_sends_one_block_when_only_one_store_answered(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user = _user()
+    mission = _mission(user)
+    offer, product, store = _offer_context()
+    event = _ready_event(mission, offer)
+    session = MagicMock()
+    session.get.side_effect = [mission, user, offer, product, store]
+    monkeypatch.setattr(
+        "app.telegram.notifications.claim_unconsumed_events",
+        lambda *args, **kwargs: [event],
+    )
+    sent: list[str] = []
+
+    async def _send(chat_id: int, text: str, **kwargs: object) -> None:
+        sent.append(text)
+
+    monkeypatch.setattr("app.telegram.notifications.send_message", _send)
+
+    result = await process_telegram_prelist_notifications(
+        session, bot_token=SecretStr("token")
+    )
+
+    assert result.succeeded == 1
+    assert "MELHORES OFERTAS" in sent[0]
+    assert "R$ 1.900,00" in sent[0]
+    assert store.name in sent[0]
+    assert sent[0].count("🏪") == 1  # só uma loja respondeu ainda
+    attempt = session.add.call_args.args[0]
+    assert attempt.consumer_name == TELEGRAM_PRELIST_CONSUMER
+
+
+@pytest.mark.anyio
+async def test_prelist_ready_sends_two_blocks_cheapest_first(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user = _user()
+    mission = _mission(user)
+    offer, product, store = _offer_context()
+    second_offer, second_product, second_store = _second_offer_context()
+    event = _ready_event(mission, offer, second_offer=second_offer)
+    session = MagicMock()
+    session.get.side_effect = [
+        mission,
+        user,
+        offer,
+        product,
+        store,
+        second_offer,
+        second_product,
+        second_store,
+    ]
+    monkeypatch.setattr(
+        "app.telegram.notifications.claim_unconsumed_events",
+        lambda *args, **kwargs: [event],
+    )
+    sent: list[str] = []
+
+    async def _send(chat_id: int, text: str, **kwargs: object) -> None:
+        sent.append(text)
+
+    monkeypatch.setattr("app.telegram.notifications.send_message", _send)
+
+    result = await process_telegram_prelist_notifications(
+        session, bot_token=SecretStr("token")
+    )
+
+    assert result.succeeded == 1
+    assert sent[0].count("🏪") == 2
+    assert sent[0].index("R$ 1.900,00") < sent[0].index("R$ 2.100,00")
+
+
+@pytest.mark.anyio
+async def test_prelist_ready_ignores_price_preferences(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TASK-068: a pré-lista nunca é bloqueada por notify_price_decreases/
+    notify_target_reached -- essas preferências são só da TASK-037."""
+    user = _user(notify_price_decreases=False, notify_target_reached=False)
+    mission = _mission(user)
+    offer, product, store = _offer_context()
+    event = _ready_event(mission, offer)
+    session = MagicMock()
+    session.get.side_effect = [mission, user, offer, product, store]
+    monkeypatch.setattr(
+        "app.telegram.notifications.claim_unconsumed_events",
+        lambda *args, **kwargs: [event],
+    )
+
+    async def _send(chat_id: int, text: str, **kwargs: object) -> None:
+        pass
+
+    monkeypatch.setattr("app.telegram.notifications.send_message", _send)
+
+    result = await process_telegram_prelist_notifications(
+        session, bot_token=SecretStr("token")
+    )
+
+    assert result.succeeded == 1
+    assert result.skipped == 0
+
+
+@pytest.mark.anyio
+async def test_prelist_errata_message_frames_correction_vs_first_find(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user = _user()
+    mission = _mission(user)
+    offer, product, store = _offer_context()
+    correction_event = _errata_event(mission, offer, previous_lowest_total="1900.00")
+    session = MagicMock()
+    session.get.side_effect = [mission, user, offer, product, store]
+    monkeypatch.setattr(
+        "app.telegram.notifications.claim_unconsumed_events",
+        lambda *args, **kwargs: [correction_event],
+    )
+    sent: list[str] = []
+
+    async def _send(chat_id: int, text: str, **kwargs: object) -> None:
+        sent.append(text)
+
+    monkeypatch.setattr("app.telegram.notifications.send_message", _send)
+
+    result = await process_telegram_prelist_notifications(
+        session, bot_token=SecretStr("token")
+    )
+
+    assert result.succeeded == 1
+    assert "CORREÇÃO" in sent[0]
+    assert "R$ 1.500,00" in sent[0]
+
+
+@pytest.mark.anyio
+async def test_prelist_errata_frames_first_find_without_previous_baseline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user = _user()
+    mission = _mission(user)
+    offer, product, store = _offer_context()
+    first_find_event = _errata_event(mission, offer, previous_lowest_total=None)
+    session = MagicMock()
+    session.get.side_effect = [mission, user, offer, product, store]
+    monkeypatch.setattr(
+        "app.telegram.notifications.claim_unconsumed_events",
+        lambda *args, **kwargs: [first_find_event],
+    )
+    sent: list[str] = []
+
+    async def _send(chat_id: int, text: str, **kwargs: object) -> None:
+        sent.append(text)
+
+    monkeypatch.setattr("app.telegram.notifications.send_message", _send)
+
+    result = await process_telegram_prelist_notifications(
+        session, bot_token=SecretStr("token")
+    )
+
+    assert result.succeeded == 1
+    assert "PRIMEIRA OFERTA" in sent[0]
+    assert "CORREÇÃO" not in sent[0]
+
+
+@pytest.mark.anyio
+async def test_prelist_notification_fails_closed_on_missing_recipient(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user = _user(chat_id=None)
+    mission = _mission(user)
+    offer, _product, _store = _offer_context()
+    event = _ready_event(mission, offer)
+    session = MagicMock()
+    session.get.side_effect = [mission, user]
+    monkeypatch.setattr(
+        "app.telegram.notifications.claim_unconsumed_events",
+        lambda *args, **kwargs: [event],
+    )
+    send = MagicMock()
+    monkeypatch.setattr("app.telegram.notifications.send_message", send)
+
+    result = await process_telegram_prelist_notifications(
+        session, bot_token=SecretStr("token")
+    )
+
+    assert result.failed == 1
+    send.assert_not_called()
+    assert (
+        session.add.call_args.args[0].failure_code == "notification_recipient_missing"
+    )

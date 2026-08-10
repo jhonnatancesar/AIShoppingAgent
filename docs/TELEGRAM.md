@@ -57,6 +57,15 @@ avisa uma vez antes de a sessão expirar e uma vez após a expiração, orientan
 conteúdo do chat funciona como histórico visível para a pessoa, enquanto
 eventos e tentativas append-only preservam o resultado operacional no banco.
 
+A pré-lista informativa sem IA (TASK-068) usa um terceiro consumidor
+independente, `telegram_prelist_v1`, para `mission.prelist_ready.v1` e
+`mission.prelist_errata.v1`. Depois que todas as lojas selecionadas de uma
+missão nova tiveram pelo menos uma tentativa de coleta (sucesso ou falha), o
+usuário recebe uma única mensagem com até 2 ofertas já encontradas (a mais
+barata primeiro), sem nenhum julgamento de "vale a pena". Se uma coleta
+posterior encontrar algo mais barato que essa base, uma única mensagem de
+correção é enviada depois. Nenhuma preferência de preço afeta esse fluxo.
+
 ## Replay e rate limit (TASK-049)
 
 Depois de autenticar transporte e identidade, o webhook persiste um recibo

@@ -33,6 +33,10 @@ def test_mission_table_matches_data_contract() -> None:
         table.c.state_version,
         table.c.created_at,
         table.c.updated_at,
+        table.c.prelist_sent,
+        table.c.prelist_errata_sent,
+        table.c.prelist_lowest_amount,
+        table.c.prelist_lowest_currency,
     ]
     assert table.c.user_id.nullable is False
     assert table.c.title.type.length == 200
@@ -43,6 +47,11 @@ def test_mission_table_matches_data_contract() -> None:
     assert table.c.state_version.nullable is False
     assert table.c.created_at.type.timezone is True
     assert table.c.updated_at.type.timezone is True
+    assert table.c.prelist_sent.nullable is False
+    assert table.c.prelist_errata_sent.nullable is False
+    assert table.c.prelist_lowest_amount.nullable is True
+    assert table.c.prelist_lowest_currency.nullable is True
+    assert table.c.prelist_lowest_currency.type.length == 3
 
 
 def test_mission_constraints_protect_core_invariants() -> None:
@@ -57,6 +66,10 @@ def test_mission_constraints_protect_core_invariants() -> None:
         "ck_missions_title_not_blank",
         "ck_missions_expiration_after_creation",
         "ck_missions_state_version_non_negative",
+        "ck_missions_prelist_lowest_pair",
+        "ck_missions_prelist_lowest_amount_non_negative",
+        "ck_missions_prelist_lowest_currency_iso4217",
+        "ck_missions_prelist_errata_requires_sent",
     }
 
 

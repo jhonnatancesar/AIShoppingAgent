@@ -60,6 +60,9 @@ async def test_worker_once_processes_and_commits_one_batch(
         "app.telegram.worker.process_telegram_authentication_notifications",
         _process_auth,
     )
+    monkeypatch.setattr(
+        "app.telegram.worker.process_telegram_prelist_notifications", _process_auth
+    )
     publish = MagicMock()
     monkeypatch.setattr(
         "app.telegram.worker.publish_due_authentication_notifications", publish
@@ -68,7 +71,9 @@ async def test_worker_once_processes_and_commits_one_batch(
     await run_worker(settings, once=True)
 
     assert calls == [(session, 25)]
-    assert transaction.__exit__.call_count == 3
+    # TASK-068: publish_due_authentication_notifications + price + auth +
+    # prelist consumers -- 4 transações por lote (era 3 antes da TASK-068).
+    assert transaction.__exit__.call_count == 4
     publish.assert_called_once_with(session, limit=25)
     engine.dispose.assert_called_once()
 
@@ -118,6 +123,9 @@ async def test_worker_rolls_back_then_backs_off_outside_failed_transaction(
         process_auth,
     )
     monkeypatch.setattr(
+        "app.telegram.worker.process_telegram_prelist_notifications", process_auth
+    )
+    monkeypatch.setattr(
         "app.telegram.worker.publish_due_authentication_notifications", MagicMock()
     )
     monkeypatch.setattr("app.telegram.worker.asyncio.sleep", sleep)
@@ -127,5 +135,8 @@ async def test_worker_rolls_back_then_backs_off_outside_failed_transaction(
 
     assert calls == 2
     assert sleeps[0] == settings.worker_failure_backoff_seconds
-    assert transaction.__exit__.call_count == 5
+    # TASK-068: 1a rodada falha logo no processor de preço (publish_due +
+    # price = 2 transações); 2a rodada bem-sucedida abre as 4 (publish_due
+    # + price + auth + prelist) -- 6 no total (era 5 antes da TASK-068).
+    assert transaction.__exit__.call_count == 6
     engine.dispose.assert_called_once()

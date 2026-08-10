@@ -83,6 +83,19 @@ aviso prévio já vencido termina como `skipped`, sem retry; falhas de entrega
 seguem o mesmo contrato sanitizado de retry/dead letter do consumidor de
 preços.
 
+## Consumidor de pré-lista (TASK-068)
+
+`telegram_prelist_v1` reivindica somente `mission.prelist_ready.v1` e
+`mission.prelist_errata.v1`, num consumidor dedicado (não reaproveita
+`telegram_price_alerts_v1`). Resolve a missão e seu proprietário, envia ao
+chat privado e **nunca consulta** `notify_price_decreases`/
+`notify_target_reached` (TASK-037) — a pré-lista não é um alerta de preço.
+Retry/dead letter seguem o mesmo contrato sanitizado dos demais
+consumidores. `python -m app.telegram.worker` processa os três consumidores
+(`telegram_price_alerts_v1`, `telegram_auth_notifications_v1`,
+`telegram_prelist_v1`) a cada ciclo de poll, cada um em sua própria
+transação.
+
 O worker publica eventos de expiração e os consome em transações separadas. A
 publicação usa `FOR UPDATE SKIP LOCKED` e dois marcadores booleanos na sessão,
 atualizados atomicamente com o evento, para impedir eventos duplicados em

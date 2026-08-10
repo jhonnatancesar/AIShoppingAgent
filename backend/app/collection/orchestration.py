@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import exists, or_, select
+from sqlalchemy import exists, func, or_, select
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
@@ -44,6 +44,8 @@ from app.events import (
     CollectionCompletedPayload,
     CollectionFailedPayload,
     EventType,
+    MissionPrelistErrataPayload,
+    MissionPrelistReadyPayload,
     publish_event,
 )
 from app.missions.models import (
@@ -181,6 +183,7 @@ def recover_stale_runs(
             session, run.id, CollectionRunStatus.FAILED, finished_at=effective_now
         )
         _publish_failure(session, run, "stale_execution", effective_now)
+        _evaluate_mission_prelist(session, run.mission_id, effective_now)
     return len(runs)
 
 
@@ -508,6 +511,9 @@ async def _persist_success(
         mission_id=run.mission_id,
     )
     _reset_source_backoff(session, run.mission_id, run.store_id)
+    _evaluate_mission_prelist(
+        session, run.mission_id, normalized.raw_result.completed_at
+    )
     return True
 
 
@@ -692,6 +698,7 @@ def _record_failure(
     _publish_failure(session, run, failure_code, failed_at)
     if confirmed_block:
         _apply_source_backoff(session, run.mission_id, run.store_id, failed_at)
+    _evaluate_mission_prelist(session, run.mission_id, failed_at)
     return True
 
 
@@ -756,6 +763,157 @@ def _reset_source_backoff(session: Session, mission_id: UUID, store_id: UUID) ->
         return
     source.consecutive_blocks = 0
     source.next_eligible_at = None
+
+
+def _evaluate_mission_prelist(
+    session: Session, mission_id: UUID, occurred_at: datetime
+) -> None:
+    """TASK-068: pré-lista informativa (sem IA) após a primeira rodada completa.
+
+    Dispara uma única vez por missão, quando toda `MissionSource` já teve
+    pelo menos um `CollectionRun` terminal (sucesso ou falha) -- não fica
+    esperando indefinidamente por uma fonte bloqueada; uma tentativa
+    falha também conta como terminal. Reaproveita a classificação `MATCH`
+    já calculada pela TASK-063 (nenhuma chamada de IA nova). Depois de
+    enviada, no máximo uma mensagem de correção é publicada se uma coleta
+    posterior encontrar uma oferta `MATCH` mais barata que a base já
+    mostrada (`Mission.prelist_lowest_amount`).
+    """
+    mission = session.scalar(
+        select(Mission).where(Mission.id == mission_id).with_for_update()
+    )
+    if mission is None or mission.status is not MissionStatus.ACTIVE:
+        return
+    if not mission.prelist_sent:
+        _maybe_publish_prelist_ready(session, mission, occurred_at)
+        return
+    if not mission.prelist_errata_sent:
+        _maybe_publish_prelist_errata(session, mission, occurred_at)
+
+
+def _mission_prelist_round_complete(session: Session, mission_id: UUID) -> bool:
+    total_sources = session.scalar(
+        select(func.count())
+        .select_from(MissionSource)
+        .where(MissionSource.mission_id == mission_id)
+    )
+    if not total_sources:
+        return False
+    completed_sources = session.scalar(
+        select(func.count(func.distinct(CollectionRun.store_id))).where(
+            CollectionRun.mission_id == mission_id,
+            CollectionRun.status != CollectionRunStatus.RUNNING,
+        )
+    )
+    return (completed_sources or 0) >= total_sources
+
+
+def _latest_match_observations_by_store(
+    session: Session, mission_id: UUID
+) -> list[PriceObservation]:
+    rows = session.execute(
+        select(PriceObservation, CollectionRun.store_id)
+        .join(CollectionRun, CollectionRun.id == PriceObservation.collection_run_id)
+        .join(
+            MissionOfferRelevance,
+            (MissionOfferRelevance.mission_id == CollectionRun.mission_id)
+            & (MissionOfferRelevance.offer_id == PriceObservation.offer_id),
+        )
+        .where(
+            CollectionRun.mission_id == mission_id,
+            MissionOfferRelevance.classification == OfferRelevance.MATCH,
+        )
+        .order_by(PriceObservation.observed_at.desc(), PriceObservation.id.desc())
+    ).all()
+    best_per_store: dict[UUID, PriceObservation] = {}
+    for observation, store_id in rows:
+        best_per_store.setdefault(store_id, observation)
+    return list(best_per_store.values())
+
+
+def _maybe_publish_prelist_ready(
+    session: Session, mission: Mission, occurred_at: datetime
+) -> None:
+    if not _mission_prelist_round_complete(session, mission.id):
+        return
+    candidates = sorted(
+        _latest_match_observations_by_store(session, mission.id),
+        key=lambda observation: observation.total_amount,
+    )
+    mission.prelist_sent = True
+    if not candidates:
+        return
+    top = candidates[:2]
+    first = top[0]
+    second = top[1] if len(top) > 1 else None
+    mission.prelist_lowest_amount = first.total_amount
+    mission.prelist_lowest_currency = first.currency
+    publish_event(
+        session,
+        event_type=EventType.MISSION_PRELIST_READY_V1,
+        aggregate_type=AggregateType.MISSION,
+        aggregate_id=mission.id,
+        payload=MissionPrelistReadyPayload(
+            mission_id=mission.id,
+            first_offer_id=first.offer_id,
+            first_observation_id=first.id,
+            first_total=first.total_amount,
+            first_currency=first.currency,
+            second_offer_id=second.offer_id if second else None,
+            second_observation_id=second.id if second else None,
+            second_total=second.total_amount if second else None,
+            second_currency=second.currency if second else None,
+        ),
+        occurred_at=occurred_at,
+        mission_id=mission.id,
+    )
+
+
+def _maybe_publish_prelist_errata(
+    session: Session, mission: Mission, occurred_at: datetime
+) -> None:
+    query = (
+        select(PriceObservation)
+        .join(CollectionRun, CollectionRun.id == PriceObservation.collection_run_id)
+        .join(
+            MissionOfferRelevance,
+            (MissionOfferRelevance.mission_id == CollectionRun.mission_id)
+            & (MissionOfferRelevance.offer_id == PriceObservation.offer_id),
+        )
+        .where(
+            CollectionRun.mission_id == mission.id,
+            MissionOfferRelevance.classification == OfferRelevance.MATCH,
+        )
+    )
+    if mission.prelist_lowest_amount is not None:
+        query = query.where(
+            PriceObservation.currency == mission.prelist_lowest_currency,
+            PriceObservation.total_amount < mission.prelist_lowest_amount,
+        )
+    observation = session.scalar(
+        query.order_by(
+            PriceObservation.total_amount.asc(), PriceObservation.observed_at.desc()
+        ).limit(1)
+    )
+    if observation is None:
+        return
+    mission.prelist_errata_sent = True
+    publish_event(
+        session,
+        event_type=EventType.MISSION_PRELIST_ERRATA_V1,
+        aggregate_type=AggregateType.MISSION,
+        aggregate_id=mission.id,
+        payload=MissionPrelistErrataPayload(
+            mission_id=mission.id,
+            offer_id=observation.offer_id,
+            observation_id=observation.id,
+            current_total=observation.total_amount,
+            currency=observation.currency,
+            previous_lowest_total=mission.prelist_lowest_amount,
+        ),
+        occurred_at=occurred_at,
+        mission_id=mission.id,
+    )
 
 
 def _failure_code(error: Exception) -> str:

@@ -79,6 +79,23 @@ class Mission(Base):
                 "status NOT IN ('completed', 'cancelled', 'expired')"
             ),
         ),
+        CheckConstraint(
+            "(prelist_lowest_amount IS NULL AND prelist_lowest_currency IS NULL) OR "
+            "(prelist_lowest_amount IS NOT NULL AND prelist_lowest_currency IS NOT NULL)",
+            name="ck_missions_prelist_lowest_pair",
+        ),
+        CheckConstraint(
+            "prelist_lowest_amount IS NULL OR prelist_lowest_amount >= 0",
+            name="ck_missions_prelist_lowest_amount_non_negative",
+        ),
+        CheckConstraint(
+            "prelist_lowest_currency IS NULL OR prelist_lowest_currency ~ '^[A-Z]{3}$'",
+            name="ck_missions_prelist_lowest_currency_iso4217",
+        ),
+        CheckConstraint(
+            "prelist_sent = true OR prelist_errata_sent = false",
+            name="ck_missions_prelist_errata_requires_sent",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(
@@ -125,6 +142,30 @@ class Mission(Base):
         default=utc_now,
         onupdate=utc_now,
         server_default=func.now(),
+    )
+    # TASK-068: pré-lista informativa (sem IA), enviada uma única vez após a
+    # primeira rodada completa de coleta; `prelist_errata_sent` controla a
+    # única mensagem de correção permitida se uma coleta posterior encontrar
+    # algo mais barato que a base já enviada (`prelist_lowest_amount`).
+    prelist_sent: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="false",
+    )
+    prelist_errata_sent: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="false",
+    )
+    prelist_lowest_amount: Mapped[Decimal | None] = mapped_column(
+        Numeric(19, 4),
+        nullable=True,
+    )
+    prelist_lowest_currency: Mapped[str | None] = mapped_column(
+        String(3),
+        nullable=True,
     )
 
 

@@ -16,6 +16,8 @@ from app.events import (
     CollectionFailedPayload,
     EventCatalogError,
     EventType,
+    MissionPrelistErrataPayload,
+    MissionPrelistReadyPayload,
     MissionStatusChangedPayload,
     PriceDecreasedPayload,
     PriceTargetReachedPayload,
@@ -151,4 +153,85 @@ def test_money_contract_rejects_invalid_currency(currency: str) -> None:
     with pytest.raises(EventCatalogError, match="currency"):
         PriceTargetReachedPayload(
             uuid4(), uuid4(), uuid4(), Decimal("100"), Decimal("90"), currency
+        )
+
+
+def test_prelist_ready_contract_allows_one_or_two_offers_lowest_first() -> None:
+    mission_id, first_offer, first_obs = uuid4(), uuid4(), uuid4()
+
+    single = MissionPrelistReadyPayload(
+        mission_id, first_offer, first_obs, Decimal("100.00"), "BRL"
+    )
+    assert single.second_offer_id is None
+
+    second_offer, second_obs = uuid4(), uuid4()
+    pair = MissionPrelistReadyPayload(
+        mission_id,
+        first_offer,
+        first_obs,
+        Decimal("100.00"),
+        "BRL",
+        second_offer,
+        second_obs,
+        Decimal("150.00"),
+        "BRL",
+    )
+    assert pair.second_total == Decimal("150.00")
+
+    with pytest.raises(EventCatalogError, match="lowest"):
+        MissionPrelistReadyPayload(
+            mission_id,
+            first_offer,
+            first_obs,
+            Decimal("150.00"),
+            "BRL",
+            second_offer,
+            second_obs,
+            Decimal("100.00"),
+            "BRL",
+        )
+    with pytest.raises(EventCatalogError, match="differ"):
+        MissionPrelistReadyPayload(
+            mission_id,
+            first_offer,
+            first_obs,
+            Decimal("100.00"),
+            "BRL",
+            first_offer,
+            second_obs,
+            Decimal("150.00"),
+            "BRL",
+        )
+    with pytest.raises(EventCatalogError, match="complete or all absent"):
+        MissionPrelistReadyPayload(
+            mission_id,
+            first_offer,
+            first_obs,
+            Decimal("100.00"),
+            "BRL",
+            second_offer_id=second_offer,
+        )
+
+
+def test_prelist_errata_contract_requires_strictly_cheaper() -> None:
+    mission_id, offer_id, observation_id = uuid4(), uuid4(), uuid4()
+
+    first_ever = MissionPrelistErrataPayload(
+        mission_id, offer_id, observation_id, Decimal("100.00"), "BRL", None
+    )
+    assert first_ever.previous_lowest_total is None
+
+    correction = MissionPrelistErrataPayload(
+        mission_id, offer_id, observation_id, Decimal("80.00"), "BRL", Decimal("100.00")
+    )
+    assert correction.current_total == Decimal("80.00")
+
+    with pytest.raises(EventCatalogError, match="lower"):
+        MissionPrelistErrataPayload(
+            mission_id,
+            offer_id,
+            observation_id,
+            Decimal("100.00"),
+            "BRL",
+            Decimal("100.00"),
         )

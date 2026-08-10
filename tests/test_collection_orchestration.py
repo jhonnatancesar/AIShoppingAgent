@@ -4,6 +4,7 @@ import asyncio
 from contextlib import nullcontext
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
@@ -26,8 +27,11 @@ from app.collection.orchestration import (
     CollectionOrchestrator,
     _apply_source_backoff,
     _ensure_display_name,
+    _evaluate_mission_prelist,
     _failure_code,
     _is_confirmed_external_block,
+    _maybe_publish_prelist_errata,
+    _maybe_publish_prelist_ready,
     _persist_success,
     _raw_evidence,
     _record_failure,
@@ -42,7 +46,7 @@ from app.collection.orchestration import (
 )
 from app.collection.relevance import OfferRelevance
 from app.events import EventType
-from app.missions.models import Mission, MissionSchedule
+from app.missions.models import Mission, MissionSchedule, MissionStatus
 from app.products.models import Product
 from app.users.models import UserRole
 from sqlalchemy.exc import IntegrityError
@@ -171,6 +175,9 @@ def test_stale_runs_are_terminal_and_publish_failure(monkeypatch) -> None:
     publish = MagicMock()
     monkeypatch.setattr("app.collection.orchestration.finish_collection_run", finish)
     monkeypatch.setattr("app.collection.orchestration._publish_failure", publish)
+    monkeypatch.setattr(
+        "app.collection.orchestration._evaluate_mission_prelist", lambda *_a, **_k: None
+    )
 
     assert recover_stale_runs(session, now=NOW) == 1
     finish.assert_called_once()
@@ -312,6 +319,9 @@ def test_persist_success_deduplicates_and_publishes_events(monkeypatch) -> None:
     )
     monkeypatch.setattr("app.collection.orchestration.publish_event", publish)
     monkeypatch.setattr("app.collection.orchestration.finish_collection_run", finish)
+    monkeypatch.setattr(
+        "app.collection.orchestration._evaluate_mission_prelist", lambda *_a, **_k: None
+    )
     claim = ClaimedCollection(run_id, mission_id, store_id, "pichau", "GPU", NOW)
     ai_manager = _StubAIManager()
 
@@ -492,6 +502,9 @@ def test_persist_success_blocks_alert_when_relevance_is_no_match(
     monkeypatch.setattr(
         "app.collection.orchestration.finish_collection_run", MagicMock()
     )
+    monkeypatch.setattr(
+        "app.collection.orchestration._evaluate_mission_prelist", lambda *_a, **_k: None
+    )
     claim = ClaimedCollection(run_id, mission_id, store_id, "pichau", "GPU", NOW)
 
     outcome = asyncio.run(
@@ -532,6 +545,9 @@ def test_record_failure_applies_backoff_only_when_confirmed(monkeypatch) -> None
         "app.collection.orchestration.finish_collection_run", MagicMock()
     )
     monkeypatch.setattr("app.collection.orchestration._publish_failure", MagicMock())
+    monkeypatch.setattr(
+        "app.collection.orchestration._evaluate_mission_prelist", lambda *_a, **_k: None
+    )
 
     assert (
         _record_failure(session, claim, "provider_blocked", NOW, confirmed_block=True)
@@ -559,6 +575,9 @@ def test_record_failure_skips_backoff_when_not_confirmed(monkeypatch) -> None:
         "app.collection.orchestration.finish_collection_run", MagicMock()
     )
     monkeypatch.setattr("app.collection.orchestration._publish_failure", MagicMock())
+    monkeypatch.setattr(
+        "app.collection.orchestration._evaluate_mission_prelist", lambda *_a, **_k: None
+    )
 
     # timeout/erro interno/parsing: confirmed_block=False (o padrao)
     assert _record_failure(session, claim, "provider_unavailable", NOW) is True
@@ -732,6 +751,198 @@ def test_orchestrator_isolates_provider_failure(monkeypatch) -> None:
 
     assert asyncio.run(orchestrator._process(claim)) is False
     assert record.call_args.args[2] == "provider_blocked"
+
+
+def test_evaluate_mission_prelist_is_noop_for_inactive_mission(monkeypatch) -> None:
+    mission = SimpleNamespace(id=uuid4(), status=MissionStatus.PAUSED)
+    session = MagicMock()
+    session.scalar.return_value = mission
+    ready = MagicMock()
+    errata = MagicMock()
+    monkeypatch.setattr(
+        "app.collection.orchestration._maybe_publish_prelist_ready", ready
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration._maybe_publish_prelist_errata", errata
+    )
+
+    _evaluate_mission_prelist(session, mission.id, NOW)
+
+    ready.assert_not_called()
+    errata.assert_not_called()
+
+
+def test_evaluate_mission_prelist_dispatches_ready_then_errata(monkeypatch) -> None:
+    ready = MagicMock()
+    errata = MagicMock()
+    monkeypatch.setattr(
+        "app.collection.orchestration._maybe_publish_prelist_ready", ready
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration._maybe_publish_prelist_errata", errata
+    )
+    session = MagicMock()
+
+    # ainda não enviada: só avalia a pré-lista original, nunca a errata na
+    # mesma chamada (evita publicar os dois eventos de uma vez).
+    pending = SimpleNamespace(
+        id=uuid4(), status=MissionStatus.ACTIVE, prelist_sent=False
+    )
+    session.scalar.return_value = pending
+    _evaluate_mission_prelist(session, pending.id, NOW)
+    ready.assert_called_once_with(session, pending, NOW)
+    errata.assert_not_called()
+
+    # já enviada, correção ainda não: avalia só a errata.
+    ready.reset_mock()
+    sent = SimpleNamespace(
+        id=uuid4(),
+        status=MissionStatus.ACTIVE,
+        prelist_sent=True,
+        prelist_errata_sent=False,
+    )
+    session.scalar.return_value = sent
+    _evaluate_mission_prelist(session, sent.id, NOW)
+    ready.assert_not_called()
+    errata.assert_called_once_with(session, sent, NOW)
+
+    # os dois já resolvidos: nenhuma consulta adicional é feita.
+    errata.reset_mock()
+    done = SimpleNamespace(
+        id=uuid4(),
+        status=MissionStatus.ACTIVE,
+        prelist_sent=True,
+        prelist_errata_sent=True,
+    )
+    session.scalar.return_value = done
+    _evaluate_mission_prelist(session, done.id, NOW)
+    errata.assert_not_called()
+
+
+def test_maybe_publish_prelist_ready_picks_two_cheapest_of_three_stores(
+    monkeypatch,
+) -> None:
+    mission = SimpleNamespace(
+        id=uuid4(), prelist_sent=False, prelist_lowest_amount=None
+    )
+    cheap = SimpleNamespace(
+        offer_id=uuid4(), id=uuid4(), total_amount=Decimal("100.00"), currency="BRL"
+    )
+    mid = SimpleNamespace(
+        offer_id=uuid4(), id=uuid4(), total_amount=Decimal("150.00"), currency="BRL"
+    )
+    expensive = SimpleNamespace(
+        offer_id=uuid4(), id=uuid4(), total_amount=Decimal("999.00"), currency="BRL"
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration._mission_prelist_round_complete",
+        lambda *_a: True,
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration._latest_match_observations_by_store",
+        lambda *_a: [expensive, cheap, mid],
+    )
+    publish = MagicMock()
+    monkeypatch.setattr("app.collection.orchestration.publish_event", publish)
+
+    _maybe_publish_prelist_ready(MagicMock(), mission, NOW)
+
+    assert mission.prelist_sent is True
+    assert mission.prelist_lowest_amount == Decimal("100.00")
+    assert mission.prelist_lowest_currency == "BRL"
+    payload = publish.call_args.kwargs["payload"]
+    assert payload.first_offer_id == cheap.offer_id
+    assert payload.first_total == Decimal("100.00")
+    assert payload.second_offer_id == mid.offer_id  # a 3a mais barata fica de fora
+    assert payload.second_total == Decimal("150.00")
+
+
+def test_maybe_publish_prelist_ready_sends_nothing_without_match_offers(
+    monkeypatch,
+) -> None:
+    mission = SimpleNamespace(
+        id=uuid4(), prelist_sent=False, prelist_lowest_amount=None
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration._mission_prelist_round_complete",
+        lambda *_a: True,
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration._latest_match_observations_by_store",
+        lambda *_a: [],
+    )
+    publish = MagicMock()
+    monkeypatch.setattr("app.collection.orchestration.publish_event", publish)
+
+    _maybe_publish_prelist_ready(MagicMock(), mission, NOW)
+
+    # sem nenhuma oferta MATCH ainda, marca como enviada mesmo assim -- não
+    # fica reavaliando a mesma rodada já completa a cada nova coleta.
+    assert mission.prelist_sent is True
+    publish.assert_not_called()
+
+
+def test_maybe_publish_prelist_ready_waits_for_the_full_round(monkeypatch) -> None:
+    mission = SimpleNamespace(
+        id=uuid4(), prelist_sent=False, prelist_lowest_amount=None
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration._mission_prelist_round_complete",
+        lambda *_a: False,
+    )
+    publish = MagicMock()
+    monkeypatch.setattr("app.collection.orchestration.publish_event", publish)
+
+    _maybe_publish_prelist_ready(MagicMock(), mission, NOW)
+
+    assert mission.prelist_sent is False
+    publish.assert_not_called()
+
+
+def test_maybe_publish_prelist_errata_requires_strictly_cheaper_offer(
+    monkeypatch,
+) -> None:
+    mission = SimpleNamespace(
+        id=uuid4(),
+        prelist_errata_sent=False,
+        prelist_lowest_amount=Decimal("100.00"),
+        prelist_lowest_currency="BRL",
+    )
+    session = MagicMock()
+    session.scalar.return_value = None  # nada mais barato encontrado
+    publish = MagicMock()
+    monkeypatch.setattr("app.collection.orchestration.publish_event", publish)
+
+    _maybe_publish_prelist_errata(session, mission, NOW)
+
+    assert mission.prelist_errata_sent is False
+    publish.assert_not_called()
+
+
+def test_maybe_publish_prelist_errata_publishes_once_when_cheaper_found(
+    monkeypatch,
+) -> None:
+    mission = SimpleNamespace(
+        id=uuid4(),
+        prelist_errata_sent=False,
+        prelist_lowest_amount=Decimal("100.00"),
+        prelist_lowest_currency="BRL",
+    )
+    cheaper = SimpleNamespace(
+        offer_id=uuid4(), id=uuid4(), total_amount=Decimal("80.00"), currency="BRL"
+    )
+    session = MagicMock()
+    session.scalar.return_value = cheaper
+    publish = MagicMock()
+    monkeypatch.setattr("app.collection.orchestration.publish_event", publish)
+
+    _maybe_publish_prelist_errata(session, mission, NOW)
+
+    assert mission.prelist_errata_sent is True
+    payload = publish.call_args.kwargs["payload"]
+    assert payload.offer_id == cheaper.offer_id
+    assert payload.current_total == Decimal("80.00")
+    assert payload.previous_lowest_total == Decimal("100.00")
 
 
 def test_unexpected_integrity_error_propagates(monkeypatch) -> None:

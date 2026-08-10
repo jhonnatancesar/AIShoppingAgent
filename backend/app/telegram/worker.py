@@ -27,6 +27,7 @@ from app.telegram.notifications import (
     TelegramNotificationBatch,
     process_telegram_authentication_notifications,
     process_telegram_notifications,
+    process_telegram_prelist_notifications,
 )
 
 logger = logging.getLogger("app.telegram.worker")
@@ -85,7 +86,15 @@ async def run_worker(
                         limit=limit,
                         processor=process_telegram_authentication_notifications,
                     )
-                    result = _combine_batches(price_result, auth_result)
+                    prelist_result = await _process_batch(
+                        session_factory,
+                        settings=settings,
+                        limit=limit,
+                        processor=process_telegram_prelist_notifications,
+                    )
+                    result = _combine_batches(
+                        _combine_batches(price_result, auth_result), prelist_result
+                    )
             except asyncio.CancelledError:
                 raise
             except Exception as error:

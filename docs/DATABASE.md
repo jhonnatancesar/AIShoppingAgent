@@ -96,6 +96,10 @@ Intenção persistente de compra e fonte de verdade para seu estado atual.
 | `state_version` | `bigint` | Obrigatório, padrão `0`; incrementado em cada transição para controle concorrente. |
 | `created_at` | `timestamptz` | Obrigatório. |
 | `updated_at` | `timestamptz` | Obrigatório. |
+| `prelist_sent` | `boolean` | Obrigatório, padrão `false` (TASK-068). |
+| `prelist_errata_sent` | `boolean` | Obrigatório, padrão `false` (TASK-068); só `true` se `prelist_sent` também for. |
+| `prelist_lowest_amount` | `numeric(19,4)` | Opcional, não negativo (TASK-068). |
+| `prelist_lowest_currency` | `varchar(3)` | Obrigatório quando `prelist_lowest_amount` existir e nulo caso contrário (TASK-068). |
 
 `mission_status` contém somente `draft`, `active`, `paused`, `completed`, `cancelled` e `expired`. As transições válidas continuam sendo as de `docs/MISSION_SYSTEM.md`; o enum isoladamente não as garante.
 
@@ -103,7 +107,8 @@ Quando presente, `expires_at` deve ser posterior a `created_at`. Uma missão em 
 
 Esta entidade foi implementada na TASK-019 pela revisão `20260802_0006`. O
 contrato persistente e seus limites estão em `docs/MISSIONS.md`; comandos e
-transições foram implementadas na TASK-021.
+transições foram implementadas na TASK-021. Os quatro campos `prelist_*` foram
+adicionados pela TASK-068 (revisão `20260810_0001`).
 
 ### `mission_criteria`
 
