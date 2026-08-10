@@ -169,7 +169,7 @@ def get_telegram_intent_adapters() -> dict[UserRole, TelegramIntentAdapter]:
 
     `USER` fala exclusivamente com o Gemini gratuito, sem fallback;
     `ADMIN`/`DEV` compartilham a cascata do `AdminDevAIProviderManager`
-    (Gemini premium, Groq opcional, Gemini gratuito — TASK-059). Qual
+    (Gemini Flash, depois Groq quando configurado — TASK-059/DEC-050). Qual
     adaptador é usado numa interação real depende de `User.role`
     (TASK-060), nunca de escolha do próprio usuário.
     """

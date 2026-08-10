@@ -6,11 +6,11 @@ cobrindo os quatro valores de `IntentKind`, para validar a robustez de
 classificação exigida pela TASK-057. Com `--message`, valida apenas uma
 mensagem pontual.
 
-Por padrão usa o perfil `admin` (cascata Gemini premium → Groq → Gemini
-gratuito, TASK-059), para não consumir a cota gratuita compartilhada do
-perfil `user` real. Use `--profile user` só para a confirmação final antes
-de considerar a robustez validada de verdade — é o único perfil que reflete
-exatamente o caminho de produção do webhook do Telegram.
+Por padrão usa o perfil `admin` (cascata Gemini Flash → Groq, TASK-059/
+DEC-050), para não consumir a cota gratuita compartilhada do perfil `user`
+real. Use `--profile user` só para a confirmação final antes de considerar a
+robustez validada de verdade — é o único perfil que reflete exatamente o
+caminho de produção do webhook do Telegram.
 """
 
 import argparse
@@ -149,8 +149,8 @@ def main() -> None:
         default="admin",
         help=(
             "Perfil usado para validar (default: admin, cascata Gemini "
-            "premium/Groq/Gemini gratuito). Use 'user' só para a "
-            "confirmação final contra o caminho real de produção."
+            "Flash/Groq). Use 'user' só para a confirmação final contra o "
+            "caminho real de produção."
         ),
     )
     args = parser.parse_args()

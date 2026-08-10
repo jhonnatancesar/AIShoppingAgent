@@ -1,5 +1,33 @@
 # Changelog
 
+## 2026-08-09/2026-08-10 — TASK-064 implementada e validada com chamadas reais — aguardando fechamento
+
+- `AdminDevAIProviderManager` (`backend/app/ai_provider/manager.py`)
+  colapsado de 3 para 2 camadas: `gemini-3.6-flash` (mesmo modelo do
+  perfil `USER`, `Settings.gemini_model`) e, se configurado, Groq como
+  fallback de disponibilidade. `Settings.gemini_premium_model`/
+  `AISHOPPING_GEMINI_PREMIUM_MODEL` removidos do config e dos
+  `.env.example`. Nenhum modelo Gemini Pro/preview participa da cascata
+  (DEC-050); `USER`/`ADMIN`/`DEV` usam o mesmo Gemini Flash, distinção
+  continua sendo só permissão/autorização.
+- Pipeline oficial aprovado (752 testes, 90,63% cobertura, 14 integrações
+  PostgreSQL reais, migration head inalterada) e E2E reproduzível 2/2.
+- Validação real (stack Docker reconstruído): fallback Flash→Groq
+  confirmado com chamadas reais (Groq respondendo quando o Flash falha por
+  `quota_exceeded`/`unavailable`, circuit breaker da TASK-049 funcionando
+  como esperado); uma coleta pequena representativa (missão descartável,
+  uma única fonte, 20 ofertas novas) confirmou melhora real na taxa de
+  classificação — 75% de sucesso (`classify_offer_relevance` e
+  `normalize_offer_title`), contra a maioria de falhas documentada na
+  validação original da TASK-063 sob a cascata de 3 camadas. Nenhuma
+  referência a `gemini-3.1-pro-preview`/`gemini-pro-latest` em nenhum log.
+  Semântica `MATCH`/`POSSIBLE_MATCH`/`NO_MATCH` da TASK-063 intocada;
+  batching não implementado (fora do escopo desta TASK).
+- **Aguardando aprovação explícita do usuário para fechar a TASK-064.**
+  `v1.0.0` (TASK-054) não foi tocada; `main`/`origin/main` não foram
+  tocados. A release continua sem ser tratada como definitiva até o
+  fechamento formal.
+
 ## 2026-08-09 — TASK-063 concluída; TASK-064 registrada — release segue suspensa
 
 - TASK-063 (relevância dos alertas e formatação do Telegram) **concluída**

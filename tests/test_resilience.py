@@ -141,12 +141,10 @@ class _AIProvider:
 @pytest.mark.anyio
 async def test_ai_provider_circuits_are_independent() -> None:
     suffix = uuid4().hex
-    premium = _AIProvider("gemini", f"premium-{suffix}", fails=True)
+    gemini = _AIProvider("gemini", f"flash-{suffix}", fails=True)
     groq = _AIProvider("groq", f"groq-{suffix}")
-    free = _AIProvider("gemini", f"free-{suffix}")
     manager = AdminDevAIProviderManager(
-        premium,
-        free,
+        gemini,
         groq=groq,
         circuit_failure_threshold=1,
     )
@@ -160,9 +158,8 @@ async def test_ai_provider_circuits_are_independent() -> None:
 
     assert (await manager.generate(request)).provider == "groq"
     assert (await manager.generate(request)).provider == "groq"
-    assert premium.calls == 1
+    assert gemini.calls == 1
     assert groq.calls == 2
-    assert free.calls == 0
 
 
 class _StoreA(PlaywrightStoreProvider):

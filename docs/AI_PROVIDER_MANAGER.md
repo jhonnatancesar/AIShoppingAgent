@@ -20,20 +20,25 @@ Perfis previstos:
 
 - `USER`: implementado com o SDK oficial `google-genai` e o modelo configurável
   `gemini-3.6-flash`; exige `AISHOPPING_GEMINI_API_KEY_USER`. Sem fallback.
-- `ADMIN/DEV`: política única que tenta `gemini-3.1-pro-preview`, depois o
+- `ADMIN/DEV`: política única de 2 camadas — `gemini-3.6-flash` (o mesmo
+  modelo Gemini Flash do perfil `USER`, via `Settings.gemini_model`, sobre a
+  chave dedicada `AISHOPPING_GEMINI_API_KEY_ADMIN_DEV`) e, se configurado, o
   Groq (`GroqProvider`, TASK-059, opcional — só entra se
-  `AISHOPPING_GROQ_API_KEY` estiver configurada) e, por último, o
-  `gemini-3.6-flash` gratuito. Sem a chave do Groq, o comportamento é o
-  mesmo de dois níveis já validado nas TASKs 029–031.
+  `AISHOPPING_GROQ_API_KEY` estiver configurada) como fallback de
+  disponibilidade. Sem a chave do Groq, `ADMIN`/`DEV` usa só o Flash, sem
+  fallback (mesmo comportamento de `USER`, chave separada). **Nenhum nível
+  Gemini Pro/preview participa da cascata (TASK-064/DEC-050)** — a
+  distinção `USER`/`ADMIN`/`DEV` é só de permissão/autorização do resto do
+  sistema, nunca de modelo de IA.
 - `PLUS`: futuro; não existe no contrato nem na V1.
 
 O perfil USER traduz mensagens para o contrato Gemini, fecha o cliente assíncrono
 após cada chamada e converte quota, indisponibilidade, autenticação e rejeição em
 erros sanitizados. Ao atingir o limite, `AIProviderQuotaExceeded` permite ao canal
-informar que o usuário tente novamente mais tarde. USER nunca tenta o modelo
-premium nem o Groq. OpenAI, Claude, usuário pago e comparação multi-IA ficam
-para a V2 — o Groq só existe como fallback interno de infraestrutura do
-ADMIN/DEV, nunca como escolha exposta ao usuário final.
+informar que o usuário tente novamente mais tarde. USER nunca tenta o Groq.
+OpenAI, Claude, usuário pago e comparação multi-IA ficam para a V2 — o Groq só
+existe como fallback interno de infraestrutura do ADMIN/DEV, nunca como escolha
+exposta ao usuário final.
 
 `GroqProvider` (TASK-059) chama a API compatível com OpenAI do Groq via
 `httpx`, traduzindo os papéis `system`/`user`/`assistant` diretamente (sem a
@@ -98,3 +103,21 @@ cascata), mas as que tiveram sucesso classificaram corretamente — inclusive
 distinguindo corretamente dois modelos textualmente parecidos ("Logitech G
 PRO 2" como `match` do critério pedido; "Logitech G Pro X Superlight 2"
 como `no_match`, apesar de nome muito similar).
+
+Em 2026-08-09/2026-08-10 (TASK-064/DEC-050), a camada `gemini-3.1-pro-preview`
+foi removida — a auditoria confirmou que o modelo é oficialmente `preview` e
+que a chave não tem cota real de nível "Pro" (um candidato GA "Pro",
+`gemini-pro-latest`, também falhou com `quota_exceeded` imediato). A cascata
+`ADMIN`/`DEV` colapsou de 3 para 2 camadas: `gemini-3.6-flash` (o mesmo
+modelo do perfil `USER`) e, se configurado, o Groq. `Settings.gemini_premium_model`/
+`AISHOPPING_GEMINI_PREMIUM_MODEL` deixaram de existir. Validado com chamadas
+reais: fallback Flash→Groq confirmado (Groq real respondendo quando o Flash
+falha por `quota_exceeded`/`unavailable`, inclusive com o circuit breaker da
+TASK-049 abrindo corretamente para o par `(gemini, gemini-3.6-flash)` depois
+de falhas reais consecutivas) e uma coleta pequena representativa (missão
+descartável, uma única fonte) confirmando melhora real na taxa de
+classificação: 75% de sucesso (`classify_offer_relevance` e
+`normalize_offer_title`, 15/20 cada), contra a maioria de falhas documentada
+acima sob a cascata de 3 camadas. Nenhuma mudança na semântica de relevância
+da TASK-063 nem no comportamento fail-closed. Detalhes completos em
+`docs/tasks/TASK-064.md`.

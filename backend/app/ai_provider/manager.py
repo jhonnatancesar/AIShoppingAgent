@@ -66,12 +66,17 @@ class UserAIProviderManager:
 
 
 class AdminDevAIProviderManager:
-    """Política única de ADMIN/DEV: premium, Groq opcional, depois Gemini gratuito."""
+    """Política única de ADMIN/DEV: Gemini Flash e, se configurado, Groq como fallback.
+
+    USER, ADMIN e DEV usam o mesmo modelo Gemini Flash para operações
+    automáticas de IA (DEC-050); a distinção de papel é só de
+    permissão/autorização, nunca de modelo. Fallback só por disponibilidade,
+    nunca dois modelos Gemini equivalentes em sequência.
+    """
 
     def __init__(
         self,
-        premium: AIProvider,
-        free: AIProvider,
+        gemini: AIProvider,
         *,
         groq: AIProvider | None = None,
         max_attempts: int = 3,
@@ -80,8 +85,7 @@ class AdminDevAIProviderManager:
     ) -> None:
         if not 1 <= max_attempts <= 3:
             raise ValueError("AI max_attempts must be between 1 and 3")
-        self._premium = premium
-        self._free = free
+        self._gemini = gemini
         self._groq = groq
         self._max_attempts = max_attempts
         self._circuit_failure_threshold = circuit_failure_threshold
@@ -91,10 +95,9 @@ class AdminDevAIProviderManager:
         if request.profile not in {UserRole.ADMIN, UserRole.DEV}:
             raise AIRequestError("ADMIN/DEV manager accepts only ADMIN or DEV profile")
 
-        tiers = [self._premium]
+        tiers = [self._gemini]
         if self._groq is not None:
             tiers.append(self._groq)
-        tiers.append(self._free)
 
         last_error: AIProviderError | None = None
         for index, provider in enumerate(tiers[: self._max_attempts]):
@@ -162,23 +165,20 @@ def build_user_ai_provider_manager(
 def build_admin_dev_ai_provider_manager(
     settings: Settings | None = None,
 ) -> AdminDevAIProviderManager:
-    """Monta a política de ADMIN/DEV: Gemini premium, Groq opcional, Gemini gratuito.
+    """Monta a política de ADMIN/DEV: Gemini Flash e, se configurado, Groq como fallback.
 
     Usa uma chave Gemini dedicada (`AISHOPPING_GEMINI_API_KEY_ADMIN_DEV`),
     separada da chave do perfil `USER`, para que a cota gratuita do
     ADMIN/DEV nunca compita com a cota compartilhada de usuários reais.
+    O modelo é o mesmo Gemini Flash do perfil `USER` (`Settings.gemini_model`,
+    DEC-050) — nenhum nível Gemini Pro/preview entra na cascata.
     """
     current = settings or get_settings()
     if current.gemini_api_key_admin_dev is None:
         raise AIRequestError(
             "AISHOPPING_GEMINI_API_KEY_ADMIN_DEV is required for ADMIN/DEV profile"
         )
-    premium = GeminiProvider(
-        current.gemini_api_key_admin_dev,
-        current.gemini_premium_model,
-        timeout_seconds=current.external_http_timeout_seconds,
-    )
-    free = GeminiProvider(
+    gemini = GeminiProvider(
         current.gemini_api_key_admin_dev,
         current.gemini_model,
         timeout_seconds=current.external_http_timeout_seconds,
@@ -193,8 +193,7 @@ def build_admin_dev_ai_provider_manager(
         else None
     )
     return AdminDevAIProviderManager(
-        premium,
-        free,
+        gemini,
         groq=groq,
         max_attempts=current.safe_retry_max_attempts,
         circuit_failure_threshold=current.circuit_failure_threshold,

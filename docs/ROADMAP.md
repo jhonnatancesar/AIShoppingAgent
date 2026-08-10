@@ -82,9 +82,16 @@ alerta e formatação revisada das mensagens principais, tudo validado
 (pipeline, E2E reproduzível, missão real) e aprovado explicitamente. A
 validação real revelou que a camada premium da cascata ADMIN/DEV
 (`gemini-3.1-pro-preview`) teve 0% de sucesso sob carga — desmembrado para
-a TASK-064 (`DEC-049`), auditoria concluída, implementação aguardando
-autorização explícita. `v1.0.0` continua publicada sem alteração, mas
-segue sem ser tratada como estado final da V1 até a TASK-064 fechar. A
+a TASK-064 (`DEC-049`/`DEC-050`). A TASK-064 teve escopo final decidido
+pelo usuário (Flash único para USER/ADMIN/DEV, sem nível Pro/preview,
+fallback só por disponibilidade), implementação autorizada e concluída em
+2026-08-09/2026-08-10: `AdminDevAIProviderManager` colapsado para 2
+camadas (Flash→Groq), validado com pipeline oficial, E2E reproduzível e
+chamadas reais (fallback Flash→Groq real confirmado; coleta pequena
+representativa com 75% de sucesso na classificação, melhora real sobre a
+maioria de falhas da TASK-063). **Aguardando aprovação explícita do
+usuário para fechar a TASK-064**; até lá, `v1.0.0` continua publicada sem
+alteração e segue sem ser tratada como estado final da V1. A
 TASK-057 (`DEC-017`): validação real contra o
 `USER`/Gemini cobre 3 dos 4 `IntentKind`, e o usuário aceitou explicitamente
 encerrar nesse estado, adiando mais variedade de linguagem para a V2

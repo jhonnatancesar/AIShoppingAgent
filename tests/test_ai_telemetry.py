@@ -30,9 +30,10 @@ def _request() -> AIRequest:
 
 
 class _Provider:
-    provider_id = "gemini"
-
-    def __init__(self, model: str, result: str | Exception) -> None:
+    def __init__(
+        self, model: str, result: str | Exception, *, provider_id: str = "gemini"
+    ) -> None:
+        self.provider_id = provider_id
         self.model = model
         self.result = result
 
@@ -49,23 +50,27 @@ class _Provider:
 
 
 @pytest.mark.anyio
-async def test_fallback_records_premium_failure_and_free_success(
+async def test_fallback_records_gemini_failure_and_groq_success(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     reset_at = datetime.now(UTC) + timedelta(seconds=30)
     manager = AdminDevAIProviderManager(
         _Provider(
-            "gemini-3.1-pro-preview",
+            "gemini-3.6-flash",
             AIProviderQuotaExceeded(quota_reset_at=reset_at),
         ),
-        _Provider("gemini-3.6-flash", "resposta que também não deve ir ao log"),
+        groq=_Provider(
+            "llama-3.3-70b-versatile",
+            "resposta que também não deve ir ao log",
+            provider_id="groq",
+        ),
     )
     request = _request()
 
     with caplog.at_level(logging.INFO, logger="app.ai_provider"):
         response = await manager.generate(request)
 
-    assert response.model == "gemini-3.6-flash"
+    assert response.model == "llama-3.3-70b-versatile"
     records = [record for record in caplog.records if record.name == "app.ai_provider"]
     assert [record.ai_outcome for record in records] == [  # type: ignore[attr-defined]
         "quota_exceeded",

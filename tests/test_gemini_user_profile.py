@@ -149,47 +149,33 @@ class _PoisonProvider:
 
 @pytest.mark.anyio
 @pytest.mark.parametrize("profile", [UserRole.ADMIN, UserRole.DEV])
-async def test_admin_dev_share_premium_policy(profile: UserRole) -> None:
-    premium, _ = _provider(_FakeModels(response_text="Resposta premium"))
-    free, _ = _provider(_FakeModels(response_text="Resposta gratuita"))
-    premium.model = "gemini-3.1-pro-preview"
-    manager = AdminDevAIProviderManager(premium, free)
+async def test_admin_dev_uses_gemini_flash_first(profile: UserRole) -> None:
+    gemini, _ = _provider(_FakeModels(response_text="Resposta Flash"))
+    manager = AdminDevAIProviderManager(gemini)
 
     response = await manager.generate(_request(profile))
 
-    assert response.model == "gemini-3.1-pro-preview"
-    assert response.content == "Resposta premium"
-
-
-@pytest.mark.anyio
-@pytest.mark.parametrize("error", [AIProviderQuotaExceeded(), AIProviderUnavailable()])
-async def test_admin_dev_fall_back_to_free_gemini(error: AIProviderError) -> None:
-    premium, _ = _provider(_FakeModels(error=error))
-    free, _ = _provider(_FakeModels(response_text="Resposta gratuita"))
-    manager = AdminDevAIProviderManager(premium, free)
-
-    response = await manager.generate(_request(UserRole.ADMIN))
-
     assert response.model == "gemini-3.6-flash"
-    assert response.content == "Resposta gratuita"
+    assert response.content == "Resposta Flash"
 
 
 @pytest.mark.anyio
 async def test_admin_dev_manager_rejects_user() -> None:
-    premium, _ = _provider(_FakeModels())
-    free, _ = _provider(_FakeModels())
-    manager = AdminDevAIProviderManager(premium, free)
+    gemini, _ = _provider(_FakeModels())
+    manager = AdminDevAIProviderManager(gemini)
 
     with pytest.raises(AIRequestError, match="ADMIN/DEV"):
         await manager.generate(_request(UserRole.USER))
 
 
 @pytest.mark.anyio
-async def test_admin_dev_falls_back_to_groq_before_free_gemini() -> None:
-    premium, _ = _provider(_FakeModels(error=AIProviderQuotaExceeded()))
+@pytest.mark.parametrize("error", [AIProviderQuotaExceeded(), AIProviderUnavailable()])
+async def test_admin_dev_falls_back_to_groq_when_gemini_fails(
+    error: AIProviderError,
+) -> None:
+    gemini, _ = _provider(_FakeModels(error=error))
     groq = _StaticProvider("groq", "llama-3.3-70b-versatile", response_text="Groq")
-    free = _PoisonProvider()
-    manager = AdminDevAIProviderManager(premium, free, groq=groq)
+    manager = AdminDevAIProviderManager(gemini, groq=groq)
 
     response = await manager.generate(_request(UserRole.ADMIN))
 
@@ -198,41 +184,32 @@ async def test_admin_dev_falls_back_to_groq_before_free_gemini() -> None:
 
 
 @pytest.mark.anyio
-async def test_admin_dev_falls_back_to_free_gemini_when_premium_and_groq_fail() -> None:
-    premium, _ = _provider(_FakeModels(error=AIProviderUnavailable()))
-    groq = _StaticProvider(
-        "groq", "llama-3.3-70b-versatile", error=AIProviderQuotaExceeded()
-    )
-    free, _ = _provider(_FakeModels(response_text="Resposta gratuita"))
-    manager = AdminDevAIProviderManager(premium, free, groq=groq)
-
-    response = await manager.generate(_request(UserRole.DEV))
-
-    assert response.model == "gemini-3.6-flash"
-    assert response.content == "Resposta gratuita"
-
-
-@pytest.mark.anyio
 async def test_admin_dev_raises_last_error_when_every_tier_fails() -> None:
-    premium, _ = _provider(_FakeModels(error=AIProviderQuotaExceeded()))
+    gemini, _ = _provider(_FakeModels(error=AIProviderQuotaExceeded()))
     groq = _StaticProvider("groq", "m", error=AIProviderUnavailable())
-    free, _ = _provider(_FakeModels(error=AIProviderQuotaExceeded()))
-    manager = AdminDevAIProviderManager(premium, free, groq=groq)
+    manager = AdminDevAIProviderManager(gemini, groq=groq)
 
-    with pytest.raises(AIProviderQuotaExceeded):
+    with pytest.raises(AIProviderUnavailable):
         await manager.generate(_request(UserRole.ADMIN))
 
 
 @pytest.mark.anyio
-async def test_admin_dev_non_retryable_premium_error_skips_remaining_tiers() -> None:
-    premium, _ = _provider(
+async def test_admin_dev_non_retryable_gemini_error_skips_remaining_tiers() -> None:
+    gemini, _ = _provider(
         _FakeModels(error=AIProviderError("provider_request_rejected", retryable=False))
     )
-    manager = AdminDevAIProviderManager(
-        premium, _PoisonProvider(), groq=_PoisonProvider()
-    )
+    manager = AdminDevAIProviderManager(gemini, groq=_PoisonProvider())
 
     with pytest.raises(AIProviderError, match="provider_request_rejected"):
+        await manager.generate(_request(UserRole.ADMIN))
+
+
+@pytest.mark.anyio
+async def test_admin_dev_no_groq_configured_raises_gemini_error() -> None:
+    gemini, _ = _provider(_FakeModels(error=AIProviderUnavailable()))
+    manager = AdminDevAIProviderManager(gemini)
+
+    with pytest.raises(AIProviderUnavailable):
         await manager.generate(_request(UserRole.ADMIN))
 
 
@@ -242,7 +219,6 @@ def test_admin_dev_factory_wires_groq_only_when_key_configured() -> None:
             _env_file=None,
             gemini_api_key_admin_dev="configured-key",
             gemini_model="gemini-3.6-flash",
-            gemini_premium_model="gemini-3.1-pro-preview",
         )
     )
     assert without_groq._groq is None  # noqa: SLF001
@@ -324,7 +300,7 @@ def test_user_manager_factory_requires_key_and_uses_configured_model() -> None:
     assert isinstance(manager, UserAIProviderManager)
 
 
-def test_admin_dev_factory_requires_key_and_configures_both_models() -> None:
+def test_admin_dev_factory_requires_key_and_configures_flash_model() -> None:
     with pytest.raises(AIRequestError, match="AISHOPPING_GEMINI_API_KEY_ADMIN_DEV"):
         build_admin_dev_ai_provider_manager(Settings(_env_file=None))
 
@@ -333,10 +309,10 @@ def test_admin_dev_factory_requires_key_and_configures_both_models() -> None:
             _env_file=None,
             gemini_api_key_admin_dev="configured-key",
             gemini_model="gemini-3.6-flash",
-            gemini_premium_model="gemini-3.1-pro-preview",
         )
     )
     assert isinstance(manager, AdminDevAIProviderManager)
+    assert manager._gemini.model == "gemini-3.6-flash"  # noqa: SLF001
 
 
 @pytest.mark.anyio
@@ -380,10 +356,8 @@ async def test_admin_dev_records_telemetry_and_raises_on_time_mismatch(
         lambda *args, **kwargs: recorded.append(kwargs.get("outcome")),
     )
 
-    premium, _ = _provider(_FakeModels(response_text="Resposta premium"))
-    manager = AdminDevAIProviderManager(
-        premium, _PoisonProvider(), groq=_PoisonProvider()
-    )
+    gemini, _ = _provider(_FakeModels(response_text="Resposta Flash"))
+    manager = AdminDevAIProviderManager(gemini, groq=_PoisonProvider())
     request = AIRequest(
         uuid4(),
         UserRole.ADMIN,

@@ -1,8 +1,9 @@
 # TASK-064 — Revisar disponibilidade e fallback dos provedores de IA
 
-Status: Auditoria concluída e escopo final decidido pelo usuário em
-2026-08-09 (ver "Decisão final do usuário" abaixo); aguardando autorização
-explícita para implementar. **Não implementado ainda.**
+Status: Implementação e validação real concluídas em 2026-08-09/2026-08-10
+(ver "Implementação e validação real" ao final); **aguardando aprovação
+explícita do usuário para fechar a TASK**, conforme pedido — não encerrar
+sozinho.
 
 Dependência: TASK-063 funcionalmente concluída (relevância, identidade da
 oferta, formatação). A TASK-054/`v1.0.0` continua suspensa como release
@@ -218,3 +219,120 @@ garantidamente perdida contra um modelo Pro/preview sem cota.
   pressão de quota depois desta correção);
 - Alterar a semântica MATCH/POSSIBLE_MATCH/NO_MATCH da TASK-063;
 - Qualquer implementação antes da autorização explícita do usuário.
+
+## Implementação (2026-08-09, autorizada explicitamente pelo usuário)
+
+O usuário reforçou por escrito a decisão do DEC-050 (sem buscar/testar/
+substituir por outro Gemini Pro; USER/ADMIN/DEV todos em Gemini Flash;
+diferença continua sendo só permissão) e autorizou a implementação.
+
+- **`backend/app/core/config.py`**: removido `Settings.gemini_premium_model`
+  (`AISHOPPING_GEMINI_PREMIUM_MODEL`) — o config não conhece mais um nível
+  "premium" separado.
+- **`backend/app/ai_provider/manager.py`**: `AdminDevAIProviderManager`
+  colapsado de 3 para 2 camadas. Construtor passa a receber um único
+  provider `gemini` (antes: `premium` + `free` redundantes sobre a mesma
+  chave) e o `groq` opcional continua como segunda camada. `generate()`
+  monta `tiers = [gemini]` e só acrescenta `groq` quando configurado — sem
+  terceira camada. `build_admin_dev_ai_provider_manager` monta o único
+  Gemini com `Settings.gemini_model` (o mesmo Flash do perfil `USER`) em
+  vez de `gemini_premium_model`. `UserAIProviderManager` não foi tocado.
+- **`.env.example`, `backend/.env.example`**: removida a linha
+  `AISHOPPING_GEMINI_PREMIUM_MODEL`. `compose.yaml` já não referenciava essa
+  variável (nada a alterar ali).
+- **Comentários/docstrings** desatualizados sobre "cascata premium/Groq/
+  gratuito" corrigidos em `backend/app/telegram/router.py` e
+  `backend/scripts/validate_intent_interpreter.py` (só texto, nenhuma
+  mudança de comportamento).
+- **Testes**: `tests/test_gemini_user_profile.py`,
+  `tests/test_resilience.py` e `tests/test_ai_telemetry.py` reescritos para
+  o construtor de 2 camadas — cobrindo Flash isolado, fallback Flash→Groq
+  (`AIProviderQuotaExceeded`/`AIProviderUnavailable`), erro não retryable
+  interrompendo a cascata sem tentar Groq, ausência de Groq configurado, e
+  a telemetria/sanitização de log do fallback real. Nenhuma mudança de
+  comportamento fora do escopo (semântica MATCH/POSSIBLE_MATCH/NO_MATCH da
+  TASK-063 intocada).
+
+## Validação real (2026-08-09/2026-08-10)
+
+- **Pipeline oficial** (`scripts/check.ps1`): aprovado — 752 testes rápidos
+  (753 → 752: dois testes de cascata de 3 camadas foram consolidados em um
+  só de 2 camadas), 90,63% de cobertura, migration head `20260809_0004`
+  inalterada, 14 integrações PostgreSQL reais aprovadas.
+- **E2E reproduzível** (`scripts/run_e2e_tests.py`): 2/2 aprovados (a
+  fronteira de IA continua mockada nesse suite, por design —
+  `docs/E2E_TESTS.md` — então isso valida a fiação do
+  `collection_worker`/`build_admin_dev_ai_provider_manager`, não a
+  disponibilidade real).
+- **Stack Docker reconstruído** com o código novo
+  (`docker compose build api collection_worker telegram_notifier` +
+  `--force-recreate`), todos os serviços saudáveis.
+- **Camada Gemini Flash isolada, chamada real**: confirmado por código e
+  por log que a cascata nunca mais tenta `gemini-3.1-pro-preview` nem
+  qualquer variante "Pro" (zero ocorrências em logs/telemetria). Uma
+  chamada real direta ao `GeminiProvider` com `gemini-3.6-flash` e a chave
+  `AISHOPPING_GEMINI_API_KEY_ADMIN_DEV` retornou `quota_exceeded` real no
+  momento do teste — resíduo esperado da carga real da própria validação da
+  TASK-063 mais cedo no mesmo dia (a mesma chave/mesmo modelo já usado como
+  camada gratuita antiga também tinha mostrado falhas sob carga, conforme
+  a auditoria). Não insisti em novas tentativas além do necessário para
+  confirmar o comportamento (evitar nova carga artificial), mas o sucesso
+  do Flash como modelo já está documentado nesta auditoria (`gemini-3.5-flash`
+  respondeu com sucesso num teste mínimo) e em validações reais anteriores
+  (`docs/AI_PROVIDER_MANAGER.md`, 2026-08-02 e 2026-08-08) — o código de
+  chamada do Flash não foi alterado por esta TASK, só a ordem/composição da
+  cascata.
+- **Fallback Flash→Groq, chamada real**: validado de duas formas
+  independentes. (1) Script isolado com Gemini forçado a falhar
+  (`AIProviderQuotaExceeded`, sem chamada real) e um `GroqProvider` real
+  configurado com a chave/modelo de produção — resposta real do Groq
+  (`llama-3.3-70b-versatile`, conteúdo `"ok"`) recebida com sucesso. (2) O
+  mesmo padrão ocorreu organicamente durante a coleta real abaixo: toda vez
+  que o Flash falhou (quota real ou `unavailable`), o Groq real respondeu
+  como segunda e última camada — nunca uma terceira tentativa contra o
+  próprio Gemini.
+- **`quota_exceeded`/`unavailable` com a nova cascata**: taxonomia
+  inalterada, confirmada tanto pelos testes automatizados (`AIProviderError`
+  não-retryable interrompe a cascata sem tentar Groq; `quota_exceeded`/
+  `unavailable` acionam fallback) quanto pelos logs reais abaixo — inclusive
+  o circuit breaker (`DEC-037`) abrindo corretamente para o par
+  `(gemini, gemini-3.6-flash)` depois de falhas reais consecutivas, sem
+  gastar chamadas de rede adicionais enquanto aberto.
+- **Coleta pequena representativa (real, Telegram/DB reais)**: missão
+  descartável de validação (`user_id`/`mission_id` só para este teste, um
+  único Store Provider — Kabum — consulta "teclado mecanico", sem alvo de
+  preço), processada pelo `collection_worker` real. Resultado da execução:
+  `collection_run.status = succeeded`. Telemetria real (`ai_provider_attempt`,
+  deduplicada por `ai_request_id`, contando só o resultado final de cada
+  operação lógica):
+
+  | Operação | Total | Sucesso | Falha (`quota_exceeded`/`unavailable` nas duas camadas) |
+  | --- | --- | --- | --- |
+  | `classify_offer_relevance` | 20 | 15 (75%) | 5 (25%) |
+  | `normalize_offer_title` | 20 | 15 (75%) | 5 (25%) |
+
+  Todo sucesso veio do Groq (camada 2) nesta execução específica, porque a
+  cota do Flash da chave ADMIN/DEV estava momentaneamente pressionada (ver
+  item acima) — mesmo assim, **75% de sucesso** é uma melhora real e
+  mensurável sobre o achado original da TASK-063 ("sob carga real, a
+  maioria das chamadas de IA falhou" com a cascata de 3 camadas, que
+  desperdiçava a primeira tentativa inteira contra `gemini-3.1-pro-preview`
+  antes de sequer chegar ao Groq). As falhas restantes (5/20 em cada
+  operação) são `unavailable`/`quota_exceeded` reais em **ambas** as
+  camadas (Flash pressionado + Groq também rate-limited pelo mesmo burst de
+  20 chamadas em poucos segundos) — tratadas de forma conservadora, sem
+  persistir classificação inválida, exatamente como a TASK-063 especifica.
+  Nenhuma referência a `gemini-3.1-pro-preview`/`gemini-pro-latest` em
+  nenhum log desta execução.
+- **Semântica da TASK-063**: intocada — nenhuma mudança em
+  `app/collection/relevance.py` nem no vocabulário
+  `MATCH`/`POSSIBLE_MATCH`/`NO_MATCH`.
+- **Batching**: não implementado, conforme escopo.
+
+## Pendência para encerrar
+
+Aguardando aprovação explícita do usuário sobre os resultados acima antes
+de marcar esta TASK como concluída e atualizar
+`AGENTS.md`/`docs/ROADMAP.md`/`docs/PROJECT_CONTEXT.md`/
+`docs/tasks/README.md` como fechados. A TASK-054/`v1.0.0` segue suspensa
+como release final até esse fechamento.

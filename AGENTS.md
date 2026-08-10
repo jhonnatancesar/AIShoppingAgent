@@ -150,8 +150,18 @@ formatação revisada das mensagens principais, tudo validado (pipeline, E2E
 reproduzível, missão real) e aprovado explicitamente. Durante essa
 validação, a camada premium do `AdminDevAIProviderManager`
 (`gemini-3.1-pro-preview`) mostrou 0% de sucesso sob carga real — isso foi
-desmembrado para a TASK-064 (`docs/tasks/TASK-064.md`, `DEC-049`),
-auditoria concluída, implementação **aguarda autorização explícita**. O
+desmembrado para a TASK-064 (`docs/tasks/TASK-064.md`, `DEC-049`/`DEC-050`).
+O usuário fechou o escopo final (Gemini Flash único para `USER`/`ADMIN`/
+`DEV`, nenhum nível Pro/preview, fallback só por disponibilidade
+Flash→Groq) e autorizou a implementação, concluída em
+2026-08-09/2026-08-10: `AdminDevAIProviderManager` colapsado de 3 para 2
+camadas, `Settings.gemini_premium_model` removido. Validado com pipeline
+oficial (752 testes, 90,63% cobertura, 14 integrações reais), E2E
+reproduzível (2/2) e chamadas reais contra o stack Docker reconstruído —
+fallback Flash→Groq real confirmado e uma coleta pequena representativa
+(missão descartável, uma fonte) mostrou 75% de sucesso na classificação,
+melhora real sobre a maioria de falhas da validação original da TASK-063.
+**Aguardando aprovação explícita do usuário para fechar a TASK-064** — o
 tag `v1.0.0` não foi alterado nem recriado; a release **continua suspensa
-como definitiva** até a TASK-064 fechar. Não iniciar a implementação da
-TASK-064 nem qualquer TASK de V1.2/V2 sem pedido explícito.
+como definitiva** até esse fechamento. Não iniciar qualquer TASK de
+V1.2/V2 sem pedido explícito.
