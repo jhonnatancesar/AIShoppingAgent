@@ -635,4 +635,21 @@ isolado (não produção): `database`/`jaeger` subidos localmente, crash
 interno simulado (`docker exec ... kill -9 1`, diferente de `docker
 stop`/`kill` no nível do Engine, que `unless-stopped` trata como parada
 intencional), recuperação automática confirmada em segundos. Produção da
-`v1.0.1` intocada; TASK-067 não foi iniciada.
+`v1.0.1` intocada.
+
+**Atualização 2026-08-10 (5):** aprovada e concluída a **TASK-067**
+(`docs/tasks/TASK-067.md`, item 4 da `v1.0.2`) — pesquisa ao vivo (Browser)
+da taxonomia real de categorias de Kabum, Pichau, Terabyte e
+Amazon.com.br, consolidada por critério objetivo (categoria presente em
+pelo menos 2 das 4 lojas, excluindo o catálogo genérico exclusivo da
+Amazon) em 15 categorias + "Todas". O usuário aprovou a lista sem
+alterações. `backend/app/users/registration.py` passou a usar o mesmo
+padrão de lista numerada de `favorite_stores` para
+`preferred_categories`; `preferred_categories` continua sem consumidor
+além de metadado (só desidentificação, `backend/app/privacy/service.py`).
+Validado com pipeline oficial (756 testes, 90,65% cobertura,
+`registration.py` a 100%) e o teste de fluxo completo real do `/cadastro`
+via `receive_telegram_webhook`; sem round-trip ao vivo contra a API do
+Telegram, por ser mudança de vocabulário fechado sem alterar a mecânica
+do webhook já validada em produção. Produção da `v1.0.1` intocada;
+TASK-068 não foi iniciada.

@@ -25,8 +25,9 @@ credencial e sessão em tabelas separadas.
   caracteres, não vazio quando presente;
 - `favorite_stores`: lista de códigos de loja preferidos (entre os quatro
   selecionáveis da V1), vazia por padrão;
-- `preferred_categories`: lista livre de categorias preferidas (ex.: games,
-  móveis), vazia por padrão;
+- `preferred_categories`: lista de slugs de categorias preferidas, entre
+  as 15 selecionáveis do `/cadastro` (TASK-067, taxonomia real de Kabum,
+  Pichau, Terabyte e Amazon — `docs/tasks/TASK-067.md`), vazia por padrão;
 - `registration_step`: passo pendente do fluxo `/cadastro` (TASK-060) —
   `null` quando não há cadastro em andamento;
 - `created_at` e `updated_at`: horários conscientes de fuso, persistidos como UTC.
@@ -92,8 +93,10 @@ fechado. O papel `PLUS`, planos e múltiplos papéis permanecem fora do MVP.
   guardando o passo pendente em `registration_step`; ele intercepta a
   próxima mensagem do usuário diretamente, sem passar pelo
   `IntentInterpreter`. As lojas são apresentadas como `1` Kabum, `2` Pichau,
-  `3` Terabyte, `4` Amazon e `5` Todas; combinações usam números separados por
-  vírgula. Ao terminar, o mesmo fluxo emite o link HTTPS para criar a senha e
+  `3` Terabyte, `4` Amazon e `5` Todas; as categorias (TASK-067) seguem o
+  mesmo padrão numerado, com 15 opções reais (`1` Hardware a `15` Geek e
+  Colecionáveis) e `16` para todas; ambos os passos aceitam combinações por
+  números separados por vírgula. Ao terminar, o mesmo fluxo emite o link HTTPS para criar a senha e
   orienta o login, sem receber a senha pelo chat. O comando `/upgrade` existe e é visível no menu do
   bot, mas responde apenas que a função está "em breve" — nenhuma lógica
   real de mudança de plano/perfil está implementada

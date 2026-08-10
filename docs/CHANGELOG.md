@@ -1,5 +1,27 @@
 # Changelog
 
+## 2026-08-10 (4) — TASK-067 concluída: categorias numeradas no /cadastro
+
+- **TASK-067** (`docs/tasks/TASK-067.md`, item 4 da `v1.0.2`) concluída:
+  pesquisa ao vivo (Browser) da taxonomia real de categorias de Kabum,
+  Pichau, Terabyte e Amazon.com.br — consolidada por critério objetivo
+  (categoria presente em pelo menos 2 das 4 lojas) em 15 categorias reais
+  + "Todas", excluindo automaticamente o catálogo genérico exclusivo da
+  Amazon (livros, moda, beleza, alimentos etc., sem correspondência nas
+  outras 3 lojas especializadas em hardware/gamer). Usuário aprovou a
+  lista sem alterações.
+- `backend/app/users/registration.py`: o passo `preferred_categories` do
+  `/cadastro` trocou de texto livre para lista numerada fixa, mesmo
+  padrão já usado por `favorite_stores` (múltipla escolha por vírgula,
+  opção "Todas", "pular" continua válido). `favorite_stores` e os demais
+  passos não foram alterados.
+- `preferred_categories` continua sendo só metadado informativo, sem
+  nenhum consumidor downstream novo (confirmado por auditoria).
+- `docs/USERS.md` atualizado; testes reescritos para o vocabulário
+  fechado (`tests/test_user_registration.py`,
+  `tests/test_telegram_router.py`). Nenhuma tag `v1.0.2` criada; produção
+  da `v1.0.1` intocada; TASK-068 não iniciada.
+
 ## 2026-08-10 (3) — TASK-066 concluída: restart policy uniforme nos 7 serviços
 
 - **TASK-066** (`docs/tasks/TASK-066.md`, item 2 da `v1.0.2`) concluída:

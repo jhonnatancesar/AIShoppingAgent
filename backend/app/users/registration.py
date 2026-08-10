@@ -22,8 +22,6 @@ REGISTRATION_STEPS: Final[tuple[str, ...]] = (
 
 _SKIP_WORDS = frozenset({"pular", "pula", "skip", "nenhum", "nenhuma", "-"})
 _EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
-_MAX_CATEGORIES = 20
-_MAX_CATEGORY_LENGTH = 64
 _NUMBERED_STORES = {
     "1": "kabum",
     "2": "pichau",
@@ -31,6 +29,30 @@ _NUMBERED_STORES = {
     "4": "amazon",
 }
 _ALL_STORES = frozenset({"5", "todo", "todos", "toda", "todas"})
+
+# TASK-067: taxonomia real consolidada de Kabum, Pichau, Terabyte e
+# Amazon.com.br (docs/tasks/TASK-067.md) — categoria entra na lista só se
+# aparecer em pelo menos 2 das 4 lojas, para não herdar o catálogo
+# genérico da Amazon (livros, moda, beleza etc.) sem correspondência nas
+# outras 3 lojas especializadas em hardware/gamer.
+_NUMBERED_CATEGORIES = {
+    "1": "hardware",
+    "2": "perifericos",
+    "3": "computadores",
+    "4": "notebooks",
+    "5": "monitores",
+    "6": "celulares",
+    "7": "tv_audio",
+    "8": "video_games",
+    "9": "cadeiras_moveis",
+    "10": "casa_inteligente",
+    "11": "eletrodomesticos",
+    "12": "cameras_drones",
+    "13": "redes_conectividade",
+    "14": "seguranca",
+    "15": "geek_colecionaveis",
+}
+_ALL_CATEGORIES = frozenset({"16", "todo", "todos", "toda", "todas"})
 
 _PROMPTS: Final[dict[str, str]] = {
     "username": "Vamos cadastrar você! Qual nome de usuário você quer usar?",
@@ -46,8 +68,25 @@ _PROMPTS: Final[dict[str, str]] = {
         'todas ou responda "pular".'
     ),
     "preferred_categories": (
-        "Por último: quais categorias você mais compra (ex.: games, móveis)? "
-        '(separe por vírgula, ou responda "pular")'
+        "Por último: quais categorias você mais compra?\n\n"
+        "1 - Hardware / Componentes de PC\n"
+        "2 - Periféricos\n"
+        "3 - Computadores / PC Gamer montado\n"
+        "4 - Notebooks\n"
+        "5 - Monitores\n"
+        "6 - Celulares e Smartphones\n"
+        "7 - TV, Áudio e Vídeo\n"
+        "8 - Video Games e Consoles\n"
+        "9 - Cadeiras e Móveis Gamer/Escritório\n"
+        "10 - Casa Inteligente e Automação\n"
+        "11 - Eletrodomésticos e Eletroportáteis\n"
+        "12 - Câmeras e Drones\n"
+        "13 - Redes e Conectividade\n"
+        "14 - Segurança (câmeras, alarmes)\n"
+        "15 - Geek e Colecionáveis\n"
+        "16 - Todas\n\n"
+        "Digite os números separados por vírgula (ex.: 1,4,8), use 16 para "
+        'todas ou responda "pular".'
     ),
 }
 
@@ -135,18 +174,17 @@ def _parse_stores(raw: str) -> list[str]:
 
 
 def _parse_categories(raw: str) -> list[str]:
-    categories = [token.strip() for token in raw.split(",") if token.strip()]
+    tokens = [
+        token.strip().lower() for token in re.split(r"[,\s]+", raw) if token.strip()
+    ]
+    if any(token in _ALL_CATEGORIES for token in tokens):
+        return sorted(_NUMBERED_CATEGORIES.values())
+    categories = [
+        _NUMBERED_CATEGORIES[token] for token in tokens if token in _NUMBERED_CATEGORIES
+    ]
     if not categories:
         raise RegistrationError(
-            'Não entendi nenhuma categoria. Tente de novo ou responda "pular".'
+            "Não reconheci nenhuma categoria. Use os números de 1 a 15 "
+            'separados por vírgula, 16 para todas ou responda "pular".'
         )
-    if len(categories) > _MAX_CATEGORIES:
-        raise RegistrationError(
-            f"Manda no máximo {_MAX_CATEGORIES} categorias por vez."
-        )
-    for category in categories:
-        if len(category) > _MAX_CATEGORY_LENGTH:
-            raise RegistrationError(
-                f'"{category}" é muito longa (máximo {_MAX_CATEGORY_LENGTH} caracteres).'
-            )
-    return categories
+    return sorted(set(categories))

@@ -215,5 +215,12 @@ encontrou a política parcial de restart já contraditória
 `database`, sem a política) e o usuário aprovou aplicar
 `restart: unless-stopped` aos 7 serviços de `compose.yaml`. Validado com
 pipeline oficial e teste real de crash simulado (recuperação automática
-confirmada, ambiente local isolado, produção intocada). TASK-067 não foi
-iniciada automaticamente; aguarda aprovação explícita.
+confirmada, ambiente local isolado, produção intocada).
+
+A **TASK-067** (`docs/tasks/TASK-067.md`) está **concluída**: pesquisa ao
+vivo da taxonomia real de Kabum, Pichau, Terabyte e Amazon.com.br,
+consolidada em 15 categorias + "Todas" por critério objetivo (presente em
+pelo menos 2 das 4 lojas), aprovada pelo usuário sem alterações. O
+`/cadastro` passou a pedir `preferred_categories` pelo mesmo padrão
+numerado de `favorite_stores`. TASK-068 não foi iniciada automaticamente;
+aguarda aprovação explícita.

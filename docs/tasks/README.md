@@ -73,5 +73,12 @@ já era contraditória (`collection_worker`/`telegram_notifier` com
 `unless-stopped` dependiam de `database`, que não tinha); usuário aprovou
 aplicar `restart: unless-stopped` aos 7 serviços; validado com pipeline
 oficial e um teste real de crash simulado (`docker exec ... kill -9 1`)
-confirmando recuperação automática. TASK-067 a TASK-069 continuam
-aguardando aprovação explícita, uma de cada vez.
+confirmando recuperação automática.
+
+**Atualização 2026-08-10 (5):** a **TASK-067** (`docs/tasks/TASK-067.md`)
+está **concluída**: pesquisa ao vivo da taxonomia real de Kabum, Pichau,
+Terabyte e Amazon.com.br, lista consolidada de 15 categorias + "Todas"
+aprovada pelo usuário, `/cadastro` passou a usar o mesmo padrão numerado
+de `favorite_stores`. `preferred_categories` segue sem consumidor além de
+metadado. TASK-068 e TASK-069 continuam aguardando aprovação explícita,
+uma de cada vez.

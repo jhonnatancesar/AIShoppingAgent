@@ -3,6 +3,7 @@
 import pytest
 from app.users.models import User, UserRole
 from app.users.registration import (
+    _NUMBERED_CATEGORIES,
     REGISTRATION_STEPS,
     RegistrationError,
     advance_registration,
@@ -159,31 +160,54 @@ def test_advance_registration_allows_skipping_favorite_stores() -> None:
     assert user.registration_step == "preferred_categories"
 
 
-def test_advance_registration_parses_preferred_categories_and_completes() -> None:
+def test_registration_prompt_offers_numbered_categories_and_all_option() -> None:
+    user = _user()
+    user.registration_step = "favorite_stores"
+
+    prompt = advance_registration(user, answer="pular")
+
+    assert "1 - Hardware / Componentes de PC" in prompt
+    assert "15 - Geek e Colecionáveis" in prompt
+    assert "16 - Todas" in prompt
+
+
+@pytest.mark.parametrize(
+    ("answer", "expected"),
+    [
+        ("1,4,8", ["hardware", "notebooks", "video_games"]),
+        ("2, 6", ["celulares", "perifericos"]),
+        ("16", sorted(_NUMBERED_CATEGORIES.values())),
+        ("todas", sorted(_NUMBERED_CATEGORIES.values())),
+    ],
+)
+def test_advance_registration_parses_numbered_categories(
+    answer: str, expected: list[str]
+) -> None:
     user = _user()
     user.registration_step = "preferred_categories"
 
-    completion = advance_registration(user, answer="games, moveis,  livros ")
+    completion = advance_registration(user, answer=answer)
 
-    assert user.preferred_categories == ["games", "moveis", "livros"]
+    assert user.preferred_categories == expected
     assert user.registration_step is None
     assert "confirmado" in completion.lower()
     assert "senha" in completion.lower()
 
 
-def test_advance_registration_rejects_too_many_categories() -> None:
+def test_advance_registration_rejects_categories_with_no_known_match() -> None:
     user = _user()
     user.registration_step = "preferred_categories"
 
     with pytest.raises(RegistrationError):
-        advance_registration(user, answer=",".join(f"cat{i}" for i in range(21)))
+        advance_registration(user, answer="games, moveis, livros")
     assert user.registration_step == "preferred_categories"
 
 
-def test_advance_registration_rejects_category_too_long() -> None:
+def test_advance_registration_allows_skipping_preferred_categories() -> None:
     user = _user()
     user.registration_step = "preferred_categories"
 
-    with pytest.raises(RegistrationError):
-        advance_registration(user, answer="a" * 65)
-    assert user.registration_step == "preferred_categories"
+    advance_registration(user, answer="pular")
+
+    assert user.preferred_categories == []
+    assert user.registration_step is None

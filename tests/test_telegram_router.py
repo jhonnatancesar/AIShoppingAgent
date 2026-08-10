@@ -1052,7 +1052,7 @@ async def test_registration_full_flow_completes_and_clears_step(
         ),
     )
 
-    answers = ["joaosilva", "pular", "pichau, kabum", "games, moveis"]
+    answers = ["joaosilva", "pular", "pichau, kabum", "8, 1"]
     text = "/cadastro"
     for answer in [None, *answers]:
         if answer is not None:
@@ -1075,7 +1075,7 @@ async def test_registration_full_flow_completes_and_clears_step(
     assert fake_user.username == "joaosilva"
     assert fake_user.email is None
     assert fake_user.favorite_stores == ["kabum", "pichau"]
-    assert fake_user.preferred_categories == ["games", "moveis"]
+    assert fake_user.preferred_categories == ["hardware", "video_games"]
     assert fake_user.registration_step is None
     assert adapter.calls == []
     assert "cadastro confirmado" in send_calls[-1][1].lower()
