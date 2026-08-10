@@ -25,6 +25,37 @@ Após a classificação, registrar a decisão neste arquivo e atualizar a docume
 - **Justificativa:** impacto avaliado e motivo da classificação.
 - **Próxima ação:** documento a atualizar, TASK a criar quando aplicável, ou ação de não implementação.
 
+### DEC-051 — Manter `v1.0.0` imutável; publicar `v1.0.1` como release corretiva atual
+
+- **Data:** 2026-08-10
+- **Ideia:** auditoria (a pedido do usuário) confirmou que a tag `v1.0.0`
+  (`85b56c6`, criada pela TASK-054 em 2026-08-09) nunca foi movida e não
+  contém as correções da TASK-063 (`DEC-048`, relevância/apresentação dos
+  alertas) nem da TASK-064 (`DEC-049`/`DEC-050`, cascata Gemini Flash →
+  Groq), ambas concluídas e aprovadas depois da tag existir. O
+  `docs/RELEASE_CHECKLIST.md` marcado "65/65" refletia o código corrente
+  (`main`/branch da TASK-064), não o conteúdo efetivamente publicado sob
+  `v1.0.0` — uma divergência real entre "release definitiva" e "estado
+  aprovado atual". Decisão do usuário: `v1.0.0` **permanece intocada**,
+  como marco histórico do estado da V1 em 2026-08-09 (não deve ser usada
+  como referência de deploy); uma nova tag **`v1.0.1`** é publicada sobre
+  o commit atual (que inclui TASK-063 e TASK-064) como a release corretiva
+  e referência corrente.
+- **Classificação:** Implementar agora (ação administrativa de
+  versionamento sobre escopo já aprovado — TASK-054/TASK-063/TASK-064 —,
+  sem nenhuma mudança de código ou arquitetura).
+- **Justificativa técnica:** semver de correção (`v1.0.0` → `v1.0.1`) é
+  apropriado porque TASK-063 e TASK-064 são correções sobre o mesmo escopo
+  do MVP da V1 (`docs/MVP.md`), não funcionalidades novas. Manter `v1.0.0`
+  imutável preserva o histórico auditável e evita reescrever uma tag já
+  publicada em `origin`; publicar uma tag nova em vez de mover a existente
+  é a forma correta de corrigir a divergência sem apagar evidência do
+  estado anterior.
+- **Próxima ação:** `docs/RELEASE_CHECKLIST.md`, `docs/tasks/TASK-054.md`
+  e `docs/CHANGELOG.md` atualizados nesta mesma revisão. Publicação da tag
+  `v1.0.1` e atualização de `origin/main` aguardam autorização final
+  explícita do usuário, em separado desta decisão.
+
 ### DEC-050 — Eliminar o nível Gemini Pro/preview da V1; USER/ADMIN/DEV usam só Flash
 
 - **Data:** 2026-08-09

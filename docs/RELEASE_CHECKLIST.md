@@ -11,7 +11,8 @@ TASK-054 o fechou publicando o tag `v1.0.0` sobre o commit revisado.
 
 Atualizar este documento sempre que uma TASK relevante para produção for
 concluída ou revisada. Snapshot revisado em **2026-08-10**, após a TASK-063
-e a TASK-064 fecharem.
+e a TASK-064 fecharem. **Este snapshot (65/65) corresponde à tag `v1.0.1`,
+não à `v1.0.0`** — ver "Resumo executivo" abaixo.
 
 ## Resumo executivo
 
@@ -26,10 +27,16 @@ sucesso sob carga real. Desmembrado para a TASK-064 (`DEC-049`/`DEC-050`),
 **concluída em 2026-08-10**: a cascata foi colapsada para 2 camadas
 (Gemini Flash → Groq, sem nível Pro/preview), fallback real validado e uma
 coleta representativa confirmou melhora real na taxa de classificação
-(15/20 em cada operação) — critério 6 volta a `✅ Atendido`. A condição que
-suspendia `v1.0.0` como release final (TASK-064 pendente) está **resolvida**;
-o tag `v1.0.0` continua publicado sem alteração — deploy real num Ubuntu
-Server permanece fora do escopo já aprovado desta TASK, exigindo
+(15/20 em cada operação) — critério 6 volta a `✅ Atendido`.
+
+**A tag `v1.0.0` (`85b56c6`) é um snapshot histórico anterior à TASK-063 e
+à TASK-064 — não contém nenhuma das duas correções e não deve ser usada
+como referência atual de deploy.** Ela permanece publicada sem alteração,
+por decisão explícita do usuário, como marco revisado do estado da V1 em
+2026-08-09. A referência corrente de release, com os 65/65 itens deste
+checklist e os 8 critérios do MVP atendidos, é a tag **`v1.0.1`**,
+publicada sobre o commit que inclui TASK-063 e TASK-064. Deploy real num
+Ubuntu Server permanece fora do escopo já aprovado, exigindo
 provisionamento próprio e execução de `docs/OPERATIONS.md`.
 
 ## Critérios objetivos do MVP (`docs/MVP.md`) — status real

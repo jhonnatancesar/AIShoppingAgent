@@ -12,6 +12,13 @@ explicitamente pelo usuário, **a condição de suspensão está resolvida**
 atendidos) — deploy real num Ubuntu Server continua fora do escopo já
 aprovado desta TASK, exigindo decisão explícita futura.
 
+**Nota posterior (2026-08-10):** a tag `v1.0.0` criada por esta TASK
+(`85b56c6`) foi superada como referência corrente de release pela
+**`v1.0.1`**, publicada depois das correções da TASK-063 e da TASK-064.
+`v1.0.0` permanece intocada, sem ser recriada ou movida, como marco
+histórico do estado da V1 em 2026-08-09 — não deve ser usada como
+referência de deploy.
+
 Dependência obrigatória: TASK-053 concluída (`PASS` no E2E reproduzível e
 externo, 2026-08-09).
 

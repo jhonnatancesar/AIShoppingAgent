@@ -1,5 +1,26 @@
 # Changelog
 
+## 2026-08-10 — Release `v1.0.1` preparada — corrige a divergência da `v1.0.0`
+
+- Auditoria identificou que a tag `v1.0.0` (`85b56c6`) permaneceu apontando
+  para o commit de fechamento da TASK-054 (2026-08-09) e **nunca foi
+  atualizada** — não contém as correções da TASK-063 (relevância/
+  apresentação dos alertas) nem da TASK-064 (cascata Gemini Flash → Groq),
+  concluídas depois. O `docs/RELEASE_CHECKLIST.md` marcado como "65/65"
+  descrevia o código corrente (branch/`main` local), não o conteúdo
+  efetivamente publicado sob a tag — inconsistência corrigida por esta
+  entrada.
+- Preparado o commit de documentação para a tag **`v1.0.1`**, release
+  corretiva sobre a `v1.0.0`, cobrindo TASK-063 e TASK-064. `v1.0.0`
+  permanece **intocada** — não foi movida, apagada nem recriada — como
+  marco histórico anterior às duas correções.
+- Documentos sincronizados: `docs/RELEASE_CHECKLIST.md` (65/65 associado à
+  `v1.0.1`, `v1.0.0` marcada como histórica), `docs/tasks/TASK-054.md`
+  (nota posterior sobre a supersessão), `docs/DECISION_LOG.md` (decisão de
+  versionamento registrada).
+- Publicação da tag e atualização de `origin/main` **aguardam autorização
+  final explícita do usuário** — nada foi publicado ainda nesta entrada.
+
 ## 2026-08-10 — TASK-064 concluída — release deixa de estar suspensa
 
 - **TASK-064 concluída**, aprovada explicitamente pelo usuário. Registro do
