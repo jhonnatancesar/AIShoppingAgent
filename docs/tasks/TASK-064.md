@@ -1,9 +1,7 @@
 # TASK-064 — Revisar disponibilidade e fallback dos provedores de IA
 
-Status: Implementação e validação real concluídas em 2026-08-09/2026-08-10
-(ver "Implementação e validação real" ao final); **aguardando aprovação
-explícita do usuário para fechar a TASK**, conforme pedido — não encerrar
-sozinho.
+Status: **Concluída em 2026-08-10, aprovada explicitamente pelo usuário**
+(ver "Encerramento" ao final).
 
 Dependência: TASK-063 funcionalmente concluída (relevância, identidade da
 oferta, formatação). A TASK-054/`v1.0.0` continua suspensa como release
@@ -329,10 +327,40 @@ diferença continua sendo só permissão) e autorizou a implementação.
   `MATCH`/`POSSIBLE_MATCH`/`NO_MATCH`.
 - **Batching**: não implementado, conforme escopo.
 
-## Pendência para encerrar
+## Encerramento
 
-Aguardando aprovação explícita do usuário sobre os resultados acima antes
-de marcar esta TASK como concluída e atualizar
-`AGENTS.md`/`docs/ROADMAP.md`/`docs/PROJECT_CONTEXT.md`/
-`docs/tasks/README.md` como fechados. A TASK-054/`v1.0.0` segue suspensa
-como release final até esse fechamento.
+Aprovado explicitamente pelo usuário em 2026-08-10. Registro do
+fechamento:
+
+- `USER`, `ADMIN` e `DEV` usam o mesmo Gemini Flash (`Settings.gemini_model`)
+  nas operações automáticas de IA (classificação de relevância e
+  normalização de título da TASK-063, e as chamadas interativas de
+  `ADMIN`/`DEV` no Telegram). O papel continua sendo só permissão/
+  autorização, nunca escolha de modelo.
+- **Cascata oficial da V1**: Gemini Flash → Groq. Nenhuma terceira camada.
+- Os modelos Gemini Pro/preview (`gemini-3.1-pro-preview`, candidato GA
+  `gemini-pro-latest`, ou qualquer outro dessa família) foram **removidos**
+  dessa função — `Settings.gemini_premium_model`/
+  `AISHOPPING_GEMINI_PREMIUM_MODEL` não existem mais no código.
+- O fallback real Flash→Groq foi validado com chamadas reais (Groq
+  respondendo com sucesso quando o Flash falhava).
+- A validação representativa (missão descartável, uma fonte, 20 ofertas
+  novas) obteve **15/20 classificações** (`classify_offer_relevance`) e
+  **15/20 normalizações** (`normalize_offer_title`) com sucesso — 75% em
+  ambas as operações.
+- As falhas restantes do Flash por cota (`quota_exceeded`/`unavailable`)
+  observadas durante a validação **ficam registradas como condição
+  operacional externa** (pressão real e momentânea sobre a chave
+  compartilhada, residual da própria carga de validação da TASK-063 mais
+  cedo no mesmo dia) — **não como falha desta TASK**, cujo objetivo era
+  corrigir a composição/ordem da cascata, não eliminar limites de cota de
+  terceiros.
+- Nenhuma alteração adicional de arquitetura além da cascata de 2 camadas.
+  Batching não implementado (fora do escopo, permanece adiado). Semântica
+  `MATCH`/`POSSIBLE_MATCH`/`NO_MATCH` da TASK-063 intocada.
+- Nenhuma outra TASK iniciada.
+
+`docs/AI_PROVIDER_MANAGER.md`, `docs/CHANGELOG.md`, `docs/PROJECT_CONTEXT.md`,
+`docs/ROADMAP.md`, `docs/tasks/README.md`, `docs/RELEASE_CHECKLIST.md` e
+`AGENTS.md` foram sincronizados com este fechamento. `v1.0.0` e
+`origin/main` não foram tocados.

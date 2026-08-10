@@ -1,5 +1,28 @@
 # Changelog
 
+## 2026-08-10 — TASK-064 concluída — release deixa de estar suspensa
+
+- **TASK-064 concluída**, aprovada explicitamente pelo usuário. Registro do
+  fechamento: `USER`, `ADMIN` e `DEV` usam Gemini Flash
+  (`Settings.gemini_model`) nas operações automáticas de IA; cascata
+  oficial da V1 é Gemini Flash → Groq; os modelos Pro/Preview
+  (`gemini-3.1-pro-preview`, `gemini-pro-latest`) foram removidos dessa
+  função; o fallback real Flash→Groq foi validado com chamadas reais; a
+  validação representativa obteve 15/20 classificações
+  (`classify_offer_relevance`) e 15/20 normalizações
+  (`normalize_offer_title`) com sucesso; as falhas restantes do Flash por
+  cota ficam registradas como condição operacional externa, não como falha
+  desta TASK. Papel continua sendo só permissão/autorização. Batching não
+  implementado. Semântica `MATCH`/`POSSIBLE_MATCH`/`NO_MATCH` da TASK-063
+  intocada.
+- `docs/RELEASE_CHECKLIST.md` atualizado: critério 6 do MVP volta a
+  `✅ Atendido`, checklist 65/65, 0 pendentes.
+- Com a TASK-063 e a TASK-064 concluídas, **a condição que suspendia
+  `v1.0.0` como release final está resolvida**. O tag `v1.0.0` não foi
+  alterado nem recriado; `main`/`origin/main` não foram tocados; deploy
+  real num Ubuntu Server continua fora do escopo até decisão explícita
+  futura.
+
 ## 2026-08-09/2026-08-10 — TASK-064 implementada e validada com chamadas reais — aguardando fechamento
 
 - `AdminDevAIProviderManager` (`backend/app/ai_provider/manager.py`)

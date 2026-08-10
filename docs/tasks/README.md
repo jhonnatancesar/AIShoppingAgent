@@ -2,9 +2,8 @@
 
 Cada arquivo descreve uma unidade de trabalho. Antes de executar uma tarefa, leia os documentos obrigatórios definidos em `AGENTS.md`.
 
-As TASKs 000 a 054, as TASKs 055 a 062 e a TASK-063 estão concluídas — MVP
-da V1 completo. A TASK-064 tem implementação e validação real concluídas,
-aguardando aprovação explícita do usuário para fechar. A
+As TASKs 000 a 054, as TASKs 055 a 062, a TASK-063 e a TASK-064 estão
+concluídas — MVP da V1 completo, checklist de release 65/65. A
 TASK-038 recomenda
 deterministicamente (`DEC-026`), a TASK-039 compara as mesmas evidências
 (`DEC-027`), a TASK-040 define a confirmação com TTL (`DEC-028`) e a TASK-041
@@ -35,12 +34,13 @@ direto, está **concluída**: relevância, correção do bug de `previous`
 compartilhado, título/loja/link reais e formatação das mensagens
 principais, tudo validado e aprovado. A validação revelou a camada premium
 da cascata ADMIN/DEV com 0% de sucesso sob carga — desmembrado para a
-TASK-064 (`docs/tasks/TASK-064.md`, `DEC-049`/`DEC-050`). O usuário fechou
-o escopo final (Flash único para USER/ADMIN/DEV, sem nível Pro/preview,
-fallback só por disponibilidade) e autorizou a implementação, concluída em
-2026-08-09/2026-08-10: cascata `ADMIN`/`DEV` colapsada de 3 para 2 camadas,
-validada com pipeline oficial, E2E reproduzível e chamadas reais (fallback
-Flash→Groq real confirmado; coleta pequena representativa com 75% de
-sucesso na classificação). **Aguardando aprovação explícita do usuário
-para fechar a TASK-064** — até lá, a release continua sem ser tratada como
-definitiva; o tag `v1.0.0` permanece publicado sem alteração.
+TASK-064 (`docs/tasks/TASK-064.md`, `DEC-049`/`DEC-050`), que está
+**concluída**, aprovada explicitamente pelo usuário em 2026-08-10: cascata
+`ADMIN`/`DEV` colapsada de 3 para 2 camadas (Gemini Flash → Groq, sem
+nível Pro/preview), validada com pipeline oficial, E2E reproduzível e
+chamadas reais (fallback Flash→Groq real confirmado; coleta representativa
+com 15/20 sucesso em classificação e em normalização; falhas restantes do
+Flash por cota registradas como condição operacional externa). Com a
+TASK-064 fechada, a condição que suspendia a release como definitiva está
+resolvida (`docs/RELEASE_CHECKLIST.md`, 65/65); o tag `v1.0.0` permanece
+publicado sem alteração.

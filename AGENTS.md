@@ -110,8 +110,8 @@ Nunca iniciar automaticamente a próxima TASK. Encerrar apresentando resumo da i
 
 ## Estado atual
 
-TASKs 000 a 054, TASK-055 a TASK-062 e TASK-063 concluídas — MVP da V1
-completo, com a TASK-064 registrada e aguardando autorização. A observabilidade da
+TASKs 000 a 054, TASK-055 a TASK-062, TASK-063 e TASK-064 concluídas — MVP
+da V1 completo, checklist de release 65/65. A observabilidade da
 TASK-045 (`DEC-031`) foi validada com PostgreSQL, API, worker, Collector,
 Prometheus e Jaeger reais, incluindo falha/recuperação e privacidade. A
 TASK-046 autentica a identidade mínima do canal Telegram (`DEC-032`). A
@@ -151,17 +151,20 @@ reproduzível, missão real) e aprovado explicitamente. Durante essa
 validação, a camada premium do `AdminDevAIProviderManager`
 (`gemini-3.1-pro-preview`) mostrou 0% de sucesso sob carga real — isso foi
 desmembrado para a TASK-064 (`docs/tasks/TASK-064.md`, `DEC-049`/`DEC-050`).
-O usuário fechou o escopo final (Gemini Flash único para `USER`/`ADMIN`/
-`DEV`, nenhum nível Pro/preview, fallback só por disponibilidade
-Flash→Groq) e autorizou a implementação, concluída em
-2026-08-09/2026-08-10: `AdminDevAIProviderManager` colapsado de 3 para 2
-camadas, `Settings.gemini_premium_model` removido. Validado com pipeline
-oficial (752 testes, 90,63% cobertura, 14 integrações reais), E2E
-reproduzível (2/2) e chamadas reais contra o stack Docker reconstruído —
-fallback Flash→Groq real confirmado e uma coleta pequena representativa
-(missão descartável, uma fonte) mostrou 75% de sucesso na classificação,
-melhora real sobre a maioria de falhas da validação original da TASK-063.
-**Aguardando aprovação explícita do usuário para fechar a TASK-064** — o
-tag `v1.0.0` não foi alterado nem recriado; a release **continua suspensa
-como definitiva** até esse fechamento. Não iniciar qualquer TASK de
-V1.2/V2 sem pedido explícito.
+A TASK-064 está **concluída**, aprovada explicitamente pelo usuário em
+2026-08-10: `AdminDevAIProviderManager` colapsado de 3 para 2 camadas
+(Gemini Flash → Groq, mesmo modelo do perfil `USER`); nenhum nível
+Pro/preview participa da cascata; `Settings.gemini_premium_model` removido.
+Papel continua sendo só permissão/autorização, nunca escolha de modelo.
+Validado com pipeline oficial (752 testes, 90,63% cobertura, 14
+integrações reais), E2E reproduzível (2/2) e chamadas reais contra o stack
+Docker reconstruído — fallback Flash→Groq real confirmado e uma coleta
+representativa (missão descartável, uma fonte) obteve 15/20 sucesso em
+classificação e em normalização; as falhas restantes do Flash por cota
+ficam registradas como condição operacional externa, não como falha da
+TASK-064. Batching não implementado (fora do escopo). Com a TASK-064
+fechada, **a condição que suspendia `v1.0.0` como release final está
+resolvida** (`docs/RELEASE_CHECKLIST.md`, 65/65, todos os 8 critérios do
+MVP `✅ Atendido`) — o tag `v1.0.0` não foi alterado nem recriado; deploy
+real num Ubuntu Server continua fora do escopo até decisão explícita
+futura. Não iniciar qualquer TASK de V1.2/V2 sem pedido explícito.

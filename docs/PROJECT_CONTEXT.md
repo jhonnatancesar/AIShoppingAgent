@@ -289,17 +289,21 @@ um problema pontual do modelo escolhido.
 sem depender da pergunta sobre faturamento — `USER`, `ADMIN` e `DEV` usam o
 mesmo Gemini Flash para as operações automáticas de IA, nenhum nível
 Pro/preview entra na cascata, fallback só por disponibilidade
-(Flash→Groq). Autorizada a implementação: `AdminDevAIProviderManager`
-colapsado de 3 para 2 camadas, `gemini_premium_model` removido do config.
-Validado com pipeline oficial (752 testes, 90,63% cobertura, 14
-integrações reais), E2E reproduzível (2/2) e chamadas reais contra o stack
-Docker reconstruído — fallback Flash→Groq real confirmado e uma coleta
-pequena representativa (missão descartável, uma fonte, 20 ofertas novas)
-mostrou 75% de sucesso na classificação/normalização, melhora real sobre a
-maioria de falhas da validação original da TASK-063. **Aguardando
-aprovação explícita do usuário para fechar a TASK-064** — até lá, a
-release continua sem ser tratada como definitiva e o tag `v1.0.0`
-permanece publicado sem alteração.
+(Flash→Groq). A implementação foi autorizada e **a TASK-064 está
+concluída, aprovada explicitamente pelo usuário em 2026-08-10**:
+`AdminDevAIProviderManager` colapsado de 3 para 2 camadas,
+`gemini_premium_model` removido do config. Validado com pipeline oficial
+(752 testes, 90,63% cobertura, 14 integrações reais), E2E reproduzível
+(2/2) e chamadas reais contra o stack Docker reconstruído — fallback
+Flash→Groq real confirmado e uma coleta representativa (missão
+descartável, uma fonte, 20 ofertas novas) obteve 15/20 sucesso em
+classificação e em normalização, melhora real sobre a maioria de falhas
+da validação original da TASK-063; as falhas restantes do Flash por cota
+ficam registradas como condição operacional externa, não como falha da
+TASK-064. **A condição que suspendia a release como definitiva está
+resolvida** (`docs/RELEASE_CHECKLIST.md`, 65/65) — o tag `v1.0.0`
+permanece publicado sem alteração; deploy real segue fora do escopo até
+decisão explícita futura.
 
 A TASK-058 (`DEC-015`) está **concluída**: `create_mission` e
 `mission_command` não executam mais direto — ficam encenados em

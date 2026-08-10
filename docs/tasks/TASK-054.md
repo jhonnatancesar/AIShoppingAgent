@@ -1,11 +1,16 @@
 # TASK-054 — Preparar release MVP
 
 Status: Concluída em 2026-08-09 — tag `v1.0.0` criado e publicado em `origin`.
-**Suspensa como release final em 2026-08-09**: a TASK-063 (`DEC-048`)
-encontrou defeitos de relevância/apresentação nos alertas antes da V1 ser
-tratada como definitiva. O tag `v1.0.0` **não foi alterado nem recriado** e
-continua publicado tal como está — só deixa de ser considerado o estado
-final da V1 até a TASK-063 fechar.
+**Suspensa como release final entre 2026-08-09 e 2026-08-10**: primeiro a
+TASK-063 (`DEC-048`) encontrou defeitos de relevância/apresentação nos
+alertas, depois a validação real dessa correção revelou a TASK-064
+(`DEC-049`/`DEC-050`, cascata ADMIN/DEV do `AIProviderManager` com 0% de
+sucesso sob carga). O tag `v1.0.0` **não foi alterado nem recriado** em
+nenhum momento. Com a TASK-063 e a TASK-064 concluídas e aprovadas
+explicitamente pelo usuário, **a condição de suspensão está resolvida**
+(`docs/RELEASE_CHECKLIST.md`, 65/65, todos os 8 critérios do MVP
+atendidos) — deploy real num Ubuntu Server continua fora do escopo já
+aprovado desta TASK, exigindo decisão explícita futura.
 
 Dependência obrigatória: TASK-053 concluída (`PASS` no E2E reproduzível e
 externo, 2026-08-09).

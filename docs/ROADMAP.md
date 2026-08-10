@@ -84,14 +84,17 @@ validação real revelou que a camada premium da cascata ADMIN/DEV
 (`gemini-3.1-pro-preview`) teve 0% de sucesso sob carga — desmembrado para
 a TASK-064 (`DEC-049`/`DEC-050`). A TASK-064 teve escopo final decidido
 pelo usuário (Flash único para USER/ADMIN/DEV, sem nível Pro/preview,
-fallback só por disponibilidade), implementação autorizada e concluída em
-2026-08-09/2026-08-10: `AdminDevAIProviderManager` colapsado para 2
-camadas (Flash→Groq), validado com pipeline oficial, E2E reproduzível e
-chamadas reais (fallback Flash→Groq real confirmado; coleta pequena
-representativa com 75% de sucesso na classificação, melhora real sobre a
-maioria de falhas da TASK-063). **Aguardando aprovação explícita do
-usuário para fechar a TASK-064**; até lá, `v1.0.0` continua publicada sem
-alteração e segue sem ser tratada como estado final da V1. A
+fallback só por disponibilidade) e está **concluída**, aprovada
+explicitamente pelo usuário em 2026-08-10: `AdminDevAIProviderManager`
+colapsado para 2 camadas (Flash→Groq), validado com pipeline oficial, E2E
+reproduzível e chamadas reais (fallback Flash→Groq real confirmado; coleta
+representativa com 15/20 sucesso em classificação e em normalização,
+melhora real sobre a maioria de falhas da TASK-063; falhas restantes do
+Flash por cota registradas como condição operacional externa). Com a
+TASK-064 fechada, a condição que suspendia `v1.0.0` como release final
+está resolvida (`docs/RELEASE_CHECKLIST.md`, 65/65); o tag continua
+publicado sem alteração e deploy real segue fora do escopo até decisão
+explícita futura. A
 TASK-057 (`DEC-017`): validação real contra o
 `USER`/Gemini cobre 3 dos 4 `IntentKind`, e o usuário aceitou explicitamente
 encerrar nesse estado, adiando mais variedade de linguagem para a V2
