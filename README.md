@@ -12,6 +12,18 @@ O desenvolvimento usa a versão estável mais recente do Python disponível. A v
 
 Consulte `AGENTS.md` antes de executar tarefas e `docs/ROADMAP.md` para a sequência planejada. O procedimento de instalação e manutenção em Ubuntu Server está em [`docs/OPERATIONS.md`](docs/OPERATIONS.md).
 
+## Deploy em produção
+
+O manual completo, passo a passo, para instalar o AIShoppingAgent do zero em
+um Ubuntu Server novo — a partir da release `v1.0.1` — está em
+[`docs/PRODUCTION_SETUP.md`](docs/PRODUCTION_SETUP.md). Cobre pré-requisitos
+do servidor, clonagem pelo Git, `.env`/`.secrets` de produção, PostgreSQL e
+migrations, criação do primeiro usuário `DEV`, Telegram, build/inicialização
+dos serviços, validação, backup/restauração, atualização entre releases e
+uma checklist final de deploy. Para operação contínua depois da instalação
+(rotina, rotação de credenciais, rollback, diagnóstico), use
+[`docs/OPERATIONS.md`](docs/OPERATIONS.md).
+
 ## Ambiente local com Docker Compose
 
 Copie o exemplo de configuração não sensível e inicialize os secrets com

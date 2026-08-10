@@ -6,6 +6,13 @@ __pycache__/
 .coverage
 .pytest_cache/
 htmlcov/
+.ruff_cache/
+coverage.xml
+
+# Database dumps and logs (preventive; none tracked as of this change)
+*.sql
+*.dump
+logs/
 
 # Local environment configuration
 .env
