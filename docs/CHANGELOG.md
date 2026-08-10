@@ -1,5 +1,23 @@
 # Changelog
 
+## 2026-08-10 (2) — TASK-065 concluída: remoção de variáveis de modelo obsoletas
+
+- **`v1.0.2` entrou em planejamento ativo** e os 5 itens de
+  `docs/V1_0_2.md` foram convertidos em propostas de TASK (TASK-065 a
+  TASK-069), aprovadas para execução uma de cada vez.
+- **TASK-065** (`docs/tasks/TASK-065.md`, item 1) concluída: auditoria
+  reconfirmou que `AISHOPPING_GEMINI_MODEL`/`AISHOPPING_GROQ_MODEL` não
+  são propagadas por nenhum dos 7 serviços de `compose.yaml` — o nome do
+  modelo em produção sempre veio do default hardcoded em
+  `Settings.gemini_model`/`Settings.groq_model`. Removidas de
+  `.env.example` (raiz), `backend/.env.example` e do `backend/.env` local
+  (limpeza não versionada, sem expor valores). `docs/DEPENDENCIES.md` e
+  `docs/PRODUCTION_SETUP.md` atualizados para não anunciar essas duas
+  variáveis como configuráveis via `.env`/Compose. `manager.py`, a
+  cascata Gemini Flash → Groq (`DEC-050`), `compose.yaml` e a produção da
+  `v1.0.1` já implantada **não foram alterados**. Nenhuma tag `v1.0.2`
+  criada; TASK-066 não iniciada.
+
 ## 2026-08-10 — `v1.0.1` implantada em produção real; planejamento de `v1.0.2`/V1.2 ampliado
 
 - **`v1.0.1` implantada num servidor de produção real**: build das imagens,

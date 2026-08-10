@@ -197,7 +197,15 @@ TASK de `v1.0.2`/V1.2/V2 sem pedido explícito.
 **Atualização 2026-08-10:** por pedido explícito do usuário, a `v1.0.2`
 entrou em **planejamento ativo**. Os 5 itens de `docs/V1_0_2.md` foram
 convertidos em propostas de TASK (TASK-065 a TASK-069, uma por
-responsabilidade, com ordem recomendada), aguardando aprovação explícita
-antes de qualquer arquivo `TASK-06X.md` ser criado ou qualquer
-implementação começar. `v1.0.1` em produção não foi alterada; nenhuma tag
-`v1.0.2` foi criada; V1.2/V2 continuam sem qualquer TASK.
+responsabilidade, com ordem recomendada). `v1.0.1` em produção não foi
+alterada; nenhuma tag `v1.0.2` foi criada; V1.2/V2 continuam sem qualquer
+TASK.
+
+A **TASK-065** (`docs/tasks/TASK-065.md`) está **concluída**: removeu
+`AISHOPPING_GEMINI_MODEL`/`AISHOPPING_GROQ_MODEL` — confirmadas sem
+propagação real em `compose.yaml` — de `.env.example` (raiz),
+`backend/.env.example` e do `backend/.env` local, e corrigiu a
+documentação (`docs/DEPENDENCIES.md`, `docs/PRODUCTION_SETUP.md`) que as
+descrevia como configuráveis. `manager.py`, a cascata Flash→Groq e a
+produção da `v1.0.1` não foram tocados. TASK-066 não foi iniciada
+automaticamente; aguarda aprovação explícita.

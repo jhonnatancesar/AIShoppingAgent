@@ -62,16 +62,22 @@ ADMIN/DEV. A chamada ao Gemini exige uma chave por perfil —
 `AISHOPPING_GEMINI_API_KEY_USER` para o perfil USER e
 `AISHOPPING_GEMINI_API_KEY_ADMIN_DEV` para a cascata ADMIN/DEV (TASK-059),
 mantendo as cotas gratuitas completamente separadas entre usuários reais e
-validação/uso administrativo. O modelo padrão configurável é
-`gemini-3.6-flash`. Em desenvolvimento fora do Docker, as chaves podem ficar
+validação/uso administrativo. O nome do modelo é fixado em
+`Settings.gemini_model` (`gemini-3.6-flash`) — `compose.yaml` não propaga
+nenhuma variável de override para ele, então `AISHOPPING_GEMINI_MODEL` foi
+removida dos arquivos de exemplo (TASK-065). Em desenvolvimento fora do
+Docker, as chaves podem ficar
 no ambiente ou `.env` ignorado. No Compose e em produção, ficam somente em
 arquivos montados por `/run/secrets`, conforme `docs/SECRETS.md`.
 
 `httpx` 0.28.1 (TASK-059) é usado por `GroqProvider` para chamar a API
 compatível com OpenAI do Groq (`/openai/v1/chat/completions`), fallback
 opcional do perfil ADMIN/DEV entre o Gemini premium e o Gemini gratuito.
-Exige `AISHOPPING_GROQ_API_KEY`; o modelo padrão configurável é
-`AISHOPPING_GROQ_MODEL` (`llama-3.3-70b-versatile`). Sem a chave, o
+Exige `AISHOPPING_GROQ_API_KEY`; o nome do modelo é fixado em
+`Settings.groq_model` (`llama-3.3-70b-versatile`) — `compose.yaml` não
+propaga nenhuma variável de override para ele, então `AISHOPPING_GROQ_MODEL`
+foi removida dos arquivos de exemplo (TASK-065); alterar o modelo exige
+mudar o default no código, não uma variável de ambiente. Sem a chave, o
 `AdminDevAIProviderManager` mantém o comportamento de dois níveis (Gemini
 premium → Gemini gratuito) já validado nas TASKs 029–031. A execução local
 fora do Docker pode usar `backend/.env`; Compose/produção usam secret file.

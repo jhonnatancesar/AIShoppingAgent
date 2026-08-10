@@ -57,7 +57,13 @@ as duas versões) está registrado com `docs/DECISION_LOG.md` (`DEC-052` a
 **Atualização 2026-08-10 (2):** a `v1.0.2` entrou em **planejamento
 ativo** por pedido explícito do usuário. Os 5 itens de `docs/V1_0_2.md`
 foram propostos como TASK-065 a TASK-069 (numeração, nome, objetivo e
-dependências apresentados ao usuário, ordem recomendada sugerida),
-aguardando aprovação explícita antes de qualquer arquivo `TASK-06X.md`
-ser criado ou qualquer código alterado. V1.2 permanece só planejamento,
-sem nenhuma TASK.
+dependências apresentados ao usuário, ordem recomendada sugerida). V1.2
+permanece só planejamento, sem nenhuma TASK.
+
+**Atualização 2026-08-10 (3):** a **TASK-065** (`docs/tasks/TASK-065.md`)
+foi aprovada, executada e está **concluída**: removeu
+`AISHOPPING_GEMINI_MODEL`/`AISHOPPING_GROQ_MODEL` de `.env.example`
+(raiz), `backend/.env.example` e do `backend/.env` local (limpeza não
+versionada), sem alterar `manager.py`, a cascata Flash→Groq, `compose.yaml`
+ou a produção da `v1.0.1`. TASK-066 a TASK-069 continuam aguardando
+aprovação explícita, uma de cada vez.

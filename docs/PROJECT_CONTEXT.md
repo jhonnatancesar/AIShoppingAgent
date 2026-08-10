@@ -606,8 +606,19 @@ funcional) → V2.
 `docs/V1_0_2.md` foram convertidos em propostas de TASK (TASK-065 a
 TASK-069, uma por responsabilidade), com numeração, nome, objetivo,
 dependências e ordem recomendada apresentados ao usuário para aprovação.
-Nenhum arquivo `docs/tasks/TASK-06X.md` foi criado, nenhuma TASK foi
-iniciada e nenhum código foi alterado — a implementação só começa após
-aprovação explícita, item por item, seguindo o workflow oficial (TASK →
-implementação → validação → commit → aprovação → push). A `v1.0.1` em
-produção não foi tocada por este planejamento.
+A implementação segue item por item, cada uma só após aprovação explícita,
+pelo workflow oficial (TASK → implementação → validação → commit →
+aprovação → push). A `v1.0.1` em produção não foi tocada por este
+planejamento.
+
+**Atualização 2026-08-10 (3):** aprovada e concluída a **TASK-065**
+(`docs/tasks/TASK-065.md`, item 1 da `v1.0.2`) — auditoria reconfirmou que
+`AISHOPPING_GEMINI_MODEL`/`AISHOPPING_GROQ_MODEL` seguem sem propagação
+real em `compose.yaml` (zero ocorrências nos 7 serviços); removidas de
+`.env.example` (raiz), `backend/.env.example` e do `backend/.env` local
+(limpeza não versionada, sem expor valores); `docs/DEPENDENCIES.md` e
+`docs/PRODUCTION_SETUP.md` atualizados para não anunciar essas variáveis
+como configuráveis. `Settings.gemini_model`/`Settings.groq_model`
+(`backend/app/core/config.py`) e `manager.py` **não foram alterados** — a
+cascata Flash→Groq (`DEC-050`) e a produção da `v1.0.1` seguem intocadas.
+TASK-066 não foi iniciada.

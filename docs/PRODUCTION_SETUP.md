@@ -277,22 +277,23 @@ quiser mudar o comportamento padrão, adicione-as ao seu `.env`:
 | `AISHOPPING_COLLECTION_MAX_CONCURRENCY` | Missões coletadas em paralelo (Chromium simultâneos) | Opcional | `2` (temporário, DEC-046, servidor de 8 GB) | Não suba para `4` sem confirmar 16 GB de RAM disponíveis de verdade |
 
 > **Achado da auditoria dos arquivos atuais, documentado aqui para não
-> repetir o engano:** `.env.example` (raiz) lista `AISHOPPING_GEMINI_MODEL`,
-> mas o `compose.yaml` atual **não lê essa variável** em nenhum serviço — o
-> nome do modelo Gemini usado em produção é sempre o padrão do código
-> (`gemini-3.6-flash`), independentemente do que for colocado em `.env`, a
-> menos que `compose.yaml` seja editado para repassá-la. O mesmo vale para
-> `AISHOPPING_GROQ_MODEL` (padrão `llama-3.3-70b-versatile`) e para
-> `AISHOPPING_TELEGRAM_NOTIFICATION_POLL_SECONDS`/`_BATCH_SIZE`. Não coloque
-> expectativa de que alterar essas três no `.env` da raiz muda o
-> comportamento do Compose hoje — isso exigiria uma mudança de código, fora
-> do escopo deste documento.
+> repetir o engano:** o `compose.yaml` atual **não lê**
+> `AISHOPPING_TELEGRAM_NOTIFICATION_POLL_SECONDS`/`_BATCH_SIZE` em nenhum
+> serviço — os defaults efetivos vêm sempre do código, independentemente do
+> que for colocado em `.env`, a menos que `compose.yaml` seja editado para
+> repassá-las. Não coloque expectativa de que alterar essas duas no `.env`
+> da raiz muda o comportamento do Compose hoje — isso exigiria uma mudança
+> de código, fora do escopo deste documento.
 >
-> **Correção planejada:** a remoção de `AISHOPPING_GEMINI_MODEL` e
-> `AISHOPPING_GROQ_MODEL` (sem uso real, confirmado acima) está registrada
-> para a release corretiva **`v1.0.2`** (`docs/V1_2.md`, `DEC-052`) —
-> depois da `v1.0.1` estar em produção. Não remova essas variáveis agora;
-> este documento continua descrevendo o comportamento real da `v1.0.1`.
+> **Correção aplicada (TASK-065, 2026-08-10):** `AISHOPPING_GEMINI_MODEL` e
+> `AISHOPPING_GROQ_MODEL` tinham o mesmo problema (sem propagação real pelo
+> `compose.yaml`, nome do modelo sempre o default do código —
+> `gemini-3.6-flash`/`llama-3.3-70b-versatile`) e foram **removidas** de
+> `.env.example` (raiz) e `backend/.env.example` — nenhum código,
+> `compose.yaml` ou o servidor de produção da `v1.0.1` já implantado foram
+> alterados por essa limpeza; um `.env` de produção antigo que ainda tenha
+> essas duas linhas continua inofensivo (elas já não tinham efeito antes
+> desta TASK).
 
 ## 6. Secrets
 
