@@ -1,8 +1,7 @@
 # TASK-065 — Remover variáveis de modelo obsoletas (`AISHOPPING_GEMINI_MODEL`/`AISHOPPING_GROQ_MODEL`)
 
-Status: **Concluída em 2026-08-10** (pipeline oficial aprovado; aguardando
-revisão final do usuário antes do commit ser publicado), autorizada
-explicitamente pelo usuário como primeira TASK da `v1.0.2`
+Status: **Concluída em 2026-08-10**, pipeline oficial aprovado e publicada,
+autorizada explicitamente pelo usuário como primeira TASK da `v1.0.2`
 (`docs/V1_0_2.md`, item 1).
 
 Dependência: nenhuma. Primeira TASK da `v1.0.2`; não bloqueia nem depende
