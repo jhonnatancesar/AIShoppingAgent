@@ -12,6 +12,12 @@ coverage.xml
 # Database dumps and logs (preventive; none tracked as of this change)
 *.sql
 *.dump
+*.sqlite
+*.sqlite3
+*.db
+*.bak
+*.backup
+*.log
 logs/
 
 # Local environment configuration
