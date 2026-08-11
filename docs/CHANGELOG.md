@@ -1,5 +1,50 @@
 # Changelog
 
+## 2026-08-11 — TASK-070 concluída: perguntar lojas por lista numerada quando a missão for criada sem nenhuma
+
+- **TASK-070** (`docs/tasks/TASK-070.md`, item 7 da `v1.0.2`, `DEC-060`)
+  concluída: quando `CREATE_MISSION` chega sem nenhuma loja em
+  `IntentParameters.sources`, o webhook não assume mais as quatro fontes
+  da V1 automaticamente — encena um novo estado pendente
+  (`await_create_mission_sources`, preservando `search_query`/
+  `target_amount`/`target_currency` já interpretados) e pergunta por
+  lista numerada própria: `1 Pichau, 2 Terabyte, 3 Amazon, 4 Kabum,
+  5 Todas` — ordem diferente da usada pelo `/cadastro` (TASK-067), que
+  não foi alterado.
+- **Validação completa, sem aceitação parcial**: a resposta é
+  interpretada por `parse_numbered_store_selection`
+  (`backend/app/telegram/confirmation.py`), determinística e sem IA.
+  Qualquer token fora do mapa invalida a resposta inteira (`"1,9"` é
+  inválido mesmo o `"1"` existindo — nunca vira só `"1"` silenciosamente).
+  Repetição é deduplicada (`"1,1"` → só a loja 1). Misturar `"5"` com
+  qualquer outro número ainda resulta em todas (`"5,1"` → todas).
+  Resposta inválida mantém o mesmo estado pendente e repete o pedido.
+- **Só chega à confirmação normal depois de uma seleção válida**: uma vez
+  reconhecida, a lista de lojas preenche `sources` e a missão passa a
+  ficar encenada como `create_mission`, seguindo o mesmo par
+  confirmar/cancelar já existente (TASK-058) — a missão nunca é criada
+  antes disso, e a resposta numérica nunca passa pelo `IntentInterpreter`
+  de novo nem cria uma segunda missão.
+- **`_DEFAULT_V1_SOURCE_CODES` preservado** em
+  `create_mission_from_criteria` (`backend/app/missions/service.py`):
+  confirmado que `backend/scripts/validate_collection_worker.py` e um
+  teste unitário ainda chamam o serviço com `source_codes=()` esperando
+  esse fallback — só o fluxo do webhook deixou de exercitá-lo. Nenhuma
+  mudança de contrato do service.
+- `/cadastro` (TASK-067), providers, coleta, ranking, alertas, TASK-068 e
+  TASK-069 intocados. Nenhuma migration.
+- Validado com pipeline oficial completo (Gitleaks, lint, formatação,
+  testes com cobertura ≥ 90%). Testes novos cobrem: uma loja, múltiplas
+  lojas, "todas", "todas" misturado com outro número, opção inválida,
+  mistura válida+inválida, repetição de opção, preservação dos critérios
+  originais enquanto aguarda a escolha, e um fluxo de ponta a ponta (3
+  mensagens) provando que a missão só é criada depois da seleção válida
+  **e** da confirmação sim/não. Nenhuma tag `v1.0.2` criada; produção da
+  `v1.0.1` intocada. Com esta TASK, o item 7 da `v1.0.2` está concluído;
+  o item 6 (bloquear `/cadastro` para usuário já autenticado) continua
+  registrado e pendente, sem TASK aberta — **a `v1.0.2` continua
+  aberta**.
+
 ## 2026-08-10 (6) — TASK-069 concluída: editar missão existente (lojas e/ou preço-alvo)
 
 - **TASK-069** (`docs/tasks/TASK-069.md`, item 3 da `v1.0.2`) concluída:

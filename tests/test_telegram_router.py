@@ -582,6 +582,223 @@ async def test_cancelled_pending_create_mission_does_not_execute(
 
 
 @pytest.mark.anyio
+async def test_create_mission_without_sources_stages_source_selection_and_preserves_criteria(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_user = _fake_user()
+    create_calls: list[dict[str, object]] = []
+
+    _patch_user(monkeypatch, fake_user)
+
+    def _fake_create_mission(session: object, **kwargs: object):
+        create_calls.append(kwargs)
+        raise AssertionError("create_mission_from_criteria should not run yet")
+
+    monkeypatch.setattr(
+        "app.telegram.router.create_mission_from_criteria", _fake_create_mission
+    )
+    send_calls = _patch_send_message(monkeypatch)
+
+    intent = _intent(
+        kind=IntentKind.CREATE_MISSION,
+        parameters=IntentParameters(
+            search_query="notebook gamer",
+            target_amount=Decimal("5000.00"),
+            target_currency="BRL",
+        ),
+    )
+    adapter = _FakeAdapter(intent)
+
+    response = await receive_telegram_webhook(
+        update=_update(),
+        x_telegram_bot_api_secret_token="correct-secret",
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        settings=_settings(),
+        session=MagicMock(),
+    )
+
+    assert response.status_code == 204
+    assert create_calls == []
+    assert fake_user.pending_intent == {
+        "kind": "await_create_mission_sources",
+        "search_query": "notebook gamer",
+        "target_amount": "5000.00",
+        "target_currency": "BRL",
+    }
+    reply = send_calls[0][1]
+    assert "1 - Pichau" in reply
+    assert "2 - Terabyte" in reply
+    assert "3 - Amazon" in reply
+    assert "4 - Kabum" in reply
+    assert "5 - Todas" in reply
+
+
+@pytest.mark.anyio
+async def test_valid_source_selection_answer_advances_to_normal_confirmation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_user = _fake_user(
+        pending_intent={
+            "kind": "await_create_mission_sources",
+            "search_query": "notebook gamer",
+            "target_amount": "5000.00",
+            "target_currency": "BRL",
+        }
+    )
+    _patch_user(monkeypatch, fake_user)
+    send_calls = _patch_send_message(monkeypatch)
+    adapter = _FakeAdapter(_intent())
+
+    response = await receive_telegram_webhook(
+        update=_update(
+            message=_TelegramIncomingMessage(
+                text="1,4",
+                date=1754586000,
+                chat=_TelegramChat(id=222, type=TelegramChatType.PRIVATE),
+                from_=_TelegramSender(id=222, first_name="Fulano"),
+            )
+        ),
+        x_telegram_bot_api_secret_token="correct-secret",
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        settings=_settings(),
+        session=MagicMock(),
+    )
+
+    assert response.status_code == 204
+    # a resposta numérica nunca passa pelo IntentInterpreter
+    assert adapter.calls == []
+    assert fake_user.pending_intent == {
+        "kind": "create_mission",
+        "search_query": "notebook gamer",
+        "target_amount": "5000.00",
+        "target_currency": "BRL",
+        "sources": ["pichau", "kabum"],
+    }
+    reply = send_calls[0][1]
+    assert "Pichau, Kabum" in reply
+    assert "sim" in reply.lower()
+
+
+@pytest.mark.anyio
+async def test_invalid_source_selection_answer_keeps_pending_state_and_asks_again(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pending = {
+        "kind": "await_create_mission_sources",
+        "search_query": "notebook gamer",
+        "target_amount": None,
+        "target_currency": None,
+    }
+    fake_user = _fake_user(pending_intent=dict(pending))
+    _patch_user(monkeypatch, fake_user)
+    send_calls = _patch_send_message(monkeypatch)
+    adapter = _FakeAdapter(_intent())
+
+    response = await receive_telegram_webhook(
+        update=_update(
+            message=_TelegramIncomingMessage(
+                text="1,9",
+                date=1754586000,
+                chat=_TelegramChat(id=222, type=TelegramChatType.PRIVATE),
+                from_=_TelegramSender(id=222, first_name="Fulano"),
+            )
+        ),
+        x_telegram_bot_api_secret_token="correct-secret",
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        settings=_settings(),
+        session=MagicMock(),
+    )
+
+    assert response.status_code == 204
+    assert adapter.calls == []
+    assert fake_user.pending_intent == pending
+    assert "Não reconheci" in send_calls[0][1]
+
+
+@pytest.mark.anyio
+async def test_full_flow_from_empty_sources_to_created_mission_only_after_valid_selection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TASK-070: encena -> pede lojas -> só cria a missão depois de uma
+    seleção válida e da confirmação normal. Nunca cria uma segunda missão
+    nem passa pelo `IntentInterpreter` de novo nos passos intermediários."""
+    fake_user = _fake_user()
+    fake_mission = SimpleNamespace(title="notebook gamer")
+    create_calls: list[dict[str, object]] = []
+
+    _patch_user(monkeypatch, fake_user)
+    _patch_resolve_answer(monkeypatch, True)
+
+    def _fake_create_mission(session: object, **kwargs: object):
+        create_calls.append(kwargs)
+        return fake_mission, ("pichau", "kabum")
+
+    monkeypatch.setattr(
+        "app.telegram.router.create_mission_from_criteria", _fake_create_mission
+    )
+    send_calls = _patch_send_message(monkeypatch)
+
+    intent = _intent(
+        kind=IntentKind.CREATE_MISSION,
+        parameters=IntentParameters(search_query="notebook gamer"),
+    )
+    adapter = _FakeAdapter(intent)
+
+    # 1) sem lojas -> encena a pergunta, não cria nada.
+    await receive_telegram_webhook(
+        update=_update(),
+        x_telegram_bot_api_secret_token="correct-secret",
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        settings=_settings(),
+        session=MagicMock(),
+    )
+    assert fake_user.pending_intent["kind"] == "await_create_mission_sources"
+    assert create_calls == []
+
+    # 2) seleção válida -> avança para a confirmação normal, não cria ainda.
+    await receive_telegram_webhook(
+        update=_update(
+            message=_TelegramIncomingMessage(
+                text="1,4",
+                date=1754586000,
+                chat=_TelegramChat(id=222, type=TelegramChatType.PRIVATE),
+                from_=_TelegramSender(id=222, first_name="Fulano"),
+            )
+        ),
+        x_telegram_bot_api_secret_token="correct-secret",
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        settings=_settings(),
+        session=MagicMock(),
+    )
+    assert fake_user.pending_intent["kind"] == "create_mission"
+    assert fake_user.pending_intent["sources"] == ["pichau", "kabum"]
+    assert create_calls == []
+
+    # 3) confirmação sim/não -> só agora cria a missão.
+    await receive_telegram_webhook(
+        update=_update(
+            message=_TelegramIncomingMessage(
+                text="sim",
+                date=1754586000,
+                chat=_TelegramChat(id=222, type=TelegramChatType.PRIVATE),
+                from_=_TelegramSender(id=222, first_name="Fulano"),
+            )
+        ),
+        x_telegram_bot_api_secret_token="correct-secret",
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        settings=_settings(),
+        session=MagicMock(),
+    )
+
+    assert len(create_calls) == 1
+    assert create_calls[0]["source_codes"] == ("pichau", "kabum")
+    assert fake_user.pending_intent is None
+    # o IntentInterpreter só foi chamado uma vez, no passo 1.
+    assert len(adapter.calls) == 1
+    assert "notebook gamer" in send_calls[-1][1]
+
+
+@pytest.mark.anyio
 async def test_unrecognized_answer_to_pending_intent_keeps_it_staged(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

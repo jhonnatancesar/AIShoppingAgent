@@ -7,11 +7,17 @@ classificação (`confirm`/`cancel`/`unclear`) é novo e exclusivo deste
 módulo. Guarda só os dados mínimos necessários para executar uma
 `create_mission`, `mission_command` ou `edit_mission` (TASK-069) já
 validada -- `pause_for_edit` (TASK-069) reusa o mesmo par confirmar/
-cancelar para pausar uma missão ativa antes de editar. Nunca guarda o
-`Intent` bruto nem texto livre da mensagem original.
+cancelar para pausar uma missão ativa antes de editar;
+`await_create_mission_sources` (TASK-070) é o único estado pendente que
+**não** passa por `resolve_answer` -- a resposta é uma lista numerada de
+lojas, interpretada de forma determinística por
+`parse_numbered_store_selection`, nunca por IA. Nunca guarda o `Intent`
+bruto nem texto livre da mensagem original.
 """
 
 import json
+import re
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
@@ -153,6 +159,104 @@ def describe_create_mission(payload: dict[str, Any]) -> str:
     )
     lines.extend(["", _CONFIRMATION_SUFFIX])
     return "\n".join(lines)
+
+
+_CREATE_MISSION_SOURCE_OPTIONS: dict[str, str] = {
+    "1": "pichau",
+    "2": "terabyte",
+    "3": "amazon",
+    "4": "kabum",
+}
+"""TASK-070: ordem própria deste fluxo -- diferente da usada pelo
+`/cadastro` (`app/users/registration.py`), que não é alterada por esta
+TASK. Cada fluxo numerado define o próprio mapa."""
+
+_CREATE_MISSION_SOURCE_ALL_TOKENS = frozenset({"5", "todo", "todos", "toda", "todas"})
+
+_CREATE_MISSION_SOURCES_PROMPT = (
+    "🏪 Em quais lojas você quer que eu busque?\n\n"
+    "1 - Pichau\n"
+    "2 - Terabyte\n"
+    "3 - Amazon\n"
+    "4 - Kabum\n"
+    "5 - Todas\n\n"
+    "Digite os números separados por vírgula (ex.: 1,3) ou use 5 para todas."
+)
+
+_CREATE_MISSION_SOURCES_RETRY = (
+    "Não reconheci essa opção. Use os números de 1 a 4 separados por "
+    "vírgula, ou 5 para todas."
+)
+
+
+def parse_numbered_store_selection(
+    raw: str,
+    *,
+    option_map: Mapping[str, str],
+    all_tokens: frozenset[str],
+) -> tuple[str, ...] | None:
+    """Interpreta uma lista numerada de lojas de forma determinística, sem
+    IA (TASK-070). Genérico/configurável -- `option_map`/`all_tokens`
+    definem o vocabulário de cada fluxo; nenhuma ordem fica fixa aqui.
+
+    A entrada precisa ser reconhecida por completo: qualquer token fora de
+    `option_map`/`all_tokens` invalida a resposta inteira (nunca aceita só
+    a parte reconhecida, ex.: "1,9" é inválido mesmo o "1" existindo).
+    Repetição é deduplicada (ex.: "1,1" vira só a loja 1). Misturar "5"
+    (ou sinônimo de "todas") com qualquer outro token ainda resulta em
+    todas as opções (ex.: "5,1"). Retorna `None` quando a resposta é
+    inválida.
+    """
+    tokens = [
+        token.strip().lower() for token in re.split(r"[,\s]+", raw) if token.strip()
+    ]
+    if not tokens:
+        return None
+    if any(token in all_tokens for token in tokens):
+        return tuple(sorted(set(option_map.values())))
+    resolved: list[str] = []
+    for token in tokens:
+        code = option_map.get(token)
+        if code is None:
+            return None
+        if code not in resolved:
+            resolved.append(code)
+    return tuple(resolved)
+
+
+def stage_await_create_mission_sources(
+    *,
+    search_query: str,
+    target_amount: object,
+    target_currency: str | None,
+) -> dict[str, Any]:
+    """TASK-070: guarda os critérios já interpretados (produto e, se
+    houver, preço-alvo) enquanto aguarda a escolha das lojas -- não cria a
+    missão nem encena a confirmação normal ainda."""
+    return {
+        "kind": "await_create_mission_sources",
+        "search_query": search_query,
+        "target_amount": str(target_amount) if target_amount is not None else None,
+        "target_currency": target_currency,
+    }
+
+
+def describe_create_mission_sources_prompt() -> str:
+    return _CREATE_MISSION_SOURCES_PROMPT
+
+
+def describe_create_mission_sources_retry() -> str:
+    return _CREATE_MISSION_SOURCES_RETRY
+
+
+def resolve_create_mission_sources(raw: str) -> tuple[str, ...] | None:
+    """TASK-070: única forma de interpretar a resposta à lista numerada de
+    lojas na criação de missão -- determinística, nunca passa pela IA."""
+    return parse_numbered_store_selection(
+        raw,
+        option_map=_CREATE_MISSION_SOURCE_OPTIONS,
+        all_tokens=_CREATE_MISSION_SOURCE_ALL_TOKENS,
+    )
 
 
 def describe_mission_command(payload: dict[str, Any]) -> str:

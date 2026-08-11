@@ -411,9 +411,13 @@ reais observadas em produção.
 - Despacho de comandos de missão pelo webhook: consulta responde direto;
   criar e comandar missão ficam encenados em `User.pending_intent` e só
   executam após confirmação explícita (TASK-058), com resposta síncrona ao
-  Telegram (`send_message`); toda `CREATE_MISSION` válida sai `active`,
-  usando as quatro fontes-padrão da V1 quando o `Intent` não especifica
-  nenhuma; erro conhecido de domínio responde `204` com explicação, falha
+  Telegram (`send_message`); toda `CREATE_MISSION` válida sai `active`.
+  Desde a TASK-070, quando o `Intent` não especifica nenhuma loja, o
+  webhook não assume mais as quatro fontes-padrão da V1 automaticamente —
+  encena um estado pendente à parte perguntando por lista numerada
+  própria (`1 Pichau/2 Terabyte/3 Amazon/4 Kabum/5 Todas`), resolvida de
+  forma determinística (sem IA), antes de seguir para a confirmação
+  normal; erro conhecido de domínio responde `204` com explicação, falha
   inesperada sobe como `500`, nunca mascarada. Primeira dependência FastAPI
   de sessão de banco por requisição (`get_session`).
 - Confirmação da intenção interpretada antes de executar (TASK-058):
@@ -725,3 +729,29 @@ informada, perguntar as lojas por lista numerada (`1 Pichau`,
 `2 Terabyte`, `3 Amazon`, `4 Kabum`, `5 Todas`). **A `v1.0.2` continua
 aberta** — só o planejamento original de 5 itens está concluído.
 Nenhuma tag `v1.0.2` criada; produção da `v1.0.1` intocada.
+
+**Atualização 2026-08-11:** aprovada e concluída a **TASK-070**
+(`docs/tasks/TASK-070.md`, item 7 da `v1.0.2`). `CREATE_MISSION` sem
+loja nenhuma informada não assume mais as quatro fontes da V1
+automaticamente — encena um novo estado pendente
+(`await_create_mission_sources`, preservando `search_query`/
+`target_amount`/`target_currency`) e pergunta por lista numerada própria
+(`1 Pichau/2 Terabyte/3 Amazon/4 Kabum/5 Todas`, ordem diferente da do
+`/cadastro`, que não foi alterado). A resposta é interpretada de forma
+determinística, sem IA (`parse_numbered_store_selection`,
+`backend/app/telegram/confirmation.py`), validando a entrada por
+completo — qualquer token não reconhecido invalida a resposta inteira
+(nunca aceita parcialmente, ex.: `"1,9"` é inválido mesmo o `"1"`
+existindo); repetição é deduplicada; misturar `"5"` com outro número
+ainda resulta em todas. Só depois de uma seleção válida a missão fica
+encenada como `create_mission`, seguindo para a confirmação sim/não já
+existente (TASK-058) — a missão nunca é criada antes disso, e a resposta
+numérica nunca passa pelo `IntentInterpreter` de novo.
+`_DEFAULT_V1_SOURCE_CODES` (`backend/app/missions/service.py`) foi
+preservado sem alteração, porque `backend/scripts/validate_collection_worker.py`
+e um teste unitário ainda dependem dele — só o fluxo do webhook deixou
+de exercitá-lo. Validado com pipeline oficial completo. Com esta TASK, o
+item 7 da `v1.0.2` está concluído; o item 6 (bloquear `/cadastro` para
+usuário já autenticado) continua registrado e pendente, sem TASK aberta
+— **a `v1.0.2` continua aberta**. Nenhuma tag `v1.0.2` criada; produção
+da `v1.0.1` intocada.

@@ -260,3 +260,25 @@ autenticado/logado; e perguntar as lojas por lista numerada
 missão for criada sem nenhuma informada. **Sem implementação e sem TASK
 aberta** — pedido explícito de só registrar. **A `v1.0.2` continua
 aberta.**
+
+A **TASK-070** (`docs/tasks/TASK-070.md`, item 7) está **concluída**:
+`CREATE_MISSION` sem loja nenhuma informada não assume mais as quatro
+fontes da V1 automaticamente — encena um novo estado pendente
+(`await_create_mission_sources`, preservando `search_query`/
+`target_amount`/`target_currency` já interpretados) e pergunta por lista
+numerada própria (ordem acima, diferente da usada pelo `/cadastro`,
+TASK-067, que não foi alterado). A resposta é interpretada de forma
+determinística, sem IA (`parse_numbered_store_selection`,
+`backend/app/telegram/confirmation.py`), validando a entrada por
+completo — qualquer token não reconhecido invalida a resposta inteira
+(nunca aceita parcialmente), repetição é deduplicada, misturar "5" com
+outro número ainda vira "todas". Só depois de uma seleção válida a
+missão fica encenada e segue para a confirmação sim/não já existente
+(TASK-058); a resposta numérica nunca passa pelo `IntentInterpreter` de
+novo nem cria uma segunda missão.
+`_DEFAULT_V1_SOURCE_CODES` (`backend/app/missions/service.py`)
+permaneceu sem alteração — `backend/scripts/validate_collection_worker.py`
+e um teste unitário ainda dependem dele; só o webhook deixou de
+exercitá-lo. Validado com pipeline oficial completo; nenhuma tag
+`v1.0.2` criada; produção da `v1.0.1` intocada. **O item 6 continua
+registrado e pendente, sem TASK aberta — a `v1.0.2` continua aberta.**

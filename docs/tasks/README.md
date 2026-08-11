@@ -114,3 +114,19 @@ perguntar as lojas por lista numerada (`1 Pichau`, `2 Terabyte`,
 nenhuma informada. Registrados como itens 6 e 7 em `docs/V1_0_2.md`,
 **sem implementação e sem TASK aberta** — pedido explícito de não
 implementar agora. **A `v1.0.2` continua aberta.**
+
+**Atualização 2026-08-11:** a **TASK-070** (`docs/tasks/TASK-070.md`,
+item 7) está **concluída**: `CREATE_MISSION` sem loja nenhuma informada
+não assume mais as quatro fontes da V1 automaticamente — encena um novo
+estado pendente (`await_create_mission_sources`, preservando os demais
+critérios já interpretados) e pergunta por lista numerada própria
+(`1 Pichau/2 Terabyte/3 Amazon/4 Kabum/5 Todas`, ordem diferente da do
+`/cadastro`, que não foi alterado). A resposta é interpretada de forma
+determinística, sem IA, validando por completo — qualquer token não
+reconhecido invalida a resposta inteira, repetição é deduplicada,
+misturar "5" com outro número ainda vira "todas". Só depois de uma
+seleção válida a missão segue para a confirmação sim/não já existente; o
+fallback `_DEFAULT_V1_SOURCE_CODES` do service foi preservado sem
+alteração, por depender de outros chamadores. Validado com pipeline
+oficial completo. **O item 6 continua registrado e pendente, sem TASK
+aberta — a `v1.0.2` continua aberta.**

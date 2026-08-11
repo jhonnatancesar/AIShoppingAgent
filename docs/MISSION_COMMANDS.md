@@ -16,13 +16,26 @@ usuário — ver "Confirmação antes de executar" abaixo. `edit_mission`
 ## Despacho por `IntentKind`
 
 - **`create_mission`**: fontes efetivas são as informadas em
-  `IntentParameters.sources` quando presentes; quando o `Intent` não traz
-  nenhuma, usa automaticamente as quatro fontes da V1 (Pichau, Terabyte,
-  Amazon, Kabum). Uma `CREATE_MISSION` válida sempre fica encenada com pelo
-  menos uma fonte; ao ser confirmada, `create_mission_from_criteria`
-  (`backend/app/missions/service.py`) cria `Mission` + `MissionCriteria` e
-  ativa imediatamente — não existe caminho para ficar em `draft` por falta
-  de fonte.
+  `IntentParameters.sources` quando presentes. Quando o `Intent` não traz
+  nenhuma (TASK-070), o webhook **não** assume mais as quatro fontes da
+  V1 automaticamente — encena um estado pendente à parte
+  (`await_create_mission_sources`, preservando `search_query`/
+  `target_amount`/`target_currency` já interpretados) e pergunta por
+  lista numerada (`1 Pichau, 2 Terabyte, 3 Amazon, 4 Kabum, 5 Todas`,
+  ordem própria deste fluxo — diferente da usada pelo `/cadastro`,
+  TASK-067). A resposta é interpretada de forma determinística, sem IA
+  (`parse_numbered_store_selection`, `backend/app/telegram/confirmation.py`):
+  qualquer token não reconhecido invalida a resposta inteira (nunca
+  aceita parcialmente); só depois de uma seleção válida a missão fica
+  encenada como `create_mission`, seguindo para a confirmação normal
+  descrita abaixo. `create_mission_from_criteria`
+  (`backend/app/missions/service.py`) ainda mantém um fallback interno
+  para as quatro fontes quando chamado com `source_codes` vazio — usado
+  por outros chamadores (`backend/scripts/validate_collection_worker.py`)
+  — mas o webhook nunca mais o exercita, já que sempre resolve as fontes
+  antes de chegar lá. Uma `CREATE_MISSION` confirmada sempre ativa
+  imediatamente — não existe caminho para ficar em `draft` por falta de
+  fonte.
 - **`query_mission`**: somente leitura, continua respondendo direto, sem
   confirmação. Com `mission_reference`, usa `find_missions_by_reference`
   (busca case-insensitive por substring em `MissionCriteria.search_query`);

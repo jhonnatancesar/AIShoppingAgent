@@ -11,10 +11,15 @@ from app.missions.models import MissionCommand
 from app.telegram.confirmation import (
     ConfirmationError,
     describe_create_mission,
+    describe_create_mission_sources_prompt,
+    describe_create_mission_sources_retry,
     describe_edit_mission,
     describe_mission_command,
     describe_pause_for_edit,
+    parse_numbered_store_selection,
     resolve_answer,
+    resolve_create_mission_sources,
+    stage_await_create_mission_sources,
     stage_create_mission,
     stage_edit_mission,
     stage_mission_command,
@@ -160,6 +165,117 @@ def test_stage_and_describe_create_mission_without_target_or_sources() -> None:
     assert "ssd nvme" in description
     assert "todas as lojas disponíveis" in description
     assert "V1" not in description
+
+
+_STORE_OPTIONS = {"1": "pichau", "2": "terabyte", "3": "amazon", "4": "kabum"}
+_STORE_ALL_TOKENS = frozenset({"5", "todo", "todos", "toda", "todas"})
+
+
+def test_parse_numbered_store_selection_single_option() -> None:
+    assert parse_numbered_store_selection(
+        "1", option_map=_STORE_OPTIONS, all_tokens=_STORE_ALL_TOKENS
+    ) == ("pichau",)
+
+
+def test_parse_numbered_store_selection_multiple_options() -> None:
+    assert parse_numbered_store_selection(
+        "1,3", option_map=_STORE_OPTIONS, all_tokens=_STORE_ALL_TOKENS
+    ) == ("pichau", "amazon")
+    assert parse_numbered_store_selection(
+        "1,2,4", option_map=_STORE_OPTIONS, all_tokens=_STORE_ALL_TOKENS
+    ) == ("pichau", "terabyte", "kabum")
+
+
+def test_parse_numbered_store_selection_all_token() -> None:
+    assert parse_numbered_store_selection(
+        "5", option_map=_STORE_OPTIONS, all_tokens=_STORE_ALL_TOKENS
+    ) == ("amazon", "kabum", "pichau", "terabyte")
+
+
+def test_parse_numbered_store_selection_all_mixed_with_another_number() -> None:
+    # TASK-070: misturar "5" com qualquer outro número ainda vira "todas".
+    assert parse_numbered_store_selection(
+        "5,1", option_map=_STORE_OPTIONS, all_tokens=_STORE_ALL_TOKENS
+    ) == ("amazon", "kabum", "pichau", "terabyte")
+
+
+def test_parse_numbered_store_selection_rejects_unknown_option() -> None:
+    assert (
+        parse_numbered_store_selection(
+            "9", option_map=_STORE_OPTIONS, all_tokens=_STORE_ALL_TOKENS
+        )
+        is None
+    )
+
+
+def test_parse_numbered_store_selection_rejects_valid_mixed_with_invalid() -> None:
+    # TASK-070: nunca aceita parcialmente -- "1,9" é inválido mesmo o "1" existindo.
+    assert (
+        parse_numbered_store_selection(
+            "1,9", option_map=_STORE_OPTIONS, all_tokens=_STORE_ALL_TOKENS
+        )
+        is None
+    )
+
+
+def test_parse_numbered_store_selection_rejects_unrecognizable_text() -> None:
+    assert (
+        parse_numbered_store_selection(
+            "não sei", option_map=_STORE_OPTIONS, all_tokens=_STORE_ALL_TOKENS
+        )
+        is None
+    )
+
+
+def test_parse_numbered_store_selection_deduplicates_repeated_option() -> None:
+    assert parse_numbered_store_selection(
+        "1,1", option_map=_STORE_OPTIONS, all_tokens=_STORE_ALL_TOKENS
+    ) == ("pichau",)
+
+
+def test_resolve_create_mission_sources_uses_the_task_070_order() -> None:
+    # 1 Pichau/2 Terabyte/3 Amazon/4 Kabum -- ordem própria deste fluxo,
+    # diferente da usada pelo /cadastro.
+    assert resolve_create_mission_sources("1,4") == ("pichau", "kabum")
+    assert resolve_create_mission_sources("9") is None
+
+
+def test_stage_await_create_mission_sources_preserves_other_criteria() -> None:
+    payload = stage_await_create_mission_sources(
+        search_query="notebook gamer",
+        target_amount=Decimal("5000.00"),
+        target_currency="BRL",
+    )
+
+    assert payload == {
+        "kind": "await_create_mission_sources",
+        "search_query": "notebook gamer",
+        "target_amount": "5000.00",
+        "target_currency": "BRL",
+    }
+
+
+def test_stage_await_create_mission_sources_without_target() -> None:
+    payload = stage_await_create_mission_sources(
+        search_query="ssd nvme", target_amount=None, target_currency=None
+    )
+
+    assert payload["target_amount"] is None
+    assert payload["target_currency"] is None
+
+
+def test_describe_create_mission_sources_prompt_lists_task_070_order() -> None:
+    prompt = describe_create_mission_sources_prompt()
+
+    assert "1 - Pichau" in prompt
+    assert "2 - Terabyte" in prompt
+    assert "3 - Amazon" in prompt
+    assert "4 - Kabum" in prompt
+    assert "5 - Todas" in prompt
+
+
+def test_describe_create_mission_sources_retry_asks_again() -> None:
+    assert "Não reconheci" in describe_create_mission_sources_retry()
 
 
 def test_stage_and_describe_mission_command() -> None:

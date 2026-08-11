@@ -77,10 +77,14 @@ from app.telegram.bot_api import TelegramDeliveryError, send_message
 from app.telegram.confirmation import (
     ConfirmationError,
     describe_create_mission,
+    describe_create_mission_sources_prompt,
+    describe_create_mission_sources_retry,
     describe_edit_mission,
     describe_mission_command,
     describe_pause_for_edit,
     resolve_answer,
+    resolve_create_mission_sources,
+    stage_await_create_mission_sources,
     stage_create_mission,
     stage_edit_mission,
     stage_mission_command,
@@ -161,6 +165,9 @@ _KNOWN_DISPATCH_ERRORS = (
 
 _PENDING_INTENT_PERMISSIONS: dict[str, Permission] = {
     "create_mission": Permission.MISSION_CREATE,
+    # TASK-070: mesma permissão de criar -- ainda não existe missão, só
+    # falta escolher as lojas antes de seguir para a confirmação normal.
+    "await_create_mission_sources": Permission.MISSION_CREATE,
     "edit_mission": Permission.MISSION_EDIT,
     # TASK-069: "pause_for_edit" executa um PAUSE de verdade -- mesma
     # permissão de qualquer outro comando de ciclo de vida.
@@ -482,10 +489,12 @@ async def _resolve_pending_intent(
     session: Session,
     user: User,
 ) -> str:
-    permission = _PENDING_INTENT_PERMISSIONS.get(
-        user.pending_intent.get("kind"), Permission.MISSION_TRANSITION
-    )
+    kind = user.pending_intent.get("kind")
+    permission = _PENDING_INTENT_PERMISSIONS.get(kind, Permission.MISSION_TRANSITION)
     authorize(session, user, permission)
+    if kind == "await_create_mission_sources":
+        return _apply_create_mission_sources_answer(message.text, user=user)
+
     profile = ai_profile_for_user(session, user)
     try:
         confirmed = await resolve_answer(
@@ -517,14 +526,35 @@ async def _resolve_pending_intent(
     return reply
 
 
+def _apply_create_mission_sources_answer(text: str, *, user: User) -> str:
+    """TASK-070: interpreta a resposta à lista numerada de lojas de forma
+    determinística (sem IA); resposta inválida mantém o mesmo estado
+    pendente e pede de novo -- nunca cria a missão nem volta a passar pelo
+    `IntentInterpreter`."""
+    payload = user.pending_intent
+    sources = resolve_create_mission_sources(text)
+    if sources is None:
+        return describe_create_mission_sources_retry()
+    create_payload = stage_create_mission(
+        search_query=payload["search_query"],
+        target_amount=payload["target_amount"],
+        target_currency=payload["target_currency"],
+        sources=sources,
+    )
+    user.pending_intent = create_payload
+    return describe_create_mission(create_payload)
+
+
 def _dispatch_intent(intent: Intent, *, session: Session, user: User) -> str:
     """Interpreta o `Intent` e decide a resposta.
 
     `create_mission`, `mission_command` e `edit_mission` (TASK-069) mudam
     estado — em vez de executar direto, ficam "encenados" em
     `user.pending_intent` e só são executados após confirmação explícita
-    do usuário (TASK-058). `query_mission` é somente leitura e continua
-    respondendo direto.
+    do usuário (TASK-058). Uma `create_mission` sem loja nenhuma passa
+    primeiro por um estado pendente à parte perguntando as lojas
+    (TASK-070) antes de chegar a esse ponto de confirmação.
+    `query_mission` é somente leitura e continua respondendo direto.
     """
     if intent.kind is IntentKind.CREATE_MISSION:
         authorize(session, user, Permission.MISSION_CREATE)
@@ -542,11 +572,23 @@ def _dispatch_intent(intent: Intent, *, session: Session, user: User) -> str:
 
 
 def _stage_create_mission(intent: Intent, *, user: User) -> str:
+    """TASK-070: sem loja nenhuma informada, não assume mais as 4 fontes
+    da V1 -- encena um estado pendente específico para perguntar por lista
+    numerada, preservando os demais critérios já interpretados, e só
+    segue para a confirmação normal depois de uma escolha válida."""
     search_query = intent.parameters.search_query
     if not search_query:
         raise MissionIntentError(
             "Não entendi o que você quer buscar. Pode detalhar o produto?"
         )
+    if not intent.parameters.sources:
+        payload = stage_await_create_mission_sources(
+            search_query=search_query,
+            target_amount=intent.parameters.target_amount,
+            target_currency=intent.parameters.target_currency,
+        )
+        user.pending_intent = payload
+        return describe_create_mission_sources_prompt()
     payload = stage_create_mission(
         search_query=search_query,
         target_amount=intent.parameters.target_amount,
