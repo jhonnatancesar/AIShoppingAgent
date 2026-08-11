@@ -129,6 +129,13 @@ def test_parameters_reject_blank_optional_text_fields() -> None:
         IntentParameters(search_query="   ")
     with pytest.raises(IntentError, match="mission_reference"):
         IntentParameters(mission_reference="")
+    with pytest.raises(IntentError, match="model"):
+        IntentParameters(model="")
+
+
+def test_parameters_model_defaults_to_none_and_accepts_variant_text() -> None:
+    assert IntentParameters().model is None
+    assert IntentParameters(model="RTX 4070 Ti").model == "RTX 4070 Ti"
 
 
 def test_parameters_reject_non_bool_clear_target() -> None:

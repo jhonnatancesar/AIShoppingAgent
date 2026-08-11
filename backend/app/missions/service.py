@@ -160,6 +160,7 @@ def create_mission_from_criteria(
     *,
     user_id: UUID,
     search_query: str,
+    model: str | None = None,
     target_amount: Decimal | None,
     target_currency: str | None,
     source_codes: Sequence[str],
@@ -193,6 +194,7 @@ def create_mission_from_criteria(
         MissionCriteria(
             mission_id=mission.id,
             search_query=search_query,
+            model=model,
             target_amount=target_amount,
             target_currency=target_currency,
             created_at=requested_at,

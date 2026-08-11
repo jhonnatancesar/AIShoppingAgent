@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 from uuid import uuid4
 
 import pytest
-from app.missions.models import Mission, MissionSchedule, MissionStatus
+from app.missions.models import Mission, MissionCriteria, MissionSchedule, MissionStatus
 from app.missions.service import MissionCreationError, create_mission_from_criteria
 
 NOW = datetime(2026, 8, 7, 12, 0, tzinfo=UTC)
@@ -70,6 +70,55 @@ def test_create_mission_with_explicit_sources_activates_with_exactly_those() -> 
     assert schedule.mission_id == mission.id
     assert schedule.next_run_at == NOW
     assert schedule.interval_minutes == 60
+
+
+def test_create_mission_persists_structured_model_on_criteria() -> None:
+    """TASK-075: model estruturado (quando informado) chega em
+    MissionCriteria.model, ao lado de search_query."""
+    stores = [_FakeStore("pichau"), _FakeStore("kabum")]
+    session = _session(stores)
+
+    mission, _ = create_mission_from_criteria(
+        session,
+        user_id=uuid4(),
+        search_query="Processador AMD Ryzen 9 9950X3D",
+        model="9950X3D",
+        target_amount=None,
+        target_currency=None,
+        source_codes=("pichau", "kabum"),
+        requested_at=NOW,
+    )
+
+    criteria = next(
+        call.args[0]
+        for call in session.add.call_args_list
+        if isinstance(call.args[0], MissionCriteria)
+    )
+    assert criteria.mission_id == mission.id
+    assert criteria.model == "9950X3D"
+
+
+def test_create_mission_without_model_leaves_criteria_model_none() -> None:
+    stores = [_FakeStore("pichau"), _FakeStore("kabum")]
+    session = _session(stores)
+
+    mission, _ = create_mission_from_criteria(
+        session,
+        user_id=uuid4(),
+        search_query="notebook gamer",
+        target_amount=None,
+        target_currency=None,
+        source_codes=("pichau", "kabum"),
+        requested_at=NOW,
+    )
+
+    criteria = next(
+        call.args[0]
+        for call in session.add.call_args_list
+        if isinstance(call.args[0], MissionCriteria)
+    )
+    assert criteria.mission_id == mission.id
+    assert criteria.model is None
 
 
 def test_create_mission_applies_schedule_stagger_when_configured() -> None:

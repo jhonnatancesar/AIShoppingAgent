@@ -31,6 +31,7 @@ _ALLOWED_RESPONSE_KEYS = frozenset({"kind", "command", "parameters"})
 _ALLOWED_PARAMETER_KEYS = frozenset(
     {
         "search_query",
+        "model",
         "target_amount",
         "target_currency",
         "sources",
@@ -50,6 +51,7 @@ _SYSTEM_PROMPT = (
     '"command": "activate" | "pause" | "resume" | "complete" | "cancel" | "expire" | null, '
     '"parameters": {'
     '"search_query": string ou null, '
+    '"model": string ou null, '
     '"target_amount": string decimal (ex.: "1500.00") ou null, '
     '"target_currency": string ISO 4217 de 3 letras maiúsculas (ex.: "BRL") ou null, '
     '"sources": lista com zero ou mais valores entre "pichau", "terabyte", "amazon", "kabum", '
@@ -81,58 +83,80 @@ _SYSTEM_PROMPT = (
     '"unknown" apenas quando o sentido da mensagem, e não apenas sua forma, '
     "for realmente ambíguo ou fora do domínio de compras.\n\n"
     'Ao preencher "search_query", corrija erro de digitação óbvio e '
-    "complete nome de marca/modelo reconhecível para a forma usual "
-    '(ex.: "logitek" -> "logitech", "9950x3d" -> "ryzen 9 9950x3d"). Essa '
-    "correção é só do nome do produto/marca já citado — nunca adicione "
-    "especificação, cor, variante, quantidade ou característica que a "
-    "pessoa não mencionou; isso continua proibido pela regra de nunca "
-    "inventar.\n\n"
+    "complete nome de marca/modelo reconhecível para a forma usual. "
+    "Quando o produto tiver um modelo específico e você conseguir "
+    "identificar com segurança o tipo do produto (o que ele é, ex.: "
+    "processador, placa de vídeo, mouse), monte uma descrição canônica "
+    "completa, na ordem Tipo Marca Linha/Família Modelo, do jeito que o "
+    "produto aparece de verdade nas lojas -- comece pelo TIPO (ex.: "
+    '"9950x3d" -> "Processador AMD Ryzen 9 9950X3D", nunca "AMD '
+    'Processador Ryzen 9 9950X3D"). Erro de digitação de marca também é '
+    'corrigido mesmo sem modelo específico (ex.: "logitek" -> '
+    '"logitech"). Essa correção é só do nome do produto/marca/tipo já '
+    "identificável — nunca adicione especificação, cor, variante, "
+    "quantidade ou característica que a pessoa não mencionou; isso "
+    "continua proibido pela regra de nunca inventar.\n\n"
+    'Preencha "model" com o modelo/variante completo do produto quando '
+    "houver um identificável com segurança, preservando exatamente "
+    'qualquer sufixo de variante que mudar o produto (ex.: "Ti", '
+    '"SUPER", "XT", "XTX", "GRE") -- nunca reduza "RTX 4070 Ti" para '
+    '"4070", nunca invente ou complete uma variante que a pessoa não '
+    'mencionou. Sem modelo específico identificável (ex.: "notebook '
+    'gamer", "mouse sem fio"), use null -- não force um modelo.\n\n'
     "Exemplos de mensagens reais e a resposta esperada, apenas para ilustrar "
     "o padrão — generalize o critério, nunca copie um exemplo literalmente:\n\n"
     'Mensagem: "eu qria uma rtx 4060 ate uns 2500 pila na kabum, bora"\n'
     'Resposta: {"kind": "create_mission", "command": null, "parameters": '
-    '{"search_query": "rtx 4060", "target_amount": "2500.00", '
+    '{"search_query": "Placa de Vídeo NVIDIA RTX 4060", "model": "RTX 4060", '
+    '"target_amount": "2500.00", '
     '"target_currency": "BRL", "sources": ["kabum"], "mission_reference": null, '
     '"clear_target": false}}\n\n'
     'Mensagem: "ate 3000 reais me acha um notebook gamer, comeca a procurar ai"\n'
     'Resposta: {"kind": "create_mission", "command": null, "parameters": '
-    '{"search_query": "notebook gamer", "target_amount": "3000.00", '
+    '{"search_query": "notebook gamer", "model": null, "target_amount": "3000.00", '
     '"target_currency": "BRL", "sources": [], "mission_reference": null, '
     '"clear_target": false}}\n\n'
     'Mensagem: "quero um 9950x3d ate 3500"\n'
     'Resposta: {"kind": "create_mission", "command": null, "parameters": '
-    '{"search_query": "ryzen 9 9950x3d", "target_amount": "3500.00", '
+    '{"search_query": "Processador AMD Ryzen 9 9950X3D", "model": "9950X3D", '
+    '"target_amount": "3500.00", '
     '"target_currency": "BRL", "sources": [], "mission_reference": null, '
+    '"clear_target": false}}\n\n'
+    'Mensagem: "quero uma 4070 ti"\n'
+    'Resposta: {"kind": "create_mission", "command": null, "parameters": '
+    '{"search_query": "Placa de Vídeo NVIDIA RTX 4070 Ti", "model": "RTX 4070 Ti", '
+    '"target_amount": null, '
+    '"target_currency": null, "sources": [], "mission_reference": null, '
     '"clear_target": false}}\n\n'
     'Mensagem: "procura um mouse logitek barato"\n'
     'Resposta: {"kind": "create_mission", "command": null, "parameters": '
-    '{"search_query": "mouse logitech", "target_amount": null, '
+    '{"search_query": "mouse logitech", "model": null, "target_amount": null, '
     '"target_currency": null, "sources": [], "mission_reference": null, '
     '"clear_target": false}}\n\n'
     'Mensagem: "e ai cade minha missao do notebook, achou algo?"\n'
     'Resposta: {"kind": "query_mission", "command": null, "parameters": '
-    '{"search_query": null, "target_amount": null, "target_currency": null, '
+    '{"search_query": null, "model": null, "target_amount": null, "target_currency": null, '
     '"sources": [], "mission_reference": "notebook", "clear_target": false}}\n\n'
     'Mensagem: "pausa ai a missao do teclado mecanico pfvr"\n'
     'Resposta: {"kind": "mission_command", "command": "pause", "parameters": '
-    '{"search_query": null, "target_amount": null, "target_currency": null, '
+    '{"search_query": null, "model": null, "target_amount": null, "target_currency": null, '
     '"sources": [], "mission_reference": "teclado mecanico", "clear_target": false}}\n\n'
     'Mensagem: "cancela essa busca do monitor curvo, nao quero mais nao"\n'
     'Resposta: {"kind": "mission_command", "command": "cancel", "parameters": '
-    '{"search_query": null, "target_amount": null, "target_currency": null, '
+    '{"search_query": null, "model": null, "target_amount": null, "target_currency": null, '
     '"sources": [], "mission_reference": "monitor curvo", "clear_target": false}}\n\n'
     'Mensagem: "troca a missao do teclado pra kabum e pichau, deixa o alvo em 300"\n'
     'Resposta: {"kind": "edit_mission", "command": null, "parameters": '
-    '{"search_query": null, "target_amount": "300.00", "target_currency": "BRL", '
+    '{"search_query": null, "model": null, "target_amount": "300.00", "target_currency": "BRL", '
     '"sources": ["kabum", "pichau"], "mission_reference": "teclado", '
     '"clear_target": false}}\n\n'
     'Mensagem: "tira o preco alvo da missao do monitor, so quero acompanhar os precos"\n'
     'Resposta: {"kind": "edit_mission", "command": null, "parameters": '
-    '{"search_query": null, "target_amount": null, "target_currency": null, '
+    '{"search_query": null, "model": null, "target_amount": null, "target_currency": null, '
     '"sources": [], "mission_reference": "monitor", "clear_target": true}}\n\n'
     'Mensagem: "bom dia, tudo certo?"\n'
     'Resposta: {"kind": "unknown", "command": null, "parameters": '
-    '{"search_query": null, "target_amount": null, "target_currency": null, '
+    '{"search_query": null, "model": null, "target_amount": null, "target_currency": null, '
     '"sources": [], "mission_reference": null, "clear_target": false}}'
 )
 
@@ -248,6 +272,7 @@ def _parse_parameters(raw: Any) -> IntentParameters:
         raise IntentError("unexpected parameters shape")
 
     search_query = _optional_str(raw.get("search_query"))
+    model = _optional_str(raw.get("model"))
     mission_reference = _optional_str(raw.get("mission_reference"))
     target_currency = _optional_str(raw.get("target_currency"))
 
@@ -275,6 +300,7 @@ def _parse_parameters(raw: Any) -> IntentParameters:
 
     return IntentParameters(
         search_query=search_query,
+        model=model,
         target_amount=target_amount,
         target_currency=target_currency,
         sources=tuple(sources_raw),

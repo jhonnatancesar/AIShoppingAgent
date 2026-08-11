@@ -475,6 +475,7 @@ async def test_create_mission_intent_stages_confirmation_without_creating(
     assert fake_user.pending_intent == {
         "kind": "create_mission",
         "search_query": "notebook gamer",
+        "model": None,
         "target_amount": "5000.00",
         "target_currency": "BRL",
         "sources": ["pichau", "kabum"],
@@ -622,6 +623,7 @@ async def test_create_mission_without_sources_stages_source_selection_and_preser
     assert fake_user.pending_intent == {
         "kind": "await_create_mission_sources",
         "search_query": "notebook gamer",
+        "model": None,
         "target_amount": "5000.00",
         "target_currency": "BRL",
     }
@@ -670,6 +672,7 @@ async def test_valid_source_selection_answer_advances_to_normal_confirmation(
     assert fake_user.pending_intent == {
         "kind": "create_mission",
         "search_query": "notebook gamer",
+        "model": None,
         "target_amount": "5000.00",
         "target_currency": "BRL",
         "sources": ["pichau", "kabum"],

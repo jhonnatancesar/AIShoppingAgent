@@ -82,9 +82,18 @@ class AmazonProvider(PlaywrightStoreProvider):
 class KabumProvider(PlaywrightStoreProvider):
     source_code, result_selector = "kabum", 'main a[href*="/produto/"]'
 
+    # TASK-075: facet_filters={"kabum_product":["true"]} em base64 --
+    # restringe a busca a produtos vendidos e entregues pela própria Kabum,
+    # excluindo revenda de terceiro e bundles irrelevantes. Confirmado ao
+    # vivo que funciona na busca livre (/busca/{termo}), não só em
+    # navegação por categoria.
+    _KABUM_PRODUCT_FACET_FILTER = "eyJrYWJ1bV9wcm9kdWN0IjpbInRydWUiXX0="
+
     def build_url(self, query: str) -> str:
+        slug = quote(query.strip().replace(" ", "-"))
         return (
-            f"https://www.kabum.com.br/busca/{quote(query.strip().replace(' ', '-'))}"
+            f"https://www.kabum.com.br/busca/{slug}"
+            f"?facet_filters={self._KABUM_PRODUCT_FACET_FILTER}"
         )
 
     async def extract(

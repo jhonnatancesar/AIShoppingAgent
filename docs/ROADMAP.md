@@ -165,7 +165,14 @@ item único TASK-074 — `search_query` do `IntentInterpreter` passa a
 corrigir digitação óbvia e completar marca/modelo reconhecível, sem
 inventar especificação nova, ver `docs/tasks/TASK-074.md` —
 encontrada durante a mesma validação real; concluída e validada com
-pipeline oficial e chamadas reais ao perfil `ADMIN`) → V1.2
+pipeline oficial e chamadas reais ao perfil `ADMIN`) → `v1.0.5`
+(release corretiva, item único TASK-075 — canonicalização completa +
+campo estruturado `model` no `IntentInterpreter`, filtros
+determinísticos de modelo/bundle e regra exclusiva de menor preço da
+Amazon antes de persistir/chamar IA, ver `docs/tasks/TASK-075.md` —
+encontrada durante a mesma validação real, estouro de cota de IA por
+volume de candidatos irrelevantes; concluída e validada com pipeline
+oficial, migration real e chamadas reais ao perfil `ADMIN`) → V1.2
 (evolução funcional, documento `docs/V1_2.md`, 12 itens,
 incluindo Magalu como quinta loja, redução de `PriceObservation`
 redundante, e comparação de menor preço histórico externo/interno estilo

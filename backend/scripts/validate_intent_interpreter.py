@@ -49,6 +49,11 @@ _DIVERSE_MESSAGES: tuple[str, ...] = (
     # especificação nova.
     "quero um 9950x3d ate 3500",
     "procura um mouse logitek barato",
+    # create_mission: canonicalização completa + model estruturado
+    # (TASK-075) -- search_query começa pelo tipo, model preserva a
+    # variante exata (nunca reduzida).
+    "quero uma 4070 ti",
+    "procura um 9800x3d",
     # query_mission: formas variadas de perguntar, sem referência explícita.
     "e ai como ta indo a busca do meu ssd?",
     "mostra o status da missao do teclado",
@@ -120,6 +125,7 @@ async def validate(
     print(f"kind: {intent.kind.value}")
     print(f"command: {intent.command.value if intent.command else None}")
     print(f"search_query: {intent.parameters.search_query}")
+    print(f"model: {intent.parameters.model}")
     print(
         f"target: {intent.parameters.target_amount} {intent.parameters.target_currency}"
     )

@@ -121,6 +121,7 @@ def _parse_classification(content: str) -> str | None:
 def stage_create_mission(
     *,
     search_query: str,
+    model: str | None = None,
     target_amount: object,
     target_currency: str | None,
     sources: tuple[str, ...],
@@ -128,6 +129,7 @@ def stage_create_mission(
     return {
         "kind": "create_mission",
         "search_query": search_query,
+        "model": model,
         "target_amount": str(target_amount) if target_amount is not None else None,
         "target_currency": target_currency,
         "sources": list(sources),
@@ -231,6 +233,7 @@ def parse_numbered_store_selection(
 def stage_await_create_mission_sources(
     *,
     search_query: str,
+    model: str | None = None,
     target_amount: object,
     target_currency: str | None,
 ) -> dict[str, Any]:
@@ -240,6 +243,7 @@ def stage_await_create_mission_sources(
     return {
         "kind": "await_create_mission_sources",
         "search_query": search_query,
+        "model": model,
         "target_amount": str(target_amount) if target_amount is not None else None,
         "target_currency": target_currency,
     }

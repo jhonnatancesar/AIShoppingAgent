@@ -1,5 +1,49 @@
 # Changelog
 
+## 2026-08-11 (6) — TASK-075 concluída: canonicalização + filtros determinísticos reduzem lixo de coleta e chamadas de IA
+
+- **TASK-075** (`docs/tasks/TASK-075.md`) concluída — encontrada durante
+  a mesma validação real que motivou a TASK-074: uma busca ampla como
+  "ryzen 9 9950x3d" gerava dezenas de candidatos irrelevantes (variantes
+  de modelo, PCs completos, dezenas de vendedores na Amazon), estourando
+  a cota de IA (Gemini + Groq ao mesmo tempo) na classificação de
+  relevância.
+- `IntentInterpreter` (mesma chamada de `interpret_purchase_intent`,
+  sem chamada extra) passa a devolver `search_query` totalmente
+  canônico (Tipo Marca Linha/Família Modelo, ex.: "Processador AMD
+  Ryzen 9 9950X3D") e um novo campo estruturado `model` (ex.:
+  "9950X3D", "RTX 4070 Ti") — preservando variantes exatas, nunca
+  reduzidas. Novo campo `mission_criteria.model` (migration
+  `20260811_0001`, nullable, sem backfill, sem afetar missões
+  existentes).
+- Nova camada determinística em `_persist_success`
+  (`app/collection/orchestration.py`), rodando **uma única vez antes**
+  de qualquer persistência ou chamada de IA: filtro de modelo (tolerante
+  a separador, distingue `RTX 4070`/`RTX 4070 Ti`/`RTX 4070 Ti SUPER`
+  sem falso-positivo em sufixos ambíguos como `OC`) e filtro de
+  bundle/PC completo. Candidato ambíguo sempre segue pro fluxo de
+  relevância existente — a regra só remove incompatibilidade
+  determinística segura.
+- Regra exclusiva da Amazon: entre vendedores confirmados como o mesmo
+  produto (pelos filtros acima, não por ASIN — vendedores diferentes do
+  mesmo produto normalmente vêm em ASINs diferentes, confirmado ao
+  vivo), mantém só a oferta de menor preço; empate resolvido por
+  `external_id` determinístico. Pichau/Terabyte/Kabum não recebem essa
+  regra. **Gate obrigatório**: sem `model` identificado, a Amazon nunca
+  escolhe "a mais barata" — cada candidata segue independente, igual a
+  qualquer outra loja.
+- Kabum ganhou `facet_filters` (produto vendido/entregue pela própria
+  Kabum) em `KabumProvider.build_url`, confirmado ao vivo antes de
+  implementar.
+- `product_type` estruturado avaliado e descartado — o filtro de bundle
+  já resolve o caso de identidade de tipo sem precisar do campo extra.
+- Validado com pipeline oficial completo (910 testes, migration
+  aplicada e validada em PostgreSQL real via integração), testes
+  determinísticos novos para os filtros e chamadas reais contra o
+  perfil `ADMIN` confirmando a canonicalização (`"quero uma 4070 ti"` →
+  `model: "RTX 4070 Ti"`; `"procura um 9800x3d"` → família correta
+  `Ryzen 7`, não `Ryzen 9`).
+
 ## 2026-08-11 (5) — TASK-074 concluída: search_query corrige digitação/completa marca-modelo
 
 - **TASK-074** (`docs/tasks/TASK-074.md`) concluída — encontrada durante a

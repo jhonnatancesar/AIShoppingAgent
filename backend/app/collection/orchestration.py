@@ -2,6 +2,8 @@
 
 import asyncio
 import logging
+import re
+import unicodedata
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -30,7 +32,11 @@ from app.collection.models import (
     MissionOfferRelevance,
     PriceObservation,
 )
-from app.collection.normalization import NormalizedCollectionResult, PriceNormalizer
+from app.collection.normalization import (
+    NormalizedCollectedOffer,
+    NormalizedCollectionResult,
+    PriceNormalizer,
+)
 from app.collection.persistence import finish_collection_run, start_collection_run
 from app.collection.relevance import (
     OfferRelevance,
@@ -90,6 +96,24 @@ _OFFER_IDENTITY_INDEXES = frozenset(
     }
 )
 _SELLER_IDENTITY_INDEX = "uq_sellers_store_external_id"
+
+# TASK-075: sufixos de variante oficiais de fabricante (NVIDIA: Ti/Super;
+# AMD: XT/XTX/GRE) -- sempre indicam SKU/chip realmente diferente, nunca
+# personalização de vendedor. OC/PRO/PLUS/MAX ficam de fora de propósito
+# (uso inconsistente entre categorias, alto risco de falso-positivo).
+_STRONG_VARIANT_SUFFIXES = frozenset({"TI", "SUPER", "XT", "XTX", "GRE"})
+# Palavras-sinal de sistema completo/kit -- ausentes no search_query da
+# missão mas presentes no título do candidato indicam um resultado que não
+# é o componente avulso pedido.
+_BUNDLE_SIGNAL_WORDS = (
+    "computador",
+    "pc gamer",
+    "workstation",
+    "kit",
+    "combo",
+    "notebook",
+)
+_SEPARATOR_PATTERN = re.compile(r"[\s\-_]+")
 
 
 @dataclass(frozen=True, slots=True)
@@ -375,6 +399,108 @@ class CollectionOrchestrator:
             return False
 
 
+def _normalize_for_matching(text: str) -> str:
+    """TASK-075: maiúsculo, sem acento -- base para comparação determinística."""
+    decomposed = unicodedata.normalize("NFKD", text)
+    without_accents = "".join(ch for ch in decomposed if not unicodedata.combining(ch))
+    return without_accents.upper()
+
+
+def _model_search_pattern(model: str) -> re.Pattern[str]:
+    """TASK-075: casa `model` no título tolerando espaço/hífen/underscore
+    entre os pedaços (ex.: "RTX 4070 Ti" == "RTX-4070-Ti" == "RTX4070Ti"),
+    exigindo limite alfanumérico nas duas pontas do trecho inteiro --
+    resolve "9950X3D" x "9950X3D2"/"A9950X3D" ao mesmo tempo que tolera
+    estilo de separador diferente."""
+    normalized = _normalize_for_matching(model)
+    chunks = [
+        re.escape(chunk) for chunk in _SEPARATOR_PATTERN.split(normalized) if chunk
+    ]
+    core = r"[\s\-_]*".join(chunks)
+    return re.compile(rf"(?<![A-Z0-9]){core}(?![A-Z0-9])")
+
+
+def _title_matches_model(model: str, title: str) -> bool:
+    """TASK-075: False só quando o título comprovadamente não é o modelo
+    pedido -- modelo ausente/colado a outro caractere (checagem via
+    `_model_search_pattern`), ou seguido de um sufixo de variante forte
+    (`_STRONG_VARIANT_SUFFIXES`) que a missão não pediu. Qualquer outra
+    palavra depois do modelo (ex.: "OC", "Gaming", capacidade) não rejeita
+    -- conservador por design."""
+    normalized_title = _normalize_for_matching(title)
+    match = _model_search_pattern(model).search(normalized_title)
+    if match is None:
+        return False
+    remainder = normalized_title[match.end() :].lstrip(" \t-_")
+    next_word_match = re.match(r"[A-Z0-9]+", remainder)
+    if next_word_match is None:
+        return True
+    next_word = next_word_match.group(0)
+    if next_word not in _STRONG_VARIANT_SUFFIXES:
+        return True
+    model_tokens = set(_SEPARATOR_PATTERN.split(_normalize_for_matching(model)))
+    return next_word in model_tokens
+
+
+def _title_looks_like_bundle(search_query: str, title: str) -> bool:
+    """TASK-075: True quando o título tem palavra-sinal de sistema
+    completo/kit que o `search_query` da missão não tem -- a missão pede o
+    componente avulso e o candidato é um pacote maior. Roda sempre,
+    independente de `criteria.model`."""
+    normalized_query = _normalize_for_matching(search_query)
+    normalized_title = _normalize_for_matching(title)
+    for word in _BUNDLE_SIGNAL_WORDS:
+        signal = _normalize_for_matching(word)
+        if signal in normalized_title and signal not in normalized_query:
+            return True
+    return False
+
+
+def _filter_deterministic_candidates(
+    criteria: MissionCriteria,
+    offers: tuple[NormalizedCollectedOffer, ...],
+) -> tuple[NormalizedCollectedOffer, ...]:
+    """TASK-075: passo único, roda antes de qualquer persistência ou
+    chamada de IA (uma vez por execução -- nunca reavaliado depois).
+    Rejeita só incompatibilidade determinística segura: modelo
+    comprovadamente diferente (só quando `criteria.model` existe) ou sinal
+    de bundle/PC completo. Candidato ambíguo sempre sobrevive, seguindo
+    pro fluxo de relevância existente."""
+    survivors = []
+    for item in offers:
+        title = item.raw_offer.title
+        if criteria.model is not None and not _title_matches_model(
+            criteria.model, title
+        ):
+            continue
+        if _title_looks_like_bundle(criteria.search_query, title):
+            continue
+        survivors.append(item)
+    return tuple(survivors)
+
+
+def _select_amazon_lowest_price(
+    offers: tuple[NormalizedCollectedOffer, ...],
+) -> tuple[NormalizedCollectedOffer, ...]:
+    """TASK-075: exclusivo da Amazon: só é chamada pelo chamador quando
+    `criteria.model` já confirmou identidade forte (gate obrigatório --
+    ver `_persist_success`). Mantém só as ofertas no menor `amount`;
+    entre as empatadas, persiste/classifica só a vencedora do desempate
+    determinístico por `external_id` (ASIN) crescente -- as demais
+    empatadas não geram Offer/PriceObservation/relevância, para não
+    multiplicar chamada de IA por vendedores redundantes no mesmo preço."""
+    if not offers:
+        return offers
+    lowest = min(item.amount for item in offers)
+    tied = [item for item in offers if item.amount == lowest]
+    if len(tied) == 1:
+        return tuple(tied)
+    winner = min(
+        tied, key=lambda item: item.raw_offer.external_id or item.raw_offer.url
+    )
+    return (winner,)
+
+
 async def _persist_success(
     session: Session,
     claim: ClaimedCollection,
@@ -410,9 +536,21 @@ async def _persist_success(
     if mission is None or criteria is None:
         raise RuntimeError("claimed mission data no longer exists")
 
+    # TASK-075: passo único de filtragem determinística, antes de qualquer
+    # persistência ou chamada de IA. A seleção por menor preço da Amazon só
+    # roda quando criteria.model já confirmou identidade forte (gate
+    # obrigatório) -- sem modelo, cada sobrevivente segue independente,
+    # nunca "o mais barato" é escolhido sem identidade confirmada.
+    survivors = _filter_deterministic_candidates(criteria, normalized.offers)
+    final_offers = (
+        _select_amazon_lowest_price(survivors)
+        if claim.source_code == "amazon" and criteria.model is not None
+        else survivors
+    )
+
     observation_count = 0
     seen_offer_keys: set[tuple[str | None, str | None, str]] = set()
-    for item in normalized.offers:
+    for item in final_offers:
         identity_key = (
             item.seller_external_id,
             item.raw_offer.external_id,

@@ -161,6 +161,7 @@ def test_stage_and_describe_create_mission_with_target_and_sources() -> None:
     assert payload == {
         "kind": "create_mission",
         "search_query": "notebook gamer",
+        "model": None,
         "target_amount": "5000.00",
         "target_currency": "BRL",
         "sources": ["pichau", "kabum"],
@@ -270,6 +271,7 @@ def test_stage_await_create_mission_sources_preserves_other_criteria() -> None:
     assert payload == {
         "kind": "await_create_mission_sources",
         "search_query": "notebook gamer",
+        "model": None,
         "target_amount": "5000.00",
         "target_currency": "BRL",
     }

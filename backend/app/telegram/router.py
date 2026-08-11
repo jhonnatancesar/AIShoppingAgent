@@ -609,6 +609,7 @@ def _apply_create_mission_sources_answer(text: str, *, user: User) -> str:
         return describe_create_mission_sources_retry()
     create_payload = stage_create_mission(
         search_query=payload["search_query"],
+        model=payload.get("model"),
         target_amount=payload["target_amount"],
         target_currency=payload["target_currency"],
         sources=sources,
@@ -658,6 +659,7 @@ def _stage_create_mission(intent: Intent, *, user: User) -> str:
     if not intent.parameters.sources:
         payload = stage_await_create_mission_sources(
             search_query=search_query,
+            model=intent.parameters.model,
             target_amount=intent.parameters.target_amount,
             target_currency=intent.parameters.target_currency,
         )
@@ -665,6 +667,7 @@ def _stage_create_mission(intent: Intent, *, user: User) -> str:
         return describe_create_mission_sources_prompt()
     payload = stage_create_mission(
         search_query=search_query,
+        model=intent.parameters.model,
         target_amount=intent.parameters.target_amount,
         target_currency=intent.parameters.target_currency,
         sources=intent.parameters.sources,
@@ -1018,6 +1021,7 @@ def _execute_create_mission(
         session,
         user_id=user.id,
         search_query=payload["search_query"],
+        model=payload.get("model"),
         target_amount=target_amount,
         target_currency=payload["target_currency"],
         source_codes=tuple(payload["sources"]),

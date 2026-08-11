@@ -36,12 +36,21 @@ class IntentKind(StrEnum):
 class IntentParameters:
     """Parâmetros opcionais extraídos da mensagem.
 
-    Todos os campos reaproveitam conceitos já existentes em
-    `MissionCriteria` e `mission_sources`; nenhum campo novo de domínio é
-    introduzido por este contrato.
+    Todos os campos espelham conceitos de `MissionCriteria` e
+    `mission_sources`; nenhum campo aqui existe sem uma coluna
+    correspondente no domínio persistido. `model` (TASK-075) foi
+    introduzido em conjunto com a coluna equivalente em
+    `MissionCriteria.model` -- não é um conceito novo isolado deste
+    contrato.
     """
 
     search_query: str | None = None
+    model: str | None = None
+    """TASK-075: modelo/variante completo do produto (ex.: "9950X3D",
+    "RTX 4070 Ti"), extraído pela mesma chamada que gera search_query.
+    Espelha MissionCriteria.model -- None quando não há modelo específico
+    identificável com segurança; nunca reduzido (preserva sufixos como
+    Ti/SUPER/XT/XTX/GRE)."""
     target_amount: Decimal | None = None
     target_currency: str | None = None
     sources: tuple[str, ...] = ()
@@ -55,6 +64,8 @@ class IntentParameters:
     def __post_init__(self) -> None:
         if self.search_query is not None and not self.search_query.strip():
             raise IntentError("search_query must not be blank when informed")
+        if self.model is not None and not self.model.strip():
+            raise IntentError("model must not be blank when informed")
         if (self.target_amount is None) != (self.target_currency is None):
             raise IntentError("target_amount and target_currency must be paired")
         if self.target_amount is not None and (

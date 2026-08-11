@@ -179,6 +179,10 @@ class MissionCriteria(Base):
             name="ck_mission_criteria_search_query_not_blank",
         ),
         CheckConstraint(
+            "model IS NULL OR btrim(model) <> ''",
+            name="ck_mission_criteria_model_not_blank",
+        ),
+        CheckConstraint(
             "target_amount IS NULL OR target_amount >= 0",
             name="ck_mission_criteria_target_amount_non_negative",
         ),
@@ -205,6 +209,13 @@ class MissionCriteria(Base):
         unique=True,
     )
     search_query: Mapped[str] = mapped_column(Text, nullable=False)
+    model: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    """TASK-075: modelo/variante completo do produto (ex.: "9950X3D",
+    "RTX 4070 Ti"), extraído pela mesma interpretação de IA que gera
+    `search_query`. `None` quando não há modelo específico identificável
+    com segurança -- nesse caso o filtro determinístico de coleta não
+    descarta nada por modelo e a seleção de menor preço da Amazon não
+    roda (identidade forte é pré-requisito)."""
     target_amount: Mapped[Decimal | None] = mapped_column(
         Numeric(19, 4),
         nullable=True,

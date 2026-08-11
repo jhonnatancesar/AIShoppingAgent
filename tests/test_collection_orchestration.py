@@ -29,6 +29,7 @@ from app.collection.orchestration import (
     _ensure_display_name,
     _evaluate_mission_prelist,
     _failure_code,
+    _filter_deterministic_candidates,
     _is_confirmed_external_block,
     _maybe_publish_prelist_errata,
     _maybe_publish_prelist_ready,
@@ -40,6 +41,9 @@ from app.collection.orchestration import (
     _resolve_offer_relevance,
     _resolve_seller,
     _safe_source,
+    _select_amazon_lowest_price,
+    _title_looks_like_bundle,
+    _title_matches_model,
     claim_due_collections,
     ensure_missing_schedules,
     recover_stale_runs,
@@ -77,14 +81,21 @@ class _StubAIManager:
         )
 
 
-def _raw(*, source: str = "pichau", external_id: str = "stable"):
+def _raw(
+    *,
+    source: str = "pichau",
+    external_id: str = "stable",
+    title: str = "Synthetic product",
+    raw_price: str = "R$ 100,00",
+    url: str = "https://example.invalid/offer",
+):
     return RawCollectedOffer(
         source_code=source,
-        url="https://example.invalid/offer",
-        title="Synthetic product",
+        url=url,
+        title=title,
         collected_at=NOW + timedelta(seconds=1),
         external_id=external_id,
-        raw_price="R$ 100,00",
+        raw_price=raw_price,
         raw_currency="BRL",
         raw_shipping="Frete grátis",
         raw_availability="Em estoque",
@@ -280,7 +291,7 @@ def test_persist_success_deduplicates_and_publishes_events(monkeypatch) -> None:
         started_at=NOW,
     )
     mission = SimpleNamespace(id=mission_id)
-    criteria = SimpleNamespace(mission_id=mission_id, search_query="GPU")
+    criteria = SimpleNamespace(mission_id=mission_id, search_query="GPU", model=None)
     source = SimpleNamespace(consecutive_blocks=2, next_eligible_at=NOW)
     relevance_row = SimpleNamespace(classification=OfferRelevance.MATCH)
     product_row = SimpleNamespace(display_name="Título já normalizado")
@@ -473,7 +484,7 @@ def test_persist_success_blocks_alert_when_relevance_is_no_match(
         started_at=NOW,
     )
     mission = SimpleNamespace(id=mission_id)
-    criteria = SimpleNamespace(mission_id=mission_id, search_query="GPU")
+    criteria = SimpleNamespace(mission_id=mission_id, search_query="GPU", model=None)
     source = SimpleNamespace(consecutive_blocks=0, next_eligible_at=None)
     product_row = SimpleNamespace(display_name="Já normalizado")
     session = MagicMock()
@@ -967,3 +978,249 @@ def test_unexpected_integrity_error_propagates(monkeypatch) -> None:
 
     with pytest.raises(IntegrityError):
         asyncio.run(orchestrator._process(claim))
+
+
+# TASK-075: filtro determinístico de modelo -- casamento tolerante a
+# separador, limite alfanumérico e sufixo de variante forte.
+@pytest.mark.parametrize(
+    ("model", "title", "expected"),
+    [
+        ("9950X3D", "Processador AMD Ryzen 9 9950X3D", True),
+        ("9950X3D", "Processador AMD Ryzen 9 9950X3D2", False),
+        ("9950X3D", "Processador AMD A9950X3D Edition", False),
+        ("9950x3d", "processador amd ryzen 9 9950X3D", True),  # case-insensitive
+        ("9950X3D", "Processador AMD Ryzen 9 9900X", False),  # modelo ausente
+        ("RTX 4070", "Placa de Vídeo NVIDIA RTX 4070", True),
+        ("RTX 4070", "Placa de Vídeo NVIDIA RTX 4070 Ti", False),
+        ("RTX 4070", "Placa de Vídeo NVIDIA RTX 4070 SUPER", False),
+        ("RTX 4070 Ti", "Placa de Vídeo NVIDIA RTX 4070 Ti", True),
+        ("RTX 4070 Ti", "Placa de Vídeo NVIDIA RTX 4070 Ti SUPER", False),
+        ("RTX 4070 Ti", "Placa de Vídeo NVIDIA RTX 4070 Ti OC 12GB", True),
+        ("RTX 4070 Ti", "Placa de Vídeo NVIDIA RTX4070Ti Gaming", True),
+        ("RTX 4070 Ti", "Placa de Vídeo NVIDIA RTX-4070-Ti Gaming", True),
+    ],
+)
+def test_title_matches_model(model: str, title: str, expected: bool) -> None:
+    assert _title_matches_model(model, title) is expected
+
+
+def test_title_looks_like_bundle_rejects_full_system_not_asked() -> None:
+    assert (
+        _title_looks_like_bundle(
+            "Processador AMD Ryzen 9 9950X3D",
+            "Computador Gamer Completo Ryzen 9 9950X3D RTX 4090",
+        )
+        is True
+    )
+
+
+def test_title_looks_like_bundle_allows_when_mission_asks_for_bundle() -> None:
+    assert (
+        _title_looks_like_bundle(
+            "Kit Upgrade Ryzen 9 9950X3D",
+            "Kit Upgrade Placa-mãe + Ryzen 9 9950X3D",
+        )
+        is False
+    )
+
+
+def test_title_looks_like_bundle_false_for_plain_component() -> None:
+    assert (
+        _title_looks_like_bundle(
+            "Processador AMD Ryzen 9 9950X3D",
+            "Processador AMD Ryzen 9 9950X3D, 4.4 GHz, AM5",
+        )
+        is False
+    )
+
+
+def _normalized_offers(*raws: RawCollectedOffer):
+    result = CollectionResult(
+        raws[0].source_code, NOW, NOW + timedelta(seconds=2), raws
+    )
+    return PriceNormalizer().normalize_result(result).offers
+
+
+def test_filter_deterministic_candidates_rejects_wrong_model_and_bundle() -> None:
+    criteria = SimpleNamespace(
+        search_query="Processador AMD Ryzen 9 9950X3D", model="9950X3D"
+    )
+    offers = _normalized_offers(
+        _raw(external_id="1", title="Processador AMD Ryzen 9 9950X3D"),
+        _raw(external_id="2", title="Processador AMD Ryzen 9 9950X3D2"),
+        _raw(
+            external_id="3",
+            title="Computador Gamer Completo Ryzen 9 9950X3D RTX 4090",
+        ),
+    )
+
+    survivors = _filter_deterministic_candidates(criteria, offers)
+
+    assert [item.raw_offer.external_id for item in survivors] == ["1"]
+
+
+def test_filter_deterministic_candidates_ambiguous_without_model_survives() -> None:
+    """Sem `criteria.model`, o filtro de modelo não roda -- só o de bundle."""
+    criteria = SimpleNamespace(search_query="processador AMD", model=None)
+    offers = _normalized_offers(
+        _raw(external_id="1", title="Processador AMD Ryzen 9 9900X"),
+        _raw(external_id="2", title="Computador Gamer AMD Completo"),
+    )
+
+    survivors = _filter_deterministic_candidates(criteria, offers)
+
+    assert [item.raw_offer.external_id for item in survivors] == ["1"]
+
+
+def test_select_amazon_lowest_price_keeps_only_cheapest() -> None:
+    offers = _normalized_offers(
+        _raw(external_id="B01", title="Processador X", raw_price="R$ 4.500,00"),
+        _raw(external_id="B02", title="Processador X", raw_price="R$ 4.000,00"),
+        _raw(external_id="B03", title="Processador X", raw_price="R$ 4.500,00"),
+    )
+
+    survivors = _select_amazon_lowest_price(offers)
+
+    assert len(survivors) == 1
+    assert survivors[0].raw_offer.external_id == "B02"
+    assert survivors[0].amount == Decimal("4000.00")
+
+
+def test_select_amazon_lowest_price_tie_break_by_external_id() -> None:
+    offers = _normalized_offers(
+        _raw(external_id="B999", title="Processador X", raw_price="R$ 4.000,00"),
+        _raw(external_id="B001", title="Processador X", raw_price="R$ 4.000,00"),
+        _raw(external_id="B500", title="Processador X", raw_price="R$ 4.000,00"),
+    )
+
+    survivors = _select_amazon_lowest_price(offers)
+
+    assert len(survivors) == 1
+    assert survivors[0].raw_offer.external_id == "B001"
+
+
+def test_select_amazon_lowest_price_empty_input() -> None:
+    assert _select_amazon_lowest_price(()) == ()
+
+
+def test_persist_success_rejects_wrong_model_before_any_persistence(
+    monkeypatch,
+) -> None:
+    """TASK-075: candidato rejeitado pelo filtro de modelo nunca cria
+    Product/Offer/PriceObservation nem chama classify_offer_relevance."""
+    mission_id, run_id, store_id = uuid4(), uuid4(), uuid4()
+    run = SimpleNamespace(
+        id=run_id,
+        mission_id=mission_id,
+        store_id=store_id,
+        status=CollectionRunStatus.RUNNING,
+        started_at=NOW,
+    )
+    mission = SimpleNamespace(id=mission_id)
+    criteria = SimpleNamespace(
+        mission_id=mission_id,
+        search_query="Processador AMD Ryzen 9 9950X3D",
+        model="9950X3D",
+    )
+    session = MagicMock()
+    session.scalar.side_effect = [run, criteria]
+    session.get.side_effect = lambda model, _key: mission if model is Mission else None
+    result = CollectionResult(
+        "pichau",
+        NOW,
+        NOW + timedelta(seconds=2),
+        (_raw(title="Processador AMD Ryzen 9 9950X3D2"),),  # modelo errado
+    )
+    normalized = PriceNormalizer().normalize_result(result)
+    resolve_offer = MagicMock()
+    monkeypatch.setattr("app.collection.orchestration._resolve_offer", resolve_offer)
+    monkeypatch.setattr(
+        "app.collection.orchestration.finish_collection_run", MagicMock()
+    )
+    monkeypatch.setattr("app.collection.orchestration.publish_event", MagicMock())
+    monkeypatch.setattr(
+        "app.collection.orchestration._evaluate_mission_prelist", lambda *_a, **_k: None
+    )
+    claim = ClaimedCollection(
+        run_id, mission_id, store_id, "pichau", "Processador AMD Ryzen 9 9950X3D", NOW
+    )
+    ai_manager = _StubAIManager()
+
+    outcome = asyncio.run(
+        _persist_success(session, claim, normalized, ai_manager, UserRole.ADMIN)
+    )
+
+    assert outcome is True
+    resolve_offer.assert_not_called()
+    assert ai_manager.calls == []
+
+
+def test_persist_success_amazon_without_model_never_selects_cheapest(
+    monkeypatch,
+) -> None:
+    """TASK-075: gate obrigatório -- sem criteria.model, a Amazon nunca
+    escolhe "o mais barato"; todos os sobreviventes do bundle seguem
+    independentes, igual a qualquer outra loja."""
+    mission_id, run_id, store_id = uuid4(), uuid4(), uuid4()
+    run = SimpleNamespace(
+        id=run_id,
+        mission_id=mission_id,
+        store_id=store_id,
+        status=CollectionRunStatus.RUNNING,
+        started_at=NOW,
+    )
+    mission = SimpleNamespace(id=mission_id)
+    criteria = SimpleNamespace(
+        mission_id=mission_id, search_query="notebook gamer", model=None
+    )
+    session = MagicMock()
+    session.scalar.side_effect = [run, criteria, None, None]
+    session.get.side_effect = lambda model, _key: mission if model is Mission else None
+    result = CollectionResult(
+        "amazon",
+        NOW,
+        NOW + timedelta(seconds=2),
+        (
+            _raw(
+                source="amazon",
+                external_id="B01",
+                title="Notebook Gamer Acer",
+                raw_price="R$ 4.500,00",
+            ),
+            _raw(
+                source="amazon",
+                external_id="B02",
+                title="Notebook Gamer Dell",
+                raw_price="R$ 4.000,00",
+            ),
+        ),
+    )
+    normalized = PriceNormalizer().normalize_result(result)
+    resolved_offers = {
+        "B01": SimpleNamespace(id=uuid4(), product_id=uuid4()),
+        "B02": SimpleNamespace(id=uuid4(), product_id=uuid4()),
+    }
+    monkeypatch.setattr(
+        "app.collection.orchestration._resolve_offer",
+        lambda _session, _store_id, item: resolved_offers[item.raw_offer.external_id],
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration.finish_collection_run", MagicMock()
+    )
+    monkeypatch.setattr("app.collection.orchestration.publish_event", MagicMock())
+    monkeypatch.setattr(
+        "app.collection.orchestration._evaluate_mission_prelist", lambda *_a, **_k: None
+    )
+    claim = ClaimedCollection(
+        run_id, mission_id, store_id, "amazon", "notebook gamer", NOW
+    )
+    ai_manager = _StubAIManager()
+
+    outcome = asyncio.run(
+        _persist_success(session, claim, normalized, ai_manager, UserRole.ADMIN)
+    )
+
+    assert outcome is True
+    # os dois notebooks (produtos genuinamente diferentes) sobrevivem --
+    # nenhuma seleção de "mais barato" acontece sem identidade confirmada
+    assert session.add.call_count == 2

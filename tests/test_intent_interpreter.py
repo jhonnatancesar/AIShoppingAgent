@@ -105,6 +105,39 @@ async def test_interpret_parses_create_mission_with_parameters() -> None:
 
 
 @pytest.mark.anyio
+async def test_interpret_parses_model_when_present() -> None:
+    """TASK-075: model estruturado, mesma chamada, preserva variante exata."""
+    manager = _FakeManager(
+        _response(
+            parameters={
+                "search_query": "Placa de Vídeo NVIDIA RTX 4070 Ti",
+                "model": "RTX 4070 Ti",
+                "target_amount": None,
+                "target_currency": None,
+                "sources": [],
+                "mission_reference": None,
+            }
+        )
+    )
+    interpreter = IntentInterpreter(manager)
+
+    intent = await interpreter.interpret("quero uma 4070 ti")
+
+    assert intent.parameters.search_query == "Placa de Vídeo NVIDIA RTX 4070 Ti"
+    assert intent.parameters.model == "RTX 4070 Ti"
+
+
+@pytest.mark.anyio
+async def test_interpret_model_defaults_to_none_when_absent() -> None:
+    manager = _FakeManager(_response())
+    interpreter = IntentInterpreter(manager)
+
+    intent = await interpreter.interpret("quero um notebook gamer")
+
+    assert intent.parameters.model is None
+
+
+@pytest.mark.anyio
 async def test_interpret_parses_query_mission() -> None:
     manager = _FakeManager(
         _response(

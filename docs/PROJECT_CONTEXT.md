@@ -851,3 +851,28 @@ oficial e chamadas reais contra o perfil `ADMIN` (nunca `USER`). O caso
 de "zero resultados silencioso" para produto inexistente (ex.:
 "9951x3d") fica registrado como lacuna conhecida, fora do escopo desta
 TASK.
+
+**Atualização 2026-08-11 (6):** a mesma missão de teste revelou que uma
+busca ampla ("ryzen 9 9950x3d") gerava dezenas de candidatos
+irrelevantes por loja, estourando a cota de IA (Gemini + Groq ao mesmo
+tempo) na classificação de relevância. Registrada e concluída a
+**TASK-075** (`docs/tasks/TASK-075.md`): `IntentInterpreter` (mesma
+chamada, sem chamada extra) passa a devolver `search_query` canônico
+completo (tipo primeiro, ex. "Processador AMD Ryzen 9 9950X3D") e um
+novo campo estruturado `model` (`mission_criteria.model`, migration
+`20260811_0001`, nullable, sem afetar missões existentes). Nova camada
+determinística em `_persist_success` (`app/collection/orchestration.py`)
+roda uma única vez, antes de qualquer persistência/IA: filtro de modelo
+(tolerante a separador, distingue `RTX 4070`/`RTX 4070 Ti`/`RTX 4070 Ti
+SUPER` sem falso-positivo em `OC`) e filtro de bundle/PC completo,
+sempre conservadores (ambíguo segue pra relevância existente). Regra
+exclusiva da Amazon: entre vendedores confirmados pelos filtros (não
+por ASIN — vendedores diferentes do mesmo produto vêm em ASINs
+diferentes, confirmado ao vivo), mantém só a oferta de menor preço,
+com gate obrigatório (`model` precisa existir; sem ele, nunca escolhe
+"a mais barata"). Kabum ganhou `facet_filters` de produto
+vendido/entregue pela própria loja. `product_type` estruturado avaliado
+e descartado (redundante frente ao filtro de bundle já existente).
+Validada com pipeline oficial completo e chamadas reais contra o perfil
+`ADMIN` (`"quero uma 4070 ti"` → `model: "RTX 4070 Ti"`; `"procura um
+9800x3d"` → família correta `Ryzen 7`).

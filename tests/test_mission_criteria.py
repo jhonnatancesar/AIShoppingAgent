@@ -17,6 +17,7 @@ def test_mission_criteria_table_matches_data_contract() -> None:
         table.c.id,
         table.c.mission_id,
         table.c.search_query,
+        table.c.model,
         table.c.target_amount,
         table.c.target_currency,
         table.c.created_at,
@@ -24,6 +25,7 @@ def test_mission_criteria_table_matches_data_contract() -> None:
     ]
     assert table.c.mission_id.nullable is False
     assert table.c.search_query.nullable is False
+    assert table.c.model.nullable is True
     assert isinstance(table.c.target_amount.type, Numeric)
     assert table.c.target_amount.type.precision == 19
     assert table.c.target_amount.type.scale == 4
@@ -68,6 +70,7 @@ def test_mission_criteria_constraints_protect_search_and_target() -> None:
 
     assert check_names == {
         "ck_mission_criteria_search_query_not_blank",
+        "ck_mission_criteria_model_not_blank",
         "ck_mission_criteria_target_amount_non_negative",
         "ck_mission_criteria_target_pair",
         "ck_mission_criteria_currency_iso4217",
