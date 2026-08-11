@@ -20,8 +20,14 @@
 - Validado com pipeline oficial completo e dois testes novos em
   `tests/test_telegram_router.py`. Nenhuma migration; nenhum outro
   fluxo de autenticação alterado.
-- Publicação como release `v1.0.3` e deploy em produção autorizados
-  pelo usuário para a mesma sessão do deploy de `v1.0.2`.
+- Publicada como release `v1.0.3` (`6fa5e13`) e implantada em produção
+  na mesma sessão do deploy de `v1.0.2`: backup lógico antes de
+  qualquer alteração, checkout da tag, build, sem migration nova
+  (head `20260810_0001` inalterado), `api`/`collection_worker`/
+  `telegram_notifier` recriados com a imagem nova — `database`,
+  `jaeger`, `otel-collector` e `prometheus` intocados. `/health` e
+  `/ready` `200` após o deploy; `restart: unless-stopped` confirmado
+  nos 7 serviços; dados de produção preservados.
 
 ## 2026-08-11 (3) — TASK-072 concluída: /cadastro bloqueado para sessão ativa + username duplicado avisado
 

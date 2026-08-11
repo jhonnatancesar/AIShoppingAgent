@@ -102,5 +102,11 @@ Concluída em 2026-08-11. `/cadastro` agora recusa reiniciar o cadastro
 tanto para quem está autenticado agora (TASK-072) quanto para quem já
 concluiu o cadastro antes e simplesmente perdeu a sessão (esta TASK) —
 direcionando para `/entrar`, `/senha` ou `/recuperar` conforme o caso.
-Cadastro em andamento não foi afetado. Publicação da release `v1.0.3`
-e deploy em produção tratados em seguida, na mesma sessão.
+Cadastro em andamento não foi afetado. Release `v1.0.3` publicada
+(`6fa5e13`) e implantada em produção na mesma sessão: backup lógico
+antes de qualquer alteração, checkout da tag, build, sem migration
+nova (head seguiu `20260810_0001`), `api`/`collection_worker`/
+`telegram_notifier` recriados com a imagem nova, `database`/`jaeger`/
+`otel-collector`/`prometheus` intocados. `/health` e `/ready` `200`
+após o deploy; `restart: unless-stopped` confirmado nos 7 serviços;
+dados preservados.

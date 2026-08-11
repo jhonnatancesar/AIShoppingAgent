@@ -830,5 +830,10 @@ também bloqueia quando o cadastro já está concluído
 (`registration_step is None` e `username` preenchido), mesmo sem
 sessão ativa, direcionando para `/entrar`/`/senha`/`/recuperar`;
 cadastro em andamento não foi afetado. Validada com pipeline oficial.
-Nenhuma tag `v1.0.3` criada ainda; publicação e deploy pendentes,
-autorizados pelo usuário para acontecer na mesma sessão.
+Tag `v1.0.3` (`6fa5e13`) criada, publicada e implantada em produção
+na mesma sessão: backup lógico prévio, checkout da tag, build, sem
+migration nova (head `20260810_0001` inalterado), `api`/
+`collection_worker`/`telegram_notifier` recriados com a imagem nova
+— `database`, `jaeger`, `otel-collector` e `prometheus` intocados.
+`/health`/`/ready` `200`; `restart: unless-stopped` confirmado nos 7
+serviços; dados de produção preservados.

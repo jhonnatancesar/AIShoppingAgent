@@ -159,8 +159,8 @@ e implantada em produção em 2026-08-11) → `v1.0.3` (release corretiva,
 item único TASK-073 — `/cadastro` bloqueado também para cadastro já
 concluído sem sessão ativa, complementando a TASK-072, ver
 `docs/tasks/TASK-073.md` — encontrada durante a validação real do
-deploy da `v1.0.2`; concluída e validada, publicação/deploy em
-produção autorizados pelo usuário) → V1.2
+deploy da `v1.0.2`; concluída, validada e implantada em produção,
+tag `v1.0.3` (`6fa5e13`), em 2026-08-11) → V1.2
 (evolução funcional, documento `docs/V1_2.md`, 12 itens,
 incluindo Magalu como quinta loja, redução de `PriceObservation`
 redundante, e comparação de menor preço histórico externo/interno estilo
