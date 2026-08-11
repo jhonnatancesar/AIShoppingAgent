@@ -154,8 +154,13 @@ Amazon/4 Kabum/5 Todas`, distinta da ordem do `/cadastro`, ver
 `docs/tasks/TASK-070.md`) e TASK-072 (item 6, `/cadastro` bloqueado com
 sessão ativa + checagem antecipada de username duplicado, ver
 `docs/tasks/TASK-072.md`) **estão concluídas — todo o escopo registrado
-da `v1.0.2` está concluído**; nenhuma tag `v1.0.2` criada ainda,
-publicação final pendente de decisão explícita do usuário) → V1.2
+da `v1.0.2` está concluído**; tag `v1.0.2` (`ea653b8`) criada, publicada
+e implantada em produção em 2026-08-11) → `v1.0.3` (release corretiva,
+item único TASK-073 — `/cadastro` bloqueado também para cadastro já
+concluído sem sessão ativa, complementando a TASK-072, ver
+`docs/tasks/TASK-073.md` — encontrada durante a validação real do
+deploy da `v1.0.2`; concluída e validada, publicação/deploy em
+produção autorizados pelo usuário) → V1.2
 (evolução funcional, documento `docs/V1_2.md`, 12 itens,
 incluindo Magalu como quinta loja, redução de `PriceObservation`
 redundante, e comparação de menor preço histórico externo/interno estilo

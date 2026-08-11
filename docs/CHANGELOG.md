@@ -1,5 +1,28 @@
 # Changelog
 
+## 2026-08-11 (4) — TASK-073 concluída: /cadastro bloqueado para cadastro já concluído sem sessão ativa (release v1.0.3)
+
+- **TASK-073** (`docs/tasks/TASK-073.md`, item único da `v1.0.3`)
+  concluída — encontrada durante a validação real do deploy de `v1.0.2`
+  em produção: o usuário perdeu a sessão (logout/novo login) e o
+  `/cadastro` o deixou reentrar no fluxo mesmo já tendo um cadastro
+  concluído. Investigação confirmou que isso era o desenho aprovado da
+  TASK-072 (bloqueio só por `has_active_session`, não por "já tem
+  conta") — não um bug, mas um critério mais estreito do que o usuário
+  queria.
+- Novo bloqueio: `/cadastro` agora também recusa reiniciar quando
+  `registration_step is None` e `username` está preenchido (cadastro
+  concluído no passado), mesmo sem sessão ativa — mensagem nova
+  direcionando para `/entrar`, `/senha` ou `/recuperar`. Cadastro em
+  andamento (`registration_step` != `None`) continua funcionando
+  exatamente como antes; o bloqueio por sessão ativa da TASK-072
+  permanece intocado e é avaliado primeiro.
+- Validado com pipeline oficial completo e dois testes novos em
+  `tests/test_telegram_router.py`. Nenhuma migration; nenhum outro
+  fluxo de autenticação alterado.
+- Publicação como release `v1.0.3` e deploy em produção autorizados
+  pelo usuário para a mesma sessão do deploy de `v1.0.2`.
+
 ## 2026-08-11 (3) — TASK-072 concluída: /cadastro bloqueado para sessão ativa + username duplicado avisado
 
 - **TASK-072** (`docs/tasks/TASK-072.md`, item 6 da `v1.0.2`, `DEC-060`)

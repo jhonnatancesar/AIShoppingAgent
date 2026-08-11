@@ -153,6 +153,15 @@ _CADASTRO_ALREADY_AUTHENTICATED_REPLY = (
 (`has_active_session`), não sobre o aparelho físico -- a mensagem evita
 a palavra "dispositivo" por precisão. Bloquear aqui não altera
 nenhum campo do cadastro nem `registration_step`."""
+_CADASTRO_ALREADY_REGISTERED_REPLY = (
+    "📋 Você já tem cadastro neste Telegram.\n\n"
+    "Use /entrar para acessar, /senha se ainda não criou sua senha, ou "
+    "/recuperar caso tenha esquecido."
+)
+"""TASK-073: cadastro já concluído (`registration_step is None` e
+`username` preenchido) sem sessão ativa -- não reinicia o fluxo. Um
+cadastro em andamento (`registration_step` != None) continua caindo no
+`start_registration` de sempre, sem mudança de comportamento."""
 _UPGRADE_COMMAND = "/upgrade"
 _UPGRADE_REPLY = "🔒 Mudar de usuário/perfil — em breve."
 _START_COMMAND = "/start"
@@ -419,6 +428,8 @@ async def _handle_message(
             session, user_id=user.id, telegram_user_id=user.telegram_user_id
         ):
             return _CADASTRO_ALREADY_AUTHENTICATED_REPLY
+        if user.registration_step is None and user.username is not None:
+            return _CADASTRO_ALREADY_REGISTERED_REPLY
         return start_registration(user)
     if lowered in {_PASSWORD_COMMAND, _LOGIN_COMMAND, _RECOVERY_COMMAND}:
         authorize(session, user, Permission.PROFILE_MANAGE)

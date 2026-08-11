@@ -813,3 +813,22 @@ estão implementados e validados — todo o escopo registrado desta versão
 está concluído.** Nenhuma tag `v1.0.2` criada ainda; publicação final
 pendente de decisão explícita do usuário; produção da `v1.0.1` intocada;
 nenhuma outra TASK iniciada.
+
+**Atualização 2026-08-11 (4):** a tag `v1.0.2` (`ea653b8`) foi criada e
+publicada em `origin`; produção passou por deploy controlado, em fases,
+da `v1.0.1` (`578dc29`) para a `v1.0.2` — backup lógico do PostgreSQL
+antes de qualquer alteração, missão de teste antiga retirada por
+transição de estado real (`active → cancelled`, com auditoria em
+`mission_transitions`), migration aplicada até `20260810_0001`, os 7
+serviços validados saudáveis com `restart: unless-stopped`. Durante a
+validação real em produção, o usuário identificou que `/cadastro` não
+bloqueava um cadastro já concluído quando a sessão caía — investigação
+confirmou que era o desenho aprovado da TASK-072 (bloqueio só por
+sessão ativa), não um bug. Registrada e concluída a **TASK-073**
+(`docs/tasks/TASK-073.md`), item único da `v1.0.3`: `/cadastro` agora
+também bloqueia quando o cadastro já está concluído
+(`registration_step is None` e `username` preenchido), mesmo sem
+sessão ativa, direcionando para `/entrar`/`/senha`/`/recuperar`;
+cadastro em andamento não foi afetado. Validada com pipeline oficial.
+Nenhuma tag `v1.0.3` criada ainda; publicação e deploy pendentes,
+autorizados pelo usuário para acontecer na mesma sessão.

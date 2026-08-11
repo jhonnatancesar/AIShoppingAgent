@@ -2250,6 +2250,84 @@ async def test_cadastro_command_blocked_when_already_authenticated(
 
 
 @pytest.mark.anyio
+async def test_cadastro_command_blocked_when_already_registered_without_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TASK-073: cadastro concluído (sem `registration_step`, com
+    `username`) sem sessão ativa -- não reinicia o fluxo."""
+    fake_user = _fake_user(registration_step=None)
+    fake_user.username = "joaosilva"
+    fake_user.email = "joao@example.com"
+    fake_user.favorite_stores = ["kabum"]
+    fake_user.preferred_categories = ["hardware"]
+    _patch_user(monkeypatch, fake_user)
+    send_calls = _patch_send_message(monkeypatch)
+    monkeypatch.setattr("app.telegram.router.has_active_session", lambda *a, **k: False)
+    adapter = _FakeAdapter(_intent())
+
+    response = await receive_telegram_webhook(
+        update=_update(
+            message=_TelegramIncomingMessage(
+                text="/cadastro",
+                date=1754586000,
+                chat=_TelegramChat(id=222, type=TelegramChatType.PRIVATE),
+                from_=_TelegramSender(id=222, first_name="Fulano"),
+            )
+        ),
+        x_telegram_bot_api_secret_token="correct-secret",
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        settings=_settings(),
+        session=MagicMock(),
+    )
+
+    assert response.status_code == 204
+    assert adapter.calls == []
+    # nada do estado salvo foi tocado
+    assert fake_user.registration_step is None
+    assert fake_user.username == "joaosilva"
+    assert fake_user.email == "joao@example.com"
+    assert fake_user.favorite_stores == ["kabum"]
+    assert fake_user.preferred_categories == ["hardware"]
+    assert "já tem cadastro" in send_calls[0][1].lower()
+
+
+@pytest.mark.anyio
+async def test_cadastro_command_resumes_in_progress_registration_without_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TASK-073: cadastro em andamento (`registration_step` != None) não é
+    tratado como "já registrado" -- continua reiniciando o fluxo, exatamente
+    como antes desta TASK. Esse reinício em si é comportamento pré-existente,
+    fora do escopo desta TASK."""
+    fake_user = _fake_user(registration_step="email")
+    fake_user.username = "joaosilva"
+    _patch_user(monkeypatch, fake_user)
+    send_calls = _patch_send_message(monkeypatch)
+    monkeypatch.setattr("app.telegram.router.has_active_session", lambda *a, **k: False)
+    adapter = _FakeAdapter(_intent())
+
+    response = await receive_telegram_webhook(
+        update=_update(
+            message=_TelegramIncomingMessage(
+                text="/cadastro",
+                date=1754586000,
+                chat=_TelegramChat(id=222, type=TelegramChatType.PRIVATE),
+                from_=_TelegramSender(id=222, first_name="Fulano"),
+            )
+        ),
+        x_telegram_bot_api_secret_token="correct-secret",
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        settings=_settings(),
+        session=MagicMock(),
+    )
+
+    assert response.status_code == 204
+    assert adapter.calls == []
+    assert fake_user.registration_step == "username"
+    assert "usuário" in send_calls[0][1].lower()
+
+
+@pytest.mark.anyio
 async def test_registration_in_progress_consumes_reply_without_calling_ai(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
