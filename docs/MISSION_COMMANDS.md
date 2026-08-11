@@ -10,8 +10,11 @@ evento, implementadas separadamente na TASK-036.
 
 Desde a TASK-058, `create_mission` e `mission_command` não executam mais
 direto: ficam **encenados** e só executam após confirmação explícita do
-usuário — ver "Confirmação antes de executar" abaixo. `edit_mission`
-(TASK-069) segue o mesmo padrão.
+usuário — ver "Confirmação antes de executar" abaixo. Editar lojas e/ou
+preço-alvo de uma missão (TASK-069) segue o mesmo padrão de confirmação
+final, mas desde a TASK-071 só é alcançável pelo menu guiado do
+`/editar-missao` — nunca mais por texto livre interpretado pela IA (ver
+o item `edit_mission` abaixo).
 
 ## Despacho por `IntentKind`
 
@@ -50,28 +53,56 @@ usuário — ver "Confirmação antes de executar" abaixo. `edit_mission`
   não um detalhe de implementação. Ao ser confirmado, `transition_mission`
   (TASK-021) executa o comando usando a versão de estado capturada no
   momento em que a confirmação foi encenada.
-- **`edit_mission`** (TASK-069): edita lojas e/ou preço-alvo de uma missão já
-  criada (nunca `search_query`/`title`). Só é encenada direto se a missão
-  resolvida já está `PAUSED`; se estiver `ACTIVE`, o webhook encena, em vez
-  disso, um pedido de pausa (`pause_for_edit`) — confirmar pausa a missão de
-  verdade e orienta reenviar o pedido via `/editar-missao`; pausar e editar
-  nunca acontecem como um único passo automático. Missões `DRAFT` ou em
-  status terminal são rejeitadas direto, sem nada para confirmar. O comando
-  `/editar-missao` (guia estático, sem IA) orienta o formato do pedido.
+- **`edit_mission`**: **desativado como intenção livre desde a TASK-071**
+  — o `IntentInterpreter` ainda classifica mensagens como `edit_mission`,
+  mas o webhook não executa mais nada a partir disso; responde só
+  orientando a usar `/editar-missao`. O motivo: `IntentParameters.sources`
+  sempre foi tratado como a lista completa final de lojas (não uma
+  diferença), mas a IA nunca sabe quais lojas a missão já tem — pedir
+  "adiciona kabum e terabyte" sem repetir a loja já selecionada fazia a
+  confirmação **remover** essa loja sem o usuário perceber facilmente.
+  Editar lojas e/ou preço-alvo (nunca `search_query`/`title`) de uma
+  missão já criada agora só acontece pelo **menu guiado e determinístico**
+  do `/editar-missao` (TASK-071, `backend/app/telegram/router.py`):
+  1. Resolve qual missão sem IA: exatamente 1 `PAUSED` seleciona
+     automaticamente; mais de 1 `PAUSED` lista os títulos numerados para
+     escolher; sem nenhuma `PAUSED`, reaproveita o pedido de pausa já
+     existente (`pause_for_edit`, TASK-069) para a(s) missão(ões)
+     `ACTIVE` — sem nenhuma pausada nem ativa, avisa que não há nada para
+     editar. Nunca edita uma `ACTIVE` diretamente.
+  2. Menu principal (`1 - Lojas`, `2 - Preço-alvo`), sem IA.
+  3. **Lojas**: submenu `1 - Adicionar` / `2 - Remover`. Adicionar mostra
+     só as lojas ainda não vinculadas; remover mostra só as vinculadas e
+     nunca permite zerar todas (validado no fluxo e de novo pelo
+     serviço). Seleção numerada estrita — reaproveita
+     `parse_numbered_store_selection` (TASK-070): qualquer token não
+     reconhecido invalida a resposta inteira.
+  4. **Preço-alvo**: valor digitado diretamente (vírgula ou ponto como
+     separador decimal, moeda sempre BRL), parser determinístico; `0`
+     remove o alvo.
+  5. Todos os caminhos convergem para o mesmo payload
+     `stage_edit_mission`/`describe_edit_mission` (TASK-069, sem
+     alteração) — a confirmação final sim/não continua usando
+     `resolve_answer` (a mesma classificação de IA usada por toda
+     confirmação do sistema; não é o `IntentInterpreter`). Missões
+     `DRAFT` ou em status terminal nunca aparecem como candidatas.
 - **`unknown`**: resposta fixa pedindo para o usuário reformular, deixando
   explícito que o bot não conversa sobre outros assuntos.
 
-## Confirmação antes de executar (TASK-058, estendida na TASK-069)
+## Confirmação antes de executar (TASK-058, estendida nas TASK-069/071)
 
-Depois que `create_mission`, `mission_command` ou `edit_mission` é
-interpretado e validado (fonte presente, missão resolvida), o webhook não
-executa a ação — grava os dados mínimos necessários em `User.pending_intent`
-(JSONB) e responde descrevendo a ação em português, pedindo confirmação
+Depois que `create_mission`/`mission_command` são interpretados e
+validados, ou que o menu guiado de `/editar-missao` (TASK-071) chega a um
+resumo de edição, o webhook não executa a ação — grava os dados mínimos
+necessários em `User.pending_intent` (JSONB) e responde descrevendo a
+ação em português, pedindo confirmação
 (`backend/app/telegram/confirmation.py`). A mensagem seguinte do mesmo
 usuário é tratada como resposta a essa confirmação, **antes** de qualquer
 outro processamento (comandos `/cadastro`/`/upgrade`, cadastro em
 andamento e interpretação por IA só entram em jogo se não houver
-confirmação pendente).
+confirmação pendente) — isso vale tanto para o par confirmar/cancelar
+final quanto para os passos intermediários do menu guiado, que também são
+resolvidos antes da IA.
 
 A classificação da resposta (`confirmar`/`cancelar`/`não entendi`) passa
 pelo `AIProviderManager` do próprio perfil do usuário, com um propósito e

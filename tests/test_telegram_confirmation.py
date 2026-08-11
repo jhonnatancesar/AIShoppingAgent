@@ -10,15 +10,35 @@ from app.ai_provider import AIProviderUnavailable, AIRequest, AIResponse
 from app.missions.models import MissionCommand
 from app.telegram.confirmation import (
     ConfirmationError,
+    current_store_options,
     describe_create_mission,
     describe_create_mission_sources_prompt,
     describe_create_mission_sources_retry,
+    describe_edit_add_sources_none_missing,
+    describe_edit_add_sources_prompt,
+    describe_edit_lojas_menu,
+    describe_edit_lojas_menu_retry,
+    describe_edit_menu,
+    describe_edit_menu_retry,
     describe_edit_mission,
+    describe_edit_remove_sources_prompt,
+    describe_edit_remove_sources_too_few,
+    describe_edit_remove_sources_would_empty,
+    describe_edit_source_selection_retry,
+    describe_edit_target_amount_prompt,
+    describe_edit_target_amount_retry,
+    describe_mission_choice_prompt,
+    describe_mission_choice_retry,
     describe_mission_command,
+    describe_no_editable_mission,
     describe_pause_for_edit,
+    missing_store_options,
     parse_numbered_store_selection,
+    parse_single_numbered_choice,
+    parse_target_amount_entry,
     resolve_answer,
     resolve_create_mission_sources,
+    resolve_edit_source_selection,
     stage_await_create_mission_sources,
     stage_create_mission,
     stage_edit_mission,
@@ -424,3 +444,150 @@ def test_stage_and_describe_pause_for_edit() -> None:
     assert "ssd nvme" in description
     assert "ativa" in description
     assert "sim" in description.lower()
+
+
+# TASK-071: menu guiado e determinístico de /editar-missao.
+
+
+def test_parse_single_numbered_choice_valid() -> None:
+    assert parse_single_numbered_choice("1", count=2) == 0
+    assert parse_single_numbered_choice("2", count=2) == 1
+
+
+def test_parse_single_numbered_choice_rejects_out_of_range() -> None:
+    assert parse_single_numbered_choice("3", count=2) is None
+    assert parse_single_numbered_choice("0", count=2) is None
+
+
+def test_parse_single_numbered_choice_rejects_non_numeric_or_multiple() -> None:
+    assert parse_single_numbered_choice("abc", count=2) is None
+    assert parse_single_numbered_choice("1,2", count=2) is None
+    assert parse_single_numbered_choice("", count=2) is None
+
+
+def test_describe_mission_choice_prompt_lists_titles_numbered() -> None:
+    prompt = describe_mission_choice_prompt(
+        ["teclado mecanico", "monitor curvo"], header="Qual missão?"
+    )
+
+    assert "Qual missão?" in prompt
+    assert "1 - teclado mecanico" in prompt
+    assert "2 - monitor curvo" in prompt
+
+
+def test_describe_mission_choice_retry_asks_again() -> None:
+    assert "número" in describe_mission_choice_retry()
+
+
+def test_describe_no_editable_mission_mentions_paused_and_active() -> None:
+    reply = describe_no_editable_mission()
+    assert "pausada" in reply
+    assert "ativa" in reply
+
+
+def test_describe_edit_menu_lists_lojas_and_preco() -> None:
+    menu = describe_edit_menu("teclado mecanico")
+    assert "teclado mecanico" in menu
+    assert "1 - Lojas" in menu
+    assert "2 - Preço-alvo" in menu
+
+
+def test_describe_edit_menu_retry() -> None:
+    assert "lojas" in describe_edit_menu_retry().lower()
+
+
+def test_describe_edit_lojas_menu_lists_add_and_remove() -> None:
+    menu = describe_edit_lojas_menu()
+    assert "1 - Adicionar lojas" in menu
+    assert "2 - Remover lojas" in menu
+
+
+def test_describe_edit_lojas_menu_retry() -> None:
+    assert "adicionar" in describe_edit_lojas_menu_retry().lower()
+
+
+def test_missing_store_options_excludes_current_and_uses_task_070_order() -> None:
+    assert missing_store_options(("pichau",)) == {
+        "1": "terabyte",
+        "2": "amazon",
+        "3": "kabum",
+    }
+    assert missing_store_options(()) == {
+        "1": "pichau",
+        "2": "terabyte",
+        "3": "amazon",
+        "4": "kabum",
+    }
+    assert missing_store_options(("pichau", "terabyte", "amazon", "kabum")) == {}
+
+
+def test_current_store_options_includes_only_linked_in_canonical_order() -> None:
+    assert current_store_options(("kabum", "pichau")) == {"1": "pichau", "2": "kabum"}
+    assert current_store_options(("pichau",)) == {"1": "pichau"}
+
+
+def test_describe_edit_add_sources_prompt_lists_option_map() -> None:
+    prompt = describe_edit_add_sources_prompt({"1": "terabyte", "2": "kabum"})
+    assert "ainda não vinculadas" in prompt
+    assert "1 - Terabyte" in prompt
+    assert "2 - Kabum" in prompt
+
+
+def test_describe_edit_remove_sources_prompt_lists_option_map() -> None:
+    prompt = describe_edit_remove_sources_prompt({"1": "pichau"})
+    assert "atualmente vinculadas" in prompt
+    assert "1 - Pichau" in prompt
+
+
+def test_describe_edit_source_selection_retry() -> None:
+    assert "Não reconheci" in describe_edit_source_selection_retry()
+
+
+def test_describe_edit_add_sources_none_missing() -> None:
+    assert "todas" in describe_edit_add_sources_none_missing().lower()
+
+
+def test_describe_edit_remove_sources_too_few() -> None:
+    assert "pelo menos uma" in describe_edit_remove_sources_too_few()
+
+
+def test_describe_edit_remove_sources_would_empty() -> None:
+    assert "pelo menos uma" in describe_edit_remove_sources_would_empty()
+
+
+def test_resolve_edit_source_selection_validates_completely_no_all_shortcut() -> None:
+    option_map = {"1": "terabyte", "2": "amazon", "3": "kabum"}
+    assert resolve_edit_source_selection("1,3", option_map=option_map) == (
+        "terabyte",
+        "kabum",
+    )
+    assert resolve_edit_source_selection("1,9", option_map=option_map) is None
+    # sem atalho de "todas" -- não há um número fixo que sempre signifique isso
+    assert resolve_edit_source_selection("todas", option_map=option_map) is None
+
+
+def test_describe_edit_target_amount_prompt_mentions_zero_removes_target() -> None:
+    prompt = describe_edit_target_amount_prompt()
+    assert "reais" in prompt
+    assert "0" in prompt
+    assert "remover o alvo" in prompt
+
+
+def test_describe_edit_target_amount_retry() -> None:
+    assert "Não entendi" in describe_edit_target_amount_retry()
+
+
+def test_parse_target_amount_entry_accepts_dot_and_comma() -> None:
+    assert parse_target_amount_entry("300") == Decimal("300")
+    assert parse_target_amount_entry("300.50") == Decimal("300.50")
+    assert parse_target_amount_entry("300,50") == Decimal("300.50")
+
+
+def test_parse_target_amount_entry_accepts_zero_to_clear() -> None:
+    assert parse_target_amount_entry("0") == Decimal("0")
+
+
+def test_parse_target_amount_entry_rejects_negative_and_non_numeric() -> None:
+    assert parse_target_amount_entry("-5") is None
+    assert parse_target_amount_entry("não sei") is None
+    assert parse_target_amount_entry("") is None

@@ -100,10 +100,14 @@ fechado do `IntentInterpreter`:
 - `/senha`, `/entrar`, `/sair` e `/recuperar` (TASK-061): emitem link HTTPS,
   estabelecem/revogam sessão ou recuperam a senha sem receber segredo no chat.
   Detalhes em `docs/AUTHENTICATION.md`.
-- `/editar-missao` (TASK-069): resposta estática, sem IA, orientando o
-  formato do pedido de edição de lojas e/ou preço-alvo de uma missão
-  pausada. A edição em si continua interpretada pelo `IntentInterpreter`
-  (`edit_mission`) na mensagem seguinte — ver `docs/MISSION_COMMANDS.md`.
+- `/editar-missao` (TASK-069, redesenhado como menu guiado na TASK-071):
+  abre um menu guiado e 100% determinístico para editar lojas e/ou
+  preço-alvo de uma missão — resolve qual missão, o que editar e (para
+  lojas) quais lojas adicionar/remover, tudo por escolha numerada, sem
+  nenhuma chamada ao `IntentInterpreter`. Editar por texto livre foi
+  **desativado**: o `IntentKind.EDIT_MISSION` continua existindo, mas o
+  webhook só responde orientando a usar `/editar-missao`. Detalhes em
+  `docs/MISSION_COMMANDS.md`.
 - `/start` e `/ajuda`: orientação de onboarding e autenticação.
 
 Sem sessão por senha, permanecem disponíveis `/start`, `/ajuda`, `/cadastro`,

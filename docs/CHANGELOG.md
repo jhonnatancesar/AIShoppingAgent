@@ -1,5 +1,44 @@
 # Changelog
 
+## 2026-08-11 (2) — TASK-071 concluída: menu guiado e determinístico para /editar-missao
+
+- **TASK-071** (`docs/tasks/TASK-071.md`, não é item da `v1.0.2`)
+  concluída: pedido explícito do usuário depois de uma simulação da
+  edição de missão (TASK-069) revelar um risco real — `sources` sempre
+  foi tratado como a lista completa final de lojas, mas o
+  `IntentInterpreter` (IA) nunca sabe quais lojas a missão já tem, então
+  "adiciona kabum e terabyte" sem repetir a loja já selecionada fazia a
+  confirmação **remover** essa loja sem o usuário perceber facilmente.
+- `/editar-missao` virou um **menu guiado, 100% determinístico, sem
+  IntentInterpreter**: resolve qual missão (exatamente 1 `PAUSED`
+  auto-seleciona; mais de 1 lista numerada para escolher; sem nenhuma
+  pausada reaproveita o pedido de pausa já existente, TASK-069, para a(s)
+  `ACTIVE`; sem nenhuma editável, avisa que não há nada para editar) →
+  menu `1 Lojas`/`2 Preço-alvo` → lojas ganha `1 Adicionar`/`2 Remover`
+  (mostra só as que faltam ou só as vinculadas; nunca permite zerar
+  todas, validado no fluxo e de novo pelo serviço) → preço-alvo pede o
+  valor direto (vírgula ou ponto como decimal, `0` remove o alvo).
+- **Caminho antigo (texto livre) desativado por decisão explícita do
+  usuário**: `IntentKind.EDIT_MISSION` continua existindo no vocabulário
+  do `IntentInterpreter`, mas o webhook não executa mais nada a partir
+  disso — responde só orientando a usar `/editar-missao`.
+- **Reaproveitamento total, sem duplicar lógica**: `edit_mission_criteria`
+  (serviço), `stage_edit_mission`/`describe_edit_mission`,
+  `stage_pause_for_edit`/`describe_pause_for_edit` (TASK-069) e
+  `parse_numbered_store_selection` (TASK-070) — nenhum alterado. Todos os
+  sub-fluxos (adicionar, remover, preço-alvo) convergem para o mesmo
+  payload `"kind": "edit_mission"` já existente; a confirmação final
+  sim/não continua usando o classificador de IA já existente
+  (`interpret_confirmation_reply`), que não é o `IntentInterpreter`.
+- Preserva integralmente: ownership, regra de só `PAUSED` ser editável,
+  histórico (`CollectionRun`/`PriceObservation`) ao remover uma loja,
+  `MissionSchedule`, o comportamento de criação de missão (TASK-070) e a
+  coleta/ranking/alertas — nenhum tocado.
+- Validado com pipeline oficial completo (876 testes, 91,00% cobertura,
+  21 integrações PostgreSQL reais, migration head sem alteração). Nenhuma
+  tag `v1.0.2` criada; produção da `v1.0.1` intocada; nenhuma outra TASK
+  iniciada.
+
 ## 2026-08-11 — TASK-070 concluída: perguntar lojas por lista numerada quando a missão for criada sem nenhuma
 
 - **TASK-070** (`docs/tasks/TASK-070.md`, item 7 da `v1.0.2`, `DEC-060`)

@@ -755,3 +755,32 @@ item 7 da `v1.0.2` está concluído; o item 6 (bloquear `/cadastro` para
 usuário já autenticado) continua registrado e pendente, sem TASK aberta
 — **a `v1.0.2` continua aberta**. Nenhuma tag `v1.0.2` criada; produção
 da `v1.0.1` intocada.
+
+**Atualização 2026-08-11 (2):** concluída a **TASK-071** — não é item da
+`v1.0.2`, pedido explícito do usuário depois de uma simulação da edição
+de missão (TASK-069) revelar um risco real: `IntentParameters.sources`
+sempre foi tratado como a lista completa final de lojas, mas a IA nunca
+sabe quais lojas a missão já tem, então "adiciona kabum e terabyte" sem
+repetir a loja já selecionada fazia a confirmação **remover** essa loja
+sem o usuário perceber facilmente. Decisão: `/editar-missao` virou um
+**menu guiado e 100% determinístico** — resolve qual missão (sem IA:
+`PAUSED` única auto-seleciona, mais de uma lista numerada para escolher,
+sem nenhuma pausada reaproveita o pedido de pausa já existente para a(s)
+`ACTIVE`), depois `1 Lojas`/`2 Preço-alvo`; lojas ganha `1
+Adicionar`/`2 Remover` (mostra só as que faltam ou só as vinculadas,
+nunca permite zerar todas); preço-alvo pede o valor direto (`0` remove o
+alvo). Todos os caminhos convergem para o mesmo payload
+`stage_edit_mission`/`describe_edit_mission` (TASK-069, sem alteração) —
+a confirmação final sim/não continua usando o classificador de IA já
+existente (`interpret_confirmation_reply`), que não é o
+`IntentInterpreter` e não foi alvo da preocupação do usuário. **O
+caminho antigo (editar por texto livre) foi desativado por decisão
+explícita do usuário** — `IntentKind.EDIT_MISSION` continua existindo no
+vocabulário, mas o webhook só responde orientando a usar
+`/editar-missao`, sem executar nada. `edit_mission_criteria` (serviço),
+`stage_pause_for_edit`/`describe_pause_for_edit` e
+`parse_numbered_store_selection` (TASK-070) foram totalmente
+reaproveitados, sem nenhuma alteração. Validado com pipeline oficial
+completo (876 testes, 91,00% cobertura, 21 integrações PostgreSQL
+reais). Nenhuma tag `v1.0.2` criada; produção da `v1.0.1` intocada;
+nenhuma outra TASK iniciada.

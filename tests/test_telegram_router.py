@@ -985,28 +985,22 @@ async def test_confirmed_pending_mission_command_executes_and_clears_step(
 
 
 @pytest.mark.anyio
-async def test_edit_mission_intent_on_paused_mission_stages_edit_confirmation(
+async def test_edit_mission_intent_via_free_text_redirects_to_editar_missao_command(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """TASK-071: o caminho antigo (texto livre interpretado pela IA) foi
+    desativado -- nunca mais encena nada nem toca em `resolve_mission_for_command`,
+    só orienta a usar `/editar-missao`."""
     fake_user = _fake_user()
-    fake_mission = SimpleNamespace(
-        id=uuid4(),
-        title="teclado mecanico",
-        state_version=2,
-        status=MissionStatus.PAUSED,
-    )
-    fake_criteria = SimpleNamespace(
-        target_amount=Decimal("500.00"), target_currency="BRL"
-    )
 
     _patch_user(monkeypatch, fake_user)
+
+    def _fail_resolve(*args: object, **kwargs: object) -> object:
+        raise AssertionError("resolve_mission_for_command should not run")
+
     monkeypatch.setattr(
-        "app.telegram.router.resolve_mission_for_command",
-        lambda session, **kwargs: fake_mission,
+        "app.telegram.router.resolve_mission_for_command", _fail_resolve
     )
-    session = MagicMock()
-    session.scalar.return_value = fake_criteria
-    session.scalars.return_value = ["kabum"]
     send_calls = _patch_send_message(monkeypatch)
 
     intent = _intent(
@@ -1024,105 +1018,12 @@ async def test_edit_mission_intent_on_paused_mission_stages_edit_confirmation(
         x_telegram_bot_api_secret_token="correct-secret",
         adapters=_adapters(adapter),  # type: ignore[arg-type]
         settings=_settings(),
-        session=session,
-    )
-
-    assert response.status_code == 204
-    assert fake_user.pending_intent == {
-        "kind": "edit_mission",
-        "mission_id": str(fake_mission.id),
-        "mission_title": "teclado mecanico",
-        "expected_state_version": 2,
-        "changes_target": True,
-        "target_amount": "300.00",
-        "target_currency": "BRL",
-        "changes_sources": False,
-        "sources": [],
-        "previous_target_amount": "500.00",
-        "previous_target_currency": "BRL",
-        "previous_sources": ["kabum"],
-    }
-    assert "R$ 500,00" in send_calls[0][1]
-    assert "R$ 300,00" in send_calls[0][1]
-
-
-@pytest.mark.anyio
-async def test_edit_mission_intent_on_active_mission_offers_to_pause_first(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    fake_user = _fake_user()
-    fake_mission = SimpleNamespace(
-        id=uuid4(), title="monitor curvo", state_version=1, status=MissionStatus.ACTIVE
-    )
-
-    _patch_user(monkeypatch, fake_user)
-    monkeypatch.setattr(
-        "app.telegram.router.resolve_mission_for_command",
-        lambda session, **kwargs: fake_mission,
-    )
-    send_calls = _patch_send_message(monkeypatch)
-
-    intent = _intent(
-        kind=IntentKind.EDIT_MISSION,
-        parameters=IntentParameters(mission_reference="monitor", sources=("kabum",)),
-    )
-    adapter = _FakeAdapter(intent)
-
-    response = await receive_telegram_webhook(
-        update=_update(),
-        x_telegram_bot_api_secret_token="correct-secret",
-        adapters=_adapters(adapter),  # type: ignore[arg-type]
-        settings=_settings(),
-        session=MagicMock(),
-    )
-
-    assert response.status_code == 204
-    assert fake_user.pending_intent == {
-        "kind": "pause_for_edit",
-        "mission_id": str(fake_mission.id),
-        "mission_title": "monitor curvo",
-        "expected_state_version": 1,
-    }
-    assert "ativa" in send_calls[0][1]
-    assert "monitor curvo" in send_calls[0][1]
-
-
-@pytest.mark.anyio
-async def test_edit_mission_intent_on_terminal_mission_is_a_known_error(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    fake_user = _fake_user()
-    fake_mission = SimpleNamespace(
-        id=uuid4(),
-        title="ssd nvme",
-        state_version=0,
-        status=MissionStatus.COMPLETED,
-    )
-
-    _patch_user(monkeypatch, fake_user)
-    monkeypatch.setattr(
-        "app.telegram.router.resolve_mission_for_command",
-        lambda session, **kwargs: fake_mission,
-    )
-    send_calls = _patch_send_message(monkeypatch)
-
-    intent = _intent(
-        kind=IntentKind.EDIT_MISSION,
-        parameters=IntentParameters(mission_reference="ssd", sources=("kabum",)),
-    )
-    adapter = _FakeAdapter(intent)
-
-    response = await receive_telegram_webhook(
-        update=_update(),
-        x_telegram_bot_api_secret_token="correct-secret",
-        adapters=_adapters(adapter),  # type: ignore[arg-type]
-        settings=_settings(),
         session=MagicMock(),
     )
 
     assert response.status_code == 204
     assert fake_user.pending_intent is None
-    assert "ssd nvme" in send_calls[0][1]
+    assert "/editar-missao" in send_calls[0][1]
 
 
 @pytest.mark.anyio
@@ -1278,34 +1179,795 @@ async def test_confirmed_pending_edit_mission_executes_and_clears_step(
     assert "continua pausada" in send_calls[0][1]
 
 
+def _patch_missions_by_status(
+    monkeypatch: pytest.MonkeyPatch, by_status: dict[MissionStatus, list]
+) -> None:
+    def _fake_query(session: object, *, user_id: object, status_value: MissionStatus):
+        return by_status.get(status_value, [])
+
+    monkeypatch.setattr("app.telegram.router._query_missions_by_status", _fake_query)
+
+
+def _editar_missao_update() -> TelegramUpdate:
+    return _update(
+        message=_TelegramIncomingMessage(
+            text="/editar-missao",
+            date=1754586000,
+            chat=_TelegramChat(id=222, type=TelegramChatType.PRIVATE),
+            from_=_TelegramSender(id=222, first_name="Fulano"),
+        )
+    )
+
+
+def _numeric_reply_update(text: str) -> TelegramUpdate:
+    return _update(
+        message=_TelegramIncomingMessage(
+            text=text,
+            date=1754586000,
+            chat=_TelegramChat(id=222, type=TelegramChatType.PRIVATE),
+            from_=_TelegramSender(id=222, first_name="Fulano"),
+        )
+    )
+
+
+async def _send_editar_missao(monkeypatch: pytest.MonkeyPatch, session: object) -> list:
+    adapter = _FakeAdapter(_intent())
+    send_calls = _patch_send_message(monkeypatch)
+    await receive_telegram_webhook(
+        update=_editar_missao_update(),
+        x_telegram_bot_api_secret_token="correct-secret",
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        settings=_settings(),
+        session=session,
+    )
+    assert adapter.calls == []  # TASK-071: nunca passa pelo IntentInterpreter
+    return send_calls
+
+
 @pytest.mark.anyio
-async def test_edit_mission_command_replies_with_guidance_without_calling_ai(
+async def test_editar_missao_with_one_paused_mission_shows_main_menu(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_user = _fake_user()
+    mission = SimpleNamespace(
+        id=uuid4(),
+        title="teclado mecanico",
+        state_version=2,
+        status=MissionStatus.PAUSED,
+    )
+    _patch_user(monkeypatch, fake_user)
+    _patch_missions_by_status(monkeypatch, {MissionStatus.PAUSED: [mission]})
+
+    send_calls = await _send_editar_missao(monkeypatch, MagicMock())
+
+    assert fake_user.pending_intent == {
+        "kind": "await_edit_menu_choice",
+        "mission_id": str(mission.id),
+        "mission_title": "teclado mecanico",
+        "expected_state_version": 2,
+    }
+    reply = send_calls[0][1]
+    assert "teclado mecanico" in reply
+    assert "1 - Lojas" in reply
+    assert "2 - Preço-alvo" in reply
+
+
+@pytest.mark.anyio
+async def test_editar_missao_with_multiple_paused_missions_asks_which_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_user = _fake_user()
+    first = SimpleNamespace(
+        id=uuid4(),
+        title="teclado mecanico",
+        state_version=1,
+        status=MissionStatus.PAUSED,
+    )
+    second = SimpleNamespace(
+        id=uuid4(), title="monitor curvo", state_version=3, status=MissionStatus.PAUSED
+    )
+    _patch_user(monkeypatch, fake_user)
+    _patch_missions_by_status(monkeypatch, {MissionStatus.PAUSED: [first, second]})
+
+    send_calls = await _send_editar_missao(monkeypatch, MagicMock())
+
+    assert fake_user.pending_intent == {
+        "kind": "await_edit_paused_choice",
+        "mission_ids": [str(first.id), str(second.id)],
+        "mission_titles": ["teclado mecanico", "monitor curvo"],
+        "mission_state_versions": [1, 3],
+    }
+    reply = send_calls[0][1]
+    assert "1 - teclado mecanico" in reply
+    assert "2 - monitor curvo" in reply
+
+
+@pytest.mark.anyio
+async def test_editar_missao_with_no_paused_but_one_active_offers_pause(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_user = _fake_user()
+    mission = SimpleNamespace(
+        id=uuid4(), title="monitor curvo", state_version=1, status=MissionStatus.ACTIVE
+    )
+    _patch_user(monkeypatch, fake_user)
+    _patch_missions_by_status(
+        monkeypatch, {MissionStatus.PAUSED: [], MissionStatus.ACTIVE: [mission]}
+    )
+
+    send_calls = await _send_editar_missao(monkeypatch, MagicMock())
+
+    assert fake_user.pending_intent == {
+        "kind": "pause_for_edit",
+        "mission_id": str(mission.id),
+        "mission_title": "monitor curvo",
+        "expected_state_version": 1,
+    }
+    assert "ativa" in send_calls[0][1]
+
+
+@pytest.mark.anyio
+async def test_editar_missao_with_no_paused_and_multiple_active_asks_which_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_user = _fake_user()
+    first = SimpleNamespace(
+        id=uuid4(), title="ssd nvme", state_version=1, status=MissionStatus.ACTIVE
+    )
+    second = SimpleNamespace(
+        id=uuid4(), title="rtx 4060", state_version=1, status=MissionStatus.ACTIVE
+    )
+    _patch_user(monkeypatch, fake_user)
+    _patch_missions_by_status(
+        monkeypatch, {MissionStatus.PAUSED: [], MissionStatus.ACTIVE: [first, second]}
+    )
+
+    send_calls = await _send_editar_missao(monkeypatch, MagicMock())
+
+    assert fake_user.pending_intent["kind"] == "await_edit_active_choice"
+    assert "ssd nvme" in send_calls[0][1]
+    assert "rtx 4060" in send_calls[0][1]
+
+
+@pytest.mark.anyio
+async def test_editar_missao_with_no_missions_says_nothing_to_edit(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     fake_user = _fake_user()
     _patch_user(monkeypatch, fake_user)
-    send_calls = _patch_send_message(monkeypatch)
-    adapter = _FakeAdapter(_intent())
+    _patch_missions_by_status(
+        monkeypatch, {MissionStatus.PAUSED: [], MissionStatus.ACTIVE: []}
+    )
 
-    response = await receive_telegram_webhook(
-        update=_update(
-            message=_TelegramIncomingMessage(
-                text="/editar-missao",
-                date=1754586000,
-                chat=_TelegramChat(id=222, type=TelegramChatType.PRIVATE),
-                from_=_TelegramSender(id=222, first_name="Fulano"),
-            )
-        ),
+    send_calls = await _send_editar_missao(monkeypatch, MagicMock())
+
+    assert fake_user.pending_intent is None
+    assert "pausada ou ativa" in send_calls[0][1]
+
+
+@pytest.mark.anyio
+async def test_mission_choice_answer_advances_to_menu_for_paused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mission_ids = [str(uuid4()), str(uuid4())]
+    fake_user = _fake_user(
+        pending_intent={
+            "kind": "await_edit_paused_choice",
+            "mission_ids": mission_ids,
+            "mission_titles": ["teclado mecanico", "monitor curvo"],
+            "mission_state_versions": [1, 3],
+        }
+    )
+    _patch_user(monkeypatch, fake_user)
+    adapter = _FakeAdapter(_intent())
+    send_calls = _patch_send_message(monkeypatch)
+
+    await receive_telegram_webhook(
+        update=_numeric_reply_update("2"),
         x_telegram_bot_api_secret_token="correct-secret",
         adapters=_adapters(adapter),  # type: ignore[arg-type]
         settings=_settings(),
         session=MagicMock(),
     )
 
-    assert response.status_code == 204
     assert adapter.calls == []
-    assert "lojas" in send_calls[0][1].lower()
-    assert "preço-alvo" in send_calls[0][1].lower()
+    assert fake_user.pending_intent == {
+        "kind": "await_edit_menu_choice",
+        "mission_id": mission_ids[1],
+        "mission_title": "monitor curvo",
+        "expected_state_version": 3,
+    }
+    assert "monitor curvo" in send_calls[0][1]
+
+
+@pytest.mark.anyio
+async def test_mission_choice_answer_advances_to_pause_offer_for_active(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mission_id = str(uuid4())
+    fake_user = _fake_user(
+        pending_intent={
+            "kind": "await_edit_active_choice",
+            "mission_ids": [mission_id],
+            "mission_titles": ["ssd nvme"],
+            "mission_state_versions": [1],
+        }
+    )
+    _patch_user(monkeypatch, fake_user)
+    adapter = _FakeAdapter(_intent())
+    send_calls = _patch_send_message(monkeypatch)
+
+    await receive_telegram_webhook(
+        update=_numeric_reply_update("1"),
+        x_telegram_bot_api_secret_token="correct-secret",
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        settings=_settings(),
+        session=MagicMock(),
+    )
+
+    assert fake_user.pending_intent == {
+        "kind": "pause_for_edit",
+        "mission_id": mission_id,
+        "mission_title": "ssd nvme",
+        "expected_state_version": 1,
+    }
+    assert "ativa" in send_calls[0][1]
+
+
+@pytest.mark.anyio
+async def test_mission_choice_invalid_answer_retries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pending = {
+        "kind": "await_edit_paused_choice",
+        "mission_ids": [str(uuid4())],
+        "mission_titles": ["teclado mecanico"],
+        "mission_state_versions": [1],
+    }
+    fake_user = _fake_user(pending_intent=dict(pending))
+    _patch_user(monkeypatch, fake_user)
+    adapter = _FakeAdapter(_intent())
+    send_calls = _patch_send_message(monkeypatch)
+
+    await receive_telegram_webhook(
+        update=_numeric_reply_update("9"),
+        x_telegram_bot_api_secret_token="correct-secret",
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        settings=_settings(),
+        session=MagicMock(),
+    )
+
+    assert fake_user.pending_intent == pending
+    assert "Não entendi" in send_calls[0][1]
+
+
+@pytest.mark.anyio
+async def test_edit_menu_choice_lojas_shows_lojas_submenu(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mission_id = str(uuid4())
+    fake_user = _fake_user(
+        pending_intent={
+            "kind": "await_edit_menu_choice",
+            "mission_id": mission_id,
+            "mission_title": "teclado mecanico",
+            "expected_state_version": 2,
+        }
+    )
+    _patch_user(monkeypatch, fake_user)
+    monkeypatch.setattr(
+        "app.telegram.router._query_mission_source_codes",
+        lambda session, mid: ("pichau",),
+    )
+    adapter = _FakeAdapter(_intent())
+    send_calls = _patch_send_message(monkeypatch)
+
+    await receive_telegram_webhook(
+        update=_numeric_reply_update("1"),
+        x_telegram_bot_api_secret_token="correct-secret",
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        settings=_settings(),
+        session=MagicMock(),
+    )
+
+    assert fake_user.pending_intent == {
+        "kind": "await_edit_lojas_choice",
+        "mission_id": mission_id,
+        "mission_title": "teclado mecanico",
+        "expected_state_version": 2,
+        "current_sources": ["pichau"],
+    }
+    reply = send_calls[0][1]
+    assert "Adicionar" in reply
+    assert "Remover" in reply
+
+
+@pytest.mark.anyio
+async def test_edit_menu_choice_preco_shows_price_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mission_id = str(uuid4())
+    fake_user = _fake_user(
+        pending_intent={
+            "kind": "await_edit_menu_choice",
+            "mission_id": mission_id,
+            "mission_title": "teclado mecanico",
+            "expected_state_version": 2,
+        }
+    )
+    _patch_user(monkeypatch, fake_user)
+    session = MagicMock()
+    session.scalar.return_value = SimpleNamespace(
+        target_amount=Decimal("500.00"), target_currency="BRL"
+    )
+    adapter = _FakeAdapter(_intent())
+    send_calls = _patch_send_message(monkeypatch)
+
+    await receive_telegram_webhook(
+        update=_numeric_reply_update("2"),
+        x_telegram_bot_api_secret_token="correct-secret",
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        settings=_settings(),
+        session=session,
+    )
+
+    assert fake_user.pending_intent == {
+        "kind": "await_edit_target_amount",
+        "mission_id": mission_id,
+        "mission_title": "teclado mecanico",
+        "expected_state_version": 2,
+        "previous_target_amount": "500.00",
+        "previous_target_currency": "BRL",
+    }
+    assert "novo valor" in send_calls[0][1]
+
+
+@pytest.mark.anyio
+async def test_edit_menu_choice_invalid_retries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pending = {
+        "kind": "await_edit_menu_choice",
+        "mission_id": str(uuid4()),
+        "mission_title": "teclado mecanico",
+        "expected_state_version": 2,
+    }
+    fake_user = _fake_user(pending_intent=dict(pending))
+    _patch_user(monkeypatch, fake_user)
+    adapter = _FakeAdapter(_intent())
+    send_calls = _patch_send_message(monkeypatch)
+
+    await receive_telegram_webhook(
+        update=_numeric_reply_update("abc"),
+        x_telegram_bot_api_secret_token="correct-secret",
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        settings=_settings(),
+        session=MagicMock(),
+    )
+
+    assert fake_user.pending_intent == pending
+    assert "Não entendi" in send_calls[0][1]
+
+
+@pytest.mark.anyio
+async def test_lojas_choice_add_shows_missing_stores(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mission_id = str(uuid4())
+    fake_user = _fake_user(
+        pending_intent={
+            "kind": "await_edit_lojas_choice",
+            "mission_id": mission_id,
+            "mission_title": "teclado mecanico",
+            "expected_state_version": 2,
+            "current_sources": ["pichau"],
+        }
+    )
+    _patch_user(monkeypatch, fake_user)
+    adapter = _FakeAdapter(_intent())
+    send_calls = _patch_send_message(monkeypatch)
+
+    await receive_telegram_webhook(
+        update=_numeric_reply_update("1"),
+        x_telegram_bot_api_secret_token="correct-secret",
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        settings=_settings(),
+        session=MagicMock(),
+    )
+
+    assert fake_user.pending_intent == {
+        "kind": "await_edit_add_sources",
+        "mission_id": mission_id,
+        "mission_title": "teclado mecanico",
+        "expected_state_version": 2,
+        "current_sources": ["pichau"],
+        "option_map": {"1": "terabyte", "2": "amazon", "3": "kabum"},
+    }
+    reply = send_calls[0][1]
+    assert "1 - Terabyte" in reply
+    assert "2 - Amazon" in reply
+    assert "3 - Kabum" in reply
+    assert "Pichau" not in reply
+
+
+@pytest.mark.anyio
+async def test_lojas_choice_remove_shows_current_stores(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mission_id = str(uuid4())
+    fake_user = _fake_user(
+        pending_intent={
+            "kind": "await_edit_lojas_choice",
+            "mission_id": mission_id,
+            "mission_title": "teclado mecanico",
+            "expected_state_version": 2,
+            "current_sources": ["pichau", "kabum"],
+        }
+    )
+    _patch_user(monkeypatch, fake_user)
+    adapter = _FakeAdapter(_intent())
+    send_calls = _patch_send_message(monkeypatch)
+
+    await receive_telegram_webhook(
+        update=_numeric_reply_update("2"),
+        x_telegram_bot_api_secret_token="correct-secret",
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        settings=_settings(),
+        session=MagicMock(),
+    )
+
+    assert fake_user.pending_intent == {
+        "kind": "await_edit_remove_sources",
+        "mission_id": mission_id,
+        "mission_title": "teclado mecanico",
+        "expected_state_version": 2,
+        "current_sources": ["pichau", "kabum"],
+        "option_map": {"1": "pichau", "2": "kabum"},
+    }
+    reply = send_calls[0][1]
+    assert "1 - Pichau" in reply
+    assert "2 - Kabum" in reply
+
+
+@pytest.mark.anyio
+async def test_lojas_choice_remove_blocked_when_only_one_store(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_user = _fake_user(
+        pending_intent={
+            "kind": "await_edit_lojas_choice",
+            "mission_id": str(uuid4()),
+            "mission_title": "teclado mecanico",
+            "expected_state_version": 2,
+            "current_sources": ["pichau"],
+        }
+    )
+    _patch_user(monkeypatch, fake_user)
+    adapter = _FakeAdapter(_intent())
+    send_calls = _patch_send_message(monkeypatch)
+
+    await receive_telegram_webhook(
+        update=_numeric_reply_update("2"),
+        x_telegram_bot_api_secret_token="correct-secret",
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        settings=_settings(),
+        session=MagicMock(),
+    )
+
+    assert fake_user.pending_intent is None
+    assert "não é possível remover" in send_calls[0][1]
+
+
+@pytest.mark.anyio
+async def test_lojas_choice_add_blocked_when_all_stores_already_linked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_user = _fake_user(
+        pending_intent={
+            "kind": "await_edit_lojas_choice",
+            "mission_id": str(uuid4()),
+            "mission_title": "teclado mecanico",
+            "expected_state_version": 2,
+            "current_sources": ["pichau", "terabyte", "amazon", "kabum"],
+        }
+    )
+    _patch_user(monkeypatch, fake_user)
+    adapter = _FakeAdapter(_intent())
+    send_calls = _patch_send_message(monkeypatch)
+
+    await receive_telegram_webhook(
+        update=_numeric_reply_update("1"),
+        x_telegram_bot_api_secret_token="correct-secret",
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        settings=_settings(),
+        session=MagicMock(),
+    )
+
+    assert fake_user.pending_intent is None
+    assert "já tem todas" in send_calls[0][1]
+
+
+@pytest.mark.anyio
+async def test_add_sources_valid_selection_advances_to_edit_mission_confirmation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mission_id = str(uuid4())
+    fake_user = _fake_user(
+        pending_intent={
+            "kind": "await_edit_add_sources",
+            "mission_id": mission_id,
+            "mission_title": "teclado mecanico",
+            "expected_state_version": 2,
+            "current_sources": ["pichau"],
+            "option_map": {"1": "terabyte", "2": "amazon", "3": "kabum"},
+        }
+    )
+    _patch_user(monkeypatch, fake_user)
+    adapter = _FakeAdapter(_intent())
+    send_calls = _patch_send_message(monkeypatch)
+
+    await receive_telegram_webhook(
+        update=_numeric_reply_update("1,3"),
+        x_telegram_bot_api_secret_token="correct-secret",
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        settings=_settings(),
+        session=MagicMock(),
+    )
+
+    assert fake_user.pending_intent == {
+        "kind": "edit_mission",
+        "mission_id": mission_id,
+        "mission_title": "teclado mecanico",
+        "expected_state_version": 2,
+        "changes_target": False,
+        "target_amount": None,
+        "target_currency": None,
+        "changes_sources": True,
+        "sources": ["pichau", "terabyte", "kabum"],
+        "previous_target_amount": None,
+        "previous_target_currency": None,
+        "previous_sources": ["pichau"],
+    }
+    reply = send_calls[0][1]
+    assert "Pichau" in reply
+    assert "Terabyte, Kabum" in reply or "Pichau, Terabyte, Kabum" in reply
+
+
+@pytest.mark.anyio
+async def test_add_sources_invalid_selection_retries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pending = {
+        "kind": "await_edit_add_sources",
+        "mission_id": str(uuid4()),
+        "mission_title": "teclado mecanico",
+        "expected_state_version": 2,
+        "current_sources": ["pichau"],
+        "option_map": {"1": "terabyte", "2": "amazon", "3": "kabum"},
+    }
+    fake_user = _fake_user(pending_intent=dict(pending))
+    _patch_user(monkeypatch, fake_user)
+    adapter = _FakeAdapter(_intent())
+    send_calls = _patch_send_message(monkeypatch)
+
+    await receive_telegram_webhook(
+        update=_numeric_reply_update("1,9"),
+        x_telegram_bot_api_secret_token="correct-secret",
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        settings=_settings(),
+        session=MagicMock(),
+    )
+
+    assert fake_user.pending_intent == pending
+    assert "Não reconheci" in send_calls[0][1]
+
+
+@pytest.mark.anyio
+async def test_remove_sources_valid_selection_advances_to_edit_mission_confirmation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mission_id = str(uuid4())
+    fake_user = _fake_user(
+        pending_intent={
+            "kind": "await_edit_remove_sources",
+            "mission_id": mission_id,
+            "mission_title": "teclado mecanico",
+            "expected_state_version": 2,
+            "current_sources": ["pichau", "kabum"],
+            "option_map": {"1": "pichau", "2": "kabum"},
+        }
+    )
+    _patch_user(monkeypatch, fake_user)
+    adapter = _FakeAdapter(_intent())
+    send_calls = _patch_send_message(monkeypatch)
+
+    await receive_telegram_webhook(
+        update=_numeric_reply_update("1"),
+        x_telegram_bot_api_secret_token="correct-secret",
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        settings=_settings(),
+        session=MagicMock(),
+    )
+
+    assert fake_user.pending_intent == {
+        "kind": "edit_mission",
+        "mission_id": mission_id,
+        "mission_title": "teclado mecanico",
+        "expected_state_version": 2,
+        "changes_target": False,
+        "target_amount": None,
+        "target_currency": None,
+        "changes_sources": True,
+        "sources": ["kabum"],
+        "previous_target_amount": None,
+        "previous_target_currency": None,
+        "previous_sources": ["pichau", "kabum"],
+    }
+    assert "Kabum" in send_calls[0][1]
+
+
+@pytest.mark.anyio
+async def test_remove_sources_would_empty_all_keeps_pending_and_asks_again(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pending = {
+        "kind": "await_edit_remove_sources",
+        "mission_id": str(uuid4()),
+        "mission_title": "teclado mecanico",
+        "expected_state_version": 2,
+        "current_sources": ["pichau", "kabum"],
+        "option_map": {"1": "pichau", "2": "kabum"},
+    }
+    fake_user = _fake_user(pending_intent=dict(pending))
+    _patch_user(monkeypatch, fake_user)
+    adapter = _FakeAdapter(_intent())
+    send_calls = _patch_send_message(monkeypatch)
+
+    await receive_telegram_webhook(
+        update=_numeric_reply_update("1,2"),
+        x_telegram_bot_api_secret_token="correct-secret",
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        settings=_settings(),
+        session=MagicMock(),
+    )
+
+    assert fake_user.pending_intent == pending
+    assert "pelo menos uma" in send_calls[0][1]
+
+
+@pytest.mark.anyio
+async def test_target_amount_valid_number_advances_to_edit_mission_confirmation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mission_id = str(uuid4())
+    fake_user = _fake_user(
+        pending_intent={
+            "kind": "await_edit_target_amount",
+            "mission_id": mission_id,
+            "mission_title": "teclado mecanico",
+            "expected_state_version": 2,
+            "previous_target_amount": "500.00",
+            "previous_target_currency": "BRL",
+        }
+    )
+    _patch_user(monkeypatch, fake_user)
+    adapter = _FakeAdapter(_intent())
+    send_calls = _patch_send_message(monkeypatch)
+
+    await receive_telegram_webhook(
+        update=_numeric_reply_update("300"),
+        x_telegram_bot_api_secret_token="correct-secret",
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        settings=_settings(),
+        session=MagicMock(),
+    )
+
+    assert fake_user.pending_intent == {
+        "kind": "edit_mission",
+        "mission_id": mission_id,
+        "mission_title": "teclado mecanico",
+        "expected_state_version": 2,
+        "changes_target": True,
+        "target_amount": "300",
+        "target_currency": "BRL",
+        "changes_sources": False,
+        "sources": [],
+        "previous_target_amount": "500.00",
+        "previous_target_currency": "BRL",
+        "previous_sources": [],
+    }
+    reply = send_calls[0][1]
+    assert "R$ 500,00" in reply
+    assert "R$ 300,00" in reply
+
+
+@pytest.mark.anyio
+async def test_target_amount_zero_clears_target(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_user = _fake_user(
+        pending_intent={
+            "kind": "await_edit_target_amount",
+            "mission_id": str(uuid4()),
+            "mission_title": "teclado mecanico",
+            "expected_state_version": 2,
+            "previous_target_amount": "500.00",
+            "previous_target_currency": "BRL",
+        }
+    )
+    _patch_user(monkeypatch, fake_user)
+    adapter = _FakeAdapter(_intent())
+    send_calls = _patch_send_message(monkeypatch)
+
+    await receive_telegram_webhook(
+        update=_numeric_reply_update("0"),
+        x_telegram_bot_api_secret_token="correct-secret",
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        settings=_settings(),
+        session=MagicMock(),
+    )
+
+    assert fake_user.pending_intent["changes_target"] is True
+    assert fake_user.pending_intent["target_amount"] is None
+    assert fake_user.pending_intent["target_currency"] is None
+    assert "removido" in send_calls[0][1] or "sem alvo" in send_calls[0][1]
+
+
+@pytest.mark.anyio
+async def test_target_amount_accepts_comma_decimal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_user = _fake_user(
+        pending_intent={
+            "kind": "await_edit_target_amount",
+            "mission_id": str(uuid4()),
+            "mission_title": "teclado mecanico",
+            "expected_state_version": 2,
+            "previous_target_amount": None,
+            "previous_target_currency": None,
+        }
+    )
+    _patch_user(monkeypatch, fake_user)
+    adapter = _FakeAdapter(_intent())
+    send_calls = _patch_send_message(monkeypatch)
+
+    await receive_telegram_webhook(
+        update=_numeric_reply_update("300,50"),
+        x_telegram_bot_api_secret_token="correct-secret",
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        settings=_settings(),
+        session=MagicMock(),
+    )
+
+    assert fake_user.pending_intent["target_amount"] == "300.50"
+    assert "R$ 300,50" in send_calls[0][1]
+
+
+@pytest.mark.anyio
+async def test_target_amount_invalid_retries(monkeypatch: pytest.MonkeyPatch) -> None:
+    pending = {
+        "kind": "await_edit_target_amount",
+        "mission_id": str(uuid4()),
+        "mission_title": "teclado mecanico",
+        "expected_state_version": 2,
+        "previous_target_amount": None,
+        "previous_target_currency": None,
+    }
+    fake_user = _fake_user(pending_intent=dict(pending))
+    _patch_user(monkeypatch, fake_user)
+    adapter = _FakeAdapter(_intent())
+    send_calls = _patch_send_message(monkeypatch)
+
+    await receive_telegram_webhook(
+        update=_numeric_reply_update("não sei quanto"),
+        x_telegram_bot_api_secret_token="correct-secret",
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        settings=_settings(),
+        session=MagicMock(),
+    )
+
+    assert fake_user.pending_intent == pending
+    assert "Não entendi" in send_calls[0][1]
 
 
 @pytest.mark.anyio

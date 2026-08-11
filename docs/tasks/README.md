@@ -130,3 +130,22 @@ fallback `_DEFAULT_V1_SOURCE_CODES` do service foi preservado sem
 alteração, por depender de outros chamadores. Validado com pipeline
 oficial completo. **O item 6 continua registrado e pendente, sem TASK
 aberta — a `v1.0.2` continua aberta.**
+
+**Atualização 2026-08-11 (2):** a **TASK-071**
+(`docs/tasks/TASK-071.md`) está **concluída** — não é item da `v1.0.2`,
+pedido explícito do usuário depois de uma simulação da edição de missão
+(TASK-069) revelar um risco real: `sources` sempre foi tratado como a
+lista completa final de lojas, mas a IA nunca sabe quais lojas a missão
+já tem, então "adiciona kabum e terabyte" sem repetir a loja já
+selecionada fazia a confirmação remover essa loja sem o usuário
+perceber facilmente. `/editar-missao` virou um menu guiado, 100%
+determinístico, sem `IntentInterpreter`: resolve qual missão (sem IA),
+depois `1 Lojas`/`2 Preço-alvo`, lojas ganha `1 Adicionar`/`2 Remover`
+(nunca permite zerar todas), preço-alvo pede o valor direto (`0` remove
+o alvo). **O caminho antigo por texto livre foi desativado** por decisão
+explícita do usuário. Reaproveita integralmente `edit_mission_criteria`,
+`stage_edit_mission`/`describe_edit_mission`,
+`stage_pause_for_edit`/`describe_pause_for_edit` (TASK-069) e
+`parse_numbered_store_selection` (TASK-070) — nenhum alterado. Validado
+com pipeline oficial completo (876 testes, 91,00% cobertura, 21
+integrações PostgreSQL reais).

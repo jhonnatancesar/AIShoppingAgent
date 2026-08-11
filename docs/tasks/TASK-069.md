@@ -342,3 +342,19 @@ usuário já autenticado e perguntar as lojas por lista numerada quando
 uma missão for criada sem nenhuma informada), sem implementação e sem
 TASK aberta. **A `v1.0.2` continua aberta** — esta nota não altera nada
 do que a TASK-069 implementou ou validou.
+
+**Nota pós-conclusão (2026-08-11):** a **TASK-071**
+(`docs/tasks/TASK-071.md`) **desativou o caminho de edição por texto
+livre** descrito nas seções acima (`IntentKind.EDIT_MISSION`
+interpretado pelo `IntentInterpreter`) — uma simulação revelou que
+`sources` sempre foi tratado como a lista completa final de lojas, mas a
+IA nunca sabe quais lojas a missão já tem, então pedir para "adicionar"
+lojas sem repetir as já selecionadas podia remover uma delas sem o
+usuário perceber facilmente. Editar lojas e/ou preço-alvo agora só
+acontece pelo menu guiado e determinístico do `/editar-missao`
+(TASK-071). **Tudo o que esta TASK implementou no serviço e na
+confirmação final** (`edit_mission_criteria`, `stage_edit_mission`/
+`describe_edit_mission`, `stage_pause_for_edit`/`describe_pause_for_edit`,
+a regra de só `PAUSED` ser editável, a preservação de histórico ao
+remover uma loja) **continua exatamente igual, reaproveitado sem
+alteração pela TASK-071** — só a forma de chegar até esse ponto mudou.

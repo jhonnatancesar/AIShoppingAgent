@@ -11,15 +11,19 @@ cancelar para pausar uma missão ativa antes de editar;
 `await_create_mission_sources` (TASK-070) é o único estado pendente que
 **não** passa por `resolve_answer` -- a resposta é uma lista numerada de
 lojas, interpretada de forma determinística por
-`parse_numbered_store_selection`, nunca por IA. Nunca guarda o `Intent`
-bruto nem texto livre da mensagem original.
+`parse_numbered_store_selection`, nunca por IA. O menu guiado de
+`/editar-missao` (TASK-071) segue o mesmo princípio: toda a navegação
+(qual missão, o que editar, quais lojas) é determinística, sem
+`IntentInterpreter`; só a confirmação final sim/não continua usando
+`resolve_answer`, igual a todo o resto do sistema. Nunca guarda o
+`Intent` bruto nem texto livre da mensagem original.
 """
 
 import json
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -357,3 +361,204 @@ def describe_pause_for_edit(payload: dict[str, Any]) -> str:
         "editar. Quer que eu pause agora?\n\n"
         f"{_CONFIRMATION_SUFFIX}"
     )
+
+
+# TASK-071: menu guiado e determinístico de `/editar-missao` -- nenhuma
+# função abaixo chama IA. A navegação termina sempre convergindo para o
+# mesmo payload `stage_edit_mission`/`describe_edit_mission` (acima), que
+# já é a confirmação final sim/não reaproveitada da TASK-069.
+
+_MISSION_CHOICE_RETRY = "Não entendi. Digite só o número da missão."
+
+
+def parse_single_numbered_choice(raw: str, *, count: int) -> int | None:
+    """Índice zero-based (`0`..`count - 1`) de uma escolha numérica única
+    (TASK-071) -- `None` se não for um único número dentro do intervalo."""
+    token = raw.strip()
+    if not token.isdigit():
+        return None
+    value = int(token)
+    if not (1 <= value <= count):
+        return None
+    return value - 1
+
+
+def describe_mission_choice_prompt(titles: Sequence[str], *, header: str) -> str:
+    lines = [header, ""]
+    lines.extend(f"{index + 1} - {title}" for index, title in enumerate(titles))
+    lines.extend(["", "Digite o número."])
+    return "\n".join(lines)
+
+
+def describe_mission_choice_retry() -> str:
+    return _MISSION_CHOICE_RETRY
+
+
+_NO_EDITABLE_MISSION_REPLY = (
+    "Você não tem nenhuma missão pausada ou ativa para editar agora."
+)
+
+
+def describe_no_editable_mission() -> str:
+    return _NO_EDITABLE_MISSION_REPLY
+
+
+_EDIT_MENU_PROMPT_TEMPLATE = (
+    '✏️ O que deseja editar na missão "{title}"?\n\n'
+    "1 - Lojas\n"
+    "2 - Preço-alvo\n\n"
+    "Digite o número."
+)
+
+_EDIT_MENU_RETRY = 'Não entendi. Digite "1" para lojas ou "2" para preço-alvo.'
+
+
+def describe_edit_menu(mission_title: str) -> str:
+    return _EDIT_MENU_PROMPT_TEMPLATE.format(title=mission_title)
+
+
+def describe_edit_menu_retry() -> str:
+    return _EDIT_MENU_RETRY
+
+
+_EDIT_LOJAS_MENU_PROMPT = (
+    "🏪 O que deseja fazer?\n\n"
+    "1 - Adicionar lojas\n"
+    "2 - Remover lojas\n\n"
+    "Digite o número."
+)
+
+_EDIT_LOJAS_MENU_RETRY = (
+    'Não entendi. Digite "1" para adicionar ou "2" para remover lojas.'
+)
+
+
+def describe_edit_lojas_menu() -> str:
+    return _EDIT_LOJAS_MENU_PROMPT
+
+
+def describe_edit_lojas_menu_retry() -> str:
+    return _EDIT_LOJAS_MENU_RETRY
+
+
+def missing_store_options(current_sources: Sequence[str]) -> dict[str, str]:
+    """TASK-071: lojas que a missão ainda não tem, numeradas a partir de 1
+    na mesma ordem canônica da TASK-070 (`1 Pichau/2 Terabyte/3 Amazon/
+    4 Kabum`)."""
+    missing = [
+        code
+        for code in _CREATE_MISSION_SOURCE_OPTIONS.values()
+        if code not in current_sources
+    ]
+    return {str(index + 1): code for index, code in enumerate(missing)}
+
+
+def current_store_options(current_sources: Sequence[str]) -> dict[str, str]:
+    """TASK-071: lojas já vinculadas à missão, numeradas a partir de 1 na
+    mesma ordem canônica."""
+    linked = [
+        code
+        for code in _CREATE_MISSION_SOURCE_OPTIONS.values()
+        if code in current_sources
+    ]
+    return {str(index + 1): code for index, code in enumerate(linked)}
+
+
+def describe_store_selection_prompt(
+    option_map: Mapping[str, str], *, header: str
+) -> str:
+    lines = [header, ""]
+    lines.extend(
+        f"{number} - {code.capitalize()}" for number, code in option_map.items()
+    )
+    lines.extend(["", "Digite os números separados por vírgula."])
+    return "\n".join(lines)
+
+
+_EDIT_ADD_SOURCES_HEADER = "🏪 Lojas ainda não vinculadas à missão:"
+_EDIT_REMOVE_SOURCES_HEADER = "🏪 Lojas atualmente vinculadas à missão:"
+_EDIT_SOURCE_SELECTION_RETRY = (
+    "Não reconheci essa opção. Use os números mostrados, separados por vírgula."
+)
+_EDIT_ADD_SOURCES_NONE_MISSING = (
+    "A missão já tem todas as lojas disponíveis vinculadas."
+)
+_EDIT_REMOVE_SOURCES_TOO_FEW = (
+    "A missão só tem uma loja vinculada -- não é possível remover, a "
+    "missão precisa de pelo menos uma."
+)
+_EDIT_REMOVE_SOURCES_WOULD_EMPTY = (
+    "Não é possível remover todas as lojas selecionadas -- a missão "
+    "precisa de pelo menos uma. Escolha menos opções."
+)
+
+
+def describe_edit_add_sources_prompt(option_map: Mapping[str, str]) -> str:
+    return describe_store_selection_prompt(option_map, header=_EDIT_ADD_SOURCES_HEADER)
+
+
+def describe_edit_remove_sources_prompt(option_map: Mapping[str, str]) -> str:
+    return describe_store_selection_prompt(
+        option_map, header=_EDIT_REMOVE_SOURCES_HEADER
+    )
+
+
+def describe_edit_source_selection_retry() -> str:
+    return _EDIT_SOURCE_SELECTION_RETRY
+
+
+def describe_edit_add_sources_none_missing() -> str:
+    return _EDIT_ADD_SOURCES_NONE_MISSING
+
+
+def describe_edit_remove_sources_too_few() -> str:
+    return _EDIT_REMOVE_SOURCES_TOO_FEW
+
+
+def describe_edit_remove_sources_would_empty() -> str:
+    return _EDIT_REMOVE_SOURCES_WOULD_EMPTY
+
+
+def resolve_edit_source_selection(
+    raw: str, *, option_map: Mapping[str, str]
+) -> tuple[str, ...] | None:
+    """TASK-071: mesma validação estrita da TASK-070 (`parse_numbered_store_selection`),
+    sem atalho de "todas" -- o conjunto de opções já é dinâmico (só o que
+    falta ou só o que está vinculado), então cada resposta precisa citar
+    os números mostrados."""
+    return parse_numbered_store_selection(
+        raw, option_map=option_map, all_tokens=frozenset()
+    )
+
+
+_EDIT_TARGET_AMOUNT_PROMPT = (
+    "🎯 Digite o novo valor do alvo em reais (ex.: 300 ou 300.50), ou 0 "
+    "para remover o alvo."
+)
+_EDIT_TARGET_AMOUNT_RETRY = (
+    "Não entendi o valor. Digite um número (ex.: 300), ou 0 para remover o alvo."
+)
+
+
+def describe_edit_target_amount_prompt() -> str:
+    return _EDIT_TARGET_AMOUNT_PROMPT
+
+
+def describe_edit_target_amount_retry() -> str:
+    return _EDIT_TARGET_AMOUNT_RETRY
+
+
+def parse_target_amount_entry(raw: str) -> Decimal | None:
+    """TASK-071: valor digitado diretamente, sem IA -- aceita vírgula ou
+    ponto como separador decimal. `None` se não for um número finito e
+    não negativo."""
+    text = raw.strip().replace(",", ".")
+    if not text:
+        return None
+    try:
+        amount = Decimal(text)
+    except InvalidOperation:
+        return None
+    if not amount.is_finite() or amount < 0:
+        return None
+    return amount
