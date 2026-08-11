@@ -1,5 +1,8 @@
 """Testes do fluxo de cadastro inicial dirigido por comando (TASK-060)."""
 
+from unittest.mock import MagicMock
+from uuid import uuid4
+
 import pytest
 from app.users.models import User, UserRole
 from app.users.registration import (
@@ -12,7 +15,16 @@ from app.users.registration import (
 
 
 def _user() -> User:
-    return User(display_name="Usuário de teste", role=UserRole.USER)
+    user = User(display_name="Usuário de teste", role=UserRole.USER)
+    user.id = uuid4()
+    return user
+
+
+def _session(*, username_taken: bool = False) -> MagicMock:
+    """TASK-072: por padrão, nenhum outro usuário tem o mesmo username."""
+    session = MagicMock()
+    session.scalar.return_value = uuid4() if username_taken else None
+    return session
 
 
 def test_start_registration_sets_first_step_and_prompts() -> None:
@@ -37,7 +49,7 @@ def test_advance_registration_without_step_in_progress_raises() -> None:
     user = _user()
 
     with pytest.raises(RegistrationError):
-        advance_registration(user, answer="joaosilva")
+        advance_registration(user, answer="joaosilva", session=_session())
 
 
 def test_advance_registration_rejects_skip_on_username() -> None:
@@ -45,7 +57,7 @@ def test_advance_registration_rejects_skip_on_username() -> None:
     start_registration(user)
 
     with pytest.raises(RegistrationError):
-        advance_registration(user, answer="pular")
+        advance_registration(user, answer="pular", session=_session())
     assert user.registration_step == "username"
 
 
@@ -55,7 +67,7 @@ def test_advance_registration_rejects_invalid_username(bad_username: str) -> Non
     start_registration(user)
 
     with pytest.raises(RegistrationError):
-        advance_registration(user, answer=bad_username)
+        advance_registration(user, answer=bad_username, session=_session())
     assert user.registration_step == "username"
 
 
@@ -63,18 +75,47 @@ def test_advance_registration_accepts_valid_username_and_moves_to_email() -> Non
     user = _user()
     start_registration(user)
 
-    prompt = advance_registration(user, answer="  joaosilva  ")
+    prompt = advance_registration(user, answer="  joaosilva  ", session=_session())
 
     assert user.username == "joaosilva"
     assert user.registration_step == "email"
     assert "e-mail" in prompt.lower()
 
 
+def test_advance_registration_rejects_username_already_taken() -> None:
+    """TASK-072: checagem antecipada, mantém no passo `username`."""
+    user = _user()
+    start_registration(user)
+    session = _session(username_taken=True)
+
+    with pytest.raises(RegistrationError, match="já está em uso"):
+        advance_registration(user, answer="joaosilva", session=session)
+    assert user.registration_step == "username"
+    assert user.username is None
+
+
+def test_advance_registration_username_check_queries_by_username_excluding_self() -> (
+    None
+):
+    """A consulta filtra por `username` e exclui o próprio usuário -- só
+    assim reenviar o mesmo nome nunca soa como "já em uso"."""
+    user = _user()
+    start_registration(user)
+    session = _session()
+
+    advance_registration(user, answer="joaosilva", session=session)
+
+    session.scalar.assert_called_once()
+    statement = str(session.scalar.call_args[0][0])
+    assert "users.username" in statement
+    assert "users.id" in statement
+
+
 def test_advance_registration_allows_skipping_email() -> None:
     user = _user()
     user.registration_step = "email"
 
-    advance_registration(user, answer="pular")
+    advance_registration(user, answer="pular", session=_session())
 
     assert user.email is None
     assert user.registration_step == "favorite_stores"
@@ -86,7 +127,7 @@ def test_advance_registration_rejects_invalid_email(bad_email: str) -> None:
     user.registration_step = "email"
 
     with pytest.raises(RegistrationError):
-        advance_registration(user, answer=bad_email)
+        advance_registration(user, answer=bad_email, session=_session())
     assert user.registration_step == "email"
 
 
@@ -94,7 +135,7 @@ def test_advance_registration_accepts_valid_email() -> None:
     user = _user()
     user.registration_step = "email"
 
-    advance_registration(user, answer="joao@example.com")
+    advance_registration(user, answer="joao@example.com", session=_session())
 
     assert user.email == "joao@example.com"
     assert user.registration_step == "favorite_stores"
@@ -104,7 +145,7 @@ def test_advance_registration_parses_known_favorite_stores() -> None:
     user = _user()
     user.registration_step = "favorite_stores"
 
-    advance_registration(user, answer="Kabum, pichau pichau")
+    advance_registration(user, answer="Kabum, pichau pichau", session=_session())
 
     assert user.favorite_stores == ["kabum", "pichau"]
     assert user.registration_step == "preferred_categories"
@@ -114,7 +155,7 @@ def test_registration_prompt_offers_numbered_stores_and_all_option() -> None:
     user = _user()
     user.registration_step = "email"
 
-    prompt = advance_registration(user, answer="pular")
+    prompt = advance_registration(user, answer="pular", session=_session())
 
     assert "1 - Kabum" in prompt
     assert "4 - Amazon" in prompt
@@ -136,7 +177,7 @@ def test_advance_registration_parses_numbered_stores(
     user = _user()
     user.registration_step = "favorite_stores"
 
-    advance_registration(user, answer=answer)
+    advance_registration(user, answer=answer, session=_session())
 
     assert user.favorite_stores == expected
 
@@ -146,7 +187,7 @@ def test_advance_registration_rejects_favorite_stores_with_no_known_match() -> N
     user.registration_step = "favorite_stores"
 
     with pytest.raises(RegistrationError):
-        advance_registration(user, answer="shopee, mercado livre")
+        advance_registration(user, answer="shopee, mercado livre", session=_session())
     assert user.registration_step == "favorite_stores"
 
 
@@ -154,7 +195,7 @@ def test_advance_registration_allows_skipping_favorite_stores() -> None:
     user = _user()
     user.registration_step = "favorite_stores"
 
-    advance_registration(user, answer="pular")
+    advance_registration(user, answer="pular", session=_session())
 
     assert user.favorite_stores == []
     assert user.registration_step == "preferred_categories"
@@ -164,7 +205,7 @@ def test_registration_prompt_offers_numbered_categories_and_all_option() -> None
     user = _user()
     user.registration_step = "favorite_stores"
 
-    prompt = advance_registration(user, answer="pular")
+    prompt = advance_registration(user, answer="pular", session=_session())
 
     assert "1 - Hardware / Componentes de PC" in prompt
     assert "15 - Geek e Colecionáveis" in prompt
@@ -186,7 +227,7 @@ def test_advance_registration_parses_numbered_categories(
     user = _user()
     user.registration_step = "preferred_categories"
 
-    completion = advance_registration(user, answer=answer)
+    completion = advance_registration(user, answer=answer, session=_session())
 
     assert user.preferred_categories == expected
     assert user.registration_step is None
@@ -199,7 +240,7 @@ def test_advance_registration_rejects_categories_with_no_known_match() -> None:
     user.registration_step = "preferred_categories"
 
     with pytest.raises(RegistrationError):
-        advance_registration(user, answer="games, moveis, livros")
+        advance_registration(user, answer="games, moveis, livros", session=_session())
     assert user.registration_step == "preferred_categories"
 
 
@@ -207,7 +248,7 @@ def test_advance_registration_allows_skipping_preferred_categories() -> None:
     user = _user()
     user.registration_step = "preferred_categories"
 
-    advance_registration(user, answer="pular")
+    advance_registration(user, answer="pular", session=_session())
 
     assert user.preferred_categories == []
     assert user.registration_step is None

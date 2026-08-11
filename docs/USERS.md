@@ -97,7 +97,17 @@ fechado. O papel `PLUS`, planos e múltiplos papéis permanecem fora do MVP.
   mesmo padrão numerado, com 15 opções reais (`1` Hardware a `15` Geek e
   Colecionáveis) e `16` para todas; ambos os passos aceitam combinações por
   números separados por vírgula. Ao terminar, o mesmo fluxo emite o link HTTPS para criar a senha e
-  orienta o login, sem receber a senha pelo chat. O comando `/upgrade` existe e é visível no menu do
+  orienta o login, sem receber a senha pelo chat. Desde a TASK-072,
+  `/cadastro` é **bloqueado** quando a sessão já está ativa
+  (`has_active_session`) — responde com mensagem fixa ("✅ Você já está
+  cadastrado e autenticado neste Telegram.") sem tocar em
+  `registration_step` nem em nenhum campo já salvo; sem sessão ativa
+  (usuário novo ou sessão expirada), o comportamento é o mesmo de sempre.
+  Também desde a TASK-072, o passo `username` consulta o banco antes de
+  aceitar um nome já usado por outra conta, mantendo a pessoa no mesmo
+  passo com uma mensagem clara — a constraint `UNIQUE` do banco
+  (`uq_users_username`) continua sendo a proteção real contra corrida,
+  essa consulta é só uma melhoria de UX. O comando `/upgrade` existe e é visível no menu do
   bot, mas responde apenas que a função está "em breve" — nenhuma lógica
   real de mudança de plano/perfil está implementada
   (`docs/OUT_OF_SCOPE.md`).

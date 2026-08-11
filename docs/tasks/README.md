@@ -149,3 +149,22 @@ explícita do usuário. Reaproveita integralmente `edit_mission_criteria`,
 `parse_numbered_store_selection` (TASK-070) — nenhum alterado. Validado
 com pipeline oficial completo (876 testes, 91,00% cobertura, 21
 integrações PostgreSQL reais).
+
+**Atualização 2026-08-11 (3):** a **TASK-072**
+(`docs/tasks/TASK-072.md`, item 6) está **concluída**. `/cadastro` passa
+a ser bloqueado quando a sessão já está ativa (`has_active_session`) —
+mensagem fixa, sem alterar `registration_step` nem nenhum campo do
+perfil; sem sessão ativa, o comportamento continua idêntico ao de hoje.
+O usuário ampliou o pedido durante o desenho para incluir username
+duplicado e um telefone com mais de uma conta; uma auditoria dedicada
+mostrou que as duas últimas já eram estruturalmente garantidas
+(constraints `UNIQUE` no banco + `get_or_create_telegram_user` seguro
+contra corrida), sem nenhuma mudança necessária. A única lacuna real era
+de UX: o passo `username` não consultava o banco antes de aceitar,
+travando silenciosamente mais adiante quando duplicado — corrigido com
+uma checagem antecipada (melhoria de UX, não substitui a constraint
+`UNIQUE`, que continua ativa como proteção contra corrida). Validado com
+pipeline oficial completo (880 testes, 91,06% cobertura, 21 integrações
+PostgreSQL reais). **Com esta TASK, os 7 itens da `v1.0.2` estão
+implementados e validados** — nenhuma tag `v1.0.2` criada ainda,
+publicação final pendente de decisão explícita do usuário.

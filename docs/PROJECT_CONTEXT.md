@@ -784,3 +784,32 @@ reaproveitados, sem nenhuma alteração. Validado com pipeline oficial
 completo (876 testes, 91,00% cobertura, 21 integrações PostgreSQL
 reais). Nenhuma tag `v1.0.2` criada; produção da `v1.0.1` intocada;
 nenhuma outra TASK iniciada.
+
+**Atualização 2026-08-11 (3):** concluída a **TASK-072** (item 6 da
+`v1.0.2`, `docs/tasks/TASK-072.md`) — último item pendente da versão.
+`/cadastro` passa a ser bloqueado quando `has_active_session` é `True`,
+respondendo com mensagem fixa ("✅ Você já está cadastrado e autenticado
+neste Telegram.") sem alterar `registration_step` nem nenhum campo já
+salvo; sem sessão ativa, o comportamento é idêntico ao de antes. Durante
+o desenho, o usuário ampliou a preocupação para username duplicado entre
+contas e um telefone com mais de uma conta — uma auditoria dedicada
+mostrou que essas duas últimas **já eram estruturalmente garantidas**
+(`User.telegram_user_id` e `User.username` já têm constraint `UNIQUE` no
+banco; `get_or_create_telegram_user` é seguro contra corrida; a sessão é
+sempre resolvida a partir do `telegram_user_id` recebido, nunca de um
+dado informado pelo usuário — não existe caminho para uma conta
+autenticar através da identidade de outra pessoa), sem nenhuma mudança
+de código necessária para esses dois pontos. A única lacuna real era de
+UX: o passo `username` do `/cadastro` nunca consultava o banco antes de
+aceitar, então duas pessoas escolhendo o mesmo nome ao mesmo tempo
+faziam a segunda travar silenciosamente mais adiante (a escrita falhava
+na constraint sem nenhuma mensagem clara). Corrigido com
+`_ensure_username_available` (`backend/app/users/registration.py`) — uma
+checagem antecipada, melhoria de UX que **não substitui** a constraint
+`UNIQUE`, que continua sendo a proteção real contra corrida. Validado
+com pipeline oficial completo (880 testes, 91,06% cobertura, 21
+integrações PostgreSQL reais). **Com esta TASK, os 7 itens da `v1.0.2`
+estão implementados e validados — todo o escopo registrado desta versão
+está concluído.** Nenhuma tag `v1.0.2` criada ainda; publicação final
+pendente de decisão explícita do usuário; produção da `v1.0.1` intocada;
+nenhuma outra TASK iniciada.

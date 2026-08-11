@@ -1,5 +1,44 @@
 # Changelog
 
+## 2026-08-11 (3) — TASK-072 concluída: /cadastro bloqueado para sessão ativa + username duplicado avisado
+
+- **TASK-072** (`docs/tasks/TASK-072.md`, item 6 da `v1.0.2`, `DEC-060`)
+  concluída — último item pendente da versão. `/cadastro` passa a ser
+  **bloqueado** quando `has_active_session` é `True`: responde com
+  mensagem fixa ("✅ Você já está cadastrado e autenticado neste
+  Telegram."), sem alterar `registration_step` nem nenhum campo do
+  perfil já salvo. Sem sessão ativa (usuário novo ou sessão expirada), o
+  comportamento continua idêntico ao de antes.
+- Durante o desenho, o usuário ampliou a preocupação original para
+  incluir username duplicado entre contas e um telefone com mais de uma
+  conta. Uma auditoria dedicada confirmou que essas duas já eram
+  **estruturalmente garantidas**: `User.telegram_user_id` e
+  `User.username` já têm constraint `UNIQUE` no banco
+  (`uq_users_telegram_user_id`/`uq_users_username`);
+  `get_or_create_telegram_user` é seguro contra corrida; a sessão é
+  sempre resolvida pelo `telegram_user_id` recebido, nunca por dado
+  informado pelo usuário — não existe caminho para uma conta autenticar
+  através da identidade de outra pessoa. Nenhuma mudança de código foi
+  necessária para esses dois pontos.
+- A lacuna real era de UX, não de integridade: o passo `username` do
+  `/cadastro` nunca consultava o banco antes de aceitar um nome, então
+  duas pessoas escolhendo o mesmo nome ao mesmo tempo faziam a segunda
+  avançar normalmente até travar silenciosamente mais adiante. Corrigido
+  com `_ensure_username_available`
+  (`backend/app/users/registration.py`) — consulta antecipada que
+  mantém a pessoa no passo `username` com mensagem clara quando o nome
+  já pertence a outra conta. É uma melhoria de UX que **não substitui**
+  a constraint `UNIQUE` do banco, que continua sendo a proteção real
+  contra corrida.
+- Validado com pipeline oficial completo (880 testes, 91,06% cobertura,
+  21 integrações PostgreSQL reais, migration head sem alteração).
+  Nenhum outro fluxo de autenticação alterado; recuperação de senha fora
+  do escopo. Nenhuma tag `v1.0.2` criada; produção da `v1.0.1` intocada;
+  nenhuma outra TASK iniciada. **Com esta TASK, os 7 itens da `v1.0.2`
+  estão implementados e validados — todo o escopo registrado desta
+  versão está concluído**; a publicação final (tag e eventual deploy)
+  permanece pendente de decisão explícita do usuário.
+
 ## 2026-08-11 (2) — TASK-071 concluída: menu guiado e determinístico para /editar-missao
 
 - **TASK-071** (`docs/tasks/TASK-071.md`, não é item da `v1.0.2`)

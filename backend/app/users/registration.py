@@ -4,11 +4,17 @@ Fora do vocabulário fechado do `IntentInterpreter`: enquanto um cadastro
 está em andamento, a mensagem seguinte do usuário é tratada diretamente
 como resposta ao passo pendente, sem passar pela IA. Não lida com sessão de
 banco nem com o Telegram — apenas muta o `User` recebido e devolve o texto
-de resposta.
+de resposta. Exceção pontual (TASK-072): o passo `username` recebe a
+`Session` só para uma checagem antecipada de disponibilidade -- consulta
+de UX, não substitui a constraint `UNIQUE` do banco (`uq_users_username`),
+que continua sendo a proteção real contra corrida.
 """
 
 import re
 from typing import Final
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from app.intent.contracts import MISSION_SOURCE_CODES
 from app.users.models import User
@@ -106,7 +112,7 @@ def start_registration(user: User) -> str:
     return _PROMPTS[first_step]
 
 
-def advance_registration(user: User, *, answer: str) -> str:
+def advance_registration(user: User, *, answer: str, session: Session) -> str:
     """Aplica a resposta ao passo pendente e avança para o próximo."""
     step = user.registration_step
     if step not in REGISTRATION_STEPS:
@@ -116,7 +122,9 @@ def advance_registration(user: User, *, answer: str) -> str:
     if step == "username":
         if skip:
             raise RegistrationError("nome de usuário é obrigatório, não pode pular")
-        user.username = _validate_username(answer)
+        username = _validate_username(answer)
+        _ensure_username_available(username, session=session, user=user)
+        user.username = username
     elif step == "email":
         user.email = None if skip else _validate_email(answer)
     elif step == "favorite_stores":
@@ -145,6 +153,21 @@ def _validate_username(raw: str) -> str:
             'Nome de usuário não pode começar com "/" nem conter espaços.'
         )
     return username
+
+
+def _ensure_username_available(username: str, *, session: Session, user: User) -> None:
+    """TASK-072: checagem antecipada, só de UX -- se o nome já pertence a
+    outra conta, mantém a pessoa no passo `username` com uma mensagem
+    clara, em vez de deixar avançar e travar mais adiante. A constraint
+    `UNIQUE` do banco (`uq_users_username`) continua ativa e é a proteção
+    real contra corrida; esta consulta não a substitui nem a enfraquece."""
+    taken = session.scalar(
+        select(User.id).where(User.username == username, User.id != user.id)
+    )
+    if taken is not None:
+        raise RegistrationError(
+            f'O nome de usuário "{username}" já está em uso. Escolha outro.'
+        )
 
 
 def _validate_email(raw: str) -> str:

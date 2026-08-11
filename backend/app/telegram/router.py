@@ -146,6 +146,13 @@ _UNKNOWN_REPLY = (
 )
 
 _CADASTRO_COMMAND = "/cadastro"
+_CADASTRO_ALREADY_AUTHENTICATED_REPLY = (
+    "✅ Você já está cadastrado e autenticado neste Telegram."
+)
+"""TASK-072: a checagem é sobre a sessão/identidade do Telegram
+(`has_active_session`), não sobre o aparelho físico -- a mensagem evita
+a palavra "dispositivo" por precisão. Bloquear aqui não altera
+nenhum campo do cadastro nem `registration_step`."""
 _UPGRADE_COMMAND = "/upgrade"
 _UPGRADE_REPLY = "🔒 Mudar de usuário/perfil — em breve."
 _START_COMMAND = "/start"
@@ -408,6 +415,10 @@ async def _handle_message(
         return privacy_notice()
     if lowered == _CADASTRO_COMMAND:
         authorize(session, user, Permission.PROFILE_MANAGE)
+        if user.telegram_user_id is not None and has_active_session(
+            session, user_id=user.id, telegram_user_id=user.telegram_user_id
+        ):
+            return _CADASTRO_ALREADY_AUTHENTICATED_REPLY
         return start_registration(user)
     if lowered in {_PASSWORD_COMMAND, _LOGIN_COMMAND, _RECOVERY_COMMAND}:
         authorize(session, user, Permission.PROFILE_MANAGE)
@@ -420,7 +431,9 @@ async def _handle_message(
     if user.registration_step is not None:
         authorize(session, user, Permission.PROFILE_MANAGE)
         try:
-            registration_reply = advance_registration(user, answer=message.text)
+            registration_reply = advance_registration(
+                user, answer=message.text, session=session
+            )
         except RegistrationError as error:
             return str(error)
         if user.registration_step is not None:

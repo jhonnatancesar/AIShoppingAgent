@@ -85,8 +85,10 @@ fechado do `IntentInterpreter`:
 - `/cadastro`: inicia (ou reinicia) o cadastro inicial não sensível, com
   passos sequenciais (nome de usuário, e-mail, lojas favoritas numeradas,
   preferências de categoria). `5` seleciona todas; ao concluir, o bot emite o
-  link HTTPS para criar a senha e a página orienta usar `/entrar`. Detalhes em
-  `docs/USERS.md`.
+  link HTTPS para criar a senha e a página orienta usar `/entrar`. Desde a
+  TASK-072, é **bloqueado** com sessão ativa (mensagem fixa, sem tocar no
+  perfil salvo), e o passo de nome de usuário verifica disponibilidade no
+  banco antes de aceitar. Detalhes em `docs/USERS.md`.
 - `/upgrade`: existe e aparece no menu do bot, mas responde apenas que a
   função está "em breve" — nenhuma lógica real de mudança de plano ou
   perfil está implementada.

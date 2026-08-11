@@ -305,3 +305,29 @@ existente (não é o `IntentInterpreter`). Validado com pipeline oficial
 completo (876 testes, 91,00% cobertura, 21 integrações PostgreSQL
 reais). Nenhuma tag `v1.0.2` criada; produção da `v1.0.1` intocada;
 nenhuma outra TASK iniciada.
+
+A **TASK-072** (`docs/tasks/TASK-072.md`, item 6, último item pendente
+da `v1.0.2`) está **concluída**: `/cadastro` passa a ser bloqueado
+quando `has_active_session` é `True` — mensagem fixa ("✅ Você já está
+cadastrado e autenticado neste Telegram."), sem alterar
+`registration_step` nem nenhum campo do perfil; sem sessão ativa, o
+comportamento é idêntico ao de antes. Durante o desenho, o usuário
+ampliou a preocupação para username duplicado entre contas e um
+telefone com mais de uma conta — auditoria dedicada confirmou que essas
+duas já eram estruturalmente garantidas (`User.telegram_user_id` e
+`User.username` já têm constraint `UNIQUE` no banco;
+`get_or_create_telegram_user` é seguro contra corrida; a sessão sempre é
+resolvida pelo `telegram_user_id` recebido, nunca por dado informado
+pelo usuário — nenhum caminho existe para autenticar na identidade de
+outra pessoa), sem nenhuma mudança de código necessária. A lacuna real
+era de UX: o passo `username` não consultava o banco antes de aceitar,
+travando silenciosamente mais adiante quando duplicado — corrigido com
+`_ensure_username_available` (`backend/app/users/registration.py`),
+melhoria de UX que **não substitui** a constraint `UNIQUE`, que continua
+sendo a proteção real contra corrida. Validado com pipeline oficial
+completo (880 testes, 91,06% cobertura, 21 integrações PostgreSQL
+reais). **Com esta TASK, os 7 itens da `v1.0.2` estão implementados e
+validados — todo o escopo registrado desta versão está concluído.**
+Nenhuma tag `v1.0.2` criada ainda; publicação final pendente de decisão
+explícita do usuário; produção da `v1.0.1` intocada; nenhuma outra TASK
+iniciada.
