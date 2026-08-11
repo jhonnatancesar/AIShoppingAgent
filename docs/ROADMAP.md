@@ -160,7 +160,12 @@ item único TASK-073 — `/cadastro` bloqueado também para cadastro já
 concluído sem sessão ativa, complementando a TASK-072, ver
 `docs/tasks/TASK-073.md` — encontrada durante a validação real do
 deploy da `v1.0.2`; concluída, validada e implantada em produção,
-tag `v1.0.3` (`6fa5e13`), em 2026-08-11) → V1.2
+tag `v1.0.3` (`6fa5e13`), em 2026-08-11) → `v1.0.4` (release corretiva,
+item único TASK-074 — `search_query` do `IntentInterpreter` passa a
+corrigir digitação óbvia e completar marca/modelo reconhecível, sem
+inventar especificação nova, ver `docs/tasks/TASK-074.md` —
+encontrada durante a mesma validação real; concluída e validada com
+pipeline oficial e chamadas reais ao perfil `ADMIN`) → V1.2
 (evolução funcional, documento `docs/V1_2.md`, 12 itens,
 incluindo Magalu como quinta loja, redução de `PriceObservation`
 redundante, e comparação de menor preço histórico externo/interno estilo

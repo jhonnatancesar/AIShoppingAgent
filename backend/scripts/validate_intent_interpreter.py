@@ -44,6 +44,11 @@ _DIVERSE_MESSAGES: tuple[str, ...] = (
     "cria uma missao pra mim de fone bluetooth ate 300 reais",
     "preciso de um ssd nvme 1tb barato, sem valor definido mesmo",
     "bora comprar um teclado mecanico rgb la na amazon, add uns 450 pila",
+    # create_mission: erro de digitação/modelo abreviado no search_query
+    # (TASK-074) -- espera-se correção pra forma usual, não invenção de
+    # especificação nova.
+    "quero um 9950x3d ate 3500",
+    "procura um mouse logitek barato",
     # query_mission: formas variadas de perguntar, sem referência explícita.
     "e ai como ta indo a busca do meu ssd?",
     "mostra o status da missao do teclado",

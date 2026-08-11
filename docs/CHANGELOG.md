@@ -1,5 +1,31 @@
 # Changelog
 
+## 2026-08-11 (5) — TASK-074 concluída: search_query corrige digitação/completa marca-modelo
+
+- **TASK-074** (`docs/tasks/TASK-074.md`) concluída — encontrada durante a
+  validação real de missão em produção: o usuário digitou "9950x3d" (sem
+  "Ryzen 9") e o termo saiu literal tanto na confirmação quanto na busca
+  real nas lojas (`search_query` vira a URL de busca,
+  `app/collection/providers/base.py:131`). Também identificado que um
+  erro de digitação (ex.: "logitek") nunca seria corrigido, e que a
+  TASK-057 (robustez de classificação de `IntentKind`) nunca cobriu esse
+  problema — são questões distintas: reconhecer a intenção vs. corrigir o
+  conteúdo extraído.
+- Prompt do `IntentInterpreter` (`backend/app/intent/interpreter.py`)
+  ajustado para corrigir erro de digitação óbvio e completar marca/modelo
+  reconhecível no `search_query` (ex.: "logitek" → "logitech", "9950x3d"
+  → "ryzen 9 9950x3d") — mantendo proibido inventar especificação, cor,
+  variante ou característica não mencionada.
+- Validado com pipeline oficial completo **e** validação manual real
+  contra o `AdminDevAIProviderManager` (perfil `ADMIN`, nunca `USER`):
+  as duas correções confirmadas contra a IA real, e um teste de regressão
+  ("mouse bom e barato" → `search_query: "mouse"`, sem marca inventada)
+  confirmou que o limite contra invenção continua firme.
+- Fora do escopo: o caso de "zero resultados silencioso" (produto que de
+  fato não existe, como "9951x3d") permanece uma lacuna conhecida,
+  registrada para decisão futura — a consulta de missões não mostra
+  quantidade de ofertas encontradas.
+
 ## 2026-08-11 (4) — TASK-073 concluída: /cadastro bloqueado para cadastro já concluído sem sessão ativa (release v1.0.3)
 
 - **TASK-073** (`docs/tasks/TASK-073.md`, item único da `v1.0.3`)

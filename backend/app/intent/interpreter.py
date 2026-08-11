@@ -80,6 +80,13 @@ _SYSTEM_PROMPT = (
     "Nunca exija que o usuário siga um padrão de escrita; classifique "
     '"unknown" apenas quando o sentido da mensagem, e não apenas sua forma, '
     "for realmente ambíguo ou fora do domínio de compras.\n\n"
+    'Ao preencher "search_query", corrija erro de digitação óbvio e '
+    "complete nome de marca/modelo reconhecível para a forma usual "
+    '(ex.: "logitek" -> "logitech", "9950x3d" -> "ryzen 9 9950x3d"). Essa '
+    "correção é só do nome do produto/marca já citado — nunca adicione "
+    "especificação, cor, variante, quantidade ou característica que a "
+    "pessoa não mencionou; isso continua proibido pela regra de nunca "
+    "inventar.\n\n"
     "Exemplos de mensagens reais e a resposta esperada, apenas para ilustrar "
     "o padrão — generalize o critério, nunca copie um exemplo literalmente:\n\n"
     'Mensagem: "eu qria uma rtx 4060 ate uns 2500 pila na kabum, bora"\n'
@@ -91,6 +98,16 @@ _SYSTEM_PROMPT = (
     'Resposta: {"kind": "create_mission", "command": null, "parameters": '
     '{"search_query": "notebook gamer", "target_amount": "3000.00", '
     '"target_currency": "BRL", "sources": [], "mission_reference": null, '
+    '"clear_target": false}}\n\n'
+    'Mensagem: "quero um 9950x3d ate 3500"\n'
+    'Resposta: {"kind": "create_mission", "command": null, "parameters": '
+    '{"search_query": "ryzen 9 9950x3d", "target_amount": "3500.00", '
+    '"target_currency": "BRL", "sources": [], "mission_reference": null, '
+    '"clear_target": false}}\n\n'
+    'Mensagem: "procura um mouse logitek barato"\n'
+    'Resposta: {"kind": "create_mission", "command": null, "parameters": '
+    '{"search_query": "mouse logitech", "target_amount": null, '
+    '"target_currency": null, "sources": [], "mission_reference": null, '
     '"clear_target": false}}\n\n'
     'Mensagem: "e ai cade minha missao do notebook, achou algo?"\n'
     'Resposta: {"kind": "query_mission", "command": null, "parameters": '

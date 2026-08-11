@@ -837,3 +837,17 @@ migration nova (head `20260810_0001` inalterado), `api`/
 — `database`, `jaeger`, `otel-collector` e `prometheus` intocados.
 `/health`/`/ready` `200`; `restart: unless-stopped` confirmado nos 7
 serviços; dados de produção preservados.
+
+**Atualização 2026-08-11 (5):** durante o teste em produção, uma missão
+criada só com "9950x3d" mostrou que `search_query` (usado literalmente
+como termo de busca em cada loja) nunca corrigia digitação nem
+completava marca/modelo. Registrada e concluída a **TASK-074**
+(`docs/tasks/TASK-074.md`): prompt do `IntentInterpreter` ajustado para
+corrigir erro óbvio ("logitek" → "logitech") e completar marca/modelo
+reconhecível ("9950x3d" → "ryzen 9 9950x3d"), sem abrir espaço para
+inventar especificação não mencionada — confirmado por regressão
+("mouse bom e barato" → `search_query: "mouse"`). Validada com pipeline
+oficial e chamadas reais contra o perfil `ADMIN` (nunca `USER`). O caso
+de "zero resultados silencioso" para produto inexistente (ex.:
+"9951x3d") fica registrado como lacuna conhecida, fora do escopo desta
+TASK.
