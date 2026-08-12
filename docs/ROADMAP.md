@@ -166,13 +166,22 @@ corrigir digitação óbvia e completar marca/modelo reconhecível, sem
 inventar especificação nova, ver `docs/tasks/TASK-074.md` —
 encontrada durante a mesma validação real; concluída e validada com
 pipeline oficial e chamadas reais ao perfil `ADMIN`) → `v1.0.5`
-(release corretiva, item único TASK-075 — canonicalização completa +
-campo estruturado `model` no `IntentInterpreter`, filtros
-determinísticos de modelo/bundle e regra exclusiva de menor preço da
-Amazon antes de persistir/chamar IA, ver `docs/tasks/TASK-075.md` —
-encontrada durante a mesma validação real, estouro de cota de IA por
-volume de candidatos irrelevantes; concluída e validada com pipeline
-oficial, migration real e chamadas reais ao perfil `ADMIN`) → V1.2
+(release corretiva, TASK-075 — canonicalização completa + campo
+estruturado `model` no `IntentInterpreter`, filtros determinísticos de
+modelo/bundle e regra exclusiva de menor preço da Amazon antes de
+persistir/chamar IA, ver `docs/tasks/TASK-075.md` — encontrada durante
+a mesma validação real, estouro de cota de IA por volume de candidatos
+irrelevantes; mais a correção de readiness da Pichau encontrada na
+validação real do teste controlado em produção — `domcontentloaded`
+(22-38s, às vezes >45s) trocado por `wait_until="commit"` + espera
+pelo card real ou pelo estado legítimo de "zero resultados" (9-12s),
+com o timeout de navegação do browser desacoplado do timeout de
+chamadas de API/IA (`AISHOPPING_BROWSER_NAVIGATION_TIMEOUT_SECONDS=45`
+vs `AISHOPPING_EXTERNAL_HTTP_TIMEOUT_SECONDS=10`), documentada em
+`docs/tasks/TASK-075.md`; **concluída e validada** com pipeline
+oficial, migration real, chamadas reais ao perfil `ADMIN` e missão
+real em produção (`5800X3D`, 4 lojas `succeeded`, pré-lista correta
+Amazon+Kabum por serem as mais baratas)) → V1.2
 (evolução funcional, documento `docs/V1_2.md`, 12 itens,
 incluindo Magalu como quinta loja, redução de `PriceObservation`
 redundante, e comparação de menor preço histórico externo/interno estilo

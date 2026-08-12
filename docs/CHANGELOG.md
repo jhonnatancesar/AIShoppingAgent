@@ -1,5 +1,62 @@
 # Changelog
 
+## 2026-08-11 (7) — Correção da Pichau: readiness real substitui `domcontentloaded`; release `v1.0.5`
+
+- Publicado em teste controlado (sem tag) o commit da TASK-075, o
+  usuário validou uma missão real pelo Telegram e a pré-lista só
+  mostrou Kabum e Amazon. Investigação (logs + banco) confirmou que a
+  Terabyte teve `collection_run` `succeeded` sem oferta persistida
+  (produto genuinamente esgotado) e a Pichau falhou com
+  `ProviderNavigationError`.
+- **Causa raiz da Pichau**: `_collect_once` reaproveitava
+  `AISHOPPING_EXTERNAL_HTTP_TIMEOUT_SECONDS` (10s) como timeout de
+  navegação do Playwright; a página mede ~20-38s de carregamento real
+  até `domcontentloaded`. Novo `AISHOPPING_BROWSER_NAVIGATION_
+  TIMEOUT_SECONDS` (default `45`, exclusivo do `collection_worker`)
+  desacopla os dois timeouts — `AISHOPPING_EXTERNAL_HTTP_TIMEOUT_
+  SECONDS` continua `10`, só chamadas de API/IA/Telegram. Isolado o
+  reteste, 45s por si só não resolveu de forma confiável (uma
+  execução teve sucesso só na 3ª tentativa; outra falhou nas 3, sempre
+  em ~45,8s) — decisão explícita do usuário de não aumentar ainda mais
+  o timeout e investigar o critério de prontidão em vez disso.
+- Diagnóstico comparativo confirmou que a página fica utilizável (card
+  real de produto anexado ao DOM) em **9-12s**, bem antes do
+  `domcontentloaded` (**22-38s**) — a Pichau carrega scripts de
+  terceiros (analytics/ads) que atrasam esse evento sem relação com o
+  conteúdo útil. Identificado ao vivo o texto estável do estado
+  legítimo de "zero resultados": `"Nenhum produto encontrado"`.
+- Nova extensão opt-in em `PlaywrightStoreProvider`
+  (`navigation_wait_until`, `empty_result_locator`, ambos com
+  comportamento padrão idêntico ao atual — Amazon/Kabum/Terabyte
+  inalterados). `PichauProvider` passa a navegar com
+  `wait_until="commit"` e aguardar, com o mesmo teto de 45s, o
+  primeiro entre o card real de produto e o estado legítimo de zero
+  resultados — que agora devolve uma coleta válida com zero ofertas
+  em vez de `provider_unavailable`. `build_url`, seletor de produto e
+  extração não mudaram.
+- Validado com pipeline oficial completo (915 testes, 91,22%
+  cobertura, 21 integrações PostgreSQL, migration `20260811_0001`
+  inalterada — sem migration nova nesta correção) e reteste isolado
+  real dentro do `collection_worker` (3 buscas reais + 1 busca vazia
+  proposital): todas concluídas na 1ª tentativa, sem retry.
+- **Validação funcional real em produção** (missão
+  `"Processador AMD Ryzen 7 5800X3D"`, `model: "5800X3D"`, iniciada
+  manualmente pelo usuário via Telegram): as 4 lojas concluíram com
+  sucesso (`collection_claimed=4`, `collection_succeeded=4`,
+  `collection_failed=0`) — Amazon `succeeded` R$ 2.184,99, Kabum
+  `succeeded` R$ 2.299,99, Pichau `succeeded` R$ 2.489,99 em 10,48s,
+  Terabyte `succeeded` R$ 2.699,99 em 12,48s; 1 oferta válida
+  persistida e classificada `match` por loja; pré-lista mostrou
+  corretamente só Amazon e Kabum — as duas mais baratas, por desenho
+  (`_maybe_publish_prelist_ready` sempre mostra só o top-2), não por
+  falha das outras duas.
+- Publicada como release `v1.0.5`, consolidando **TASK-075**
+  (`docs/tasks/TASK-075.md` — canonicalização completa e campo
+  estruturado `model` no `IntentInterpreter`, filtros determinísticos
+  de modelo/bundle e regra exclusiva de menor preço da Amazon antes de
+  persistir/chamar IA, gate obrigatório por `model`) e a correção de
+  readiness da Pichau acima.
+
 ## 2026-08-11 (6) — TASK-075 concluída: canonicalização + filtros determinísticos reduzem lixo de coleta e chamadas de IA
 
 - **TASK-075** (`docs/tasks/TASK-075.md`) concluída — encontrada durante

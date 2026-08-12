@@ -876,3 +876,38 @@ e descartado (redundante frente ao filtro de bundle já existente).
 Validada com pipeline oficial completo e chamadas reais contra o perfil
 `ADMIN` (`"quero uma 4070 ti"` → `model: "RTX 4070 Ti"`; `"procura um
 9800x3d"` → família correta `Ryzen 7`).
+
+**Atualização 2026-08-11/12 (7):** publicado em teste controlado (sem
+tag) o commit da TASK-075, o usuário validou uma missão real pelo
+Telegram e a pré-lista só mostrou Kabum e Amazon. Investigação (logs +
+banco) confirmou que a Terabyte teve `collection_run` `succeeded` sem
+oferta persistida (produto genuinamente esgotado) e a Pichau falhou
+com `ProviderNavigationError`. Causa raiz confirmada: `_collect_once`
+reaproveitava `AISHOPPING_EXTERNAL_HTTP_TIMEOUT_SECONDS` (10s) como
+timeout de navegação do Playwright, insuficiente para o carregamento
+real da Pichau (~20-38s até `domcontentloaded`). Novo
+`AISHOPPING_BROWSER_NAVIGATION_TIMEOUT_SECONDS` (default `45`,
+exclusivo do `collection_worker`) desacopla os dois timeouts — mas o
+reteste isolado mostrou que 45s por si só não resolvia de forma
+confiável, levando a um segundo diagnóstico: `wait_until="commit"` +
+espera pelo card real ficou pronta em 9-12s, contra 22-38s do
+`domcontentloaded` (atrasado por scripts de terceiros/analytics
+alheios ao conteúdo útil). Identificado ao vivo o texto estável do
+estado de "zero resultados" (`"Nenhum produto encontrado"`). Nova
+extensão opt-in em `PlaywrightStoreProvider`
+(`navigation_wait_until`, `empty_result_locator`, padrão inalterado
+para as demais lojas); `PichauProvider` passa a navegar com `commit` e
+aguardar o primeiro entre card real e estado vazio, devolvendo coleta
+válida com zero ofertas em vez de `provider_unavailable` quando
+aplicável. Validado com pipeline oficial (915 testes, 91,22%
+cobertura) e reteste isolado real (3 buscas reais + 1 vazia, todas na
+1ª tentativa). **Validação funcional real em produção** (missão
+`"Processador AMD Ryzen 7 5800X3D"`, iniciada manualmente pelo usuário
+via Telegram): as 4 lojas concluíram com sucesso
+(`collection_claimed=4`, `collection_succeeded=4`,
+`collection_failed=0`) — Amazon R$ 2.184,99, Kabum R$ 2.299,99, Pichau
+R$ 2.489,99 (10,48s), Terabyte R$ 2.699,99 (12,48s); pré-lista mostrou
+corretamente só Amazon e Kabum, as duas mais baratas, por desenho do
+`_maybe_publish_prelist_ready` (top-2), não por falha das outras
+duas. Publicada como release `v1.0.5`, consolidando a TASK-075 e esta
+correção.

@@ -604,8 +604,78 @@ afetada (a coluna nova só é lida, nunca obrigatória); histórico de
   `"procura um mouse logitek barato"` (correção de digitação da
   TASK-074 preservada).
 
+## Correção pós-implementação: readiness da Pichau (2026-08-11/12)
+
+Publicado o commit `0998b43` (TASK-075) em teste controlado na
+produção (sem tag), o usuário validou manualmente uma missão real pelo
+Telegram e perguntou por que a pré-lista só mostrou Kabum e Amazon.
+Investigação (logs + banco) mostrou que a Terabyte teve `collection_run`
+`succeeded` sem oferta persistida (produto genuinamente esgotado, sem
+preço a normalizar) e que a Pichau falhou com `ProviderNavigationError`.
+A investigação da Pichau foi aprofundada a pedido do usuário:
+
+- **Causa raiz confirmada**: `_collect_once` reaproveitava
+  `AISHOPPING_EXTERNAL_HTTP_TIMEOUT_SECONDS` (10s) como
+  `navigation_timeout_ms` do Playwright. Diagnóstico isolado (sem
+  persistência, sem missão) mediu ~24,91s de carregamento real da
+  Pichau em modo headed — não é bot detection, não é URL incorreta.
+- **Correção 1 aprovada**: novo `AISHOPPING_BROWSER_NAVIGATION_
+  TIMEOUT_SECONDS` (default `45`), exclusivo do `collection_worker`,
+  desacoplado de `AISHOPPING_EXTERNAL_HTTP_TIMEOUT_SECONDS` (continua
+  `10`, só chamadas de API/IA/Telegram). Reteste isolado mostrou
+  resultado **inconsistente**: numa execução, sucesso só na 3ª
+  tentativa (2 timeouts de ~45,8s antes); noutra, timeout nas 3
+  tentativas, sempre em ~45,8s. Concluído que 45s não resolve a causa
+  operacional de forma confiável — decisão explícita do usuário de não
+  aumentar ainda mais o timeout.
+- **Diagnóstico comparativo aprovado**: `wait_until="commit"` +
+  espera explícita pelo seletor real (`a[data-cy="list-product"]`)
+  medida em **9-12s** contra `wait_until="domcontentloaded"` em
+  **22-38s** (3 execuções cada). Confirmado: a página fica utilizável
+  bem antes do `domcontentloaded` — a Pichau carrega scripts de
+  terceiros (analytics/ads, ex. `doubleclick.net`,
+  `google.com/ccm/collect`, `selo.siteblindado.com`) que atrasam esse
+  evento sem relação com o conteúdo útil.
+- **Estado de "zero resultados" identificado ao vivo**: texto estável
+  `"Nenhum produto encontrado"` (a página não expõe `id`/`data-cy`
+  para esse estado — só uma classe gerada pelo MUI, instável entre
+  builds).
+- **Correção 2 aprovada e implementada**: extensão opt-in em
+  `PlaywrightStoreProvider` (`app/collection/providers/base.py`) —
+  `navigation_wait_until` (padrão `"domcontentloaded"`, inalterado
+  para Amazon/Kabum/Terabyte) e `empty_result_locator` (padrão
+  `None`). Quando definido, `_collect_once` corre `result_selector`
+  contra o locator vazio (ambos com timeout = `navigation_timeout_ms`);
+  cards reais liberam a extração normal, o estado vazio devolve uma
+  coleta válida com zero ofertas (sem virar `provider_unavailable`), e
+  a ausência dos dois cai na mesma política de `ProviderBlockedError`
+  de hoje. `PichauProvider` passa a usar `navigation_wait_until =
+  "commit"` e `empty_result_locator` pelo texto confirmado acima.
+  `build_url`, seletor de produto e extração não mudaram.
+- **Validado**: pipeline oficial completo (915 testes, 91,22%
+  cobertura, 21 integrações PostgreSQL, migration `20260811_0001`
+  inalterada — sem migration nova nesta correção), 4 testes novos em
+  `tests/test_store_providers.py` cobrindo os dois estados e a
+  ausência de ambos, e reteste isolado real dentro do
+  `collection_worker` (3 buscas reais + 1 busca vazia proposital):
+  todas concluídas na 1ª tentativa, 7,45-17,33s, 20 ofertas cada busca
+  real, 0 ofertas (sem erro) na busca vazia.
+- **Confirmação funcional em produção** (2026-08-12, missão real
+  `"Processador AMD Ryzen 7 5800X3D"` iniciada manualmente pelo
+  usuário pelo Telegram): as 4 lojas concluíram com sucesso
+  (`collection_claimed=4`, `collection_succeeded=4`,
+  `collection_failed=0`) — Amazon R$ 2.184,99, Kabum R$ 2.299,99,
+  Pichau R$ 2.489,99 (10,48s), Terabyte R$ 2.699,99 (12,48s); 1 oferta
+  persistida e classificada `match` por loja; pré-lista mostrou
+  corretamente só Amazon e Kabum, as duas mais baratas (comportamento
+  documentado de `_maybe_publish_prelist_ready`, não uma falha das
+  outras duas lojas).
+- Commit `16d20e4` (`fix(collection): improve Pichau navigation
+  readiness`), publicado em `origin/main` e implantado em produção
+  (teste controlado) na mesma sessão.
+
 ## Próximo passo
 
-Implementação concluída e validada. Commit local feito. Aguardando
-autorização explícita do usuário para publicar (tag/push) e implantar
-em produção — nenhum push nem deploy realizado ainda.
+TASK-075 e a correção acima estão implementadas, validadas (pipeline
++ produção real) e aprovadas explicitamente pelo usuário. Consolidação
+final como release `v1.0.5` em andamento.
