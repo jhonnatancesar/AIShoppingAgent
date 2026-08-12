@@ -1,5 +1,35 @@
 # Changelog
 
+## 2026-08-12 — Incidente operacional: travamento do host (GT 610/nouveau) + Tailscale Funnel não re-registrado; sem mudança de código
+
+- Bot fora do ar duas vezes na mesma manhã, sem nenhuma mudança na
+  aplicação — puramente infraestrutura do servidor `cesar-server`.
+- **Causa 1 — travamento do sistema operacional**: journal para de
+  registrar às 03:53 sem panic/OOM, boot seguinte confirma desligamento
+  sujo. Driver `nouveau` (GPU GeForce GT 610) falhando em todo boot
+  (`failed to create ce channel, -22`), consistente com histórico
+  anterior do usuário. RDP confirmado independente (driver `xrdpdev`
+  próprio, `DRMAllowList` sem nouveau). **Correção**: `nouveau`/
+  `nvidiafb` desabilitados (`/etc/modprobe.d/blacklist-nouveau.conf`),
+  `initramfs` reconstruído, reboot real validado sem nenhum erro de
+  driver de vídeo — primeira vez.
+- **Causa 2 — Tailscale Funnel não voltou a ficar acessível publicamente
+  após o reboot**, mesmo reportando "on" localmente (confirmado só
+  testando com `curl --resolve` direto no IP público real, contornando
+  o atalho do MagicDNS). Webhook do Telegram ficou com mensagens presas
+  (`pending_update_count` > 0) mesmo com os 7 serviços saudáveis.
+  **Correção**: `tailscale funnel reset` + reaplicação resolveu
+  imediatamente.
+- **Prevenção**: novo `telegram-funnel-healthcheck.timer` (systemd, a
+  cada 5 min) testa o caminho público real do Funnel e reinicia
+  `tailscaled`/reaplica o Funnel sozinho se detectar falha em duas
+  checagens seguidas, com limite de 1 restart a cada 10 min. Não cobre
+  travamento do SO em si, só a recorrência específica do problema do
+  Funnel.
+- Nenhum código do repositório alterado; só documentação
+  (`PROJECT_CONTEXT.md`, `PRODUCTION_SETUP.md`) registrando o incidente
+  e a configuração nova do servidor.
+
 ## 2026-08-11 (8) — `v1.0.6` entra em planejamento: TASK-076 (logs de falha) e TASK-077 (vendedor Amazon)
 
 - Por pedido explícito do usuário, **`v1.0.6` entrou em planejamento

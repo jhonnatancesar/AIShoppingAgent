@@ -941,3 +941,54 @@ arquiteturais explicitamente marcadas como pendentes de aprovação do
 usuário em cada documento (onde persistir a classificação da TASK-077;
 se estender o `JsonFormatter` compartilhado ou só o ponto de log da
 TASK-076). Produção da `v1.0.5` não foi tocada por este planejamento.
+
+**Atualização 2026-08-12 (9):** incidente operacional em produção, sem
+nenhuma mudança de código/aplicação — puramente infraestrutura do
+servidor. O bot ficou fora do ar duas vezes na mesma manhã, por causas
+diferentes:
+
+1. **Travamento completo do sistema operacional** (`cesar-server`) por
+   volta de 03:53, sem painc nem OOM registrado — o journal simplesmente
+   para de logar, e o boot seguinte confirma desligamento sujo
+   (`systemd-journald: ... corrupted or uncleanly shut down`).
+   Investigação (`lspci`, `lsmod`, journal de todo boot) encontrou o
+   driver `nouveau` (GPU NVIDIA GeForce GT 610) falhando repetidamente em
+   **todo** boot (`failed to create ce channel, -22`), consistente com
+   histórico anterior do usuário de travamentos ao usar interface
+   gráfica nessa mesma placa. Confirmado que o acesso remoto (RDP via
+   `xrdp`) já usa um driver X virtual próprio (`xrdpdev`,
+   `/etc/X11/xrdp/xorg.conf`) com `DRMAllowList "i915 radeon"` —
+   nouveau já estava excluído dali, então desabilitá-lo não afeta o RDP.
+   **Correção**: `nouveau`/`nvidiafb` desabilitados via
+   `/etc/modprobe.d/blacklist-nouveau.conf` (`blacklist` +
+   `options nouveau modeset=0`), `initramfs` reconstruído, reboot real
+   validado — primeiro boot dessa máquina sem nenhum erro de driver de
+   vídeo no journal. GDM (login gráfico local) já estava desabilitado,
+   então nada muda no uso real; só a saída de vídeo acelerada por essa
+   GPU deixa de existir (console básico via framebuffer do firmware
+   continua disponível).
+2. **Tailscale Funnel não se re-registrou publicamente após o reboot** —
+   `tailscale funnel status` local reportava "on", mas requisições
+   externas genuínas (testadas forçando conexão direta ao IP público
+   real via `curl --resolve`, contornando o atalho do MagicDNS que fazia
+   testes anteriores parecerem bons) davam timeout total. Isso deixou o
+   webhook do Telegram inacessível de fora mesmo com todos os 7 serviços
+   saudáveis — `pending_update_count` da API do Telegram confirmou
+   mensagens presas sem entrega. **Correção**: `tailscale funnel reset`
+   + reaplicação (`tailscale funnel --bg 8000`) resolveu imediatamente
+   (`pending_update_count` voltou a 0).
+3. **Prevenção**: novo timer systemd
+   `telegram-funnel-healthcheck.timer` (a cada 5 min) testa o caminho
+   público real do Funnel (mesma técnica de `--resolve` via DNS
+   público) e, se falhar duas checagens seguidas, reinicia o
+   `tailscaled` e reaplica o Funnel sozinho — com limite de 1 restart a
+   cada 10 min para não entrar em loop. Não cobre o travamento do
+   sistema operacional em si (item 1) nem substitui monitoramento/alerta
+   — só evita que uma recorrência do item 2 específico fique sem
+   correção até alguém notar manualmente.
+
+Nenhuma mudança em `docs/tasks/`, `CHANGELOG.md` de release ou no código
+do repositório da aplicação — só `docs/PROJECT_CONTEXT.md` e
+`docs/CHANGELOG.md` registram o incidente, e `docs/PRODUCTION_SETUP.md`
+passa a documentar o timer e o blacklist como parte da configuração
+esperada do servidor.

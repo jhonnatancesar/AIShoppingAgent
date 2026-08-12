@@ -795,6 +795,52 @@ Rodar `docker compose up -d` sempre que precisar é seguro — ele só cria/inic
 o que ainda não está no ar, sem afetar os containers já rodando nem os
 volumes.
 
+### Driver de vídeo desabilitado (2026-08-12)
+
+O servidor tem uma GPU NVIDIA GeForce GT 610, cujo driver `nouveau`
+causava travamentos completos do sistema operacional (falha repetida
+`failed to create ce channel, -22` em todo boot, confirmada em
+`journalctl -b`). Como o servidor roda headless e o acesso remoto (RDP,
+via `xrdp`) usa um driver X virtual próprio (`xrdpdev`,
+`/etc/X11/xrdp/xorg.conf`, independente de GPU real), `nouveau` e
+`nvidiafb` foram desabilitados permanentemente:
+
+```bash
+cat /etc/modprobe.d/blacklist-nouveau.conf
+# blacklist nouveau
+# blacklist nvidiafb
+# options nouveau modeset=0
+```
+
+Se precisar recriar o servidor do zero (seção 20), recriar esse arquivo
+e rodar `sudo update-initramfs -u` antes do primeiro reboot. Um monitor
+físico plugado na GPU continua mostrando o console de texto básico
+(framebuffer do firmware), mas não terá mais saída de vídeo acelerada —
+não é uma regressão de uso real, já que não havia desktop gráfico local
+configurado (GDM desabilitado) nem dependência disso no RDP.
+
+### Auto-recuperação do Tailscale Funnel (2026-08-12)
+
+Depois de um reboot, o Tailscale Funnel (que expõe o webhook do Telegram
+publicamente em `https://cesar-server.tail7d0ce1.ts.net`) pode reportar
+"on" localmente sem estar de fato acessível de fora — só é detectável
+testando o IP público real (`dig @8.8.8.8` + `curl --resolve`, não o
+hostname direto, que usa o atalho do MagicDNS do Tailscale e mascara o
+problema). Para não depender de verificação manual, existe um timer
+systemd que checa isso a cada 5 minutos e reinicia `tailscaled`/reaplica
+o Funnel sozinho se detectar falha em duas checagens seguidas (limite de
+1 restart a cada 10 min, para não entrar em loop):
+
+```bash
+systemctl status telegram-funnel-healthcheck.timer
+cat /usr/local/bin/telegram-funnel-healthcheck.sh
+journalctl -u telegram-funnel-healthcheck.service --since "1 hour ago"
+```
+
+Isso cobre só a recorrência específica desse problema — não substitui
+verificar `docker compose ps` e o `getWebhookInfo` do Telegram depois de
+qualquer reboot ou incidente.
+
 ## 16. Backup
 
 Baseado no procedimento já suportado e documentado em `docs/OPERATIONS.md` —
