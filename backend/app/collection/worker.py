@@ -43,12 +43,18 @@ def build_collection_adapter(settings: Settings) -> CollectionAdapter:
         retry_after_cap_seconds=settings.retry_after_cap_seconds,
     )
     action_timeout_ms = max(1, int(settings.external_http_timeout_seconds * 1000))
+    # TASK-075 (correção): navegação de página (Playwright) usa seu próprio
+    # timeout, desacoplado do timeout de chamada de API/HTTP externo --
+    # carregar uma página completa é mais lento que uma chamada de API.
+    navigation_timeout_ms = max(
+        1, int(settings.browser_navigation_timeout_seconds * 1000)
+    )
 
     def _browser_settings(headless: bool) -> BrowserSettings:
         return BrowserSettings(
             headless=headless,
             action_timeout_ms=action_timeout_ms,
-            navigation_timeout_ms=action_timeout_ms,
+            navigation_timeout_ms=navigation_timeout_ms,
         )
 
     return CollectionAdapter(

@@ -27,6 +27,23 @@ def test_build_adapter_uses_headed_only_for_pichau_and_terabyte() -> None:
     assert adapter._providers["kabum"].settings.headless is True
 
 
+def test_build_adapter_decouples_navigation_timeout_from_action_timeout() -> None:
+    """TASK-075 (correção): navegação de página (Playwright) usa seu próprio
+    timeout, desacoplado do timeout de chamada de API/HTTP externo."""
+    settings = Settings(_env_file=None)
+    adapter = build_collection_adapter(settings)
+
+    for provider in adapter._providers.values():
+        assert provider.settings.action_timeout_ms == int(
+            settings.external_http_timeout_seconds * 1000
+        )
+        assert provider.settings.navigation_timeout_ms == int(
+            settings.browser_navigation_timeout_seconds * 1000
+        )
+    assert settings.external_http_timeout_seconds == 10.0
+    assert settings.browser_navigation_timeout_seconds == 45.0
+
+
 def test_collection_worker_is_an_allowlisted_metric_dimension() -> None:
     mark_worker_started("collection_orchestrator")
     observe_worker_failure("collection_orchestrator")

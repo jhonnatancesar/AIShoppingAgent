@@ -63,6 +63,14 @@ class Settings(BaseSettings):
     max_request_body_bytes: int = Field(default=65_536, ge=1024, le=1_048_576)
     telegram_rate_limit_per_minute: int = Field(default=20, ge=1, le=1000)
     external_http_timeout_seconds: float = Field(default=10.0, gt=0, le=60)
+    # TASK-075 (correção): timeout de navegação do Playwright (`page.goto`),
+    # desacoplado de `external_http_timeout_seconds` -- carregar uma página
+    # completa via Chromium (headed, para lojas que exigem, ex.: Pichau/
+    # Terabyte) é uma operação estruturalmente diferente e mais lenta que
+    # uma chamada de API externa; reaproveitar o mesmo timeout curto causava
+    # falha real (ProviderNavigationError) em lojas cuja página demora mais
+    # que 10s para atingir domcontentloaded.
+    browser_navigation_timeout_seconds: float = Field(default=45.0, gt=0, le=120)
     safe_retry_max_attempts: int = Field(default=3, ge=1, le=5)
     retry_base_delay_seconds: float = Field(default=0.25, gt=0, le=10)
     retry_max_delay_seconds: float = Field(default=5.0, gt=0, le=60)

@@ -1,5 +1,7 @@
 """Base compartilhada pelos coletores Playwright da V1."""
 
+import asyncio
+import contextlib
 import re
 from collections.abc import Callable
 from dataclasses import replace
@@ -8,7 +10,7 @@ from decimal import Decimal
 from typing import Any
 
 from playwright.async_api import Error as PlaywrightError
-from playwright.async_api import Page
+from playwright.async_api import Locator, Page
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 from app.collection.browser import BrowserSession, BrowserSettings
@@ -41,6 +43,13 @@ _BLOCKED_STATUSES = frozenset({401, 403, 429})
 class PlaywrightStoreProvider:
     source_code: str
     result_selector: str
+
+    # Estratégia de espera do `page.goto`. A maioria das fontes usa
+    # "domcontentloaded" (padrão). Providers cujo readiness real independe
+    # desse evento (ex.: Pichau, TASK-075 correção) podem sobrescrever para
+    # "commit" e implementar `empty_result_locator` para diferenciar
+    # "sem resultados" de bloqueio/erro após a navegação.
+    navigation_wait_until: str = "domcontentloaded"
 
     def __init__(
         self,
@@ -90,6 +99,16 @@ class PlaywrightStoreProvider:
         """
         return None
 
+    def empty_result_locator(self, page: Page) -> Locator | None:
+        """Locator do estado legítimo de "busca sem resultados", se houver.
+
+        Retorna `None` por padrão: o provider continua dependendo apenas de
+        `result_selector` após a navegação, como hoje. Só sobrescrever
+        quando o provider precisa distinguir "zero resultados" (coleta
+        válida, vazia) de bloqueio/erro (ex.: seletor nunca aparece).
+        """
+        return None
+
     async def collect(self, request: CollectionRequest) -> CollectionResult:
         if request.source_code != self.source_code:
             raise ValueError(f"request source must be {self.source_code}")
@@ -128,7 +147,8 @@ class PlaywrightStoreProvider:
             page = await session.new_page()
             try:
                 response = await page.goto(
-                    self.build_url(request.search_query), wait_until="domcontentloaded"
+                    self.build_url(request.search_query),
+                    wait_until=self.navigation_wait_until,
                 )
             except PlaywrightTimeoutError, PlaywrightError:
                 raise ProviderNavigationError(self.source_code, None) from None
@@ -138,17 +158,79 @@ class PlaywrightStoreProvider:
                 )
             if response.status in _BLOCKED_STATUSES:
                 raise ProviderBlockedError(self.source_code, response.status)
-            try:
-                await page.locator(self.result_selector).first.wait_for(
-                    state="attached"
-                )
-            except Exception as error:
-                raise ProviderBlockedError(self.source_code, response.status) from error
+
+            empty_locator = self.empty_result_locator(page)
+            if empty_locator is None:
+                try:
+                    await page.locator(self.result_selector).first.wait_for(
+                        state="attached"
+                    )
+                except Exception as error:
+                    raise ProviderBlockedError(
+                        self.source_code, response.status
+                    ) from error
+            else:
+                try:
+                    readiness = await self._wait_for_results_or_empty(
+                        page, empty_locator
+                    )
+                except Exception as error:
+                    raise ProviderBlockedError(
+                        self.source_code, response.status
+                    ) from error
+                if readiness == "empty":
+                    return CollectionResult(
+                        self.source_code, started_at, self._clock(), ()
+                    )
+
             offers = await self.extract(page, self._clock())
             if not offers:
                 raise ProviderBlockedError(self.source_code, response.status)
             offers = await self._resolve_unknown_availability(page, offers)
         return CollectionResult(self.source_code, started_at, self._clock(), offers)
+
+    async def _wait_for_results_or_empty(
+        self, page: Page, empty_locator: Locator
+    ) -> str:
+        """Aguarda o primeiro entre resultados reais e o estado vazio legítimo.
+
+        Timeout compartilhado com a navegação (`navigation_timeout_ms`): esta
+        espera substitui, para providers com `empty_result_locator`, o que
+        antes era coberto implicitamente por `domcontentloaded` demorado.
+        Retorna "results" ou "empty"; propaga a exceção original se nenhum
+        dos dois estados aparecer dentro do timeout.
+        """
+        timeout_ms = self.settings.navigation_timeout_ms
+        results_wait = asyncio.ensure_future(
+            page.locator(self.result_selector).first.wait_for(
+                state="attached", timeout=timeout_ms
+            )
+        )
+        empty_wait = asyncio.ensure_future(
+            empty_locator.first.wait_for(state="visible", timeout=timeout_ms)
+        )
+        try:
+            done, pending = await asyncio.wait(
+                {results_wait, empty_wait}, return_when=asyncio.FIRST_COMPLETED
+            )
+            for task in pending:
+                task.cancel()
+            for task in pending:
+                with contextlib.suppress(Exception, asyncio.CancelledError):
+                    await task
+            if results_wait in done and results_wait.exception() is None:
+                return "results"
+            if empty_wait in done and empty_wait.exception() is None:
+                return "empty"
+            raise (
+                results_wait.exception()
+                if results_wait in done
+                else empty_wait.exception()
+            )
+        finally:
+            for task in (results_wait, empty_wait):
+                if not task.done():
+                    task.cancel()
 
     async def _resolve_unknown_availability(
         self, page: Page, offers: tuple[RawCollectedOffer, ...]

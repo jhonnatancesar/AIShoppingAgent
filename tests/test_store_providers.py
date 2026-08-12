@@ -1022,3 +1022,197 @@ def test_provider_retries_safe_navigation_timeout_only(monkeypatch) -> None:
         asyncio.run(provider.collect(request))
 
     assert calls == 3
+
+
+def test_pichau_navigates_with_commit_and_cards_release_collection(
+    monkeypatch,
+) -> None:
+    """TASK-075 (correção 2): domcontentloaded demora demais na Pichau; a
+    navegação usa "commit" e a coleta segue assim que os cards aparecem,
+    sem esperar pelo estado de "zero resultados" (que nunca chega aqui)."""
+    goto_kwargs: list[dict] = []
+
+    class Response:
+        status = 200
+
+    class HangingFirst:
+        async def wait_for(self, **kwargs):
+            await asyncio.Event().wait()
+
+    class HangingLocator:
+        first = HangingFirst()
+
+    class ImmediateFirst:
+        async def wait_for(self, **kwargs):
+            return None
+
+    class ImmediateLocator:
+        first = ImmediateFirst()
+
+    class Page:
+        async def goto(self, url, **kwargs):
+            goto_kwargs.append(kwargs)
+            return Response()
+
+        def locator(self, selector):
+            return ImmediateLocator()
+
+        def get_by_text(self, text, **kwargs):
+            return HangingLocator()
+
+    class Session:
+        def __init__(self, settings):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def new_page(self):
+            return Page()
+
+    offers = (
+        RawCollectedOffer(
+            source_code="pichau",
+            url="https://x/gpu",
+            title="GPU",
+            collected_at=NOW,
+            raw_price="R$ 10,00",
+            raw_currency="BRL",
+            raw_availability=None,
+        ),
+    )
+
+    monkeypatch.setattr("app.collection.providers.base.BrowserSession", Session)
+    request = CollectionRequest(uuid4(), "pichau", "GPU", NOW)
+    provider = PichauProvider(clock=lambda: NOW, availability_fallback_max_candidates=0)
+
+    async def _extract(page, collected_at):
+        return offers
+
+    monkeypatch.setattr(provider, "extract", _extract)
+
+    result = asyncio.run(provider.collect(request))
+
+    assert goto_kwargs[0]["wait_until"] == "commit"
+    assert result.offers == offers
+
+
+def test_pichau_zero_results_releases_valid_empty_collection(monkeypatch) -> None:
+    """Busca válida sem produtos não vira provider_unavailable: coleta
+    válida com zero ofertas, extract nunca roda."""
+
+    class Response:
+        status = 200
+
+    class HangingFirst:
+        async def wait_for(self, **kwargs):
+            await asyncio.Event().wait()
+
+    class HangingLocator:
+        first = HangingFirst()
+
+    class ImmediateFirst:
+        async def wait_for(self, **kwargs):
+            return None
+
+    class ImmediateLocator:
+        first = ImmediateFirst()
+
+    class Page:
+        async def goto(self, url, **kwargs):
+            return Response()
+
+        def locator(self, selector):
+            return HangingLocator()
+
+        def get_by_text(self, text, **kwargs):
+            return ImmediateLocator()
+
+    class Session:
+        def __init__(self, settings):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def new_page(self):
+            return Page()
+
+    monkeypatch.setattr("app.collection.providers.base.BrowserSession", Session)
+    request = CollectionRequest(uuid4(), "pichau", "zzz-nao-existe", NOW)
+    provider = PichauProvider(clock=lambda: NOW, availability_fallback_max_candidates=0)
+
+    async def _extract_should_not_run(page, collected_at):
+        raise AssertionError("extract nao deve rodar quando o estado eh vazio")
+
+    monkeypatch.setattr(provider, "extract", _extract_should_not_run)
+
+    result = asyncio.run(provider.collect(request))
+
+    assert result.offers == ()
+
+
+def test_pichau_neither_state_within_timeout_fails_per_existing_policy(
+    monkeypatch,
+) -> None:
+    """Se nem cards nem o estado vazio aparecerem, a política de falha
+    continua a mesma de hoje (ProviderBlockedError), não um novo tipo."""
+
+    class Response:
+        status = 200
+
+    class FailingFirst:
+        async def wait_for(self, **kwargs):
+            raise PlaywrightTimeoutError("timeout")
+
+    class FailingLocator:
+        first = FailingFirst()
+
+    class Page:
+        async def goto(self, url, **kwargs):
+            return Response()
+
+        def locator(self, selector):
+            return FailingLocator()
+
+        def get_by_text(self, text, **kwargs):
+            return FailingLocator()
+
+    class Session:
+        def __init__(self, settings):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def new_page(self):
+            return Page()
+
+    monkeypatch.setattr("app.collection.providers.base.BrowserSession", Session)
+    request = CollectionRequest(uuid4(), "pichau", "GPU", NOW)
+    provider = PichauProvider(clock=lambda: NOW, availability_fallback_max_candidates=0)
+
+    async def _extract_should_not_run(page, collected_at):
+        raise AssertionError("extract nao deve rodar quando nenhum estado aparece")
+
+    monkeypatch.setattr(provider, "extract", _extract_should_not_run)
+
+    with pytest.raises(ProviderBlockedError):
+        asyncio.run(provider.collect(request))
+
+
+def test_other_providers_keep_domcontentloaded_and_no_empty_state_hook() -> None:
+    """A extensão do readiness é opt-in: sem `empty_result_locator`, as
+    demais fontes continuam exatamente como hoje."""
+    for provider_type in (AmazonProvider, KabumProvider, TerabyteProvider):
+        assert provider_type.navigation_wait_until == "domcontentloaded"
+        assert provider_type().empty_result_locator(None) is None

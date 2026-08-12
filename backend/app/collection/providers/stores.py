@@ -4,7 +4,7 @@ import re
 from datetime import datetime
 from urllib.parse import quote, quote_plus
 
-from playwright.async_api import Page
+from playwright.async_api import Locator, Page
 
 from app.collection.contracts import RawCollectedOffer
 from app.collection.providers.base import PlaywrightStoreProvider
@@ -13,13 +13,26 @@ _NEGATIVE_STOCK_TEXT = re.compile(r"esgotad[oa]|indispon[ií]vel|sem\s+estoque",
 _BUY_BUTTON_TEXT = (
     "button:has-text('Comprar'), button:has-text('Adicionar ao carrinho')"
 )
+# TASK-075 (correção 2): "Nenhum produto encontrado" é o texto estável do
+# estado de busca sem resultados (confirmado via diagnóstico ao vivo em
+# 2026-08-11). A página não expõe id/data-cy para esse estado -- só classes
+# geradas pelo MUI (ex.: "mui-33avjv"), que não são estáveis entre builds.
+_EMPTY_RESULT_TEXT = "Nenhum produto encontrado"
 
 
 class PichauProvider(PlaywrightStoreProvider):
     source_code, result_selector = "pichau", 'a[data-cy="list-product"]'
+    # TASK-075 (correção 2): domcontentloaded demora 22-38s (às vezes >45s)
+    # na Pichau por causa de terceiros (analytics/ads) alheios ao conteúdo
+    # útil; os cards reais já existem em ~9-12s. "commit" + espera explícita
+    # pelo seletor/estado vazio reflete o readiness real da página.
+    navigation_wait_until = "commit"
 
     def build_url(self, query: str) -> str:
         return f"https://www.pichau.com.br/search?q={quote_plus(query)}"
+
+    def empty_result_locator(self, page: Page) -> Locator:
+        return page.get_by_text(_EMPTY_RESULT_TEXT)
 
     async def extract(
         self, page: Page, collected_at: datetime

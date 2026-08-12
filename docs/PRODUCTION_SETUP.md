@@ -249,7 +249,8 @@ A senha em si (`POSTGRES_PASSWORD`) **não vai no `.env`** — vai em
 | --- | --- | --- | --- | --- |
 | `AISHOPPING_MAX_REQUEST_BODY_BYTES` | Limite de corpo HTTP aceito | Opcional | `65536` | Manter, salvo necessidade específica |
 | `AISHOPPING_TELEGRAM_RATE_LIMIT_PER_MINUTE` | Limite de mensagens processadas por minuto | Opcional | `20` | Manter |
-| `AISHOPPING_EXTERNAL_HTTP_TIMEOUT_SECONDS` | Timeout de chamadas HTTP externas (IA, lojas, Telegram) | Opcional | `10` | Manter |
+| `AISHOPPING_EXTERNAL_HTTP_TIMEOUT_SECONDS` | Timeout de chamadas HTTP/API externas (IA, Telegram) | Opcional | `10` | Manter |
+| `AISHOPPING_BROWSER_NAVIGATION_TIMEOUT_SECONDS` | Timeout de navegação do Playwright (`page.goto`) nas lojas — só lido pelo `collection_worker`, desacoplado do timeout de API acima desde a correção da TASK-075 (carregar uma página completa via Chromium é mais lento que uma chamada de API; 10s causava falha real na Pichau, que mede ~20-25s) | Opcional | `45` | Manter — só reduza se validar que todas as lojas carregam bem abaixo disso |
 | `AISHOPPING_SAFE_RETRY_MAX_ATTEMPTS` | Tentativas máximas em operações seguras | Opcional | `3` | Manter |
 | `AISHOPPING_RETRY_BASE_DELAY_SECONDS` | Atraso inicial de retry | Opcional | `0.25` | Manter |
 | `AISHOPPING_RETRY_MAX_DELAY_SECONDS` | Atraso máximo de retry | Opcional | `5` | Manter |
