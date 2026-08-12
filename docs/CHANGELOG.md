@@ -1,5 +1,50 @@
 # Changelog
 
+## 2026-08-11 (8) — `v1.0.6` entra em planejamento: TASK-076 (logs de falha) e TASK-077 (vendedor Amazon)
+
+- Por pedido explícito do usuário, **`v1.0.6` entrou em planejamento
+  ativo** — dois itens, cada um com proposta de TASK própria
+  (`docs/tasks/TASK-076.md`, `docs/tasks/TASK-077.md`), numeração
+  confirmada como a próxima livre no repositório (TASK-075 era a
+  última existente). **Nenhuma das duas foi implementada** — só
+  planejadas, com investigação de código real (sem suposição) para
+  fundamentar cada proposta.
+- **TASK-076** (observabilidade): achada durante o próprio diagnóstico
+  da correção da Pichau na `v1.0.5` — a causa raiz só foi confirmada
+  reproduzindo a falha isoladamente, porque
+  `logger.warning("collection_source_failed", ...)`
+  (`app/collection/orchestration.py::_process`) descarta tipo, status e
+  traceback da exceção original logo depois de reduzi-la a
+  `failure_code`, mesmo com essa informação ainda em escopo. Achados
+  técnicos que moldam a proposta: as exceções específicas dos providers
+  (`ProviderNavigationError`/`ProviderBlockedError`/
+  `ProviderCircuitOpenError`) já são seguras para logar (só
+  `source_code` allowlisted + status HTTP, nunca URL/query); o
+  `JsonFormatter` (`app/core/logging.py`) hoje nunca serializa
+  traceback para nenhum logger do projeto, mesmo onde `logger.exception`
+  já é usado; e campos `extra` com nomes contendo certas substrings
+  (`"url"`, `"query"`, etc.) são descartados silenciosamente pelo
+  redator automático de campos sensíveis. Decisão em aberto, marcada no
+  documento: estender o `JsonFormatter` compartilhado (beneficia todo o
+  projeto) ou só o ponto de log da coleta.
+- **TASK-077** (Amazon): confirmado que nenhum provider do projeto
+  jamais preenche `seller_external_id`, então nenhuma linha de `Seller`
+  é criada hoje e toda oferta da Amazon é tratada pelos índices de
+  identidade "retailer" — os índices de "marketplace" já existem no
+  schema mas são código morto na prática. Pedido é uma classificação
+  binária (`amazon`/`marketplace_partner`/`unknown`) a partir do texto
+  de vendedor já capturado no card de busca (`[aria-label^="Vendido
+  por"]`), sem catalogar vendedores terceiros e **sem mudar a regra de
+  menor preço exclusiva da Amazon da TASK-075**. Requisito prévio
+  registrado no documento: confirmar ao vivo, antes de codificar, como
+  a Amazon realmente marca "vendido pela própria Amazon" nos cards
+  (elemento ausente vs. texto explícito) — não assumir. Decisão em
+  aberto: onde persistir a classificação (nova coluna nullable em
+  `PriceObservation`, recomendada, vs. só recalcular na apresentação
+  sem schema novo).
+- Produção da `v1.0.5` não foi tocada por este planejamento; nenhum
+  código alterado, nenhuma migration criada.
+
 ## 2026-08-11 (7) — Correção da Pichau: readiness real substitui `domcontentloaded`; release `v1.0.5`
 
 - Publicado em teste controlado (sem tag) o commit da TASK-075, o

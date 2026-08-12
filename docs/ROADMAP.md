@@ -181,7 +181,20 @@ vs `AISHOPPING_EXTERNAL_HTTP_TIMEOUT_SECONDS=10`), documentada em
 `docs/tasks/TASK-075.md`; **concluída e validada** com pipeline
 oficial, migration real, chamadas reais ao perfil `ADMIN` e missão
 real em produção (`5800X3D`, 4 lojas `succeeded`, pré-lista correta
-Amazon+Kabum por serem as mais baratas)) → V1.2
+Amazon+Kabum por serem as mais baratas)) → `v1.0.6` (release corretiva,
+**planejada, ainda não implementada** — dois itens: TASK-076
+(`docs/tasks/TASK-076.md`, observabilidade — enriquecer os logs de
+falha dos providers com tipo/status/traceback da exceção original, hoje
+descartados no ponto em que `_process` já os tem em escopo; achada
+durante o próprio diagnóstico da correção da Pichau na `v1.0.5`, que só
+foi possível reproduzindo a falha isolada por falta dessa informação no
+log) e TASK-077 (`docs/tasks/TASK-077.md`, distinguir "vendido pela
+Amazon" de "loja parceira Amazon" nos cards de busca, sem catalogar
+vendedores terceiros nem mudar a regra de menor preço da TASK-075) —
+nenhuma das duas altera comportamento de retry, classificação de falha,
+filtros, IA, Telegram ou a regra de menor preço da Amazon; cada uma tem
+decisão arquitetural em aberto (documentada no próprio arquivo da TASK)
+que precisa de aprovação explícita antes da implementação) → V1.2
 (evolução funcional, documento `docs/V1_2.md`, 12 itens,
 incluindo Magalu como quinta loja, redução de `PriceObservation`
 redundante, e comparação de menor preço histórico externo/interno estilo

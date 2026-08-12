@@ -911,3 +911,33 @@ corretamente só Amazon e Kabum, as duas mais baratas, por desenho do
 `_maybe_publish_prelist_ready` (top-2), não por falha das outras
 duas. Publicada como release `v1.0.5`, consolidando a TASK-075 e esta
 correção.
+
+**Atualização 2026-08-11/12 (8):** por pedido explícito do usuário, a
+`v1.0.6` entrou em **planejamento ativo** — dois itens, cada um com sua
+própria proposta de TASK (`docs/tasks/TASK-076.md`,
+`docs/tasks/TASK-077.md`), numeração confirmada como a próxima livre no
+repositório (TASK-075 era a última existente). **TASK-076**
+(observabilidade): achada durante o próprio diagnóstico da correção da
+Pichau na `v1.0.5` — a causa raiz só pôde ser confirmada reproduzindo a
+falha isoladamente porque `logger.warning("collection_source_failed",
+...)` (`app/collection/orchestration.py::_process`) descarta o objeto
+da exceção original (tipo, status, traceback) logo depois de reduzi-lo a
+`failure_code`, mesmo com essa informação ainda em escopo no código.
+Investigação confirmou também que o `JsonFormatter`
+(`app/core/logging.py`) hoje nunca serializa traceback para nenhum
+logger do projeto, e que campos `extra` com nomes contendo certas
+substrings (`"url"`, `"query"`, etc.) são descartados silenciosamente
+pelo redator automático — achados que moldam o desenho técnico proposto
+no documento da TASK. **TASK-077** (Amazon): confirmado que nenhum
+provider do projeto jamais preenche `seller_external_id`, então nenhuma
+linha de `Seller` é criada hoje e toda oferta da Amazon é tratada como
+"retailer" (índices de identidade "marketplace" do schema existem mas
+são código morto); o pedido é só uma classificação binária
+(`amazon`/`marketplace_partner`/`unknown`) a partir do texto de
+vendedor já capturado no card de busca, sem catalogar terceiros e sem
+mudar a regra de menor preço exclusiva da Amazon (TASK-075). Nenhuma
+das duas TASKs foi implementada — só planejadas, com decisões
+arquiteturais explicitamente marcadas como pendentes de aprovação do
+usuário em cada documento (onde persistir a classificação da TASK-077;
+se estender o `JsonFormatter` compartilhado ou só o ponto de log da
+TASK-076). Produção da `v1.0.5` não foi tocada por este planejamento.
