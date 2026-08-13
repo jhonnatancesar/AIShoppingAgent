@@ -1,7 +1,7 @@
 """Testes do consumidor proativo de alertas Telegram (TASK-036)."""
 
 from datetime import UTC, datetime, timedelta
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
@@ -27,6 +27,32 @@ from app.users.models import User, UserRole
 from pydantic import SecretStr
 
 NOW = datetime(2026, 8, 8, 20, 0, tzinfo=UTC)
+
+
+def _fake_session_factory() -> tuple[MagicMock, MagicMock]:
+    """Fábrica assíncrona falsa (TASK-080): devolve sempre a mesma sessão
+    falsa a cada `factory()`, para que um único `session.get.side_effect`
+    continue cobrindo, na ordem, todas as leituras feitas ao longo das
+    fases A e C -- mesmo efeito prático de um teste que antes usava uma
+    única `Session` síncrona para o lote inteiro."""
+    session = MagicMock()
+    session.get = AsyncMock()
+    # `count_failed_attempts_async` usa `session.scalar` -- 0 tentativas
+    # falhas anteriores por padrão (primeira tentativa), sobrescrito por
+    # teste quando o cenário exigir um valor diferente.
+    session.scalar = AsyncMock(return_value=0)
+    # `record_consumption_attempt_async` chama `session.flush()` -- `.add`
+    # continua síncrono (mesmo em `AsyncSession` real).
+    session.flush = AsyncMock()
+    session_cm = MagicMock()
+    session_cm.__aenter__ = AsyncMock(return_value=session)
+    session_cm.__aexit__ = AsyncMock(return_value=False)
+    transaction_cm = MagicMock()
+    transaction_cm.__aenter__ = AsyncMock(return_value=None)
+    transaction_cm.__aexit__ = AsyncMock(return_value=False)
+    session.begin = MagicMock(return_value=transaction_cm)
+    factory = MagicMock(return_value=session_cm)
+    return factory, session
 
 
 def _user(
@@ -166,11 +192,11 @@ async def test_process_sends_alert_and_records_success(
     mission = _mission(user)
     event = _event(mission, event_type=event_type)
     offer, product, store = _offer_context()
-    session = MagicMock()
-    session.get.side_effect = [mission, user, offer, product, store]
+    session_factory, session = _fake_session_factory()
+    session.get.side_effect = [mission, user, offer, product, store, event]
     monkeypatch.setattr(
-        "app.telegram.notifications.claim_unconsumed_events",
-        lambda *args, **kwargs: [event],
+        "app.telegram.notifications.claim_unconsumed_events_async",
+        AsyncMock(return_value=[event]),
     )
     sent: list[tuple[int, str]] = []
 
@@ -181,7 +207,9 @@ async def test_process_sends_alert_and_records_success(
 
     monkeypatch.setattr("app.telegram.notifications.send_message", _send)
 
-    result = await process_telegram_notifications(session, bot_token=SecretStr("token"))
+    result = await process_telegram_notifications(
+        session_factory, bot_token=SecretStr("token")
+    )
 
     assert result.claimed == result.succeeded == 1
     assert result.failed == 0
@@ -210,16 +238,18 @@ async def test_process_records_disabled_preference_as_terminal_skipped(
     user = _user(**user_overrides)
     mission = _mission(user)
     event = _event(mission, event_type=event_type)
-    session = MagicMock()
+    session_factory, session = _fake_session_factory()
     session.get.side_effect = [mission, user]
     monkeypatch.setattr(
-        "app.telegram.notifications.claim_unconsumed_events",
-        lambda *args, **kwargs: [event],
+        "app.telegram.notifications.claim_unconsumed_events_async",
+        AsyncMock(return_value=[event]),
     )
     send = MagicMock()
     monkeypatch.setattr("app.telegram.notifications.send_message", send)
 
-    result = await process_telegram_notifications(session, bot_token=SecretStr("token"))
+    result = await process_telegram_notifications(
+        session_factory, bot_token=SecretStr("token")
+    )
 
     assert result.claimed == result.skipped == 1
     assert result.succeeded == result.failed == 0
@@ -247,16 +277,18 @@ async def test_process_records_known_recipient_failure_for_retry(
     user.is_active = is_active
     mission = _mission(user)
     event = _event(mission)
-    session = MagicMock()
+    session_factory, session = _fake_session_factory()
     session.get.side_effect = [mission, user]
     monkeypatch.setattr(
-        "app.telegram.notifications.claim_unconsumed_events",
-        lambda *args, **kwargs: [event],
+        "app.telegram.notifications.claim_unconsumed_events_async",
+        AsyncMock(return_value=[event]),
     )
     send = MagicMock()
     monkeypatch.setattr("app.telegram.notifications.send_message", send)
 
-    result = await process_telegram_notifications(session, bot_token=SecretStr("token"))
+    result = await process_telegram_notifications(
+        session_factory, bot_token=SecretStr("token")
+    )
 
     assert result.failed == 1
     send.assert_not_called()
@@ -273,11 +305,11 @@ async def test_process_records_api_rejection_without_leaking_details(
     mission = _mission(user)
     event = _event(mission)
     offer, product, store = _offer_context()
-    session = MagicMock()
-    session.get.side_effect = [mission, user, offer, product, store]
+    session_factory, session = _fake_session_factory()
+    session.get.side_effect = [mission, user, offer, product, store, event]
     monkeypatch.setattr(
-        "app.telegram.notifications.claim_unconsumed_events",
-        lambda *args, **kwargs: [event],
+        "app.telegram.notifications.claim_unconsumed_events_async",
+        AsyncMock(return_value=[event]),
     )
 
     async def _reject(*args: object, **kwargs: object) -> None:
@@ -285,7 +317,9 @@ async def test_process_records_api_rejection_without_leaking_details(
 
     monkeypatch.setattr("app.telegram.notifications.send_message", _reject)
 
-    result = await process_telegram_notifications(session, bot_token=SecretStr("token"))
+    result = await process_telegram_notifications(
+        session_factory, bot_token=SecretStr("token")
+    )
 
     assert result.dead_lettered == 1
     assert session.add.call_args.args[0].failure_code == "telegram_api_rejected"
@@ -299,14 +333,16 @@ async def test_process_records_invalid_payload_as_permanent_dead_letter(
     mission = _mission(user)
     event = _event(mission)
     event.payload = {"currency": "BRL", "current_total": "invalid"}
-    session = MagicMock()
+    session_factory, session = _fake_session_factory()
     session.get.side_effect = [mission, user]
     monkeypatch.setattr(
-        "app.telegram.notifications.claim_unconsumed_events",
-        lambda *args, **kwargs: [event],
+        "app.telegram.notifications.claim_unconsumed_events_async",
+        AsyncMock(return_value=[event]),
     )
 
-    result = await process_telegram_notifications(session, bot_token=SecretStr("token"))
+    result = await process_telegram_notifications(
+        session_factory, bot_token=SecretStr("token")
+    )
 
     assert result.dead_lettered == 1
     assert session.add.call_args.args[0].failure_code == "notification_payload_invalid"
@@ -338,11 +374,11 @@ async def test_authentication_completion_is_sent_despite_price_preferences(
         occurred_at=NOW,
         recorded_at=NOW,
     )
-    session = MagicMock()
-    session.get.return_value = user
+    session_factory, session = _fake_session_factory()
+    session.get = AsyncMock(side_effect=[user, event])
     monkeypatch.setattr(
-        "app.telegram.notifications.claim_unconsumed_events",
-        lambda *args, **kwargs: [event],
+        "app.telegram.notifications.claim_unconsumed_events_async",
+        AsyncMock(return_value=[event]),
     )
     sent: list[str] = []
 
@@ -352,7 +388,7 @@ async def test_authentication_completion_is_sent_despite_price_preferences(
     monkeypatch.setattr("app.telegram.notifications.send_message", _send)
 
     result = await process_telegram_authentication_notifications(
-        session, bot_token=SecretStr("token")
+        session_factory, bot_token=SecretStr("token")
     )
 
     assert result.succeeded == 1
@@ -401,11 +437,11 @@ async def test_session_lifecycle_message_uses_exact_persisted_session(
         occurred_at=NOW,
         recorded_at=NOW,
     )
-    session = MagicMock()
-    session.get.side_effect = [auth_session, user]
+    session_factory, session = _fake_session_factory()
+    session.get.side_effect = [auth_session, user, event]
     monkeypatch.setattr(
-        "app.telegram.notifications.claim_unconsumed_events",
-        lambda *args, **kwargs: [event],
+        "app.telegram.notifications.claim_unconsumed_events_async",
+        AsyncMock(return_value=[event]),
     )
     sent: list[str] = []
 
@@ -415,7 +451,7 @@ async def test_session_lifecycle_message_uses_exact_persisted_session(
     monkeypatch.setattr("app.telegram.notifications.send_message", _send)
 
     result = await process_telegram_authentication_notifications(
-        session, bot_token=SecretStr("token")
+        session_factory, bot_token=SecretStr("token")
     )
 
     assert result.succeeded == 1
@@ -449,17 +485,17 @@ async def test_revoked_session_warning_is_terminal_skipped(
         occurred_at=NOW,
         recorded_at=NOW,
     )
-    session = MagicMock()
-    session.get.return_value = auth_session
+    session_factory, session = _fake_session_factory()
+    session.get = AsyncMock(return_value=auth_session)
     monkeypatch.setattr(
-        "app.telegram.notifications.claim_unconsumed_events",
-        lambda *args, **kwargs: [event],
+        "app.telegram.notifications.claim_unconsumed_events_async",
+        AsyncMock(return_value=[event]),
     )
     send = MagicMock()
     monkeypatch.setattr("app.telegram.notifications.send_message", send)
 
     result = await process_telegram_authentication_notifications(
-        session, bot_token=SecretStr("token")
+        session_factory, bot_token=SecretStr("token")
     )
 
     assert result.skipped == 1
@@ -482,15 +518,17 @@ async def test_authentication_event_fails_closed_for_invalid_identity_or_action(
         occurred_at=NOW,
         recorded_at=NOW,
     )
-    session = MagicMock()
-    session.get.return_value = user if payload["action"] == "unknown" else None
+    session_factory, session = _fake_session_factory()
+    session.get = AsyncMock(
+        return_value=user if payload["action"] == "unknown" else None
+    )
     monkeypatch.setattr(
-        "app.telegram.notifications.claim_unconsumed_events",
-        lambda *args, **kwargs: [event],
+        "app.telegram.notifications.claim_unconsumed_events_async",
+        AsyncMock(return_value=[event]),
     )
 
     result = await process_telegram_authentication_notifications(
-        session, bot_token=SecretStr("token")
+        session_factory, bot_token=SecretStr("token")
     )
 
     assert result.dead_lettered == 1
@@ -584,11 +622,11 @@ async def test_prelist_ready_sends_one_block_when_only_one_store_answered(
     mission = _mission(user)
     offer, product, store = _offer_context()
     event = _ready_event(mission, offer)
-    session = MagicMock()
-    session.get.side_effect = [mission, user, offer, product, store]
+    session_factory, session = _fake_session_factory()
+    session.get.side_effect = [mission, user, offer, product, store, event]
     monkeypatch.setattr(
-        "app.telegram.notifications.claim_unconsumed_events",
-        lambda *args, **kwargs: [event],
+        "app.telegram.notifications.claim_unconsumed_events_async",
+        AsyncMock(return_value=[event]),
     )
     sent: list[str] = []
 
@@ -598,7 +636,7 @@ async def test_prelist_ready_sends_one_block_when_only_one_store_answered(
     monkeypatch.setattr("app.telegram.notifications.send_message", _send)
 
     result = await process_telegram_prelist_notifications(
-        session, bot_token=SecretStr("token")
+        session_factory, bot_token=SecretStr("token")
     )
 
     assert result.succeeded == 1
@@ -620,7 +658,7 @@ async def test_prelist_ready_sends_two_blocks_cheapest_first(
     offer, product, store = _offer_context()
     second_offer, second_product, second_store = _second_offer_context()
     event = _ready_event(mission, offer, second_offer=second_offer)
-    session = MagicMock()
+    session_factory, session = _fake_session_factory()
     session.get.side_effect = [
         mission,
         user,
@@ -630,10 +668,11 @@ async def test_prelist_ready_sends_two_blocks_cheapest_first(
         second_offer,
         second_product,
         second_store,
+        event,
     ]
     monkeypatch.setattr(
-        "app.telegram.notifications.claim_unconsumed_events",
-        lambda *args, **kwargs: [event],
+        "app.telegram.notifications.claim_unconsumed_events_async",
+        AsyncMock(return_value=[event]),
     )
     sent: list[str] = []
 
@@ -643,7 +682,7 @@ async def test_prelist_ready_sends_two_blocks_cheapest_first(
     monkeypatch.setattr("app.telegram.notifications.send_message", _send)
 
     result = await process_telegram_prelist_notifications(
-        session, bot_token=SecretStr("token")
+        session_factory, bot_token=SecretStr("token")
     )
 
     assert result.succeeded == 1
@@ -661,11 +700,11 @@ async def test_prelist_ready_ignores_price_preferences(
     mission = _mission(user)
     offer, product, store = _offer_context()
     event = _ready_event(mission, offer)
-    session = MagicMock()
-    session.get.side_effect = [mission, user, offer, product, store]
+    session_factory, session = _fake_session_factory()
+    session.get.side_effect = [mission, user, offer, product, store, event]
     monkeypatch.setattr(
-        "app.telegram.notifications.claim_unconsumed_events",
-        lambda *args, **kwargs: [event],
+        "app.telegram.notifications.claim_unconsumed_events_async",
+        AsyncMock(return_value=[event]),
     )
 
     async def _send(chat_id: int, text: str, **kwargs: object) -> None:
@@ -674,7 +713,7 @@ async def test_prelist_ready_ignores_price_preferences(
     monkeypatch.setattr("app.telegram.notifications.send_message", _send)
 
     result = await process_telegram_prelist_notifications(
-        session, bot_token=SecretStr("token")
+        session_factory, bot_token=SecretStr("token")
     )
 
     assert result.succeeded == 1
@@ -689,11 +728,11 @@ async def test_prelist_errata_message_frames_correction_vs_first_find(
     mission = _mission(user)
     offer, product, store = _offer_context()
     correction_event = _errata_event(mission, offer, previous_lowest_amount="1900.00")
-    session = MagicMock()
-    session.get.side_effect = [mission, user, offer, product, store]
+    session_factory, session = _fake_session_factory()
+    session.get.side_effect = [mission, user, offer, product, store, correction_event]
     monkeypatch.setattr(
-        "app.telegram.notifications.claim_unconsumed_events",
-        lambda *args, **kwargs: [correction_event],
+        "app.telegram.notifications.claim_unconsumed_events_async",
+        AsyncMock(return_value=[correction_event]),
     )
     sent: list[str] = []
 
@@ -703,7 +742,7 @@ async def test_prelist_errata_message_frames_correction_vs_first_find(
     monkeypatch.setattr("app.telegram.notifications.send_message", _send)
 
     result = await process_telegram_prelist_notifications(
-        session, bot_token=SecretStr("token")
+        session_factory, bot_token=SecretStr("token")
     )
 
     assert result.succeeded == 1
@@ -720,11 +759,11 @@ async def test_prelist_errata_frames_first_find_without_previous_baseline(
     mission = _mission(user)
     offer, product, store = _offer_context()
     first_find_event = _errata_event(mission, offer, previous_lowest_amount=None)
-    session = MagicMock()
-    session.get.side_effect = [mission, user, offer, product, store]
+    session_factory, session = _fake_session_factory()
+    session.get.side_effect = [mission, user, offer, product, store, first_find_event]
     monkeypatch.setattr(
-        "app.telegram.notifications.claim_unconsumed_events",
-        lambda *args, **kwargs: [first_find_event],
+        "app.telegram.notifications.claim_unconsumed_events_async",
+        AsyncMock(return_value=[first_find_event]),
     )
     sent: list[str] = []
 
@@ -734,7 +773,7 @@ async def test_prelist_errata_frames_first_find_without_previous_baseline(
     monkeypatch.setattr("app.telegram.notifications.send_message", _send)
 
     result = await process_telegram_prelist_notifications(
-        session, bot_token=SecretStr("token")
+        session_factory, bot_token=SecretStr("token")
     )
 
     assert result.succeeded == 1
@@ -751,17 +790,17 @@ async def test_prelist_notification_fails_closed_on_missing_recipient(
     mission = _mission(user)
     offer, _product, _store = _offer_context()
     event = _ready_event(mission, offer)
-    session = MagicMock()
+    session_factory, session = _fake_session_factory()
     session.get.side_effect = [mission, user]
     monkeypatch.setattr(
-        "app.telegram.notifications.claim_unconsumed_events",
-        lambda *args, **kwargs: [event],
+        "app.telegram.notifications.claim_unconsumed_events_async",
+        AsyncMock(return_value=[event]),
     )
     send = MagicMock()
     monkeypatch.setattr("app.telegram.notifications.send_message", send)
 
     result = await process_telegram_prelist_notifications(
-        session, bot_token=SecretStr("token")
+        session_factory, bot_token=SecretStr("token")
     )
 
     assert result.failed == 1

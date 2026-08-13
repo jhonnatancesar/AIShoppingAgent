@@ -1,12 +1,32 @@
 """Testes do processo contínuo de notificações Telegram."""
 
 import asyncio
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from app.core.config import Settings
 from app.telegram.notifications import TelegramNotificationBatch
 from app.telegram.worker import run_worker
+
+
+def _fake_session_factory() -> tuple[MagicMock, MagicMock]:
+    """Fábrica assíncrona falsa (TASK-080): `factory()` é um gerenciador de
+    contexto assíncrono que abre uma sessão falsa, cujo `.begin()` também é
+    um gerenciador de contexto assíncrono -- mesmo protocolo real usado por
+    `async with session_factory() as session, session.begin():`. Suficiente
+    para os testes deste módulo, que mockam os `processor`s inteiros e não
+    exercitam as três fases de verdade (cobertas em
+    `tests/test_telegram_notifications.py`)."""
+    session = MagicMock()
+    session_cm = MagicMock()
+    session_cm.__aenter__ = AsyncMock(return_value=session)
+    session_cm.__aexit__ = AsyncMock(return_value=False)
+    transaction_cm = MagicMock()
+    transaction_cm.__aenter__ = AsyncMock(return_value=None)
+    transaction_cm.__aexit__ = AsyncMock(return_value=False)
+    session.begin = MagicMock(return_value=transaction_cm)
+    factory = MagicMock(return_value=session_cm)
+    return factory, session
 
 
 @pytest.mark.anyio
@@ -22,7 +42,7 @@ async def test_worker_requires_bot_token_before_opening_database() -> None:
 
 
 @pytest.mark.anyio
-async def test_worker_once_processes_and_commits_one_batch(
+async def test_worker_once_processes_one_batch_and_disposes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     settings = Settings(
@@ -32,24 +52,26 @@ async def test_worker_once_processes_and_commits_one_batch(
         _env_file=None,
     )
     engine = MagicMock()
-    session = MagicMock()
-    transaction = MagicMock()
-    transaction.__enter__.return_value = session
-    session_factory = MagicMock()
-    session_factory.begin.return_value = transaction
+    engine.dispose = AsyncMock()
+    session_factory, session = _fake_session_factory()
     monkeypatch.setattr(
-        "app.telegram.worker.create_database_engine", lambda settings: engine
+        "app.telegram.worker.create_telegram_async_database_engine",
+        lambda settings: engine,
     )
     monkeypatch.setattr(
-        "app.telegram.worker.create_session_factory",
+        "app.telegram.worker.create_async_session_factory",
         lambda configured_engine: session_factory,
     )
     calls: list[tuple[object, int]] = []
 
     async def _process(
-        active_session: object, *, bot_token: object, limit: int, **kwargs: object
+        active_session_factory: object,
+        *,
+        bot_token: object,
+        limit: int,
+        **kwargs: object,
     ):
-        calls.append((active_session, limit))
+        calls.append((active_session_factory, limit))
         return TelegramNotificationBatch(claimed=1, succeeded=1, failed=0, skipped=0)
 
     async def _process_auth(*args: object, **kwargs: object):
@@ -63,23 +85,23 @@ async def test_worker_once_processes_and_commits_one_batch(
     monkeypatch.setattr(
         "app.telegram.worker.process_telegram_prelist_notifications", _process_auth
     )
-    publish = MagicMock()
+    publish = AsyncMock()
     monkeypatch.setattr(
-        "app.telegram.worker.publish_due_authentication_notifications", publish
+        "app.telegram.worker.publish_due_authentication_notifications_async", publish
     )
 
     await run_worker(settings, once=True)
 
-    assert calls == [(session, 25)]
-    # TASK-068: publish_due_authentication_notifications + price + auth +
-    # prelist consumers -- 4 transações por lote (era 3 antes da TASK-068).
-    assert transaction.__exit__.call_count == 4
+    # TASK-080: o worker passa a session_factory direto para o processor --
+    # cada fase (A/B/C) abre/fecha sua própria transação internamente, não
+    # mais uma transação por lote mantida pelo worker.
+    assert calls == [(session_factory, 25)]
     publish.assert_called_once_with(session, limit=25)
     engine.dispose.assert_called_once()
 
 
 @pytest.mark.anyio
-async def test_worker_rolls_back_then_backs_off_outside_failed_transaction(
+async def test_worker_backs_off_after_failure_then_recovers(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     settings = Settings(
@@ -89,13 +111,13 @@ async def test_worker_rolls_back_then_backs_off_outside_failed_transaction(
         _env_file=None,
     )
     engine = MagicMock()
-    sessions = MagicMock()
-    transaction = MagicMock()
-    transaction.__enter__.return_value = MagicMock()
-    sessions.begin.return_value = transaction
-    monkeypatch.setattr("app.telegram.worker.create_database_engine", lambda _: engine)
+    engine.dispose = AsyncMock()
+    session_factory, _session = _fake_session_factory()
     monkeypatch.setattr(
-        "app.telegram.worker.create_session_factory", lambda _: sessions
+        "app.telegram.worker.create_telegram_async_database_engine", lambda _: engine
+    )
+    monkeypatch.setattr(
+        "app.telegram.worker.create_async_session_factory", lambda _: session_factory
     )
     calls = 0
 
@@ -126,7 +148,8 @@ async def test_worker_rolls_back_then_backs_off_outside_failed_transaction(
         "app.telegram.worker.process_telegram_prelist_notifications", process_auth
     )
     monkeypatch.setattr(
-        "app.telegram.worker.publish_due_authentication_notifications", MagicMock()
+        "app.telegram.worker.publish_due_authentication_notifications_async",
+        AsyncMock(),
     )
     monkeypatch.setattr("app.telegram.worker.asyncio.sleep", sleep)
 
@@ -135,8 +158,4 @@ async def test_worker_rolls_back_then_backs_off_outside_failed_transaction(
 
     assert calls == 2
     assert sleeps[0] == settings.worker_failure_backoff_seconds
-    # TASK-068: 1a rodada falha logo no processor de preço (publish_due +
-    # price = 2 transações); 2a rodada bem-sucedida abre as 4 (publish_due
-    # + price + auth + prelist) -- 6 no total (era 5 antes da TASK-068).
-    assert transaction.__exit__.call_count == 6
     engine.dispose.assert_called_once()

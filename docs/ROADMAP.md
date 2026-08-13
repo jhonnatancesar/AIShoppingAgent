@@ -182,7 +182,8 @@ vs `AISHOPPING_EXTERNAL_HTTP_TIMEOUT_SECONDS=10`), documentada em
 oficial, migration real, chamadas reais ao perfil `ADMIN` e missão
 real em produção (`5800X3D`, 4 lojas `succeeded`, pré-lista correta
 Amazon+Kabum por serem as mais baratas)) → `v1.0.6` (release corretiva,
-**planejada, ainda não implementada** — dois itens: TASK-076
+**em andamento — TASK-079 concluída e validada; demais itens planejados,
+não implementados** — dois itens originais: TASK-076
 (`docs/tasks/TASK-076.md`, observabilidade — enriquecer os logs de
 falha dos providers com tipo/status/traceback da exceção original, hoje
 descartados no ponto em que `_process` já os tem em escopo; achada
@@ -216,8 +217,63 @@ do container para recolher subprocessos órfãos do Playwright/Chromium.
 Diagnóstico completo, reprodução controlada e comparação objetiva
 sem/com `init: true` antes de declarar causa raiz ou implementar
 qualquer correção — autorizado a trabalhar diretamente em produção para
-isso, preservando banco/dados/secrets/rollback. Nenhuma das quatro
-TASKs desta versão tem tag/push pendente ainda) → V1.2
+isso, preservando banco/dados/secrets/rollback.
+
+**TASK-079 concluída e validada** (commit `4728857`, `collection_worker`;
+commit `0afac04`, extensão do webhook Telegram — mesma classe estrutural
+de autodeadlock, ver `docs/tasks/TASK-079.md`) — validada ao vivo em
+produção depois do redeploy completo do zero em servidor novo (Windows
+Server 2025 + Docker Desktop): stack saudável, webhook Telegram
+funcional, `/start` real processado sem erro.
+
+**Rodada de auditoria/planejamento pós-deploy (2026-08-13)**, sem
+nenhuma implementação — só auditoria, TASKs e documentação — acrescentou
+seis itens à `v1.0.6`, nesta ordem de prioridade recomendada de
+implementação (`docs/tasks/TASK-079.md`, seção "Auditoria sistemática
+adicional", é o item 1 desta lista, já coberto acima):
+
+2. **TASK-080** (`docs/tasks/TASK-080.md`) — `telegram_notifier` mantém
+   transação síncrona aberta durante `await send_message` (mesma classe
+   estrutural da TASK-079, sem evidência de reprodução do autodeadlock
+   real — processamento sequencial, query com `SKIP LOCKED`); risco
+   residual real é a ausência de timeouts defensivos de Postgres nessa
+   conexão. Três opções de tratamento registradas, nenhuma escolhida.
+3. **TASK-081** (`docs/tasks/TASK-081.md`) — zumbis Chromium/Playwright
+   no `collection_worker`, problema separado do autodeadlock (já
+   descartado como causa pela própria TASK-079). Reproduzido de novo,
+   ao vivo, no servidor novo (15 zumbis depois de um único ciclo
+   abrir/fechar Chromium); auditoria de código não encontrou bug de
+   cleanup no projeto (`BrowserSession.close()` já é exception-safe) —
+   reforça, sem provar, a hipótese de reaping do PID 1. Plano de
+   investigação completo (comparação objetiva sem/com `init: true`)
+   registrado, nenhuma correção implementada.
+4. **TASK-082** (`docs/tasks/TASK-082.md`) — buscas genéricas (ex.:
+   "cadeira gamer") não têm hoje nenhuma redução de candidatos antes da
+   persistência/IA, porque os filtros da TASK-075 (modelo + menor preço
+   da Amazon) só ativam com `criteria.model` preenchido. Nenhum número
+   de limite escolhido — decisão explícita pendente do usuário.
+5. **TASK-083** (`docs/tasks/TASK-083.md`) — canonicalização de produto
+   pela IA não é confiável de forma determinística (caso real: `9800X3D`
+   recebeu `Ryzen 7` corretamente na validação da TASK-075 e `Ryzen 9`
+   incorretamente numa interação posterior, mesma entrada). Quatro
+   opções levantadas (confiança auto-relatada, grounding do Gemini,
+   validação determinística por padrão de nomenclatura, combinação),
+   nenhuma escolhida; caso de regressão obrigatório documentado.
+6. **TASK-084** (`docs/tasks/TASK-084.md`) — foto do produto (nenhum
+   provider extrai imagem hoje), uma oferta por mensagem Telegram (hoje
+   `_render_prelist_ready` concatena até 2 ofertas numa mensagem só) e
+   link curto próprio para substituir URLs completas das lojas (nenhum
+   mecanismo de encurtamento existe hoje) — com o requisito de segurança
+   explícito de nunca permitir open redirect.
+7. **TASK-085** (`docs/tasks/TASK-085.md`) — seleção numérica única e
+   múltipla para cancelar/pausar missões ambíguas; nenhuma TASK anterior
+   encontrada sobre o assunto (verificado nesta rodada); reaproveita
+   componentes já existentes das TASK-070/071
+   (`parse_numbered_store_selection`, `parse_single_numbered_choice`).
+
+Nenhuma das seis (080-085) tem tag/push pendente nem foi implementada —
+só auditadas e documentadas nesta rodada, aguardando aprovação explícita
+do usuário antes de qualquer código.) → V1.2
 (evolução funcional, documento `docs/V1_2.md`, 12 itens,
 incluindo Magalu como quinta loja, redução de `PriceObservation`
 redundante, e comparação de menor preço histórico externo/interno estilo

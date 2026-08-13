@@ -1,10 +1,28 @@
 # TASK-079 — Diagnosticar e corrigir travamento do `collection_worker` com Chromium/Playwright
 
-Status: **`collection_worker` corrigido, testado e commitado localmente
-(2026-08-13). Extensão em andamento: mesma classe estrutural encontrada no
-fluxo API/Telegram (webhook)** — ver `## Extensão: autodeadlock estrutural
-no fluxo API/Telegram (Webhook)` no final deste documento. Primeira
-prioridade da `v1.0.6`, executada antes de TASK-076/077/078.
+Status: **Concluída e validada.** `collection_worker` corrigido, testado
+e commitado (commit `4728857`, 2026-08-13). Extensão (webhook Telegram)
+também corrigida, testada e commitada (commit `0afac04`, 2026-08-13) —
+ver `## Extensão: autodeadlock estrutural no fluxo API/Telegram
+(Webhook)` no final deste documento. Ambas validadas ao vivo em produção
+(stack redeployada do zero em servidor novo, `/ready` 200, webhook
+Telegram funcional, `/start` real processado sem erro — ver auditoria de
+2026-08-13 abaixo). Primeira prioridade da `v1.0.6`, executada antes de
+TASK-076/077/078.
+
+**Reconciliação (2026-08-13, Etapa 1 da rodada de planejamento
+pós-v1.0.6):** o "Registro de progresso da extensão" abaixo parava em
+"Pendente" para os itens 3-7 do plano de correção do webhook. Auditoria
+de código nesta rodada (leitura direta de
+`backend/app/telegram/router.py` e `backend/app/missions/service.py`)
+confirmou que todos foram concluídos: o webhook usa
+`session: AsyncSession = Depends(get_telegram_async_session)`
+(`router.py:309`), e as funções do caminho de missão chamadas por ele
+(`create_mission_from_criteria_async`, `edit_mission_criteria`,
+`transition_mission_async`) já são `async def` com `AsyncSession` —
+consistente com o commit `0afac04`. O texto original do "Registro de
+progresso" foi mantido abaixo sem edição (trilha histórica); esta nota
+só corrige o status para quem ler o documento de cima para baixo.
 
 **Causa raiz confirmada (não são os zumbis do Chromium):** autodeadlock do
 event loop do `collection_worker`. Ver `## Causa raiz confirmada e desenho
@@ -524,6 +542,14 @@ Zumbis do Chromium: confirmados ainda presentes e se acumulando
 (problema paralelo, independente, não validado/corrigido nesta TASK,
 conforme escopo). `init: true` não foi aplicado.
 
+**Acompanhamento (2026-08-13, Etapa 2 da rodada de planejamento
+pós-v1.0.6):** reproduzido de novo, ao vivo, na implantação nova
+(15 zumbis depois de um único ciclo de abrir/fechar Chromium) — o
+problema não foi resolvido por nenhuma mudança desde então. Investigação
+completa e plano de correção movidos para `docs/tasks/TASK-081.md`
+(TASK dedicada, já que é um problema de recursos separado do
+autodeadlock desta TASK).
+
 ## Extensão: autodeadlock estrutural no fluxo API/Telegram (Webhook)
 
 **2026-08-13.** Mesma classe estrutural do bug corrigido no
@@ -651,3 +677,57 @@ disso), converter as ~15 funções do caminho para `AsyncSession`, reescrever
 o webhook em Fase A/B/C/D, escrever os testes de integração reais
 (mesmo usuário, usuários diferentes, `/ready`, duas instâncias de API,
 reprodução do incidente), rodar o pipeline completo e validar em produção.
+
+**Concluído (commit `0afac04`, 2026-08-13)** — ver nota de reconciliação
+no topo deste documento. Todos os itens acima foram implementados e
+validados ao vivo em produção: 925 testes locais, 90,81% de cobertura,
+lint/format limpos, API healthy, `/ready` 200, zero `idle in transaction`
+observado.
+
+## Auditoria sistemática adicional (Etapa 1, rodada de planejamento pós-v1.0.6, 2026-08-13)
+
+Com a stack redeployada do zero em servidor novo (Windows Server 2025 +
+Docker Desktop) e validada saudável, esta etapa auditou **o restante da
+aplicação** em busca de caminhos equivalentes ao mecanismo desta TASK,
+antes de considerar a classe de bug encerrada como um todo.
+
+**Escopo auditado:** todo `backend/app` — busca por `Session`/
+`AsyncSession`, `FOR UPDATE`/`with_for_update`, todo `async def`, todo
+handler HTTP (`@router.get/post/put/delete/patch` — só 3 arquivos:
+`telegram/router.py`, `health/router.py`, `authentication/router.py`),
+pontos de `await` para IA/HTTP/Telegram/Playwright e sua relação com
+escopo transacional.
+
+**Confirmado seguro:**
+
+- `collection_worker` (caminho principal desta TASK) e o webhook
+  Telegram (extensão desta TASK): `AsyncSession` de ponta a ponta,
+  nenhuma transação aberta durante `await` externo — confirmado por
+  leitura direta do código atual, não só pela documentação.
+- `authentication/router.py` (`POST /auth/actions`): handler **síncrono**
+  (`def`, não `async def`) — o FastAPI/Starlette despacha automaticamente
+  para thread pool, não bloqueia o event loop principal. Não chama IA nem
+  Telegram. Sem risco.
+- `health/router.py`: sem transação, sem I/O externo além do `SELECT 1`
+  de `/ready`.
+- Nenhum outro router HTTP existe no projeto além desses três.
+
+**Achado novo, documentado separadamente (não corrigido nesta etapa):**
+`telegram_notifier` (`app/telegram/worker.py::_process_batch`) mantém uma
+transação síncrona aberta durante `await send_message(...)` (envio
+Telegram) — mesma classe estrutural, mas **sem evidência de que reproduza
+o autodeadlock real** desta TASK (processamento sequencial, sem
+`asyncio.gather`; a query de reivindicação usa
+`with_for_update(skip_locked=True)`, que nunca bloqueia esperando lock
+alheio). Risco residual real: ausência de timeouts defensivos de Postgres
+nesta conexão. Documentado com evidência completa, opções de tratamento e
+critérios de aceite em `docs/tasks/TASK-080.md` — aguardando decisão do
+usuário, sem implementação.
+
+**Critério objetivo para considerar a classe de bug "autodeadlock
+estrutural" encerrada:** os três serviços com histórico real do problema
+(`collection_worker`, webhook `api`, `telegram_notifier`) auditados
+individualmente; dois corrigidos e validados; o terceiro com risco
+avaliado, sem evidência de defeito ativo, decisão pendente do usuário
+(TASK-080). Nenhum outro caminho no projeto atravessa `await` externo com
+transação/lock de banco aberto.

@@ -9,17 +9,15 @@ from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from pydantic import SecretStr
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.authentication.models import CredentialAction, UserAuthSession
 from app.database.time import utc_now
-from app.events import (
-    ConsumptionOutcome,
-    Event,
-    EventType,
-    claim_unconsumed_events,
-    count_failed_attempts,
-    record_consumption_attempt,
+from app.events import ConsumptionOutcome, Event, EventType
+from app.events.consumption import (
+    claim_unconsumed_events_async,
+    count_failed_attempts_async,
+    record_consumption_attempt_async,
 )
 from app.missions.models import Mission
 from app.observability.metrics import observe_resilience_event
@@ -93,8 +91,19 @@ def remember_private_notification_chat(user: User, message: TelegramMessage) -> 
     return True
 
 
+@dataclass(frozen=True, slots=True)
+class _PreparedNotification:
+    """Uma notificação já pronta para envio, sem nada vinculado à sessão da
+    Fase A -- só tipos primitivos, para nunca disparar lazy-load na Fase B
+    (TASK-080)."""
+
+    event_id: UUID
+    chat_id: int
+    text: str
+
+
 async def process_telegram_notifications(
-    session: Session,
+    session_factory: async_sessionmaker[AsyncSession],
     *,
     bot_token: SecretStr,
     limit: int = 50,
@@ -108,109 +117,73 @@ async def process_telegram_notifications(
     _consumer_name: str = TELEGRAM_NOTIFICATION_CONSUMER,
     _event_types: tuple[str, ...] = _NOTIFICATION_EVENT_TYPES,
 ) -> TelegramNotificationBatch:
-    """Entrega um lote mantendo locks e tentativas na transação do chamador."""
-    events = claim_unconsumed_events(
-        session,
-        consumer_name=_consumer_name,
-        limit=limit,
-        event_types=_event_types,
-        max_attempts=max_attempts,
-    )
-    succeeded = 0
-    failed = 0
-    skipped = 0
-    dead_lettered = 0
-    for event in events:
-        failure_code: str | None = None
-        outcome = ConsumptionOutcome.SUCCEEDED
-        retry_after: float | None = None
-        permanent = False
-        try:
-            recipient, text = _prepare_notification(session, event)
-            await send_message(
-                recipient,
-                text,
-                bot_token=bot_token,
-                timeout_seconds=timeout_seconds,
-                retry_after_cap_seconds=retry_after_cap_seconds,
-                circuit_failure_threshold=circuit_failure_threshold,
-                circuit_open_seconds=circuit_open_seconds,
-            )
-        except TelegramNotificationSkipped:
-            outcome = ConsumptionOutcome.SKIPPED
-        except TelegramNotificationError as error:
-            failure_code = error.failure_code
-            permanent = error.permanent
-        except TelegramDeliveryAmbiguous as error:
-            failure_code = error.code
-            permanent = True
-        except TelegramBotAPIError as error:
-            failure_code = error.code
-            permanent = not error.transient
-            retry_after = error.retry_after_seconds
-        except TelegramDeliveryError as error:
-            failure_code = error.code
-            permanent = not error.transient
-        except ConnectionError:
-            failure_code = "telegram_api_unavailable"
-            permanent = False
+    """Entrega um lote em três fases (TASK-080, mesmo padrão da TASK-079):
 
-        attempted_at = utc_now()
-        next_retry_at = None
-        if failure_code is not None:
-            failures = count_failed_attempts(
-                session,
-                event_id=event.id,
-                consumer_name=_consumer_name,
-            )
-            if permanent or failures + 1 >= max_attempts:
-                outcome = ConsumptionOutcome.DEAD_LETTERED
-                observe_resilience_event("telegram", "dead_lettered")
-            else:
-                outcome = ConsumptionOutcome.FAILED
-                observe_resilience_event("telegram", "retry")
-                delay = _retry_delay(
-                    failures + 1,
-                    base_seconds=retry_base_seconds,
-                    cap_seconds=retry_cap_seconds,
-                    retry_after=retry_after,
-                )
-                next_retry_at = attempted_at + timedelta(seconds=delay)
-        record_consumption_attempt(
-            session,
-            event=event,
+    Fase A (transação curta): reivindica os eventos e prepara
+    destinatário/texto -- eventos que falham na preparação (dados
+    inválidos, destinatário ausente, preferência desativada) já são
+    resolvidos aqui, sem nenhum I/O externo. `COMMIT` libera o lock de
+    reivindicação imediatamente, antes de qualquer envio.
+
+    Fase B (sem transação): envia cada notificação preparada via Telegram.
+
+    Fase C (transação curta, uma por evento -- nunca em lote): registra o
+    resultado do envio e decide retry/dead-letter. Cada evento é
+    confirmado (`COMMIT`) individualmente, para que uma falha num evento
+    posterior do mesmo lote nunca desfaça o registro de um evento anterior
+    já entregue com sucesso.
+
+    Janela de crash conhecida (idêntica, em espírito, à do código anterior
+    a esta TASK): se o processo for encerrado exatamente entre o retorno
+    bem-sucedido de `send_message` e o `COMMIT` da Fase C daquele evento, a
+    mensagem já foi entregue mas o consumo não fica registrado -- o
+    próximo lote reivindica o mesmo evento de novo e reenvia (semântica
+    "ao menos uma vez", nunca "exatamente uma vez", sem mudança nesta
+    TASK). A diferença é que essa janela agora é por evento, não mais por
+    lote inteiro: eventos já confirmados antes do crash permanecem
+    confirmados.
+    """
+    (
+        claimed,
+        to_send,
+        succeeded,
+        failed,
+        skipped,
+        dead_lettered,
+    ) = await _claim_and_prepare(
+        session_factory,
+        consumer_name=_consumer_name,
+        event_types=_event_types,
+        limit=limit,
+        max_attempts=max_attempts,
+        retry_base_seconds=retry_base_seconds,
+        retry_cap_seconds=retry_cap_seconds,
+    )
+    for prepared in to_send:
+        outcome = await _send_and_record(
+            session_factory,
+            prepared,
+            bot_token=bot_token,
             consumer_name=_consumer_name,
-            outcome=outcome,
-            attempted_at=attempted_at,
-            failure_code=failure_code,
-            next_retry_at=next_retry_at,
+            max_attempts=max_attempts,
+            retry_base_seconds=retry_base_seconds,
+            retry_cap_seconds=retry_cap_seconds,
+            timeout_seconds=timeout_seconds,
+            retry_after_cap_seconds=retry_after_cap_seconds,
+            circuit_failure_threshold=circuit_failure_threshold,
+            circuit_open_seconds=circuit_open_seconds,
         )
         if outcome is ConsumptionOutcome.SUCCEEDED:
             succeeded += 1
-        elif outcome is ConsumptionOutcome.SKIPPED:
-            skipped += 1
         elif outcome is ConsumptionOutcome.DEAD_LETTERED:
             dead_lettered += 1
-            logger.warning(
-                "telegram_notification_dead_lettered",
-                extra={"notification_failure_code": failure_code},
-            )
         else:
             failed += 1
-            logger.warning(
-                "telegram_notification_failed",
-                extra={
-                    "event_id": str(event.id),
-                    "notification_failure_code": failure_code,
-                },
-            )
-    return TelegramNotificationBatch(
-        len(events), succeeded, failed, skipped, dead_lettered
-    )
+    return TelegramNotificationBatch(claimed, succeeded, failed, skipped, dead_lettered)
 
 
 async def process_telegram_authentication_notifications(
-    session: Session,
+    session_factory: async_sessionmaker[AsyncSession],
     *,
     bot_token: SecretStr,
     limit: int = 50,
@@ -218,7 +191,7 @@ async def process_telegram_authentication_notifications(
 ) -> TelegramNotificationBatch:
     """Entrega confirmações e avisos de autenticação em consumidor próprio."""
     return await process_telegram_notifications(
-        session,
+        session_factory,
         bot_token=bot_token,
         limit=limit,
         _consumer_name=TELEGRAM_AUTH_NOTIFICATION_CONSUMER,
@@ -228,7 +201,7 @@ async def process_telegram_authentication_notifications(
 
 
 async def process_telegram_prelist_notifications(
-    session: Session,
+    session_factory: async_sessionmaker[AsyncSession],
     *,
     bot_token: SecretStr,
     limit: int = 50,
@@ -236,7 +209,7 @@ async def process_telegram_prelist_notifications(
 ) -> TelegramNotificationBatch:
     """Entrega a pré-lista informativa (TASK-068) em consumidor próprio."""
     return await process_telegram_notifications(
-        session,
+        session_factory,
         bot_token=bot_token,
         limit=limit,
         _consumer_name=TELEGRAM_PRELIST_CONSUMER,
@@ -245,7 +218,207 @@ async def process_telegram_prelist_notifications(
     )
 
 
-def _prepare_notification(session: Session, event: Event) -> tuple[int, str]:
+async def _claim_and_prepare(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    consumer_name: str,
+    event_types: tuple[str, ...],
+    limit: int,
+    max_attempts: int,
+    retry_base_seconds: float,
+    retry_cap_seconds: float,
+) -> tuple[int, list[_PreparedNotification], int, int, int, int]:
+    """Fase A (TASK-080): reivindica e prepara, tudo numa única transação
+    curta -- nenhum `await` externo acontece aqui. Devolve
+    `(claimed, to_send, succeeded=0, failed, skipped, dead_lettered)`;
+    `succeeded` sempre começa em 0 porque sucesso só existe depois do
+    envio (Fase B/C)."""
+    to_send: list[_PreparedNotification] = []
+    failed = 0
+    skipped = 0
+    dead_lettered = 0
+    async with session_factory() as session, session.begin():
+        events = await claim_unconsumed_events_async(
+            session,
+            consumer_name=consumer_name,
+            limit=limit,
+            event_types=event_types,
+            max_attempts=max_attempts,
+        )
+        for event in events:
+            try:
+                chat_id, text = await _prepare_notification_async(session, event)
+            except TelegramNotificationSkipped:
+                await _decide_and_record_outcome(
+                    session,
+                    event,
+                    consumer_name=consumer_name,
+                    initial_outcome=ConsumptionOutcome.SKIPPED,
+                    failure_code=None,
+                    permanent=False,
+                    retry_after=None,
+                    max_attempts=max_attempts,
+                    retry_base_seconds=retry_base_seconds,
+                    retry_cap_seconds=retry_cap_seconds,
+                )
+                skipped += 1
+                continue
+            except TelegramNotificationError as error:
+                outcome = await _decide_and_record_outcome(
+                    session,
+                    event,
+                    consumer_name=consumer_name,
+                    initial_outcome=ConsumptionOutcome.FAILED,
+                    failure_code=error.failure_code,
+                    permanent=error.permanent,
+                    retry_after=None,
+                    max_attempts=max_attempts,
+                    retry_base_seconds=retry_base_seconds,
+                    retry_cap_seconds=retry_cap_seconds,
+                )
+                if outcome is ConsumptionOutcome.DEAD_LETTERED:
+                    dead_lettered += 1
+                else:
+                    failed += 1
+                continue
+            to_send.append(
+                _PreparedNotification(event_id=event.id, chat_id=chat_id, text=text)
+            )
+    return len(events), to_send, 0, failed, skipped, dead_lettered
+
+
+async def _send_and_record(
+    session_factory: async_sessionmaker[AsyncSession],
+    prepared: _PreparedNotification,
+    *,
+    bot_token: SecretStr,
+    consumer_name: str,
+    max_attempts: int,
+    retry_base_seconds: float,
+    retry_cap_seconds: float,
+    timeout_seconds: float,
+    retry_after_cap_seconds: float,
+    circuit_failure_threshold: int,
+    circuit_open_seconds: float,
+) -> ConsumptionOutcome:
+    """Fase B (envio, sem transação) + Fase C (registro, transação curta
+    por evento) -- TASK-080."""
+    failure_code: str | None = None
+    permanent = False
+    retry_after: float | None = None
+    try:
+        await send_message(
+            prepared.chat_id,
+            prepared.text,
+            bot_token=bot_token,
+            timeout_seconds=timeout_seconds,
+            retry_after_cap_seconds=retry_after_cap_seconds,
+            circuit_failure_threshold=circuit_failure_threshold,
+            circuit_open_seconds=circuit_open_seconds,
+        )
+    except TelegramDeliveryAmbiguous as error:
+        failure_code = error.code
+        permanent = True
+    except TelegramBotAPIError as error:
+        failure_code = error.code
+        permanent = not error.transient
+        retry_after = error.retry_after_seconds
+    except TelegramDeliveryError as error:
+        failure_code = error.code
+        permanent = not error.transient
+    except ConnectionError:
+        failure_code = "telegram_api_unavailable"
+        permanent = False
+
+    async with session_factory() as session, session.begin():
+        event = await session.get(Event, prepared.event_id)
+        if event is None:
+            # Eventos são append-only (nunca apagados) -- só chegaria aqui
+            # por corrupção de dados externa a este fluxo; sem outcome
+            # seguro para registrar, encerra sem tentar de novo aqui.
+            raise TelegramNotificationError(
+                "notification_event_missing", permanent=True
+            )
+        outcome = await _decide_and_record_outcome(
+            session,
+            event,
+            consumer_name=consumer_name,
+            initial_outcome=ConsumptionOutcome.SUCCEEDED,
+            failure_code=failure_code,
+            permanent=permanent,
+            retry_after=retry_after,
+            max_attempts=max_attempts,
+            retry_base_seconds=retry_base_seconds,
+            retry_cap_seconds=retry_cap_seconds,
+        )
+    return outcome
+
+
+async def _decide_and_record_outcome(
+    session: AsyncSession,
+    event: Event,
+    *,
+    consumer_name: str,
+    initial_outcome: ConsumptionOutcome,
+    failure_code: str | None,
+    permanent: bool,
+    retry_after: float | None,
+    max_attempts: int,
+    retry_base_seconds: float,
+    retry_cap_seconds: float,
+) -> ConsumptionOutcome:
+    """Decide FAILED/DEAD_LETTERED (quando há falha) ou aceita o outcome já
+    terminal (SUCCEEDED/SKIPPED) e registra -- compartilhado entre falha de
+    preparação (Fase A) e falha/sucesso de envio (Fase C), para as duas
+    nunca divergirem de critério de retry (TASK-080)."""
+    attempted_at = utc_now()
+    outcome = initial_outcome
+    next_retry_at = None
+    if failure_code is not None:
+        failures = await count_failed_attempts_async(
+            session, event_id=event.id, consumer_name=consumer_name
+        )
+        if permanent or failures + 1 >= max_attempts:
+            outcome = ConsumptionOutcome.DEAD_LETTERED
+            observe_resilience_event("telegram", "dead_lettered")
+        else:
+            outcome = ConsumptionOutcome.FAILED
+            observe_resilience_event("telegram", "retry")
+            delay = _retry_delay(
+                failures + 1,
+                base_seconds=retry_base_seconds,
+                cap_seconds=retry_cap_seconds,
+                retry_after=retry_after,
+            )
+            next_retry_at = attempted_at + timedelta(seconds=delay)
+    await record_consumption_attempt_async(
+        session,
+        event=event,
+        consumer_name=consumer_name,
+        outcome=outcome,
+        attempted_at=attempted_at,
+        failure_code=failure_code,
+        next_retry_at=next_retry_at,
+    )
+    if outcome is ConsumptionOutcome.DEAD_LETTERED:
+        logger.warning(
+            "telegram_notification_dead_lettered",
+            extra={"notification_failure_code": failure_code},
+        )
+    elif outcome is ConsumptionOutcome.FAILED:
+        logger.warning(
+            "telegram_notification_failed",
+            extra={
+                "event_id": str(event.id),
+                "notification_failure_code": failure_code,
+            },
+        )
+    return outcome
+
+
+async def _prepare_notification_async(
+    session: AsyncSession, event: Event
+) -> tuple[int, str]:
     try:
         event_type = EventType(event.event_type)
     except ValueError:
@@ -255,18 +428,20 @@ def _prepare_notification(session: Session, event: Event) -> tuple[int, str]:
         EventType.AUTHENTICATION_SESSION_EXPIRING_V1,
         EventType.AUTHENTICATION_SESSION_EXPIRED_V1,
     }:
-        return _prepare_authentication_notification(session, event, event_type)
+        return await _prepare_authentication_notification_async(
+            session, event, event_type
+        )
     if event_type in {
         EventType.MISSION_PRELIST_READY_V1,
         EventType.MISSION_PRELIST_ERRATA_V1,
     }:
-        return _prepare_prelist_notification(session, event, event_type)
+        return await _prepare_prelist_notification_async(session, event, event_type)
     if event.mission_id is None:
         raise TelegramNotificationError("notification_mission_missing")
-    mission = session.get(Mission, event.mission_id)
+    mission = await session.get(Mission, event.mission_id)
     if mission is None:
         raise TelegramNotificationError("notification_mission_missing")
-    user = session.get(User, mission.user_id)
+    user = await session.get(User, mission.user_id)
     if user is None:
         raise TelegramNotificationError("notification_recipient_missing")
     if not notification_is_enabled(user, event.event_type):
@@ -279,15 +454,15 @@ def _prepare_notification(session: Session, event: Event) -> tuple[int, str]:
         raise TelegramNotificationError(
             "notification_recipient_inactive", permanent=False
         )
-    offer, product, store = _resolve_offer_context(session, event)
+    offer, product, store = await _resolve_offer_context_async(session, event)
     return (
         user.telegram_chat_id,
         _render_alert(event, mission.title, offer, product, store),
     )
 
 
-def _resolve_offer_context(
-    session: Session, event: Event
+async def _resolve_offer_context_async(
+    session: AsyncSession, event: Event
 ) -> tuple[Offer, Product, Store]:
     """Busca a oferta real do alerta a partir do `offer_id` do evento.
 
@@ -299,28 +474,28 @@ def _resolve_offer_context(
     if not isinstance(payload, dict):
         raise TelegramNotificationError("notification_payload_invalid")
     offer_id = _required_uuid(payload, "offer_id")
-    offer = session.get(Offer, offer_id)
+    offer = await session.get(Offer, offer_id)
     if offer is None:
         raise TelegramNotificationError("notification_payload_invalid")
-    product = session.get(Product, offer.product_id)
-    store = session.get(Store, offer.store_id)
+    product = await session.get(Product, offer.product_id)
+    store = await session.get(Store, offer.store_id)
     if product is None or store is None:
         raise TelegramNotificationError("notification_payload_invalid")
     return offer, product, store
 
 
-def _prepare_prelist_notification(
-    session: Session, event: Event, event_type: EventType
+async def _prepare_prelist_notification_async(
+    session: AsyncSession, event: Event, event_type: EventType
 ) -> tuple[int, str]:
     """TASK-068: nunca sujeita a `notification_is_enabled` -- a pré-lista
     dispara no máximo uma vez (mais a correção, também no máximo uma vez),
     fora das preferências de queda/alvo da TASK-037."""
     if event.mission_id is None:
         raise TelegramNotificationError("notification_mission_missing")
-    mission = session.get(Mission, event.mission_id)
+    mission = await session.get(Mission, event.mission_id)
     if mission is None:
         raise TelegramNotificationError("notification_mission_missing")
-    user = session.get(User, mission.user_id)
+    user = await session.get(User, mission.user_id)
     if user is None:
         raise TelegramNotificationError("notification_recipient_missing")
     if user.telegram_chat_id is None:
@@ -332,14 +507,14 @@ def _prepare_prelist_notification(
             "notification_recipient_inactive", permanent=False
         )
     if event_type is EventType.MISSION_PRELIST_READY_V1:
-        text = _render_prelist_ready(session, event, mission.title)
+        text = await _render_prelist_ready_async(session, event, mission.title)
     else:
-        text = _render_prelist_errata(session, event, mission.title)
+        text = await _render_prelist_errata_async(session, event, mission.title)
     return user.telegram_chat_id, text
 
 
-def _prepare_authentication_notification(
-    session: Session, event: Event, event_type: EventType
+async def _prepare_authentication_notification_async(
+    session: AsyncSession, event: Event, event_type: EventType
 ) -> tuple[int, str]:
     payload = event.payload
     if not isinstance(payload, dict) or event.mission_id is not None:
@@ -353,7 +528,7 @@ def _prepare_authentication_notification(
         session_id = _required_uuid(payload, "session_id")
         if event.aggregate_type != "auth_session" or event.aggregate_id != session_id:
             raise TelegramNotificationError("notification_payload_invalid")
-        auth_session = session.get(UserAuthSession, session_id)
+        auth_session = await session.get(UserAuthSession, session_id)
         if auth_session is None or auth_session.user_id != user_id:
             raise TelegramNotificationError("notification_payload_invalid")
         expires_at = _required_datetime(payload, "expires_at")
@@ -374,7 +549,7 @@ def _prepare_authentication_notification(
             and auth_session.expires_at <= utc_now()
         ):
             raise TelegramNotificationSkipped
-    user = session.get(User, user_id)
+    user = await session.get(User, user_id)
     if user is None:
         raise TelegramNotificationError("notification_recipient_missing")
     if (
@@ -488,14 +663,14 @@ def _render_alert(
     raise TelegramNotificationError("notification_payload_invalid")
 
 
-def _load_offer_context(
-    session: Session, offer_id: UUID
+async def _load_offer_context_async(
+    session: AsyncSession, offer_id: UUID
 ) -> tuple[Offer, Product, Store]:
-    offer = session.get(Offer, offer_id)
+    offer = await session.get(Offer, offer_id)
     if offer is None:
         raise TelegramNotificationError("notification_payload_invalid")
-    product = session.get(Product, offer.product_id)
-    store = session.get(Store, offer.store_id)
+    product = await session.get(Product, offer.product_id)
+    store = await session.get(Store, offer.store_id)
     if product is None or store is None:
         raise TelegramNotificationError("notification_payload_invalid")
     return offer, product, store
@@ -506,10 +681,10 @@ _PRELIST_SHIPPING_DISCLAIMER = (
 )
 
 
-def _render_prelist_block(
-    session: Session, offer_id: UUID, amount: Decimal, currency: str
+async def _render_prelist_block_async(
+    session: AsyncSession, offer_id: UUID, amount: Decimal, currency: str
 ) -> str:
-    offer, product, store = _load_offer_context(session, offer_id)
+    offer, product, store = await _load_offer_context_async(session, offer_id)
     display_name = product.display_name or product.name
     return (
         f"🏪 {store.name}\n"
@@ -520,7 +695,9 @@ def _render_prelist_block(
     )
 
 
-def _render_prelist_ready(session: Session, event: Event, mission_title: str) -> str:
+async def _render_prelist_ready_async(
+    session: AsyncSession, event: Event, mission_title: str
+) -> str:
     """TASK-068: até 2 ofertas já encontradas, sem julgamento -- string fixa.
 
     Ranqueadas por `amount` (preço do produto), sem frete -- ver
@@ -534,14 +711,16 @@ def _render_prelist_ready(session: Session, event: Event, mission_title: str) ->
         first_amount = _money(payload, "first_amount")
         first_currency = _currency(payload, "first_currency")
         blocks = [
-            _render_prelist_block(session, first_offer_id, first_amount, first_currency)
+            await _render_prelist_block_async(
+                session, first_offer_id, first_amount, first_currency
+            )
         ]
         if payload.get("second_offer_id") is not None:
             second_offer_id = _required_uuid(payload, "second_offer_id")
             second_amount = _money(payload, "second_amount")
             second_currency = _currency(payload, "second_currency")
             blocks.append(
-                _render_prelist_block(
+                await _render_prelist_block_async(
                     session, second_offer_id, second_amount, second_currency
                 )
             )
@@ -559,7 +738,9 @@ def _render_prelist_ready(session: Session, event: Event, mission_title: str) ->
     )
 
 
-def _render_prelist_errata(session: Session, event: Event, mission_title: str) -> str:
+async def _render_prelist_errata_async(
+    session: AsyncSession, event: Event, mission_title: str
+) -> str:
     """TASK-068: única correção da pré-lista -- string fixa, sem julgamento.
 
     Comparação por `amount` (preço do produto), sem frete -- ver
@@ -575,7 +756,7 @@ def _render_prelist_errata(session: Session, event: Event, mission_title: str) -
         had_previous = payload.get("previous_lowest_amount") is not None
     except InvalidOperation, TypeError, ValueError:
         raise TelegramNotificationError("notification_payload_invalid") from None
-    offer, product, store = _load_offer_context(session, offer_id)
+    offer, product, store = await _load_offer_context_async(session, offer_id)
     display_name = product.display_name or product.name
     if had_previous:
         header = "✏️ CORREÇÃO DA PRÉ-LISTA\n\n"

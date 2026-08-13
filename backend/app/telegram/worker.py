@@ -8,14 +8,17 @@ from time import perf_counter
 
 from opentelemetry import trace
 from opentelemetry.trace import SpanKind
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.authentication.notifications import (
-    publish_due_authentication_notifications,
+    publish_due_authentication_notifications_async,
 )
 from app.core.config import Settings
 from app.core.logging import configure_logging
-from app.database.session import create_database_engine, create_session_factory
+from app.database.session import (
+    create_async_session_factory,
+    create_telegram_async_database_engine,
+)
 from app.observability.metrics import (
     mark_worker_started,
     observe_worker_batch,
@@ -57,8 +60,8 @@ async def run_worker(
         raise ValueError("poll_seconds must be positive")
     if not 1 <= limit <= 1000:
         raise ValueError("batch_size must be between 1 and 1000")
-    engine = create_database_engine(settings)
-    session_factory = create_session_factory(engine)
+    engine = create_telegram_async_database_engine(settings)
+    session_factory = create_async_session_factory(engine)
     try:
         consecutive_failures = 0
         while True:
@@ -72,8 +75,10 @@ async def run_worker(
                     record_exception=False,
                     set_status_on_exception=False,
                 ):
-                    with session_factory.begin() as session:
-                        publish_due_authentication_notifications(session, limit=limit)
+                    async with session_factory() as session, session.begin():
+                        await publish_due_authentication_notifications_async(
+                            session, limit=limit
+                        )
                     price_result = await _process_batch(
                         session_factory,
                         settings=settings,
@@ -139,29 +144,32 @@ async def run_worker(
                 return
             await asyncio.sleep(interval)
     finally:
-        engine.dispose()
+        await engine.dispose()
 
 
 async def _process_batch(
-    session_factory: sessionmaker[Session],
+    session_factory: async_sessionmaker[AsyncSession],
     *,
     settings: Settings,
     limit: int,
     processor: Callable[..., Awaitable[TelegramNotificationBatch]],
 ) -> TelegramNotificationBatch:
-    with session_factory.begin() as session:
-        return await processor(
-            session,
-            bot_token=settings.telegram_bot_token,
-            limit=limit,
-            max_attempts=settings.event_consumer_max_attempts,
-            retry_base_seconds=settings.event_retry_base_seconds,
-            retry_cap_seconds=settings.event_retry_cap_seconds,
-            timeout_seconds=settings.external_http_timeout_seconds,
-            retry_after_cap_seconds=settings.retry_after_cap_seconds,
-            circuit_failure_threshold=settings.circuit_failure_threshold,
-            circuit_open_seconds=settings.circuit_open_seconds,
-        )
+    """Delega diretamente ao `processor` (TASK-080) -- ele mesmo abre e
+    fecha suas próprias transações curtas por fase (A/B/C), nunca mantendo
+    uma sessão aberta durante o envio Telegram. Nenhuma transação é aberta
+    aqui."""
+    return await processor(
+        session_factory,
+        bot_token=settings.telegram_bot_token,
+        limit=limit,
+        max_attempts=settings.event_consumer_max_attempts,
+        retry_base_seconds=settings.event_retry_base_seconds,
+        retry_cap_seconds=settings.event_retry_cap_seconds,
+        timeout_seconds=settings.external_http_timeout_seconds,
+        retry_after_cap_seconds=settings.retry_after_cap_seconds,
+        circuit_failure_threshold=settings.circuit_failure_threshold,
+        circuit_open_seconds=settings.circuit_open_seconds,
+    )
 
 
 def _combine_batches(
