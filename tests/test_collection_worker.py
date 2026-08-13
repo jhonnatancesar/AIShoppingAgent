@@ -3,7 +3,7 @@
 import asyncio
 from contextlib import nullcontext
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from app.collection.worker import build_collection_adapter, run_worker
@@ -51,6 +51,7 @@ def test_collection_worker_is_an_allowlisted_metric_dimension() -> None:
 
 def test_worker_once_records_batch_and_disposes(monkeypatch) -> None:
     engine = MagicMock()
+    engine.dispose = AsyncMock()
     factory = MagicMock()
     orchestrator = MagicMock()
     orchestrator.run_batch = MagicMock(
@@ -65,10 +66,10 @@ def test_worker_once_records_batch_and_disposes(monkeypatch) -> None:
     orchestrator.run_batch = result
     observe = MagicMock()
     monkeypatch.setattr(
-        "app.collection.worker.create_database_engine", lambda *_: engine
+        "app.collection.worker.create_async_database_engine", lambda *_: engine
     )
     monkeypatch.setattr(
-        "app.collection.worker.create_session_factory", lambda *_: factory
+        "app.collection.worker.create_async_session_factory", lambda *_: factory
     )
     monkeypatch.setattr("app.collection.worker.build_collection_adapter", MagicMock())
     monkeypatch.setattr(

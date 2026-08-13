@@ -4,10 +4,29 @@ import random
 from datetime import datetime, timedelta
 
 from sqlalchemy import or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
 from app.database.time import utc_now
 from app.missions.models import Mission, MissionSchedule, MissionStatus
+
+
+def _due_schedules_statement(*, due_at: datetime, limit: int):
+    if not 1 <= limit <= 1000:
+        raise ValueError("limit deve estar entre 1 e 1000.")
+    return (
+        select(MissionSchedule)
+        .join(Mission, Mission.id == MissionSchedule.mission_id)
+        .where(
+            MissionSchedule.is_enabled.is_(True),
+            MissionSchedule.next_run_at <= due_at,
+            Mission.status == MissionStatus.ACTIVE,
+            or_(Mission.expires_at.is_(None), Mission.expires_at > due_at),
+        )
+        .order_by(MissionSchedule.next_run_at, MissionSchedule.id)
+        .limit(limit)
+        .with_for_update(skip_locked=True, of=MissionSchedule)
+    )
 
 
 def find_due_schedules(
@@ -19,23 +38,26 @@ def find_due_schedules(
     """Bloqueia e retorna agendas elegíveis em ordem determinística."""
     effective_due_at = due_at or utc_now()
     _require_aware(effective_due_at, "due_at")
-    if not 1 <= limit <= 1000:
-        raise ValueError("limit deve estar entre 1 e 1000.")
-
-    statement = (
-        select(MissionSchedule)
-        .join(Mission, Mission.id == MissionSchedule.mission_id)
-        .where(
-            MissionSchedule.is_enabled.is_(True),
-            MissionSchedule.next_run_at <= effective_due_at,
-            Mission.status == MissionStatus.ACTIVE,
-            or_(Mission.expires_at.is_(None), Mission.expires_at > effective_due_at),
-        )
-        .order_by(MissionSchedule.next_run_at, MissionSchedule.id)
-        .limit(limit)
-        .with_for_update(skip_locked=True, of=MissionSchedule)
-    )
+    statement = _due_schedules_statement(due_at=effective_due_at, limit=limit)
     return list(session.scalars(statement))
+
+
+async def find_due_schedules_async(
+    session: AsyncSession,
+    *,
+    due_at: datetime | None = None,
+    limit: int = 100,
+) -> list[MissionSchedule]:
+    """Equivalente assíncrono de `find_due_schedules` (TASK-079).
+
+    Usado só pelo `collection_worker`; chamadores síncronos (testes de
+    agenda, outros serviços) continuam com `find_due_schedules`.
+    """
+    effective_due_at = due_at or utc_now()
+    _require_aware(effective_due_at, "due_at")
+    statement = _due_schedules_statement(due_at=effective_due_at, limit=limit)
+    result = await session.scalars(statement)
+    return list(result)
 
 
 def staggered_next_run_at(base: datetime, *, max_stagger_seconds: int) -> datetime:

@@ -992,3 +992,28 @@ do repositório da aplicação — só `docs/PROJECT_CONTEXT.md` e
 `docs/CHANGELOG.md` registram o incidente, e `docs/PRODUCTION_SETUP.md`
 passa a documentar o timer e o blacklist como parte da configuração
 esperada do servidor.
+
+**Atualização 2026-08-12 (10):** durante a validação real da missão
+"cadeira gamer", duas coletas (kabum, amazon) ficaram presas em
+`running` para sempre — investigação confirmou que **o
+`collection_worker` inteiro travou** (uma segunda missão, 9950X3D, que
+rodava com sucesso a cada 30 min, também parou no mesmo momento).
+Evidência preservada do processo travado: 15 processos filhos zumbis
+(14 Chromium + 1 Xvfb), nenhuma query ativa no banco, nenhuma conexão
+com Gemini/Groq, 4 threads em espera genérica do kernel, sem nenhuma
+exceção registrada. `py-spy` não conseguiu capturar o stack real do
+Python (seccomp do Docker bloqueia `ptrace`; não instalado no host) —
+limitação registrada, não contornada ainda. Hipótese forte e **ainda
+não comprovada**: falta de init real como PID 1 do container
+interferindo no rastreamento de saída de subprocessos Chromium pelo
+`asyncio`. Registrada **TASK-079**
+(`docs/tasks/TASK-079.md`) como **primeira prioridade de implementação
+da `v1.0.6`**, à frente de TASK-076/077/078 (nenhuma renumerada, só a
+ordem de execução muda) — usuário autorizou trabalhar diretamente em
+produção para diagnóstico/validação (aplicação sem uso normal por
+usuários neste momento), com preservação explícita de banco, dados,
+secrets e do ponto de rollback (`v1.0.5`). Exige diagnóstico completo
+(auditoria de lifecycle Playwright no código, instrumentação temporária,
+reprodução controlada sem init, comparação objetiva com `init: true`)
+antes de declarar causa raiz confirmada ou implementar qualquer
+correção — investigação em andamento.

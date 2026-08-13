@@ -60,6 +60,22 @@ class Settings(BaseSettings):
     collection_schedule_stagger_seconds: int = Field(default=300, ge=0, le=3600)
     collection_stale_run_minutes: int = Field(default=10, ge=1, le=1440)
     collection_max_concurrency: int = Field(default=4, ge=1, le=4)
+    # TASK-079: airbags de banco só para a conexão assíncrona dedicada do
+    # collection_worker (não alteram postgresql.conf nem outros serviços).
+    # Não são a correção do autodeadlock -- a correção é a fronteira
+    # transacional (fase A/B/C); estes valores só garantem que um bug
+    # futuro que reintroduza um await externo dentro de transação seja
+    # abortado pelo Postgres em vez de travar o worker para sempre.
+    collection_lock_timeout_seconds: float = Field(default=10.0, gt=0, le=60)
+    collection_statement_timeout_seconds: float = Field(default=15.0, gt=0, le=120)
+    collection_idle_in_transaction_timeout_seconds: float = Field(
+        default=10.0, gt=0, le=60
+    )
+    # TASK-079: teto de tempo para uma claim inteira (coleta + fase A + IA
+    # fora de transação + fase C) -- nenhuma claim trava o worker para
+    # sempre, mesmo diante de um bug futuro não coberto pelos timeouts
+    # específicos (navegação, HTTP, IA, banco) já existentes.
+    collection_claim_deadline_seconds: float = Field(default=300.0, gt=0, le=1800)
     max_request_body_bytes: int = Field(default=65_536, ge=1024, le=1_048_576)
     telegram_rate_limit_per_minute: int = Field(default=20, ge=1, le=1000)
     external_http_timeout_seconds: float = Field(default=10.0, gt=0, le=60)

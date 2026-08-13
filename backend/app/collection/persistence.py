@@ -1,7 +1,11 @@
+"""TASK-079: só o `collection_worker` chama estas funções, sempre com
+`AsyncSession` -- sem chamador síncrono a preservar, por isso convertidas
+diretamente (sem versão paralela síncrona)."""
+
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.collection.models import CollectionRun, CollectionRunStatus
 from app.database.time import utc_now
@@ -11,8 +15,8 @@ class CollectionRunStateError(RuntimeError):
     pass
 
 
-def start_collection_run(
-    session: Session,
+async def start_collection_run(
+    session: AsyncSession,
     store_id: UUID,
     mission_id: UUID | None = None,
     *,
@@ -22,12 +26,12 @@ def start_collection_run(
         store_id=store_id, mission_id=mission_id, started_at=started_at or utc_now()
     )
     session.add(run)
-    session.flush()
+    await session.flush()
     return run
 
 
-def finish_collection_run(
-    session: Session,
+async def finish_collection_run(
+    session: AsyncSession,
     run_id: UUID,
     status: CollectionRunStatus,
     *,
@@ -35,7 +39,7 @@ def finish_collection_run(
 ) -> CollectionRun:
     if status is CollectionRunStatus.RUNNING:
         raise CollectionRunStateError("terminal status is required")
-    run = session.get(CollectionRun, run_id, with_for_update=True)
+    run = await session.get(CollectionRun, run_id, with_for_update=True)
     if run is None:
         raise CollectionRunStateError("collection run not found")
     if run.status is not CollectionRunStatus.RUNNING:
@@ -45,5 +49,5 @@ def finish_collection_run(
         raise CollectionRunStateError("finished_at precedes started_at")
     run.status = status
     run.finished_at = completed_at
-    session.flush()
+    await session.flush()
     return run

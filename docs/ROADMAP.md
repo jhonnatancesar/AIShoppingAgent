@@ -192,9 +192,32 @@ log) e TASK-077 (`docs/tasks/TASK-077.md`, distinguir "vendido pela
 Amazon" de "loja parceira Amazon" nos cards de busca, sem catalogar
 vendedores terceiros nem mudar a regra de menor preço da TASK-075) —
 nenhuma das duas altera comportamento de retry, classificação de falha,
-filtros, IA, Telegram ou a regra de menor preço da Amazon; cada uma tem
-decisão arquitetural em aberto (documentada no próprio arquivo da TASK)
-que precisa de aprovação explícita antes da implementação) → V1.2
+filtros, IA, Telegram ou a regra de menor preço da Amazon; **as
+decisões arquiteturais das duas já foram aprovadas explicitamente pelo
+usuário** (TASK-076: captura de traceback só local, sem tocar o
+`JsonFormatter` compartilhado; TASK-077: nova coluna `seller_kind` em
+`PriceObservation`, investigação ao vivo obrigatória antes de
+codificar) — nenhuma das duas implementada ainda. Um terceiro item foi
+adicionado depois: **TASK-078** (`docs/tasks/TASK-078.md`, redesenho da
+UX de texto do Telegram — saudação de primeiro contato, `/ajuda`
+reorganizado por contexto, novo comando `/missao`, fallback menos seco
+para pedido não reconhecido, e fusão de `/senha` em `/recuperar` depois
+de confirmado que `/recuperar` sozinho recusaria criar a primeira senha
+se `/senha` fosse só apagado — `_validate_action_state` exige
+credencial existente para `RECOVER_PASSWORD`). Decisões já aprovadas;
+não implementada. **Um quarto item, TASK-079
+(`docs/tasks/TASK-079.md`), foi adicionado depois e é a PRIMEIRA
+PRIORIDADE de implementação da `v1.0.6`, executada antes de
+TASK-076/077/078** — achada durante a validação real da missão
+"cadeira gamer": o `collection_worker` inteiro travou (não só essa
+missão) com 15 processos Chromium/Xvfb zumbis, sem exceção registrada;
+hipótese forte (ainda não comprovada) de falta de init real como PID 1
+do container para recolher subprocessos órfãos do Playwright/Chromium.
+Diagnóstico completo, reprodução controlada e comparação objetiva
+sem/com `init: true` antes de declarar causa raiz ou implementar
+qualquer correção — autorizado a trabalhar diretamente em produção para
+isso, preservando banco/dados/secrets/rollback. Nenhuma das quatro
+TASKs desta versão tem tag/push pendente ainda) → V1.2
 (evolução funcional, documento `docs/V1_2.md`, 12 itens,
 incluindo Magalu como quinta loja, redução de `PriceObservation`
 redundante, e comparação de menor preço histórico externo/interno estilo

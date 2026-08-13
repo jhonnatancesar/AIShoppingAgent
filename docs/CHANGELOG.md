@@ -1,5 +1,38 @@
 # Changelog
 
+## 2026-08-12 (2) — TASK-079 registrada e priorizada: travamento do `collection_worker` com Chromium/Playwright (15 zumbis)
+
+- Durante a validação real da missão "cadeira gamer" (16:48 local), duas
+  coletas (kabum, amazon) ficaram presas em `running` para sempre.
+  Investigação ao vivo mostrou que **o `collection_worker` inteiro
+  travou** — uma segunda missão (9950X3D), que rodava a cada 30 min com
+  sucesso, também parou de ser processada no mesmo momento.
+- Evidência preservada do processo travado (PID 1 do container, PID
+  2520 no host, ~56 min travado no momento da coleta): **15 processos
+  filhos em estado zumbi** (14 Chromium + 1 Xvfb), nenhuma query ativa
+  no PostgreSQL, nenhuma conexão de rede com Gemini/Groq, CPU ~0%, 4
+  threads todas em espera genérica do kernel (`poll`/`futex`) — sem
+  nenhuma exceção registrada nos logs.
+- `py-spy dump` (stack trace real do Python) falhou tanto dentro do
+  container (seccomp do Docker bloqueia `ptrace` por padrão) quanto do
+  host (não instalado) — registrado como limitação: a evidência atual
+  prova bloqueio + zumbis, mas ainda não prova qual linha exata nunca
+  retornou.
+- Hipótese forte, **não comprovada ainda**: ausência de init real como
+  PID 1 do container (`docker-entrypoint.sh` faz `exec "$@"` direto),
+  que pode interferir no rastreamento de saída de subprocessos
+  Chromium pelo `asyncio`. Registrada como TASK-079
+  (`docs/tasks/TASK-079.md`) — exige diagnóstico completo (auditoria de
+  lifecycle Playwright, instrumentação temporária, reprodução
+  controlada, comparação objetiva sem/com `init: true`) antes de
+  declarar causa raiz ou implementar qualquer correção.
+- **TASK-079 vira a primeira prioridade de implementação da `v1.0.6`**,
+  antes de TASK-076/077/078 (nenhuma renumerada, só a ordem de execução
+  muda). Autorizado a trabalhar diretamente em produção para
+  diagnóstico e validação (aplicação sem uso normal por usuários neste
+  momento), preservando banco, dados, secrets e o ponto de rollback
+  (`v1.0.5`).
+
 ## 2026-08-12 — Incidente operacional: travamento do host (GT 610/nouveau) + Tailscale Funnel não re-registrado; sem mudança de código
 
 - Bot fora do ar duas vezes na mesma manhã, sem nenhuma mudança na

@@ -13,6 +13,7 @@ from enum import Enum
 from typing import Any
 from uuid import UUID
 
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
 from app.events.catalog import (
@@ -37,17 +38,16 @@ _AGGREGATE_ID_FIELDS = {
 }
 
 
-def publish_event(
-    session: Session,
+def _build_event(
     *,
     event_type: EventType,
     aggregate_type: AggregateType,
     aggregate_id: UUID,
     payload: EventPayload,
     occurred_at: datetime,
-    mission_id: UUID | None = None,
+    mission_id: UUID | None,
 ) -> Event:
-    """Valida e persiste um evento de forma durável e append-only."""
+    """Valida o evento e devolve a instância pronta para `add`, sem I/O."""
     if occurred_at.tzinfo is None or occurred_at.utcoffset() is None:
         raise EventPublicationError("occurred_at must be timezone-aware")
 
@@ -62,7 +62,7 @@ def publish_event(
             "aggregate_id must match the aggregate identifier in payload"
         )
 
-    event = Event(
+    return Event(
         event_type=event_type.value,
         aggregate_type=aggregate_type.value,
         aggregate_id=aggregate_id,
@@ -70,8 +70,59 @@ def publish_event(
         payload=_serialize_payload(payload),
         occurred_at=occurred_at,
     )
+
+
+def publish_event(
+    session: Session,
+    *,
+    event_type: EventType,
+    aggregate_type: AggregateType,
+    aggregate_id: UUID,
+    payload: EventPayload,
+    occurred_at: datetime,
+    mission_id: UUID | None = None,
+) -> Event:
+    """Valida e persiste um evento de forma durável e append-only."""
+    event = _build_event(
+        event_type=event_type,
+        aggregate_type=aggregate_type,
+        aggregate_id=aggregate_id,
+        payload=payload,
+        occurred_at=occurred_at,
+        mission_id=mission_id,
+    )
     session.add(event)
     session.flush()
+    return event
+
+
+async def publish_event_async(
+    session: AsyncSession,
+    *,
+    event_type: EventType,
+    aggregate_type: AggregateType,
+    aggregate_id: UUID,
+    payload: EventPayload,
+    occurred_at: datetime,
+    mission_id: UUID | None = None,
+) -> Event:
+    """Equivalente assíncrono de `publish_event` (TASK-079).
+
+    Usado só pelo caminho async do `collection_worker` -- API, Telegram e
+    demais chamadores continuam usando `publish_event` (síncrono). Mesma
+    validação, via `_build_event`, para nunca divergir do comportamento
+    da versão síncrona.
+    """
+    event = _build_event(
+        event_type=event_type,
+        aggregate_type=aggregate_type,
+        aggregate_id=aggregate_id,
+        payload=payload,
+        occurred_at=occurred_at,
+        mission_id=mission_id,
+    )
+    session.add(event)
+    await session.flush()
     return event
 
 

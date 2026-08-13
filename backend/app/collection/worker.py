@@ -16,7 +16,10 @@ from app.collection.providers import V1_PROVIDER_TYPES
 from app.core.config import Settings
 from app.core.logging import configure_logging
 from app.core.resilience import RetryPolicy
-from app.database.session import create_database_engine, create_session_factory
+from app.database.session import (
+    create_async_database_engine,
+    create_async_session_factory,
+)
 from app.observability.metrics import (
     mark_worker_started,
     observe_worker_batch,
@@ -86,8 +89,11 @@ async def run_worker(
         raise ValueError("poll_seconds must be positive")
     if not 1 <= limit <= 1000:
         raise ValueError("batch_size must be between 1 and 1000")
-    engine = create_database_engine(settings)
-    session_factory = create_session_factory(engine)
+    # TASK-079: engine assíncrono dedicado -- nenhuma chamada bloqueante do
+    # SQLAlchemy/psycopg roda direto na thread do event loop neste
+    # caminho (causa raiz comprovada do autodeadlock; ver docs/tasks/TASK-079.md).
+    engine = create_async_database_engine(settings)
+    session_factory = create_async_session_factory(engine)
     orchestrator = CollectionOrchestrator(
         session_factory,
         build_collection_adapter(settings),
@@ -96,6 +102,7 @@ async def run_worker(
         schedule_stagger_seconds=settings.collection_schedule_stagger_seconds,
         stale_run_minutes=settings.collection_stale_run_minutes,
         max_concurrency=settings.collection_max_concurrency,
+        claim_deadline_seconds=settings.collection_claim_deadline_seconds,
     )
     try:
         consecutive_failures = 0
@@ -151,7 +158,7 @@ async def run_worker(
                 return
             await asyncio.sleep(interval)
     finally:
-        engine.dispose()
+        await engine.dispose()
 
 
 def main() -> None:

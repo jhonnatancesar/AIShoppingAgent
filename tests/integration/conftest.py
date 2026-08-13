@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 from dataclasses import dataclass
 from uuid import uuid4
@@ -9,9 +10,15 @@ from uuid import uuid4
 import psycopg
 import pytest
 from app.core.config import Settings, get_settings
-from app.database.session import create_database_engine, create_session_factory
+from app.database.session import (
+    create_async_database_engine,
+    create_async_session_factory,
+    create_database_engine,
+    create_session_factory,
+)
 from psycopg import sql
 from sqlalchemy import Engine, text
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import Session, sessionmaker
 
 if os.getenv("AISHOPPING_INTEGRATION_RUN_ID"):
@@ -25,6 +32,11 @@ class IntegrationDatabase:
     settings: Settings
     engine: Engine
     sessions: sessionmaker[Session]
+    # TASK-079: mesmo banco clonado, engine assíncrono dedicado -- usado
+    # pelos testes de `CollectionOrchestrator` (caminho async real do
+    # collection_worker, sem Session síncrona bloqueante).
+    async_engine: AsyncEngine
+    async_sessions: async_sessionmaker[AsyncSession]
 
 
 def _required_environment() -> dict[str, str]:
@@ -100,6 +112,8 @@ def integration_database(
     settings = Settings(_env_file=None)
     engine = create_database_engine(settings)
     sessions = create_session_factory(engine)
+    async_engine = create_async_database_engine(settings)
+    async_sessions = create_async_session_factory(async_engine)
 
     try:
         with engine.connect() as connection:
@@ -125,8 +139,11 @@ def integration_database(
             settings=settings,
             engine=engine,
             sessions=sessions,
+            async_engine=async_engine,
+            async_sessions=async_sessions,
         )
     finally:
+        asyncio.run(async_engine.dispose())
         engine.dispose()
         get_settings.cache_clear()
         with _admin_connection(values, database="postgres") as connection:
