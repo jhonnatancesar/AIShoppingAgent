@@ -1,4 +1,15 @@
-"""Reserva transacional de update_id, replay e rate limit do webhook."""
+"""Reserva transacional de update_id, replay e rate limit do webhook.
+
+Assíncrono desde a extensão da TASK-079: único chamador é
+`app.telegram.router`, então não há versão síncrona a manter. A partir
+dessa extensão, todo o processamento de uma mensagem de um mesmo usuário já
+é serializado ponta a ponta por `app.telegram.concurrency.
+user_serialization_lock` (advisory lock do Postgres) -- o `FOR UPDATE` de
+`User` abaixo deixa de ser a garantia de serialização em si (não há mais
+concorrência real entre duas reservas do mesmo usuário para ele evitar) e
+passa a ser só uma segunda camada defensiva, barata porque nunca mais fica
+presa durante um `await` externo (a seção continua curta e roda dentro da
+Fase A)."""
 
 from __future__ import annotations
 
@@ -8,7 +19,7 @@ from uuid import UUID
 
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.telegram.models import TelegramUpdateDisposition, TelegramUpdateReceipt
 from app.users.models import User
@@ -23,8 +34,8 @@ class TelegramUpdateReservation:
     warn_rate_limit: bool = False
 
 
-def reserve_telegram_update(
-    session: Session,
+async def reserve_telegram_update(
+    session: AsyncSession,
     *,
     update_id: int,
     user_id: UUID,
@@ -37,15 +48,19 @@ def reserve_telegram_update(
     if not 1 <= accepted_per_minute <= 1000:
         raise ValueError("accepted_per_minute must be between 1 and 1000")
 
-    # Serializa a cota por usuário. A unicidade global de update_id continua
-    # sendo a autoridade final para updates forjados/concorrentes entre usuários.
-    locked_user = session.execute(
-        select(User.id).where(User.id == user_id).with_for_update()
+    # Segunda camada defensiva (ver docstring do módulo) -- a serialização
+    # por usuário já é garantida por app.telegram.concurrency antes deste
+    # ponto. A unicidade global de update_id continua sendo a autoridade
+    # final para updates forjados/concorrentes entre usuários.
+    locked_user = (
+        await session.execute(
+            select(User.id).where(User.id == user_id).with_for_update()
+        )
     ).scalar_one_or_none()
     if locked_user is None:
         raise ValueError("user must exist before reserving an update")
 
-    existing = session.scalar(
+    existing = await session.scalar(
         select(TelegramUpdateReceipt).where(
             TelegramUpdateReceipt.update_id == update_id
         )
@@ -58,7 +73,7 @@ def reserve_telegram_update(
     warn_rate_limit = False
     disposition = forced_disposition
     if disposition is None:
-        accepted_count = session.scalar(
+        accepted_count = await session.scalar(
             select(func.count(TelegramUpdateReceipt.id)).where(
                 TelegramUpdateReceipt.user_id == user_id,
                 TelegramUpdateReceipt.disposition
@@ -68,7 +83,7 @@ def reserve_telegram_update(
         )
         if int(accepted_count or 0) >= accepted_per_minute:
             disposition = TelegramUpdateDisposition.RATE_LIMITED
-            recent_warning = session.scalar(
+            recent_warning = await session.scalar(
                 select(func.count(TelegramUpdateReceipt.id)).where(
                     TelegramUpdateReceipt.user_id == user_id,
                     TelegramUpdateReceipt.disposition
@@ -87,13 +102,13 @@ def reserve_telegram_update(
         disposition=disposition.value,
     )
     try:
-        with session.begin_nested():
+        async with session.begin_nested():
             session.add(receipt)
-            session.flush()
+            await session.flush()
     except IntegrityError as error:
         if _constraint_name(error) != _UPDATE_ID_UNIQUE_CONSTRAINT:
             raise
-        existing = session.scalar(
+        existing = await session.scalar(
             select(TelegramUpdateReceipt).where(
                 TelegramUpdateReceipt.update_id == update_id
             )

@@ -1,4 +1,10 @@
-"""Serviço transacional para tokens, senhas e sessões autenticadas."""
+"""Serviço transacional para tokens, senhas e sessões autenticadas.
+
+`issue_action_link`/`has_active_session`/`logout` têm uma versão `_async`
+(extensão da TASK-079, usada pelo webhook Telegram) além da síncrona
+(usada pela página `/auth` e por `scripts/validate_password_authentication.py`).
+`complete_action` (fluxo da página `/auth`, fora do webhook) permanece só
+síncrona."""
 
 import hashlib
 import secrets
@@ -8,6 +14,7 @@ from urllib.parse import urlsplit
 from uuid import UUID
 
 from sqlalchemy import func, select, update
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
 from app.audit.models import AuditEntry
@@ -77,6 +84,53 @@ def issue_action_link(
     _validate_action_state(session, user=user, action=action)
     _enforce_issuance_limit(session, user_id=user.id, action=action, now=current)
     session.execute(
+        update(CredentialActionToken)
+        .where(
+            CredentialActionToken.user_id == user.id,
+            CredentialActionToken.action == action,
+            CredentialActionToken.consumed_at.is_(None),
+            CredentialActionToken.invalidated_at.is_(None),
+            CredentialActionToken.expires_at > current,
+        )
+        .values(invalidated_at=current)
+    )
+    raw_token = secrets.token_urlsafe(32)
+    expires_at = current + TOKEN_TTL
+    session.add(
+        CredentialActionToken(
+            token_hash=token_digest(raw_token),
+            action=action,
+            user_id=user.id,
+            telegram_user_id=user.telegram_user_id,
+            created_at=current,
+            expires_at=expires_at,
+        )
+    )
+    _audit(session, user.id, "authentication.action_requested", action=action)
+    base = _validated_base_url(public_base_url)
+    hint = "login" if action is CredentialAction.LOGIN else "password"
+    return IssuedActionLink(f"{base}/auth#{hint}:{raw_token}", expires_at)
+
+
+async def issue_action_link_async(
+    session: AsyncSession,
+    *,
+    user: User,
+    action: CredentialAction,
+    public_base_url: str,
+    now: datetime | None = None,
+) -> IssuedActionLink:
+    """Equivalente assíncrono de `issue_action_link` (extensão da
+    TASK-079). Usado pelo webhook Telegram; a página `/auth` (fora deste
+    caminho) continua na versão síncrona."""
+    current = _aware_now(now)
+    if user.telegram_user_id is None:
+        raise AuthenticationError("Operação indisponível.")
+    await _validate_action_state_async(session, user=user, action=action)
+    await _enforce_issuance_limit_async(
+        session, user_id=user.id, action=action, now=current
+    )
+    await session.execute(
         update(CredentialActionToken)
         .where(
             CredentialActionToken.user_id == user.id,
@@ -178,6 +232,25 @@ def has_active_session(
     return session.execute(statement).scalar_one_or_none() is not None
 
 
+async def has_active_session_async(
+    session: AsyncSession,
+    *,
+    user_id: UUID,
+    telegram_user_id: int,
+    now: datetime | None = None,
+) -> bool:
+    """Equivalente assíncrono de `has_active_session` (extensão da
+    TASK-079)."""
+    current = _aware_now(now)
+    statement = select(UserAuthSession.id).where(
+        UserAuthSession.user_id == user_id,
+        UserAuthSession.telegram_user_id == telegram_user_id,
+        UserAuthSession.revoked_at.is_(None),
+        UserAuthSession.expires_at > current,
+    )
+    return (await session.execute(statement)).scalar_one_or_none() is not None
+
+
 def logout(
     session: Session,
     *,
@@ -186,6 +259,18 @@ def logout(
 ) -> None:
     current = _aware_now(now)
     _revoke_sessions(session, user_id=user.id, now=current)
+    _audit(session, user.id, "authentication.logged_out")
+
+
+async def logout_async(
+    session: AsyncSession,
+    *,
+    user: User,
+    now: datetime | None = None,
+) -> None:
+    """Equivalente assíncrono de `logout` (extensão da TASK-079)."""
+    current = _aware_now(now)
+    await _revoke_sessions_async(session, user_id=user.id, now=current)
     _audit(session, user.id, "authentication.logged_out")
 
 
@@ -287,6 +372,20 @@ def _validate_action_state(
         raise AuthenticationError("Operação indisponível.")
 
 
+async def _validate_action_state_async(
+    session: AsyncSession, *, user: User, action: CredentialAction
+) -> None:
+    exists = await session.get(UserCredential, user.id) is not None
+    valid = {
+        CredentialAction.SET_PASSWORD: not exists,
+        CredentialAction.CHANGE_PASSWORD: exists,
+        CredentialAction.LOGIN: exists,
+        CredentialAction.RECOVER_PASSWORD: exists,
+    }[action]
+    if not valid:
+        raise AuthenticationError("Operação indisponível.")
+
+
 def _enforce_issuance_limit(
     session: Session, *, user_id: UUID, action: CredentialAction, now: datetime
 ) -> None:
@@ -315,6 +414,38 @@ def _enforce_issuance_limit(
             .order_by(CredentialActionToken.created_at.desc())
             .limit(1)
         ).scalar_one_or_none()
+        if latest is not None and latest > now - RECOVERY_MIN_INTERVAL:
+            raise AuthenticationRateLimited("Tente novamente mais tarde.")
+
+
+async def _enforce_issuance_limit_async(
+    session: AsyncSession, *, user_id: UUID, action: CredentialAction, now: datetime
+) -> None:
+    window = (
+        RECOVERY_WINDOW if action is CredentialAction.RECOVER_PASSWORD else LINK_WINDOW
+    )
+    limit = (
+        RECOVERY_LIMIT if action is CredentialAction.RECOVER_PASSWORD else LINK_LIMIT
+    )
+    recent = await session.scalar(
+        select(func.count(CredentialActionToken.id)).where(
+            CredentialActionToken.user_id == user_id,
+            CredentialActionToken.action == action,
+            CredentialActionToken.created_at > now - window,
+        )
+    )
+    if recent >= limit:
+        raise AuthenticationRateLimited("Tente novamente mais tarde.")
+    if action is CredentialAction.RECOVER_PASSWORD:
+        latest = await session.scalar(
+            select(CredentialActionToken.created_at)
+            .where(
+                CredentialActionToken.user_id == user_id,
+                CredentialActionToken.action == action,
+            )
+            .order_by(CredentialActionToken.created_at.desc())
+            .limit(1)
+        )
         if latest is not None and latest > now - RECOVERY_MIN_INTERVAL:
             raise AuthenticationRateLimited("Tente novamente mais tarde.")
 
@@ -371,8 +502,21 @@ def _revoke_sessions(session: Session, *, user_id: UUID, now: datetime) -> None:
     )
 
 
+async def _revoke_sessions_async(
+    session: AsyncSession, *, user_id: UUID, now: datetime
+) -> None:
+    await session.execute(
+        update(UserAuthSession)
+        .where(
+            UserAuthSession.user_id == user_id,
+            UserAuthSession.revoked_at.is_(None),
+        )
+        .values(revoked_at=now)
+    )
+
+
 def _audit(
-    session: Session,
+    session: Session | AsyncSession,
     user_id: UUID,
     action_name: str,
     *,

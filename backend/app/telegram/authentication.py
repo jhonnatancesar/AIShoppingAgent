@@ -5,11 +5,15 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from pydantic import SecretStr
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
 from app.telegram.contracts import TelegramChatType, TelegramMessage
 from app.users.models import User
-from app.users.service import get_or_create_telegram_user
+from app.users.service import (
+    get_or_create_telegram_user,
+    get_or_create_telegram_user_async,
+)
 
 
 class TelegramAuthenticationFailure(StrEnum):
@@ -63,6 +67,37 @@ def authenticate_telegram_user(
         )
 
     user = get_or_create_telegram_user(
+        session,
+        telegram_user_id=message.user_id,
+        display_name=display_name,
+    )
+    if not user.is_active:
+        return TelegramAuthenticationResult(
+            failure=TelegramAuthenticationFailure.INACTIVE_USER
+        )
+    return TelegramAuthenticationResult(user=user)
+
+
+async def authenticate_telegram_user_async(
+    session: AsyncSession,
+    *,
+    message: TelegramMessage,
+    display_name: str,
+) -> TelegramAuthenticationResult:
+    """Equivalente assíncrono de `authenticate_telegram_user` (extensão da
+    TASK-079). Usado pelo webhook Telegram;
+    `scripts/validate_telegram_authentication.py` continua na versão
+    síncrona."""
+    if message.chat_type is not TelegramChatType.PRIVATE:
+        return TelegramAuthenticationResult(
+            failure=TelegramAuthenticationFailure.NON_PRIVATE_CHAT
+        )
+    if message.chat_id != message.user_id:
+        return TelegramAuthenticationResult(
+            failure=TelegramAuthenticationFailure.IDENTITY_MISMATCH
+        )
+
+    user = await get_or_create_telegram_user_async(
         session,
         telegram_user_id=message.user_id,
         display_name=display_name,

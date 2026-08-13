@@ -4,8 +4,16 @@ A rota autentica a entrega e, para mensagens de texto, aceita somente a
 identidade de uma pessoa ativa em seu chat privado direto (TASK-046). Depois
 aplica a autorização por papel e ownership da TASK-047, traduz a mensagem em
 `Intent`, executa comandos já implementados e responde ao Telegram.
+
+Assíncrono desde a extensão da TASK-079 (ver docs/tasks/TASK-079.md):
+processamento em Fase A (banco, curta, COMMIT) -> Fase B (IA, sem
+transação aberta) -> Fase C (banco, curta, COMMIT) -> Fase D (envio ao
+Telegram, sem transação aberta), com o processamento inteiro de cada
+usuário serializado por `app.telegram.concurrency.user_serialization_lock`
+e limitado por `telegram_message_deadline_seconds`.
 """
 
+import asyncio
 import logging
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -17,7 +25,7 @@ from fastapi import APIRouter, Depends, Header, status
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from app.ai_provider import (
     AIProviderError,
@@ -28,9 +36,9 @@ from app.authentication.models import CredentialAction
 from app.authentication.service import (
     AuthenticationError,
     AuthenticationRateLimited,
-    has_active_session,
-    issue_action_link,
-    logout,
+    has_active_session_async,
+    issue_action_link_async,
+    logout_async,
 )
 from app.authorization import (
     AuthorizationDenied,
@@ -40,7 +48,10 @@ from app.authorization import (
     deny_resource_unavailable,
 )
 from app.core.config import Settings, get_settings
-from app.database.dependency import get_session
+from app.database.dependency import (
+    get_telegram_async_engine,
+    get_telegram_async_session,
+)
 from app.intent import Intent, IntentInterpreter, IntentKind
 from app.missions.models import (
     Mission,
@@ -61,19 +72,20 @@ from app.missions.service import (
     MissionNotFoundError,
     MissionTransitionConditionError,
     MissionVersionConflictError,
-    create_mission_from_criteria,
+    create_mission_from_criteria_async,
     edit_mission_criteria,
-    transition_mission,
+    transition_mission_async,
 )
 from app.observability.metrics import observe_resilience_event
 from app.privacy.notice import PRIVACY_COMMAND, privacy_notice
 from app.stores.models import Store
 from app.telegram.adapter import TelegramIntentAdapter
 from app.telegram.authentication import (
-    authenticate_telegram_user,
+    authenticate_telegram_user_async,
     webhook_secret_matches,
 )
 from app.telegram.bot_api import TelegramDeliveryError, send_message
+from app.telegram.concurrency import user_serialization_lock
 from app.telegram.confirmation import (
     ConfirmationError,
     current_store_options,
@@ -294,7 +306,8 @@ async def receive_telegram_webhook(
         get_telegram_intent_adapters
     ),
     settings: Settings = Depends(get_settings),
-    session: Session = Depends(get_session),
+    session: AsyncSession = Depends(get_telegram_async_session),
+    engine: AsyncEngine = Depends(get_telegram_async_engine),
 ) -> Response:
     if not webhook_secret_matches(
         x_telegram_bot_api_secret_token, settings.telegram_webhook_secret
@@ -311,13 +324,64 @@ async def receive_telegram_webhook(
         )
 
     message = _extract_message(update)
-    if message is not None:
-        authentication = authenticate_telegram_user(
+    if message is None:
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    try:
+        return await asyncio.wait_for(
+            _process_authenticated_message(
+                message,
+                update=update,
+                adapters=adapters,
+                settings=settings,
+                session=session,
+                engine=engine,
+            ),
+            timeout=settings.telegram_message_deadline_seconds,
+        )
+    except TimeoutError:
+        # Extensão da TASK-079: teto de tempo do processamento inteiro da
+        # mensagem (Fase A + IA + Fase C + envio), calculado a partir do
+        # pior caso real -- ver `Settings.telegram_message_deadline_seconds`.
+        # `asyncio.wait_for` cancela a task interna e propaga através de
+        # todo `try/finally` pendente (inclusive `user_serialization_lock`
+        # e o `finally` de `get_telegram_async_session`), então o lock é
+        # liberado, a transação em aberto é desfeita e a sessão é fechada
+        # mesmo quando o timeout interrompe um `await` de banco em
+        # andamento -- o loop de eventos e outros usuários não são afetados.
+        logger.error(
+            "telegram_webhook_deadline_exceeded",
+            extra={"telegram_update_id": update.update_id},
+        )
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+async def _process_authenticated_message(
+    message: TelegramMessage,
+    *,
+    update: TelegramUpdate,
+    adapters: dict[UserRole, TelegramIntentAdapter],
+    settings: Settings,
+    session: AsyncSession,
+    engine: AsyncEngine,
+) -> Response:
+    """Corpo protegido pelo advisory lock por usuário (Caso B -- extensão
+    da TASK-079): duas mensagens do mesmo `telegram_user_id` nunca são
+    processadas concorrentemente, porque `User.pending_intent` e
+    `User.registration_step` são lidos no início e só persistidos no fim.
+    A chave do lock é o `telegram_user_id` do próprio `Update`, disponível
+    antes de qualquer consulta ao banco -- inclusive antes de
+    `authenticate_telegram_user_async`, que pode criar o `User` no
+    primeiro contato -- para nunca existir uma janela em que algo já foi
+    lido sem o lock ainda estar seguro."""
+    async with user_serialization_lock(engine, message.user_id):
+        authentication = await authenticate_telegram_user_async(
             session,
             message=message,
             display_name=update.message.from_.first_name,
         )
         if not authentication.authenticated:
+            await session.commit()
             failure = authentication.failure
             if failure is None:
                 raise RuntimeError("authentication failure reason is missing")
@@ -332,37 +396,42 @@ async def receive_telegram_webhook(
         try:
             authorize(session, user, Permission.TELEGRAM_INTERACT)
         except AuthorizationDenied as error:
-            reservation = reserve_telegram_update(
+            reservation = await reserve_telegram_update(
                 session,
                 update_id=update.update_id,
                 user_id=user.id,
                 accepted_per_minute=settings.telegram_rate_limit_per_minute,
                 forced_disposition=TelegramUpdateDisposition.DISCARDED,
             )
+            await session.commit()
             if reservation.replay:
                 observe_resilience_event("webhook", "replay")
                 return Response(status_code=status.HTTP_204_NO_CONTENT)
             _log_authorization_denial(error, user)
             return Response(status_code=status.HTTP_204_NO_CONTENT)
-        reservation = reserve_telegram_update(
+        reservation = await reserve_telegram_update(
             session,
             update_id=update.update_id,
             user_id=user.id,
             accepted_per_minute=settings.telegram_rate_limit_per_minute,
         )
+        await session.commit()  # Fase A concluída.
         if reservation.replay:
             observe_resilience_event("webhook", "replay")
             return Response(status_code=status.HTTP_204_NO_CONTENT)
         if reservation.disposition is TelegramUpdateDisposition.RATE_LIMITED:
             observe_resilience_event("webhook", "rate_limited")
             if reservation.warn_rate_limit and settings.telegram_bot_token is not None:
-                await _send_reply_safely(
+                await _send_reply_safely(  # Fase D -- nenhuma transação aberta.
                     message.chat_id,
                     "Muitas mensagens em pouco tempo. Aguarde um minuto e tente novamente.",
                     settings=settings,
                 )
             return Response(status_code=status.HTTP_204_NO_CONTENT)
         try:
+            # `_handle_message` comita a Fase A/pré-IA internamente antes
+            # de qualquer await de IA (Fase B) e retoma a Fase C na volta
+            # -- a sessão reabre transação automaticamente no próximo uso.
             reply = await _handle_message(
                 message,
                 user=user,
@@ -371,11 +440,13 @@ async def receive_telegram_webhook(
                 auth_public_base_url=settings.auth_public_base_url,
             )
         except AuthorizationDenied as error:
+            await session.commit()
             _log_authorization_denial(error, user)
             return Response(status_code=status.HTTP_204_NO_CONTENT)
         remember_private_notification_chat(user, message)
+        await session.commit()  # Fase C concluída.
         if reply is not None and settings.telegram_bot_token is not None:
-            await _send_reply_safely(
+            await _send_reply_safely(  # Fase D -- nenhuma transação aberta.
                 message.chat_id,
                 reply,
                 settings=settings,
@@ -411,7 +482,7 @@ async def _handle_message(
     *,
     user: User,
     adapters: dict[UserRole, TelegramIntentAdapter],
-    session: Session,
+    session: AsyncSession,
     auth_public_base_url: str,
 ) -> str | None:
     lowered = message.text.strip().lower()
@@ -424,7 +495,7 @@ async def _handle_message(
         return privacy_notice()
     if lowered == _CADASTRO_COMMAND:
         authorize(session, user, Permission.PROFILE_MANAGE)
-        if user.telegram_user_id is not None and has_active_session(
+        if user.telegram_user_id is not None and await has_active_session_async(
             session, user_id=user.id, telegram_user_id=user.telegram_user_id
         ):
             return _CADASTRO_ALREADY_AUTHENTICATED_REPLY
@@ -433,7 +504,7 @@ async def _handle_message(
         return start_registration(user)
     if lowered in {_PASSWORD_COMMAND, _LOGIN_COMMAND, _RECOVERY_COMMAND}:
         authorize(session, user, Permission.PROFILE_MANAGE)
-        return _authentication_link_reply(
+        return await _authentication_link_reply(
             lowered,
             user=user,
             session=session,
@@ -442,28 +513,28 @@ async def _handle_message(
     if user.registration_step is not None:
         authorize(session, user, Permission.PROFILE_MANAGE)
         try:
-            registration_reply = advance_registration(
+            registration_reply = await advance_registration(
                 user, answer=message.text, session=session
             )
         except RegistrationError as error:
             return str(error)
         if user.registration_step is not None:
             return registration_reply
-        password_reply = _authentication_link_reply(
+        password_reply = await _authentication_link_reply(
             _PASSWORD_COMMAND,
             user=user,
             session=session,
             public_base_url=auth_public_base_url,
         )
         return f"{registration_reply}\n\n{password_reply}"
-    if user.telegram_user_id is None or not has_active_session(
+    if user.telegram_user_id is None or not await has_active_session_async(
         session,
         user_id=user.id,
         telegram_user_id=user.telegram_user_id,
     ):
         return _SESSION_REQUIRED_REPLY
     if lowered == _LOGOUT_COMMAND:
-        logout(session, user=user)
+        await logout_async(session, user=user)
         return "👋 Sessão encerrada.\n\nUse /entrar quando quiser acessar novamente."
     if lowered == _UPGRADE_COMMAND:
         authorize(session, user, Permission.PROFILE_MANAGE)
@@ -473,7 +544,7 @@ async def _handle_message(
         return handle_preferences_command(user, lowered)
     if lowered == _EDIT_MISSION_COMMAND:
         authorize(session, user, Permission.MISSION_EDIT)
-        return _start_edit_mission_flow(session=session, user=user)
+        return await _start_edit_mission_flow(session=session, user=user)
     if user.pending_intent is not None:
         return await _resolve_pending_intent(
             message, adapters=adapters, session=session, user=user
@@ -481,6 +552,11 @@ async def _handle_message(
 
     authorize(session, user, Permission.AI_INTERPRET)
     profile = ai_profile_for_user(session, user)
+    # Fase A/pré-IA encerrada aqui -- extensão da TASK-079: nenhuma
+    # transação pode ficar aberta durante o await de IA logo abaixo
+    # (Fase B). A sessão reabre uma nova transação automaticamente no
+    # próximo uso (`_dispatch_intent`, Fase C).
+    await session.commit()
     try:
         intent = await adapters[profile].interpret(message, profile=profile)
     except TelegramContractError, AIProviderError:
@@ -488,7 +564,7 @@ async def _handle_message(
         return None
 
     try:
-        return _dispatch_intent(intent, session=session, user=user)
+        return await _dispatch_intent(intent, session=session, user=user)
     except _KNOWN_DISPATCH_ERRORS as error:
         logger.warning(
             "telegram_webhook_mission_failed",
@@ -497,11 +573,11 @@ async def _handle_message(
         return str(error)
 
 
-def _authentication_link_reply(
+async def _authentication_link_reply(
     command: str,
     *,
     user: User,
-    session: Session,
+    session: AsyncSession,
     public_base_url: str,
 ) -> str:
     if not user.username:
@@ -515,11 +591,11 @@ def _authentication_link_reply(
 
         action = (
             CredentialAction.CHANGE_PASSWORD
-            if session.get(UserCredential, user.id) is not None
+            if await session.get(UserCredential, user.id) is not None
             else CredentialAction.SET_PASSWORD
         )
     try:
-        issued = issue_action_link(
+        issued = await issue_action_link_async(
             session,
             user=user,
             action=action,
@@ -546,7 +622,7 @@ async def _resolve_pending_intent(
     message: TelegramMessage,
     *,
     adapters: dict[UserRole, TelegramIntentAdapter],
-    session: Session,
+    session: AsyncSession,
     user: User,
 ) -> str:
     kind = user.pending_intent.get("kind")
@@ -557,7 +633,7 @@ async def _resolve_pending_intent(
     if kind in ("await_edit_paused_choice", "await_edit_active_choice"):
         return _apply_edit_mission_choice(message.text, user=user)
     if kind == "await_edit_menu_choice":
-        return _apply_edit_menu_choice(message.text, session=session, user=user)
+        return await _apply_edit_menu_choice(message.text, session=session, user=user)
     if kind == "await_edit_lojas_choice":
         return _apply_edit_lojas_choice(message.text, user=user)
     if kind == "await_edit_add_sources":
@@ -568,6 +644,10 @@ async def _resolve_pending_intent(
         return _apply_edit_target_amount(message.text, user=user)
 
     profile = ai_profile_for_user(session, user)
+    # Extensão da TASK-079: mesma regra do fim de `_handle_message` -- fecha
+    # a transação antes do await de IA (Fase B); `_execute_pending_intent`
+    # reabre uma nova (Fase C) na volta.
+    await session.commit()
     try:
         confirmed = await resolve_answer(
             message.text, manager=adapters[profile].manager, profile=profile
@@ -581,7 +661,7 @@ async def _resolve_pending_intent(
         return "Combinado, cancelei."
 
     try:
-        reply = _execute_pending_intent(payload, session=session, user=user)
+        reply = await _execute_pending_intent(payload, session=session, user=user)
     except AuthorizationDenied:
         raise
     except _KNOWN_DISPATCH_ERRORS as error:
@@ -618,7 +698,7 @@ def _apply_create_mission_sources_answer(text: str, *, user: User) -> str:
     return describe_create_mission(create_payload)
 
 
-def _dispatch_intent(intent: Intent, *, session: Session, user: User) -> str:
+async def _dispatch_intent(intent: Intent, *, session: AsyncSession, user: User) -> str:
     """Interpreta o `Intent` e decide a resposta.
 
     `create_mission` e `mission_command` mudam estado — em vez de
@@ -637,10 +717,10 @@ def _dispatch_intent(intent: Intent, *, session: Session, user: User) -> str:
         return _stage_create_mission(intent, user=user)
     if intent.kind is IntentKind.QUERY_MISSION:
         authorize(session, user, Permission.MISSION_READ)
-        return _handle_query_mission(intent, session=session, user=user)
+        return await _handle_query_mission(intent, session=session, user=user)
     if intent.kind is IntentKind.MISSION_COMMAND:
         authorize(session, user, Permission.MISSION_TRANSITION)
-        return _stage_mission_command(intent, session=session, user=user)
+        return await _stage_mission_command(intent, session=session, user=user)
     if intent.kind is IntentKind.EDIT_MISSION:
         return _EDIT_MISSION_FREE_TEXT_REDIRECT
     return _UNKNOWN_REPLY
@@ -676,14 +756,16 @@ def _stage_create_mission(intent: Intent, *, user: User) -> str:
     return describe_create_mission(payload)
 
 
-def _handle_query_mission(intent: Intent, *, session: Session, user: User) -> str:
+async def _handle_query_mission(
+    intent: Intent, *, session: AsyncSession, user: User
+) -> str:
     reference = intent.parameters.mission_reference
     if reference:
-        missions = find_missions_by_reference(
+        missions = await find_missions_by_reference(
             session, user_id=user.id, reference=reference
         )
     else:
-        missions = list_missions_for_user(session, user_id=user.id)
+        missions = await list_missions_for_user(session, user_id=user.id)
 
     if not missions:
         return "Você ainda não tem nenhuma missão registrada."
@@ -696,8 +778,10 @@ def _handle_query_mission(intent: Intent, *, session: Session, user: User) -> st
     return "\n".join(lines)
 
 
-def _stage_mission_command(intent: Intent, *, session: Session, user: User) -> str:
-    mission = resolve_mission_for_command(
+async def _stage_mission_command(
+    intent: Intent, *, session: AsyncSession, user: User
+) -> str:
+    mission = await resolve_mission_for_command(
         session,
         user_id=user.id,
         reference=intent.parameters.mission_reference,
@@ -712,11 +796,11 @@ def _stage_mission_command(intent: Intent, *, session: Session, user: User) -> s
     return describe_mission_command(payload)
 
 
-def _query_missions_by_status(
-    session: Session, *, user_id: Any, status_value: MissionStatus
+async def _query_missions_by_status(
+    session: AsyncSession, *, user_id: Any, status_value: MissionStatus
 ) -> list[Mission]:
     return list(
-        session.scalars(
+        await session.scalars(
             select(Mission)
             .where(Mission.user_id == user_id, Mission.status == status_value)
             .order_by(Mission.created_at)
@@ -724,10 +808,12 @@ def _query_missions_by_status(
     )
 
 
-def _query_mission_source_codes(session: Session, mission_id: UUID) -> tuple[str, ...]:
+async def _query_mission_source_codes(
+    session: AsyncSession, mission_id: UUID
+) -> tuple[str, ...]:
     return tuple(
         sorted(
-            session.scalars(
+            await session.scalars(
                 select(Store.code)
                 .join(MissionSource, MissionSource.store_id == Store.id)
                 .where(MissionSource.mission_id == mission_id)
@@ -736,12 +822,12 @@ def _query_mission_source_codes(session: Session, mission_id: UUID) -> tuple[str
     )
 
 
-def _start_edit_mission_flow(*, session: Session, user: User) -> str:
+async def _start_edit_mission_flow(*, session: AsyncSession, user: User) -> str:
     """TASK-071: única porta de entrada do menu guiado -- resolve qual
     missão editar sem IA, priorizando missões `PAUSED`; sem nenhuma
     pausada, reaproveita o pedido de pausa já existente (TASK-069) para
     a(s) missão(ões) `ACTIVE`."""
-    paused = _query_missions_by_status(
+    paused = await _query_missions_by_status(
         session, user_id=user.id, status_value=MissionStatus.PAUSED
     )
     if len(paused) == 1:
@@ -756,7 +842,7 @@ def _start_edit_mission_flow(*, session: Session, user: User) -> str:
             paused, user=user, kind="await_edit_paused_choice"
         )
 
-    active = _query_missions_by_status(
+    active = await _query_missions_by_status(
         session, user_id=user.id, status_value=MissionStatus.ACTIVE
     )
     if len(active) == 1:
@@ -841,14 +927,16 @@ def _stage_edit_menu(
     return describe_edit_menu(mission_title)
 
 
-def _apply_edit_menu_choice(text: str, *, session: Session, user: User) -> str:
+async def _apply_edit_menu_choice(
+    text: str, *, session: AsyncSession, user: User
+) -> str:
     payload = user.pending_intent
     choice = parse_single_numbered_choice(text, count=2)
     if choice is None:
         return describe_edit_menu_retry()
     mission_id = payload["mission_id"]
     if choice == 0:  # "1 - Lojas"
-        current_sources = _query_mission_source_codes(session, UUID(mission_id))
+        current_sources = await _query_mission_source_codes(session, UUID(mission_id))
         user.pending_intent = {
             "kind": "await_edit_lojas_choice",
             "mission_id": mission_id,
@@ -858,7 +946,7 @@ def _apply_edit_menu_choice(text: str, *, session: Session, user: User) -> str:
         }
         return describe_edit_lojas_menu()
     # choice == 1: "2 - Preço-alvo"
-    criteria = session.scalar(
+    criteria = await session.scalar(
         select(MissionCriteria).where(MissionCriteria.mission_id == UUID(mission_id))
     )
     user.pending_intent = {
@@ -995,21 +1083,21 @@ def _apply_edit_target_amount(text: str, *, user: User) -> str:
     return describe_edit_mission(create_payload)
 
 
-def _execute_pending_intent(
-    payload: dict[str, Any], *, session: Session, user: User
+async def _execute_pending_intent(
+    payload: dict[str, Any], *, session: AsyncSession, user: User
 ) -> str:
     kind = payload["kind"]
     if kind == "create_mission":
-        return _execute_create_mission(payload, session=session, user=user)
+        return await _execute_create_mission(payload, session=session, user=user)
     if kind == "edit_mission":
-        return _execute_edit_mission(payload, session=session, user=user)
+        return await _execute_edit_mission(payload, session=session, user=user)
     if kind == "pause_for_edit":
-        return _execute_pause_for_edit(payload, session=session, user=user)
-    return _execute_mission_command(payload, session=session, user=user)
+        return await _execute_pause_for_edit(payload, session=session, user=user)
+    return await _execute_mission_command(payload, session=session, user=user)
 
 
-def _execute_create_mission(
-    payload: dict[str, Any], *, session: Session, user: User
+async def _execute_create_mission(
+    payload: dict[str, Any], *, session: AsyncSession, user: User
 ) -> str:
     authorize(session, user, Permission.MISSION_CREATE)
     target_amount = (
@@ -1017,7 +1105,7 @@ def _execute_create_mission(
         if payload["target_amount"] is not None
         else None
     )
-    mission, sources = create_mission_from_criteria(
+    mission, sources = await create_mission_from_criteria_async(
         session,
         user_id=user.id,
         search_query=payload["search_query"],
@@ -1039,8 +1127,8 @@ def _execute_create_mission(
     return "\n".join(lines)
 
 
-def _execute_mission_command(
-    payload: dict[str, Any], *, session: Session, user: User
+async def _execute_mission_command(
+    payload: dict[str, Any], *, session: AsyncSession, user: User
 ) -> str:
     authorize(
         session,
@@ -1050,7 +1138,7 @@ def _execute_mission_command(
         resource_id=UUID(payload["mission_id"]),
     )
     mission_id = UUID(payload["mission_id"])
-    mission = session.get(Mission, mission_id)
+    mission = await session.get(Mission, mission_id)
     if mission is None or mission.user_id != user.id:
         deny_resource_unavailable(
             session,
@@ -1059,7 +1147,7 @@ def _execute_mission_command(
             resource_type="mission",
             resource_id=mission_id,
         )
-    transition = transition_mission(
+    transition = await transition_mission_async(
         session,
         mission_id=mission_id,
         command=MissionCommand(payload["command"]),
@@ -1072,8 +1160,8 @@ def _execute_mission_command(
     return f'{icon} "{payload["mission_title"]}" agora está {status}.'
 
 
-def _execute_edit_mission(
-    payload: dict[str, Any], *, session: Session, user: User
+async def _execute_edit_mission(
+    payload: dict[str, Any], *, session: AsyncSession, user: User
 ) -> str:
     mission_id = UUID(payload["mission_id"])
     authorize(
@@ -1083,7 +1171,7 @@ def _execute_edit_mission(
         resource_type="mission",
         resource_id=mission_id,
     )
-    mission = session.get(Mission, mission_id)
+    mission = await session.get(Mission, mission_id)
     if mission is None or mission.user_id != user.id:
         deny_resource_unavailable(
             session,
@@ -1100,7 +1188,7 @@ def _execute_edit_mission(
             payload["target_currency"],
         )
     source_codes = tuple(payload["sources"]) if payload["changes_sources"] else None
-    _mission, effective_codes = edit_mission_criteria(
+    _mission, effective_codes = await edit_mission_criteria(
         session,
         mission_id=mission_id,
         expected_state_version=payload["expected_state_version"],
@@ -1124,8 +1212,8 @@ def _execute_edit_mission(
     return "\n".join(lines)
 
 
-def _execute_pause_for_edit(
-    payload: dict[str, Any], *, session: Session, user: User
+async def _execute_pause_for_edit(
+    payload: dict[str, Any], *, session: AsyncSession, user: User
 ) -> str:
     mission_id = UUID(payload["mission_id"])
     authorize(
@@ -1135,7 +1223,7 @@ def _execute_pause_for_edit(
         resource_type="mission",
         resource_id=mission_id,
     )
-    mission = session.get(Mission, mission_id)
+    mission = await session.get(Mission, mission_id)
     if mission is None or mission.user_id != user.id:
         deny_resource_unavailable(
             session,
@@ -1144,7 +1232,7 @@ def _execute_pause_for_edit(
             resource_type="mission",
             resource_id=mission_id,
         )
-    transition_mission(
+    await transition_mission_async(
         session,
         mission_id=mission_id,
         command=MissionCommand.PAUSE,

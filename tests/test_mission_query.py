@@ -1,6 +1,7 @@
 """Testes das consultas somente leitura de missões por proprietário."""
 
-from unittest.mock import MagicMock
+import asyncio
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
@@ -21,7 +22,7 @@ class _FakeMission:
 
 def _session(missions: list[_FakeMission]) -> MagicMock:
     session = MagicMock()
-    session.scalars.return_value = missions
+    session.scalars = AsyncMock(return_value=missions)
     return session
 
 
@@ -29,7 +30,7 @@ def test_list_missions_for_user_returns_scalars_result() -> None:
     missions = [_FakeMission(), _FakeMission()]
     session = _session(missions)
 
-    result = list_missions_for_user(session, user_id=uuid4())
+    result = asyncio.run(list_missions_for_user(session, user_id=uuid4()))
 
     assert result == missions
 
@@ -38,7 +39,9 @@ def test_find_missions_by_reference_returns_scalars_result() -> None:
     missions = [_FakeMission()]
     session = _session(missions)
 
-    result = find_missions_by_reference(session, user_id=uuid4(), reference="notebook")
+    result = asyncio.run(
+        find_missions_by_reference(session, user_id=uuid4(), reference="notebook")
+    )
 
     assert result == missions
 
@@ -47,8 +50,8 @@ def test_resolve_mission_for_command_with_reference_returns_single_match() -> No
     mission = _FakeMission()
     session = _session([mission])
 
-    resolved = resolve_mission_for_command(
-        session, user_id=uuid4(), reference="notebook"
+    resolved = asyncio.run(
+        resolve_mission_for_command(session, user_id=uuid4(), reference="notebook")
     )
 
     assert resolved is mission
@@ -58,14 +61,18 @@ def test_resolve_mission_for_command_with_reference_rejects_zero_matches() -> No
     session = _session([])
 
     with pytest.raises(MissionReferenceError, match="Não encontrei"):
-        resolve_mission_for_command(session, user_id=uuid4(), reference="notebook")
+        asyncio.run(
+            resolve_mission_for_command(session, user_id=uuid4(), reference="notebook")
+        )
 
 
 def test_resolve_mission_for_command_with_reference_rejects_multiple_matches() -> None:
     session = _session([_FakeMission(), _FakeMission()])
 
     with pytest.raises(MissionReferenceError, match="mais de uma"):
-        resolve_mission_for_command(session, user_id=uuid4(), reference="notebook")
+        asyncio.run(
+            resolve_mission_for_command(session, user_id=uuid4(), reference="notebook")
+        )
 
 
 def test_resolve_mission_for_command_without_reference_uses_only_non_terminal() -> None:
@@ -73,7 +80,9 @@ def test_resolve_mission_for_command_without_reference_uses_only_non_terminal() 
     completed = _FakeMission(MissionStatus.COMPLETED)
     session = _session([active, completed])
 
-    resolved = resolve_mission_for_command(session, user_id=uuid4(), reference=None)
+    resolved = asyncio.run(
+        resolve_mission_for_command(session, user_id=uuid4(), reference=None)
+    )
 
     assert resolved is active
 
@@ -86,7 +95,9 @@ def test_resolve_mission_for_command_without_reference_rejects_multiple_non_term
     )
 
     with pytest.raises(MissionReferenceError, match="mais de uma"):
-        resolve_mission_for_command(session, user_id=uuid4(), reference=None)
+        asyncio.run(
+            resolve_mission_for_command(session, user_id=uuid4(), reference=None)
+        )
 
 
 def test_resolve_mission_for_command_without_reference_rejects_no_non_terminal() -> (
@@ -95,4 +106,6 @@ def test_resolve_mission_for_command_without_reference_rejects_no_non_terminal()
     session = _session([_FakeMission(MissionStatus.COMPLETED)])
 
     with pytest.raises(MissionReferenceError, match="Não encontrei"):
-        resolve_mission_for_command(session, user_id=uuid4(), reference=None)
+        asyncio.run(
+            resolve_mission_for_command(session, user_id=uuid4(), reference=None)
+        )

@@ -62,15 +62,22 @@ def create_session_factory(engine: Engine) -> sessionmaker[Session]:
     return sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
 
 
-def _collection_connect_options(settings: Settings) -> str:
-    """Monta a string `options` (libpq) com os airbags de timeout do
-    `collection_worker` (TASK-079) -- extraído para ser testável sem
-    inspecionar internals do engine/pool do SQLAlchemy."""
+def _connect_options(
+    *,
+    lock_timeout_seconds: float,
+    statement_timeout_seconds: float,
+    idle_in_transaction_timeout_seconds: float,
+) -> str:
+    """Monta a string `options` (libpq) com airbags de timeout -- extraído
+    para ser testável sem inspecionar internals do engine/pool do
+    SQLAlchemy. Genérico: cada engine assíncrono dedicado (collection_worker,
+    API/Telegram, ...) passa seus próprios valores; nunca compartilhado nem
+    aplicado a `postgresql.conf` global."""
     return (
-        f"-c lock_timeout={int(settings.collection_lock_timeout_seconds * 1000)} "
-        f"-c statement_timeout={int(settings.collection_statement_timeout_seconds * 1000)} "
+        f"-c lock_timeout={int(lock_timeout_seconds * 1000)} "
+        f"-c statement_timeout={int(statement_timeout_seconds * 1000)} "
         "-c idle_in_transaction_session_timeout="
-        f"{int(settings.collection_idle_in_transaction_timeout_seconds * 1000)}"
+        f"{int(idle_in_transaction_timeout_seconds * 1000)}"
     )
 
 
@@ -78,26 +85,49 @@ def create_async_database_engine(
     settings: Settings | None = None,
     *,
     connect_timeout_seconds: float | None = None,
+    lock_timeout_seconds: float | None = None,
+    statement_timeout_seconds: float | None = None,
+    idle_in_transaction_timeout_seconds: float | None = None,
 ) -> AsyncEngine:
-    """Engine assíncrono dedicado ao caminho do `collection_worker` (TASK-079).
+    """Engine assíncrono dedicado a um caminho específico da aplicação
+    (`collection_worker` -- TASK-079 -- ou webhook Telegram/API -- extensão
+    da TASK-079).
 
-    Não substitui `create_database_engine`: API, Telegram e demais
-    serviços continuam na `Session` síncrona. Este engine existe só para
-    que o caminho de orquestração da coleta nunca execute I/O bloqueante
-    do Postgres direto na thread do event loop -- causa raiz comprovada do
-    autodeadlock (ver TASK-079).
+    Não substitui `create_database_engine`: chamadores síncronos (rotas
+    HTTP não migradas, outros serviços) continuam na `Session` síncrona.
+    Este engine existe só para que um caminho específico nunca execute I/O
+    bloqueante do Postgres direto na thread do event loop -- causa raiz
+    comprovada de autodeadlock, primeiro no `collection_worker`, depois no
+    mesmo padrão no webhook Telegram.
 
     Os timeouts de `lock_timeout`/`statement_timeout`/
     `idle_in_transaction_session_timeout` são aplicados via `options` da
-    conexão (libpq), portanto só valem para conexões abertas por este
-    engine -- nunca alteram `postgresql.conf` nem afetam outros serviços.
-    São um airbag, não a correção: a correção é nunca manter uma dessas
-    transações aberta durante um `await` externo.
+    conexão (libpq) só quando fornecidos -- portanto só valem para conexões
+    abertas por ESTE engine, nunca alteram `postgresql.conf` nem afetam
+    outros serviços. São um airbag, não a correção: a correção é nunca
+    manter uma dessas transações aberta durante um `await` externo.
     """
     current_settings = settings or get_settings()
-    connect_args: dict[str, object] = {
-        "options": _collection_connect_options(current_settings)
-    }
+    connect_args: dict[str, object] = {}
+    if (
+        lock_timeout_seconds is not None
+        or statement_timeout_seconds is not None
+        or idle_in_transaction_timeout_seconds is not None
+    ):
+        if (
+            lock_timeout_seconds is None
+            or statement_timeout_seconds is None
+            or idle_in_transaction_timeout_seconds is None
+        ):
+            raise ValueError(
+                "os três timeouts (lock/statement/idle_in_transaction) devem "
+                "ser fornecidos juntos, ou nenhum deles"
+            )
+        connect_args["options"] = _connect_options(
+            lock_timeout_seconds=lock_timeout_seconds,
+            statement_timeout_seconds=statement_timeout_seconds,
+            idle_in_transaction_timeout_seconds=idle_in_transaction_timeout_seconds,
+        )
     if connect_timeout_seconds is not None:
         connect_args["connect_timeout"] = max(1, int(connect_timeout_seconds))
     engine = create_async_engine(
@@ -110,6 +140,44 @@ def create_async_database_engine(
 
         instrument_sqlalchemy_engine(engine.sync_engine)
     return engine
+
+
+def create_collection_async_database_engine(
+    settings: Settings | None = None,
+    *,
+    connect_timeout_seconds: float | None = None,
+) -> AsyncEngine:
+    """Atalho para o engine assíncrono do `collection_worker` (TASK-079),
+    lendo os timeouts já configurados em `Settings`."""
+    current_settings = settings or get_settings()
+    return create_async_database_engine(
+        current_settings,
+        connect_timeout_seconds=connect_timeout_seconds,
+        lock_timeout_seconds=current_settings.collection_lock_timeout_seconds,
+        statement_timeout_seconds=current_settings.collection_statement_timeout_seconds,
+        idle_in_transaction_timeout_seconds=(
+            current_settings.collection_idle_in_transaction_timeout_seconds
+        ),
+    )
+
+
+def create_telegram_async_database_engine(
+    settings: Settings | None = None,
+    *,
+    connect_timeout_seconds: float | None = None,
+) -> AsyncEngine:
+    """Atalho para o engine assíncrono do webhook Telegram/API (extensão da
+    TASK-079), lendo os timeouts já configurados em `Settings`."""
+    current_settings = settings or get_settings()
+    return create_async_database_engine(
+        current_settings,
+        connect_timeout_seconds=connect_timeout_seconds,
+        lock_timeout_seconds=current_settings.telegram_lock_timeout_seconds,
+        statement_timeout_seconds=current_settings.telegram_statement_timeout_seconds,
+        idle_in_transaction_timeout_seconds=(
+            current_settings.telegram_idle_in_transaction_timeout_seconds
+        ),
+    )
 
 
 def create_async_session_factory(

@@ -66,7 +66,8 @@ def test_worker_once_records_batch_and_disposes(monkeypatch) -> None:
     orchestrator.run_batch = result
     observe = MagicMock()
     monkeypatch.setattr(
-        "app.collection.worker.create_async_database_engine", lambda *_: engine
+        "app.collection.worker.create_collection_async_database_engine",
+        lambda *_: engine,
     )
     monkeypatch.setattr(
         "app.collection.worker.create_async_session_factory", lambda *_: factory

@@ -1,9 +1,10 @@
 # TASK-079 — Diagnosticar e corrigir travamento do `collection_worker` com Chromium/Playwright
 
-Status: **Causa raiz comprovada; em implementação** (2026-08-12) —
-autorizado a trabalhar diretamente em produção para diagnóstico e
-validação (aplicação ainda sem uso normal por usuários neste momento).
-Primeira prioridade da `v1.0.6`, executada antes de TASK-076/077/078.
+Status: **`collection_worker` corrigido, testado e commitado localmente
+(2026-08-13). Extensão em andamento: mesma classe estrutural encontrada no
+fluxo API/Telegram (webhook)** — ver `## Extensão: autodeadlock estrutural
+no fluxo API/Telegram (Webhook)` no final deste documento. Primeira
+prioridade da `v1.0.6`, executada antes de TASK-076/077/078.
 
 **Causa raiz confirmada (não são os zumbis do Chromium):** autodeadlock do
 event loop do `collection_worker`. Ver `## Causa raiz confirmada e desenho
@@ -522,3 +523,131 @@ separada para investigação futura.
 Zumbis do Chromium: confirmados ainda presentes e se acumulando
 (problema paralelo, independente, não validado/corrigido nesta TASK,
 conforme escopo). `init: true` não foi aplicado.
+
+## Extensão: autodeadlock estrutural no fluxo API/Telegram (Webhook)
+
+**2026-08-13.** Mesma classe estrutural do bug corrigido no
+`collection_worker` (I/O síncrono de banco dentro de fluxo async +
+transação/lock atravessando `await` externo), encontrada de forma
+independente no fluxo `receive_telegram_webhook`. Tratada aqui como
+extensão específica (não reabre nem modifica a correção já validada do
+`collection_worker`).
+
+### Causa raiz comprovada (`py-spy` + `pg_stat_activity` + `pg_locks`, ao vivo em produção)
+
+`receive_telegram_webhook` (`backend/app/telegram/router.py:290`) recebe
+`session: Session = Depends(get_session)` — síncrona, com ciclo de vida
+cobrindo a requisição inteira (`backend/app/database/dependency.py:16-26`,
+corretamente desenhada: commit no sucesso, rollback em exceção, close no
+`finally` — mas só roda quando o handler *retorna*). Dentro da mesma
+transação: `reserve_telegram_update` (`backend/app/telegram/limits.py:43`)
+faz `SELECT User.id ... FOR UPDATE` (deliberado, para serializar por
+usuário) e, mais adiante, o handler faz `await
+adapters[profile].interpret(...)` (IA, `router.py:485`) e `await
+_send_reply_safely(...)` (Telegram, `router.py:378`) **com a mesma
+transação ainda aberta**, segurando o lock.
+
+Evidência ao vivo: conexão `pid=645` (`client_addr` da API) presa em
+`idle in transaction` desde `2026-08-13 00:44:57`, útlima query
+`SELECT user_auth_sessions...` (a checagem de sessão ativa,
+`has_active_session`, `authentication/service.py:164-178`) — bloqueando
+`pid=1515`, uma segunda mensagem do MESMO usuário tentando o mesmo
+`FOR UPDATE`. `py-spy dump` do processo da API mostrou a **thread
+principal do event loop uvicorn** parada exatamente nessa espera de lock
+(`reserve_telegram_update → session.execute → psycopg wait`) — ou seja, a
+espera síncrona do lock trava o loop inteiro, não só a requisição.
+Container `aishoppingagent-api-1` `unhealthy`, `/ready` falhando (237
+tentativas seguidas, `TimeoutError` em 2s) porque o healthcheck também
+precisa do event loop livre.
+
+Zumbis do Chromium (problema separado, TASK-079 principal) não tocados
+nesta extensão.
+
+### Plano de correção (aprovado pelo usuário, ver mensagem completa da
+autorização para o texto literal de cada requisito — resumo abaixo)
+
+1. Migrar o caminho do webhook Telegram (e tudo que ele chama) para
+   `AsyncSession` — engine assíncrono dedicado a esse fluxo, timeouts
+   defensivos próprios, sem afetar API/rotas não tocadas por este fluxo
+   nem o `collection_worker`.
+2. Nenhuma transação aberta durante `await` de IA/Telegram/HTTP externo.
+3. Fronteira: Fase A (banco, curta: dedup do update, resolve usuário,
+   autentica, autoriza, reserva se necessário, `COMMIT`) → Fase B (IA,
+   sem transação) → Fase C (banco, curta: revalida, aplica intenção,
+   persiste, `COMMIT`) → Fase D (envia resposta ao Telegram, sem
+   transação; se precisar persistir o resultado do envio, nova transação
+   curta depois).
+4. Serialização por usuário: auditar `reserve_telegram_update`/
+   `TelegramUpdateReceipt` antes de decidir entre manter `FOR UPDATE` só
+   em seções críticas curtas (Caso A) ou um mecanismo de coordenação
+   durável que não dependa de transação aberta como mutex (Caso B) — sem
+   depender de `asyncio.Lock` local, correto mesmo com múltiplas
+   instâncias da API.
+5. Deadline global do processamento da mensagem, calculado a partir dos
+   timeouts/tentativas reais de IA + Telegram, não um número arbitrário.
+6. Timeouts defensivos de Postgres (airbag) só na conexão desse fluxo.
+7. Testes: mesmo usuário com duas mensagens, usuários diferentes
+   concorrentes, `/ready` durante IA lenta, duas instâncias da API —
+   todos com PostgreSQL real, provando eliminação do mecanismo (não só
+   testes unitários).
+
+Sem push, sem tag, sem iniciar TASK-076/077/078/080/081, sem mexer nos
+zumbis, até esta extensão fechar e ser aprovada.
+
+### Registro de progresso da extensão
+
+*(preenchido conforme a investigação/implementação avança)*
+
+**1. Infraestrutura de engine assíncrono genérico** — `database/session.py`
+generalizado: `create_async_database_engine` passa a aceitar os três
+timeouts (`lock`/`statement`/`idle_in_transaction`) explicitamente, com
+`create_collection_async_database_engine` (reaproveita os campos
+`collection_*` já existentes, TASK-079 original) e
+`create_telegram_async_database_engine` (novos campos
+`telegram_lock_timeout_seconds` (5s), `telegram_statement_timeout_seconds`
+(10s), `telegram_idle_in_transaction_timeout_seconds` (5s) em
+`core/config.py`) como atalhos dedicados. `collection/worker.py` e toda a
+suíte de testes que dependia do nome antigo foram atualizados. Também foi
+adicionado `telegram_message_deadline_seconds` (default 90s), calculado a
+partir do pior caso real: Fase A + Fase C (2 × `telegram_statement_timeout`
+= 20s) + Fase B (cascata Gemini → Groq, 2 × `external_http_timeout`, sem
+espera entre tiers porque `AdminDevAIProviderManager` não faz backoff entre
+provedores = 20s) + Fase D (envio Telegram, tentativa única via
+`asyncio.to_thread` = 10s) = 50s de núcleo, com ~80% de margem operacional
+→ 90s. Validado: 899 testes locais passando (2 a mais que a TASK-079
+original), 90,77% de cobertura, lint/format limpos.
+
+**2. Decisão de serialização por usuário: Caso B** — auditoria de
+`reserve_telegram_update`/`TelegramUpdateReceipt` confirmou que o `SELECT
+... FOR UPDATE` em `User` ali existente serve só para serializar a
+contagem de cota (rate limit) dentro da própria função, uma seção já
+curta. O problema real de ordenação está em outro lugar: `User.pending_intent`
+(e os fluxos de edição/criação de missão que o usam — `router.py`, dezenas
+de atribuições) é lido no início do processamento de uma mensagem e só é
+persistido no fim da requisição inteira. Duas mensagens do mesmo usuário
+processadas concorrentemente (ex.: usuário manda "editar missão 3" e, logo
+em seguida, "orçamento 500") podem fazer a segunda ler o estado antes da
+primeira persistir, ou as duas perderem a escrita uma da outra — é
+necessário impedir que a mensagem B comece antes de A terminar (Fase A até
+D), não só serializar seções curtas de banco (Caso A não seria suficiente
+aqui). Implementado `backend/app/telegram/concurrency.py`:
+`user_serialization_lock(engine, user_id)` — advisory lock do Postgres
+(`pg_try_advisory_lock`/`pg_advisory_unlock`) com escopo de *sessão*, não de
+transação: chave `bigint` determinística derivada do UUID do usuário (sem
+depender de função de hash do Postgres), conexão dedicada em AUTOCOMMIT
+(nunca fica "idle in transaction" enquanto aguarda IA/Telegram), polling
+com `pg_try_advisory_lock` (20ms → 200ms, dobrando) em vez de
+`pg_advisory_lock` bloqueante (que poderia colidir com o
+`statement_timeout` da própria engine). Correto entre múltiplos processos
+de API porque o lock vive no Postgres, não em memória local — nenhum
+`asyncio.Lock` envolvido. 7 testes unitários (`AsyncMock`) cobrindo
+aquisição/liberação, liberação mesmo com exceção no corpo, polling até
+adquirir e fechamento da conexão mesmo se a configuração da conexão falhar;
+lint/format limpos.
+
+Pendente: aplicar `user_serialization_lock` em volta do processamento de
+cada mensagem dentro de `receive_telegram_webhook` (item 4 abaixo depende
+disso), converter as ~15 funções do caminho para `AsyncSession`, reescrever
+o webhook em Fase A/B/C/D, escrever os testes de integração reais
+(mesmo usuário, usuários diferentes, `/ready`, duas instâncias de API,
+reprodução do incidente), rodar o pipeline completo e validar em produção.

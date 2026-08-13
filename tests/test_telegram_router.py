@@ -1,8 +1,9 @@
 import json
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from decimal import Decimal
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
@@ -27,14 +28,43 @@ from app.telegram.router import (
 from app.users.models import UserRole
 
 
+def _async_session() -> MagicMock:
+    """`AsyncSession` simulada -- extensão da TASK-079: `scalar`/`scalars`/
+    `execute`/`get`/`flush`/`commit`/`rollback` são awaitables; `add`
+    continua síncrono, como na `AsyncSession` real."""
+    session = MagicMock()
+    session.scalar = AsyncMock()
+    session.scalars = AsyncMock()
+    session.execute = AsyncMock()
+    session.get = AsyncMock()
+    session.flush = AsyncMock()
+    session.commit = AsyncMock()
+    session.rollback = AsyncMock()
+    return session
+
+
 @pytest.fixture(autouse=True)
 def _reserve_update_without_database(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        "app.telegram.router.reserve_telegram_update",
-        lambda *args, **kwargs: TelegramUpdateReservation(
-            TelegramUpdateDisposition.ACCEPTED
-        ),
-    )
+    async def _fake_reserve(
+        *args: object, **kwargs: object
+    ) -> TelegramUpdateReservation:
+        return TelegramUpdateReservation(TelegramUpdateDisposition.ACCEPTED)
+
+    monkeypatch.setattr("app.telegram.router.reserve_telegram_update", _fake_reserve)
+
+
+@pytest.fixture(autouse=True)
+def _user_serialization_lock_without_database(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Extensão da TASK-079: estes testes chamam `receive_telegram_webhook`
+    direto (sem passar por `Depends`), então `engine` nunca é um
+    `AsyncEngine` real -- o advisory lock em si é coberto pelos testes de
+    integração reais (`tests/integration/test_telegram_webhook.py`)."""
+
+    @asynccontextmanager
+    async def _fake_lock(*args: object, **kwargs: object):
+        yield
+
+    monkeypatch.setattr("app.telegram.router.user_serialization_lock", _fake_lock)
 
 
 class _FakeAdapter:
@@ -130,14 +160,14 @@ def _patch_user(
 ) -> list[tuple[int, str]]:
     resolve_calls: list[tuple[int, str]] = []
 
-    def _fake_get_or_create(
+    async def _fake_get_or_create(
         session: object, *, telegram_user_id: int, display_name: str
     ) -> SimpleNamespace:
         resolve_calls.append((telegram_user_id, display_name))
         return user
 
     monkeypatch.setattr(
-        "app.telegram.authentication.get_or_create_telegram_user",
+        "app.telegram.authentication.get_or_create_telegram_user_async",
         _fake_get_or_create,
     )
     return resolve_calls
@@ -167,7 +197,7 @@ async def test_valid_secret_and_text_message_returns_204_and_calls_adapter(
         x_telegram_bot_api_secret_token="correct-secret",
         adapters=_adapters(adapter),  # type: ignore[arg-type]
         settings=_settings(telegram_bot_token=None),
-        session=MagicMock(),
+        session=_async_session(),
     )
 
     assert response.status_code == 204
@@ -201,7 +231,7 @@ async def test_privacy_command_is_static_and_does_not_require_ai_or_session(
         x_telegram_bot_api_secret_token="correct-secret",
         adapters=_adapters(adapter),  # type: ignore[arg-type]
         settings=_settings(),
-        session=MagicMock(),
+        session=_async_session(),
     )
 
     assert response.status_code == 204
@@ -224,7 +254,7 @@ async def test_admin_user_uses_admin_dev_adapter(
         x_telegram_bot_api_secret_token="correct-secret",
         adapters=_adapters(adapter, role=UserRole.ADMIN),  # type: ignore[arg-type]
         settings=_settings(),
-        session=MagicMock(),
+        session=_async_session(),
     )
 
     assert response.status_code == 204
@@ -246,7 +276,7 @@ async def test_missing_or_wrong_secret_returns_401_without_calling_adapter(
         x_telegram_bot_api_secret_token=token,
         adapters=_adapters(adapter),  # type: ignore[arg-type]
         settings=_settings(),
-        session=MagicMock(),
+        session=_async_session(),
     )
 
     assert response.status_code == 401
@@ -268,12 +298,188 @@ async def test_unconfigured_secret_rejects_every_request(
         x_telegram_bot_api_secret_token="anything",
         adapters=_adapters(adapter),  # type: ignore[arg-type]
         settings=_settings(telegram_webhook_secret=None),
-        session=MagicMock(),
+        session=_async_session(),
     )
 
     assert response.status_code == 401
     assert resolve_calls == []
     assert adapter.calls == []
+
+
+@pytest.mark.anyio
+async def test_replayed_update_is_a_no_op_without_calling_adapter_or_replying(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Extensão da TASK-079: replay é detectado dentro da Fase A (banco),
+    depois de já ter comitado -- a requisição termina aí, sem IA nem
+    resposta ao Telegram."""
+    _patch_user(monkeypatch, _fake_user())
+
+    async def _fake_reserve_replay(
+        *args: object, **kwargs: object
+    ) -> TelegramUpdateReservation:
+        return TelegramUpdateReservation(
+            TelegramUpdateDisposition.ACCEPTED, replay=True
+        )
+
+    monkeypatch.setattr(
+        "app.telegram.router.reserve_telegram_update", _fake_reserve_replay
+    )
+    send_calls = _patch_send_message(monkeypatch)
+    adapter = _FakeAdapter(_intent())
+
+    response = await receive_telegram_webhook(
+        update=_update(),
+        x_telegram_bot_api_secret_token="correct-secret",
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        settings=_settings(),
+        session=_async_session(),
+    )
+
+    assert response.status_code == 204
+    assert adapter.calls == []
+    assert send_calls == []
+
+
+@pytest.mark.anyio
+async def test_authorization_denied_replay_skips_denial_log(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Quando a reserva forçada como `DISCARDED` (após negação de
+    `TELEGRAM_INTERACT`) indica que este `update_id` já havia sido
+    reservado antes (replay -- ex.: reentrega do Telegram), a requisição
+    termina no aviso de replay, sem chamar `_log_authorization_denial`
+    de novo."""
+    fake_user = _fake_user(role="OWNER")
+    _patch_user(monkeypatch, fake_user)
+
+    async def _fake_reserve_replay(
+        *args: object, **kwargs: object
+    ) -> TelegramUpdateReservation:
+        return TelegramUpdateReservation(
+            TelegramUpdateDisposition.DISCARDED, replay=True
+        )
+
+    monkeypatch.setattr(
+        "app.telegram.router.reserve_telegram_update", _fake_reserve_replay
+    )
+    send_calls = _patch_send_message(monkeypatch)
+    adapter = _FakeAdapter(_intent(kind=IntentKind.QUERY_MISSION))
+    session = _async_session()
+
+    response = await receive_telegram_webhook(
+        update=_update(),
+        x_telegram_bot_api_secret_token="correct-secret",
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        settings=_settings(),
+        session=session,
+    )
+
+    assert response.status_code == 204
+    assert adapter.calls == []
+    assert send_calls == []
+    session.add.assert_called_once()  # auditoria da 1a negação, não desta
+
+
+@pytest.mark.anyio
+async def test_rate_limited_update_warns_once_and_skips_processing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_user(monkeypatch, _fake_user())
+
+    async def _fake_reserve_rate_limited(
+        *args: object, **kwargs: object
+    ) -> TelegramUpdateReservation:
+        return TelegramUpdateReservation(
+            TelegramUpdateDisposition.RATE_LIMITED, warn_rate_limit=True
+        )
+
+    monkeypatch.setattr(
+        "app.telegram.router.reserve_telegram_update", _fake_reserve_rate_limited
+    )
+    send_calls = _patch_send_message(monkeypatch)
+    adapter = _FakeAdapter(_intent())
+
+    response = await receive_telegram_webhook(
+        update=_update(),
+        x_telegram_bot_api_secret_token="correct-secret",
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        settings=_settings(),
+        session=_async_session(),
+    )
+
+    assert response.status_code == 204
+    assert adapter.calls == []
+    assert len(send_calls) == 1
+    assert "Muitas mensagens" in send_calls[0][1]
+
+
+@pytest.mark.anyio
+async def test_rate_limited_update_without_warning_does_not_reply(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Janelas de rate limit subsequentes na mesma janela de 1 minuto não
+    repetem o aviso (`warn_rate_limit=False`)."""
+    _patch_user(monkeypatch, _fake_user())
+
+    async def _fake_reserve_rate_limited(
+        *args: object, **kwargs: object
+    ) -> TelegramUpdateReservation:
+        return TelegramUpdateReservation(
+            TelegramUpdateDisposition.RATE_LIMITED, warn_rate_limit=False
+        )
+
+    monkeypatch.setattr(
+        "app.telegram.router.reserve_telegram_update", _fake_reserve_rate_limited
+    )
+    send_calls = _patch_send_message(monkeypatch)
+    adapter = _FakeAdapter(_intent())
+
+    response = await receive_telegram_webhook(
+        update=_update(),
+        x_telegram_bot_api_secret_token="correct-secret",
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        settings=_settings(),
+        session=_async_session(),
+    )
+
+    assert response.status_code == 204
+    assert adapter.calls == []
+    assert send_calls == []
+
+
+@pytest.mark.anyio
+async def test_deadline_exceeded_cancels_processing_and_returns_204(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Extensão da TASK-079: `telegram_message_deadline_seconds` limita o
+    processamento inteiro -- uma IA que nunca responde não trava a
+    requisição para sempre nem o loop de eventos."""
+    _patch_user(monkeypatch, _fake_user())
+    send_calls = _patch_send_message(monkeypatch)
+
+    class _HangingAdapter:
+        manager = object()
+
+        async def interpret(self, message: object, *, profile: object) -> Intent:
+            import asyncio
+
+            await asyncio.sleep(10)
+            raise AssertionError("must have timed out before this point")
+
+    with caplog.at_level("ERROR", logger="app.telegram"):
+        response = await receive_telegram_webhook(
+            update=_update(),
+            x_telegram_bot_api_secret_token="correct-secret",
+            adapters=_adapters(_HangingAdapter()),  # type: ignore[arg-type]
+            settings=_settings(telegram_message_deadline_seconds=0.05),
+            session=_async_session(),
+        )
+
+    assert response.status_code == 204
+    assert send_calls == []
+    assert caplog.records[-1].message == "telegram_webhook_deadline_exceeded"
 
 
 @pytest.mark.anyio
@@ -314,7 +520,7 @@ async def test_rejected_telegram_identity_is_sanitized_no_op(
             x_telegram_bot_api_secret_token="correct-secret",
             adapters=_adapters(adapter),  # type: ignore[arg-type]
             settings=_settings(),
-            session=MagicMock(),
+            session=_async_session(),
         )
 
     assert response.status_code == 204
@@ -349,7 +555,7 @@ async def test_inactive_user_is_rejected_before_side_effects(
         x_telegram_bot_api_secret_token="correct-secret",
         adapters=_adapters(adapter),  # type: ignore[arg-type]
         settings=_settings(),
-        session=MagicMock(),
+        session=_async_session(),
     )
 
     assert response.status_code == 204
@@ -369,7 +575,7 @@ async def test_update_without_message_is_a_no_op_204() -> None:
         x_telegram_bot_api_secret_token="correct-secret",
         adapters=_adapters(adapter),  # type: ignore[arg-type]
         settings=_settings(),
-        session=MagicMock(),
+        session=_async_session(),
     )
 
     assert response.status_code == 204
@@ -393,7 +599,7 @@ async def test_message_without_text_is_a_no_op_204() -> None:
         x_telegram_bot_api_secret_token="correct-secret",
         adapters=_adapters(adapter),  # type: ignore[arg-type]
         settings=_settings(),
-        session=MagicMock(),
+        session=_async_session(),
     )
 
     assert response.status_code == 204
@@ -413,7 +619,7 @@ async def test_ai_provider_failure_still_returns_204(
         x_telegram_bot_api_secret_token="correct-secret",
         adapters=_adapters(adapter),  # type: ignore[arg-type]
         settings=_settings(),
-        session=MagicMock(),
+        session=_async_session(),
     )
 
     assert response.status_code == 204
@@ -441,12 +647,12 @@ async def test_create_mission_intent_stages_confirmation_without_creating(
 
     resolve_calls = _patch_user(monkeypatch, fake_user)
 
-    def _fake_create_mission(session: object, **kwargs: object):
+    async def _fake_create_mission(session: object, **kwargs: object):
         create_calls.append(kwargs)
         raise AssertionError("create_mission_from_criteria should not run yet")
 
     monkeypatch.setattr(
-        "app.telegram.router.create_mission_from_criteria", _fake_create_mission
+        "app.telegram.router.create_mission_from_criteria_async", _fake_create_mission
     )
     send_calls = _patch_send_message(monkeypatch)
 
@@ -466,7 +672,7 @@ async def test_create_mission_intent_stages_confirmation_without_creating(
         x_telegram_bot_api_secret_token="correct-secret",
         adapters=_adapters(adapter),  # type: ignore[arg-type]
         settings=_settings(),
-        session=MagicMock(),
+        session=_async_session(),
     )
 
     assert response.status_code == 204
@@ -504,12 +710,12 @@ async def test_confirmed_pending_create_mission_executes_and_clears_step(
     _patch_user(monkeypatch, fake_user)
     _patch_resolve_answer(monkeypatch, True)
 
-    def _fake_create_mission(session: object, **kwargs: object):
+    async def _fake_create_mission(session: object, **kwargs: object):
         create_calls.append(kwargs)
         return fake_mission, ("pichau", "kabum")
 
     monkeypatch.setattr(
-        "app.telegram.router.create_mission_from_criteria", _fake_create_mission
+        "app.telegram.router.create_mission_from_criteria_async", _fake_create_mission
     )
     send_calls = _patch_send_message(monkeypatch)
     adapter = _FakeAdapter(_intent())
@@ -526,7 +732,7 @@ async def test_confirmed_pending_create_mission_executes_and_clears_step(
         x_telegram_bot_api_secret_token="correct-secret",
         adapters=_adapters(adapter),  # type: ignore[arg-type]
         settings=_settings(),
-        session=MagicMock(),
+        session=_async_session(),
     )
 
     assert response.status_code == 204
@@ -554,10 +760,10 @@ async def test_cancelled_pending_create_mission_does_not_execute(
     _patch_user(monkeypatch, fake_user)
     _patch_resolve_answer(monkeypatch, False)
 
-    def _fail(*args: object, **kwargs: object) -> object:
+    async def _fail(*args: object, **kwargs: object) -> object:
         raise AssertionError("create_mission_from_criteria should not run")
 
-    monkeypatch.setattr("app.telegram.router.create_mission_from_criteria", _fail)
+    monkeypatch.setattr("app.telegram.router.create_mission_from_criteria_async", _fail)
     send_calls = _patch_send_message(monkeypatch)
     adapter = _FakeAdapter(_intent())
 
@@ -573,7 +779,7 @@ async def test_cancelled_pending_create_mission_does_not_execute(
         x_telegram_bot_api_secret_token="correct-secret",
         adapters=_adapters(adapter),  # type: ignore[arg-type]
         settings=_settings(),
-        session=MagicMock(),
+        session=_async_session(),
     )
 
     assert response.status_code == 204
@@ -591,12 +797,12 @@ async def test_create_mission_without_sources_stages_source_selection_and_preser
 
     _patch_user(monkeypatch, fake_user)
 
-    def _fake_create_mission(session: object, **kwargs: object):
+    async def _fake_create_mission(session: object, **kwargs: object):
         create_calls.append(kwargs)
         raise AssertionError("create_mission_from_criteria should not run yet")
 
     monkeypatch.setattr(
-        "app.telegram.router.create_mission_from_criteria", _fake_create_mission
+        "app.telegram.router.create_mission_from_criteria_async", _fake_create_mission
     )
     send_calls = _patch_send_message(monkeypatch)
 
@@ -615,7 +821,7 @@ async def test_create_mission_without_sources_stages_source_selection_and_preser
         x_telegram_bot_api_secret_token="correct-secret",
         adapters=_adapters(adapter),  # type: ignore[arg-type]
         settings=_settings(),
-        session=MagicMock(),
+        session=_async_session(),
     )
 
     assert response.status_code == 204
@@ -663,7 +869,7 @@ async def test_valid_source_selection_answer_advances_to_normal_confirmation(
         x_telegram_bot_api_secret_token="correct-secret",
         adapters=_adapters(adapter),  # type: ignore[arg-type]
         settings=_settings(),
-        session=MagicMock(),
+        session=_async_session(),
     )
 
     assert response.status_code == 204
@@ -709,7 +915,7 @@ async def test_invalid_source_selection_answer_keeps_pending_state_and_asks_agai
         x_telegram_bot_api_secret_token="correct-secret",
         adapters=_adapters(adapter),  # type: ignore[arg-type]
         settings=_settings(),
-        session=MagicMock(),
+        session=_async_session(),
     )
 
     assert response.status_code == 204
@@ -732,12 +938,12 @@ async def test_full_flow_from_empty_sources_to_created_mission_only_after_valid_
     _patch_user(monkeypatch, fake_user)
     _patch_resolve_answer(monkeypatch, True)
 
-    def _fake_create_mission(session: object, **kwargs: object):
+    async def _fake_create_mission(session: object, **kwargs: object):
         create_calls.append(kwargs)
         return fake_mission, ("pichau", "kabum")
 
     monkeypatch.setattr(
-        "app.telegram.router.create_mission_from_criteria", _fake_create_mission
+        "app.telegram.router.create_mission_from_criteria_async", _fake_create_mission
     )
     send_calls = _patch_send_message(monkeypatch)
 
@@ -753,7 +959,7 @@ async def test_full_flow_from_empty_sources_to_created_mission_only_after_valid_
         x_telegram_bot_api_secret_token="correct-secret",
         adapters=_adapters(adapter),  # type: ignore[arg-type]
         settings=_settings(),
-        session=MagicMock(),
+        session=_async_session(),
     )
     assert fake_user.pending_intent["kind"] == "await_create_mission_sources"
     assert create_calls == []
@@ -771,7 +977,7 @@ async def test_full_flow_from_empty_sources_to_created_mission_only_after_valid_
         x_telegram_bot_api_secret_token="correct-secret",
         adapters=_adapters(adapter),  # type: ignore[arg-type]
         settings=_settings(),
-        session=MagicMock(),
+        session=_async_session(),
     )
     assert fake_user.pending_intent["kind"] == "create_mission"
     assert fake_user.pending_intent["sources"] == ["pichau", "kabum"]
@@ -790,7 +996,7 @@ async def test_full_flow_from_empty_sources_to_created_mission_only_after_valid_
         x_telegram_bot_api_secret_token="correct-secret",
         adapters=_adapters(adapter),  # type: ignore[arg-type]
         settings=_settings(),
-        session=MagicMock(),
+        session=_async_session(),
     )
 
     assert len(create_calls) == 1
@@ -830,7 +1036,7 @@ async def test_unrecognized_answer_to_pending_intent_keeps_it_staged(
         x_telegram_bot_api_secret_token="correct-secret",
         adapters=_adapters(adapter),  # type: ignore[arg-type]
         settings=_settings(),
-        session=MagicMock(),
+        session=_async_session(),
     )
 
     assert response.status_code == 204
@@ -854,7 +1060,7 @@ async def test_create_mission_intent_without_search_query_is_a_known_error(
         x_telegram_bot_api_secret_token="correct-secret",
         adapters=_adapters(adapter),  # type: ignore[arg-type]
         settings=_settings(),
-        session=MagicMock(),
+        session=_async_session(),
     )
 
     assert response.status_code == 204
@@ -870,7 +1076,7 @@ async def test_query_mission_intent_lists_missions_found(
     _patch_user(monkeypatch, _fake_user())
     monkeypatch.setattr(
         "app.telegram.router.list_missions_for_user",
-        lambda session, **kwargs: [fake_mission],
+        AsyncMock(return_value=[fake_mission]),
     )
     send_calls = _patch_send_message(monkeypatch)
 
@@ -882,7 +1088,7 @@ async def test_query_mission_intent_lists_missions_found(
         x_telegram_bot_api_secret_token="correct-secret",
         adapters=_adapters(adapter),  # type: ignore[arg-type]
         settings=_settings(),
-        session=MagicMock(),
+        session=_async_session(),
     )
 
     assert response.status_code == 204
@@ -904,13 +1110,15 @@ async def test_mission_command_intent_stages_confirmation_without_transitioning(
     _patch_user(monkeypatch, fake_user)
     monkeypatch.setattr(
         "app.telegram.router.resolve_mission_for_command",
-        lambda session, **kwargs: fake_mission,
+        AsyncMock(return_value=fake_mission),
     )
 
-    def _fail_transition(*args: object, **kwargs: object) -> object:
+    async def _fail_transition(*args: object, **kwargs: object) -> object:
         raise AssertionError("transition_mission should not run yet")
 
-    monkeypatch.setattr("app.telegram.router.transition_mission", _fail_transition)
+    monkeypatch.setattr(
+        "app.telegram.router.transition_mission_async", _fail_transition
+    )
     send_calls = _patch_send_message(monkeypatch)
 
     intent = _intent(
@@ -924,7 +1132,7 @@ async def test_mission_command_intent_stages_confirmation_without_transitioning(
         x_telegram_bot_api_secret_token="correct-secret",
         adapters=_adapters(adapter),  # type: ignore[arg-type]
         settings=_settings(),
-        session=MagicMock(),
+        session=_async_session(),
     )
 
     assert response.status_code == 204
@@ -958,12 +1166,12 @@ async def test_confirmed_pending_mission_command_executes_and_clears_step(
     _patch_user(monkeypatch, fake_user)
     _patch_resolve_answer(monkeypatch, True)
     monkeypatch.setattr(
-        "app.telegram.router.transition_mission",
-        lambda session, **kwargs: fake_transition,
+        "app.telegram.router.transition_mission_async",
+        AsyncMock(return_value=fake_transition),
     )
     send_calls = _patch_send_message(monkeypatch)
     adapter = _FakeAdapter(_intent())
-    session = MagicMock()
+    session = _async_session()
     session.get.return_value = SimpleNamespace(user_id=fake_user.id)
 
     response = await receive_telegram_webhook(
@@ -998,7 +1206,7 @@ async def test_edit_mission_intent_via_free_text_redirects_to_editar_missao_comm
 
     _patch_user(monkeypatch, fake_user)
 
-    def _fail_resolve(*args: object, **kwargs: object) -> object:
+    async def _fail_resolve(*args: object, **kwargs: object) -> object:
         raise AssertionError("resolve_mission_for_command should not run")
 
     monkeypatch.setattr(
@@ -1021,7 +1229,7 @@ async def test_edit_mission_intent_via_free_text_redirects_to_editar_missao_comm
         x_telegram_bot_api_secret_token="correct-secret",
         adapters=_adapters(adapter),  # type: ignore[arg-type]
         settings=_settings(),
-        session=MagicMock(),
+        session=_async_session(),
     )
 
     assert response.status_code == 204
@@ -1046,13 +1254,17 @@ async def test_confirmed_pause_for_edit_pauses_and_points_to_edit_command(
     _patch_user(monkeypatch, fake_user)
     _patch_resolve_answer(monkeypatch, True)
     transition_calls: list[dict] = []
+
+    async def _fake_transition(session: object, **kwargs: object) -> None:
+        transition_calls.append(kwargs)
+
     monkeypatch.setattr(
-        "app.telegram.router.transition_mission",
-        lambda session, **kwargs: transition_calls.append(kwargs),
+        "app.telegram.router.transition_mission_async",
+        _fake_transition,
     )
     send_calls = _patch_send_message(monkeypatch)
     adapter = _FakeAdapter(_intent())
-    session = MagicMock()
+    session = _async_session()
     session.get.return_value = SimpleNamespace(user_id=fake_user.id)
 
     response = await receive_telegram_webhook(
@@ -1093,10 +1305,12 @@ async def test_declined_pause_for_edit_does_not_pause(
     _patch_user(monkeypatch, fake_user)
     _patch_resolve_answer(monkeypatch, False)
 
-    def _fail_transition(*args: object, **kwargs: object) -> object:
+    async def _fail_transition(*args: object, **kwargs: object) -> object:
         raise AssertionError("transition_mission should not run on cancel")
 
-    monkeypatch.setattr("app.telegram.router.transition_mission", _fail_transition)
+    monkeypatch.setattr(
+        "app.telegram.router.transition_mission_async", _fail_transition
+    )
     send_calls = _patch_send_message(monkeypatch)
     adapter = _FakeAdapter(_intent())
 
@@ -1112,7 +1326,7 @@ async def test_declined_pause_for_edit_does_not_pause(
         x_telegram_bot_api_secret_token="correct-secret",
         adapters=_adapters(adapter),  # type: ignore[arg-type]
         settings=_settings(),
-        session=MagicMock(),
+        session=_async_session(),
     )
 
     assert response.status_code == 204
@@ -1146,14 +1360,14 @@ async def test_confirmed_pending_edit_mission_executes_and_clears_step(
     _patch_resolve_answer(monkeypatch, True)
     edit_calls: list[dict] = []
 
-    def _fake_edit(session: object, **kwargs: object):
+    async def _fake_edit(session: object, **kwargs: object):
         edit_calls.append(kwargs)
         return SimpleNamespace(id=mission_id), ("kabum", "pichau")
 
     monkeypatch.setattr("app.telegram.router.edit_mission_criteria", _fake_edit)
     send_calls = _patch_send_message(monkeypatch)
     adapter = _FakeAdapter(_intent())
-    session = MagicMock()
+    session = _async_session()
     session.get.return_value = SimpleNamespace(user_id=fake_user.id)
 
     response = await receive_telegram_webhook(
@@ -1185,7 +1399,9 @@ async def test_confirmed_pending_edit_mission_executes_and_clears_step(
 def _patch_missions_by_status(
     monkeypatch: pytest.MonkeyPatch, by_status: dict[MissionStatus, list]
 ) -> None:
-    def _fake_query(session: object, *, user_id: object, status_value: MissionStatus):
+    async def _fake_query(
+        session: object, *, user_id: object, status_value: MissionStatus
+    ):
         return by_status.get(status_value, [])
 
     monkeypatch.setattr("app.telegram.router._query_missions_by_status", _fake_query)
@@ -1241,7 +1457,7 @@ async def test_editar_missao_with_one_paused_mission_shows_main_menu(
     _patch_user(monkeypatch, fake_user)
     _patch_missions_by_status(monkeypatch, {MissionStatus.PAUSED: [mission]})
 
-    send_calls = await _send_editar_missao(monkeypatch, MagicMock())
+    send_calls = await _send_editar_missao(monkeypatch, _async_session())
 
     assert fake_user.pending_intent == {
         "kind": "await_edit_menu_choice",
@@ -1272,7 +1488,7 @@ async def test_editar_missao_with_multiple_paused_missions_asks_which_one(
     _patch_user(monkeypatch, fake_user)
     _patch_missions_by_status(monkeypatch, {MissionStatus.PAUSED: [first, second]})
 
-    send_calls = await _send_editar_missao(monkeypatch, MagicMock())
+    send_calls = await _send_editar_missao(monkeypatch, _async_session())
 
     assert fake_user.pending_intent == {
         "kind": "await_edit_paused_choice",
@@ -1298,7 +1514,7 @@ async def test_editar_missao_with_no_paused_but_one_active_offers_pause(
         monkeypatch, {MissionStatus.PAUSED: [], MissionStatus.ACTIVE: [mission]}
     )
 
-    send_calls = await _send_editar_missao(monkeypatch, MagicMock())
+    send_calls = await _send_editar_missao(monkeypatch, _async_session())
 
     assert fake_user.pending_intent == {
         "kind": "pause_for_edit",
@@ -1325,7 +1541,7 @@ async def test_editar_missao_with_no_paused_and_multiple_active_asks_which_one(
         monkeypatch, {MissionStatus.PAUSED: [], MissionStatus.ACTIVE: [first, second]}
     )
 
-    send_calls = await _send_editar_missao(monkeypatch, MagicMock())
+    send_calls = await _send_editar_missao(monkeypatch, _async_session())
 
     assert fake_user.pending_intent["kind"] == "await_edit_active_choice"
     assert "ssd nvme" in send_calls[0][1]
@@ -1342,7 +1558,7 @@ async def test_editar_missao_with_no_missions_says_nothing_to_edit(
         monkeypatch, {MissionStatus.PAUSED: [], MissionStatus.ACTIVE: []}
     )
 
-    send_calls = await _send_editar_missao(monkeypatch, MagicMock())
+    send_calls = await _send_editar_missao(monkeypatch, _async_session())
 
     assert fake_user.pending_intent is None
     assert "pausada ou ativa" in send_calls[0][1]
@@ -1370,7 +1586,7 @@ async def test_mission_choice_answer_advances_to_menu_for_paused(
         x_telegram_bot_api_secret_token="correct-secret",
         adapters=_adapters(adapter),  # type: ignore[arg-type]
         settings=_settings(),
-        session=MagicMock(),
+        session=_async_session(),
     )
 
     assert adapter.calls == []
@@ -1405,7 +1621,7 @@ async def test_mission_choice_answer_advances_to_pause_offer_for_active(
         x_telegram_bot_api_secret_token="correct-secret",
         adapters=_adapters(adapter),  # type: ignore[arg-type]
         settings=_settings(),
-        session=MagicMock(),
+        session=_async_session(),
     )
 
     assert fake_user.pending_intent == {
@@ -1437,7 +1653,7 @@ async def test_mission_choice_invalid_answer_retries(
         x_telegram_bot_api_secret_token="correct-secret",
         adapters=_adapters(adapter),  # type: ignore[arg-type]
         settings=_settings(),
-        session=MagicMock(),
+        session=_async_session(),
     )
 
     assert fake_user.pending_intent == pending
@@ -1458,9 +1674,13 @@ async def test_edit_menu_choice_lojas_shows_lojas_submenu(
         }
     )
     _patch_user(monkeypatch, fake_user)
+
+    async def _fake_source_codes(session: object, mid: object) -> tuple[str, ...]:
+        return ("pichau",)
+
     monkeypatch.setattr(
         "app.telegram.router._query_mission_source_codes",
-        lambda session, mid: ("pichau",),
+        _fake_source_codes,
     )
     adapter = _FakeAdapter(_intent())
     send_calls = _patch_send_message(monkeypatch)
@@ -1470,7 +1690,7 @@ async def test_edit_menu_choice_lojas_shows_lojas_submenu(
         x_telegram_bot_api_secret_token="correct-secret",
         adapters=_adapters(adapter),  # type: ignore[arg-type]
         settings=_settings(),
-        session=MagicMock(),
+        session=_async_session(),
     )
 
     assert fake_user.pending_intent == {
@@ -1499,7 +1719,7 @@ async def test_edit_menu_choice_preco_shows_price_prompt(
         }
     )
     _patch_user(monkeypatch, fake_user)
-    session = MagicMock()
+    session = _async_session()
     session.scalar.return_value = SimpleNamespace(
         target_amount=Decimal("500.00"), target_currency="BRL"
     )
@@ -1545,7 +1765,7 @@ async def test_edit_menu_choice_invalid_retries(
         x_telegram_bot_api_secret_token="correct-secret",
         adapters=_adapters(adapter),  # type: ignore[arg-type]
         settings=_settings(),
-        session=MagicMock(),
+        session=_async_session(),
     )
 
     assert fake_user.pending_intent == pending
@@ -1575,7 +1795,7 @@ async def test_lojas_choice_add_shows_missing_stores(
         x_telegram_bot_api_secret_token="correct-secret",
         adapters=_adapters(adapter),  # type: ignore[arg-type]
         settings=_settings(),
-        session=MagicMock(),
+        session=_async_session(),
     )
 
     assert fake_user.pending_intent == {
@@ -1616,7 +1836,7 @@ async def test_lojas_choice_remove_shows_current_stores(
         x_telegram_bot_api_secret_token="correct-secret",
         adapters=_adapters(adapter),  # type: ignore[arg-type]
         settings=_settings(),
-        session=MagicMock(),
+        session=_async_session(),
     )
 
     assert fake_user.pending_intent == {
@@ -1654,7 +1874,7 @@ async def test_lojas_choice_remove_blocked_when_only_one_store(
         x_telegram_bot_api_secret_token="correct-secret",
         adapters=_adapters(adapter),  # type: ignore[arg-type]
         settings=_settings(),
-        session=MagicMock(),
+        session=_async_session(),
     )
 
     assert fake_user.pending_intent is None
@@ -1683,7 +1903,7 @@ async def test_lojas_choice_add_blocked_when_all_stores_already_linked(
         x_telegram_bot_api_secret_token="correct-secret",
         adapters=_adapters(adapter),  # type: ignore[arg-type]
         settings=_settings(),
-        session=MagicMock(),
+        session=_async_session(),
     )
 
     assert fake_user.pending_intent is None
@@ -1714,7 +1934,7 @@ async def test_add_sources_valid_selection_advances_to_edit_mission_confirmation
         x_telegram_bot_api_secret_token="correct-secret",
         adapters=_adapters(adapter),  # type: ignore[arg-type]
         settings=_settings(),
-        session=MagicMock(),
+        session=_async_session(),
     )
 
     assert fake_user.pending_intent == {
@@ -1758,7 +1978,7 @@ async def test_add_sources_invalid_selection_retries(
         x_telegram_bot_api_secret_token="correct-secret",
         adapters=_adapters(adapter),  # type: ignore[arg-type]
         settings=_settings(),
-        session=MagicMock(),
+        session=_async_session(),
     )
 
     assert fake_user.pending_intent == pending
@@ -1789,7 +2009,7 @@ async def test_remove_sources_valid_selection_advances_to_edit_mission_confirmat
         x_telegram_bot_api_secret_token="correct-secret",
         adapters=_adapters(adapter),  # type: ignore[arg-type]
         settings=_settings(),
-        session=MagicMock(),
+        session=_async_session(),
     )
 
     assert fake_user.pending_intent == {
@@ -1831,7 +2051,7 @@ async def test_remove_sources_would_empty_all_keeps_pending_and_asks_again(
         x_telegram_bot_api_secret_token="correct-secret",
         adapters=_adapters(adapter),  # type: ignore[arg-type]
         settings=_settings(),
-        session=MagicMock(),
+        session=_async_session(),
     )
 
     assert fake_user.pending_intent == pending
@@ -1862,7 +2082,7 @@ async def test_target_amount_valid_number_advances_to_edit_mission_confirmation(
         x_telegram_bot_api_secret_token="correct-secret",
         adapters=_adapters(adapter),  # type: ignore[arg-type]
         settings=_settings(),
-        session=MagicMock(),
+        session=_async_session(),
     )
 
     assert fake_user.pending_intent == {
@@ -1907,7 +2127,7 @@ async def test_target_amount_zero_clears_target(
         x_telegram_bot_api_secret_token="correct-secret",
         adapters=_adapters(adapter),  # type: ignore[arg-type]
         settings=_settings(),
-        session=MagicMock(),
+        session=_async_session(),
     )
 
     assert fake_user.pending_intent["changes_target"] is True
@@ -1939,7 +2159,7 @@ async def test_target_amount_accepts_comma_decimal(
         x_telegram_bot_api_secret_token="correct-secret",
         adapters=_adapters(adapter),  # type: ignore[arg-type]
         settings=_settings(),
-        session=MagicMock(),
+        session=_async_session(),
     )
 
     assert fake_user.pending_intent["target_amount"] == "300.50"
@@ -1966,7 +2186,7 @@ async def test_target_amount_invalid_retries(monkeypatch: pytest.MonkeyPatch) ->
         x_telegram_bot_api_secret_token="correct-secret",
         adapters=_adapters(adapter),  # type: ignore[arg-type]
         settings=_settings(),
-        session=MagicMock(),
+        session=_async_session(),
     )
 
     assert fake_user.pending_intent == pending
@@ -1981,7 +2201,7 @@ async def test_unknown_role_is_denied_without_functional_side_effects(
     _patch_user(monkeypatch, fake_user)
     send_calls = _patch_send_message(monkeypatch)
     adapter = _FakeAdapter(_intent(kind=IntentKind.QUERY_MISSION))
-    session = MagicMock()
+    session = _async_session()
 
     response = await receive_telegram_webhook(
         update=_update(),
@@ -2021,7 +2241,7 @@ async def test_forged_pending_mission_keeps_state_and_is_denied(
     _patch_resolve_answer(monkeypatch, True)
     send_calls = _patch_send_message(monkeypatch)
     adapter = _FakeAdapter(_intent())
-    session = MagicMock()
+    session = _async_session()
     session.get.return_value = SimpleNamespace(user_id=uuid4())
 
     response = await receive_telegram_webhook(
@@ -2056,7 +2276,7 @@ async def test_unknown_intent_replies_asking_to_rephrase(
         x_telegram_bot_api_secret_token="correct-secret",
         adapters=_adapters(adapter),  # type: ignore[arg-type]
         settings=_settings(),
-        session=MagicMock(),
+        session=_async_session(),
     )
 
     assert response.status_code == 204
@@ -2074,7 +2294,7 @@ async def test_mission_reference_error_at_staging_is_replied_without_pending_int
 
     _patch_user(monkeypatch, fake_user)
 
-    def _raise(*args: object, **kwargs: object) -> object:
+    async def _raise(*args: object, **kwargs: object) -> object:
         raise error
 
     monkeypatch.setattr("app.telegram.router.resolve_mission_for_command", _raise)
@@ -2088,7 +2308,7 @@ async def test_mission_reference_error_at_staging_is_replied_without_pending_int
         x_telegram_bot_api_secret_token="correct-secret",
         adapters=_adapters(adapter),  # type: ignore[arg-type]
         settings=_settings(),
-        session=MagicMock(),
+        session=_async_session(),
     )
 
     assert response.status_code == 204
@@ -2114,10 +2334,12 @@ async def test_known_error_at_confirmed_execution_is_replied_and_clears_pending(
     _patch_user(monkeypatch, fake_user)
     _patch_resolve_answer(monkeypatch, True)
 
-    def _raise(*args: object, **kwargs: object) -> object:
+    async def _raise(*args: object, **kwargs: object) -> object:
         raise error
 
-    monkeypatch.setattr("app.telegram.router.create_mission_from_criteria", _raise)
+    monkeypatch.setattr(
+        "app.telegram.router.create_mission_from_criteria_async", _raise
+    )
     send_calls = _patch_send_message(monkeypatch)
     adapter = _FakeAdapter(_intent())
 
@@ -2133,7 +2355,7 @@ async def test_known_error_at_confirmed_execution_is_replied_and_clears_pending(
         x_telegram_bot_api_secret_token="correct-secret",
         adapters=_adapters(adapter),  # type: ignore[arg-type]
         settings=_settings(),
-        session=MagicMock(),
+        session=_async_session(),
     )
 
     assert response.status_code == 204
@@ -2157,10 +2379,12 @@ async def test_unexpected_error_at_confirmed_execution_is_not_masked_and_propaga
     _patch_user(monkeypatch, fake_user)
     _patch_resolve_answer(monkeypatch, True)
 
-    def _raise(*args: object, **kwargs: object) -> object:
+    async def _raise(*args: object, **kwargs: object) -> object:
         raise MissionCreationError("stores not seeded for codes: pichau")
 
-    monkeypatch.setattr("app.telegram.router.create_mission_from_criteria", _raise)
+    monkeypatch.setattr(
+        "app.telegram.router.create_mission_from_criteria_async", _raise
+    )
     adapter = _FakeAdapter(_intent())
 
     with pytest.raises(MissionCreationError):
@@ -2176,7 +2400,7 @@ async def test_unexpected_error_at_confirmed_execution_is_not_masked_and_propaga
             x_telegram_bot_api_secret_token="correct-secret",
             adapters=_adapters(adapter),  # type: ignore[arg-type]
             settings=_settings(),
-            session=MagicMock(),
+            session=_async_session(),
         )
 
 
@@ -2187,7 +2411,9 @@ async def test_cadastro_command_starts_registration_without_calling_ai(
     fake_user = _fake_user()
     _patch_user(monkeypatch, fake_user)
     send_calls = _patch_send_message(monkeypatch)
-    monkeypatch.setattr("app.telegram.router.has_active_session", lambda *a, **k: False)
+    monkeypatch.setattr(
+        "app.telegram.router.has_active_session_async", AsyncMock(return_value=False)
+    )
     adapter = _FakeAdapter(_intent())
 
     response = await receive_telegram_webhook(
@@ -2202,7 +2428,7 @@ async def test_cadastro_command_starts_registration_without_calling_ai(
         x_telegram_bot_api_secret_token="correct-secret",
         adapters=_adapters(adapter),  # type: ignore[arg-type]
         settings=_settings(),
-        session=MagicMock(),
+        session=_async_session(),
     )
 
     assert response.status_code == 204
@@ -2223,7 +2449,9 @@ async def test_cadastro_command_blocked_when_already_authenticated(
     fake_user.preferred_categories = ["hardware"]
     _patch_user(monkeypatch, fake_user)
     send_calls = _patch_send_message(monkeypatch)
-    monkeypatch.setattr("app.telegram.router.has_active_session", lambda *a, **k: True)
+    monkeypatch.setattr(
+        "app.telegram.router.has_active_session_async", AsyncMock(return_value=True)
+    )
     adapter = _FakeAdapter(_intent())
 
     response = await receive_telegram_webhook(
@@ -2238,7 +2466,7 @@ async def test_cadastro_command_blocked_when_already_authenticated(
         x_telegram_bot_api_secret_token="correct-secret",
         adapters=_adapters(adapter),  # type: ignore[arg-type]
         settings=_settings(),
-        session=MagicMock(),
+        session=_async_session(),
     )
 
     assert response.status_code == 204
@@ -2265,7 +2493,9 @@ async def test_cadastro_command_blocked_when_already_registered_without_session(
     fake_user.preferred_categories = ["hardware"]
     _patch_user(monkeypatch, fake_user)
     send_calls = _patch_send_message(monkeypatch)
-    monkeypatch.setattr("app.telegram.router.has_active_session", lambda *a, **k: False)
+    monkeypatch.setattr(
+        "app.telegram.router.has_active_session_async", AsyncMock(return_value=False)
+    )
     adapter = _FakeAdapter(_intent())
 
     response = await receive_telegram_webhook(
@@ -2280,7 +2510,7 @@ async def test_cadastro_command_blocked_when_already_registered_without_session(
         x_telegram_bot_api_secret_token="correct-secret",
         adapters=_adapters(adapter),  # type: ignore[arg-type]
         settings=_settings(),
-        session=MagicMock(),
+        session=_async_session(),
     )
 
     assert response.status_code == 204
@@ -2306,7 +2536,9 @@ async def test_cadastro_command_resumes_in_progress_registration_without_session
     fake_user.username = "joaosilva"
     _patch_user(monkeypatch, fake_user)
     send_calls = _patch_send_message(monkeypatch)
-    monkeypatch.setattr("app.telegram.router.has_active_session", lambda *a, **k: False)
+    monkeypatch.setattr(
+        "app.telegram.router.has_active_session_async", AsyncMock(return_value=False)
+    )
     adapter = _FakeAdapter(_intent())
 
     response = await receive_telegram_webhook(
@@ -2321,7 +2553,7 @@ async def test_cadastro_command_resumes_in_progress_registration_without_session
         x_telegram_bot_api_secret_token="correct-secret",
         adapters=_adapters(adapter),  # type: ignore[arg-type]
         settings=_settings(),
-        session=MagicMock(),
+        session=_async_session(),
     )
 
     assert response.status_code == 204
@@ -2338,7 +2570,7 @@ async def test_registration_in_progress_consumes_reply_without_calling_ai(
     _patch_user(monkeypatch, fake_user)
     send_calls = _patch_send_message(monkeypatch)
     adapter = _FakeAdapter(_intent())
-    session = MagicMock()
+    session = _async_session()
     session.scalar.return_value = None  # nenhum outro usuário com esse username
 
     response = await receive_telegram_webhook(
@@ -2372,7 +2604,7 @@ async def test_registration_rejects_username_already_taken_by_another_account(
     _patch_user(monkeypatch, fake_user)
     send_calls = _patch_send_message(monkeypatch)
     adapter = _FakeAdapter(_intent())
-    session = MagicMock()
+    session = _async_session()
     session.scalar.return_value = uuid4()  # outro usuário já tem esse username
 
     response = await receive_telegram_webhook(
@@ -2404,17 +2636,21 @@ async def test_registration_full_flow_completes_and_clears_step(
     fake_user = _fake_user()
     _patch_user(monkeypatch, fake_user)
     send_calls = _patch_send_message(monkeypatch)
-    monkeypatch.setattr("app.telegram.router.has_active_session", lambda *a, **k: False)
+    monkeypatch.setattr(
+        "app.telegram.router.has_active_session_async", AsyncMock(return_value=False)
+    )
     adapter = _FakeAdapter(_intent())
     adapters = _adapters(adapter)
     monkeypatch.setattr(
-        "app.telegram.router.issue_action_link",
-        lambda *args, **kwargs: SimpleNamespace(
-            url="https://auth.example.test/auth#set_password:opaque",
-            expires_at=datetime.now(UTC),
+        "app.telegram.router.issue_action_link_async",
+        AsyncMock(
+            return_value=SimpleNamespace(
+                url="https://auth.example.test/auth#set_password:opaque",
+                expires_at=datetime.now(UTC),
+            )
         ),
     )
-    session = MagicMock()
+    session = _async_session()
     session.scalar.return_value = None  # nenhum outro usuário com esse username
 
     answers = ["joaosilva", "pular", "pichau, kabum", "8, 1"]
@@ -2467,7 +2703,7 @@ async def test_upgrade_command_replies_statically_without_calling_ai(
         x_telegram_bot_api_secret_token="correct-secret",
         adapters=_adapters(adapter),  # type: ignore[arg-type]
         settings=_settings(),
-        session=MagicMock(),
+        session=_async_session(),
     )
 
     assert response.status_code == 204
@@ -2496,7 +2732,7 @@ async def test_preferences_command_queries_without_calling_ai(
         x_telegram_bot_api_secret_token="correct-secret",
         adapters=_adapters(adapter),  # type: ignore[arg-type]
         settings=_settings(),
-        session=MagicMock(),
+        session=_async_session(),
     )
 
     assert response.status_code == 204
@@ -2526,7 +2762,7 @@ async def test_preferences_command_disables_only_requested_alert(
         x_telegram_bot_api_secret_token="correct-secret",
         adapters=_adapters(adapter),  # type: ignore[arg-type]
         settings=_settings(),
-        session=MagicMock(),
+        session=_async_session(),
     )
 
     assert adapter.calls == []
@@ -2555,7 +2791,7 @@ async def test_private_webhook_message_remembers_notification_chat(
         x_telegram_bot_api_secret_token="correct-secret",
         adapters=_adapters(adapter),  # type: ignore[arg-type]
         settings=_settings(),
-        session=MagicMock(),
+        session=_async_session(),
     )
 
     assert response.status_code == 204
@@ -2569,7 +2805,9 @@ async def test_start_remains_available_without_password_session(
     fake_user = _fake_user()
     _patch_user(monkeypatch, fake_user)
     sends = _patch_send_message(monkeypatch)
-    monkeypatch.setattr("app.telegram.router.has_active_session", lambda *a, **k: False)
+    monkeypatch.setattr(
+        "app.telegram.router.has_active_session_async", AsyncMock(return_value=False)
+    )
     adapter = _FakeAdapter(_intent(kind=IntentKind.UNKNOWN))
 
     response = await receive_telegram_webhook(
@@ -2584,7 +2822,7 @@ async def test_start_remains_available_without_password_session(
         x_telegram_bot_api_secret_token="correct-secret",
         adapters=_adapters(adapter),  # type: ignore[arg-type]
         settings=_settings(),
-        session=MagicMock(),
+        session=_async_session(),
     )
 
     assert response.status_code == 204
@@ -2599,7 +2837,9 @@ async def test_sensitive_message_is_blocked_without_password_session(
     fake_user = _fake_user()
     _patch_user(monkeypatch, fake_user)
     sends = _patch_send_message(monkeypatch)
-    monkeypatch.setattr("app.telegram.router.has_active_session", lambda *a, **k: False)
+    monkeypatch.setattr(
+        "app.telegram.router.has_active_session_async", AsyncMock(return_value=False)
+    )
     adapter = _FakeAdapter(_intent())
 
     await receive_telegram_webhook(
@@ -2607,7 +2847,7 @@ async def test_sensitive_message_is_blocked_without_password_session(
         x_telegram_bot_api_secret_token="correct-secret",
         adapters=_adapters(adapter),  # type: ignore[arg-type]
         settings=_settings(),
-        session=MagicMock(),
+        session=_async_session(),
     )
 
     assert "sessão não está ativa" in sends[0][1].lower()
@@ -2624,14 +2864,14 @@ async def test_login_command_issues_server_bound_link(
     sends = _patch_send_message(monkeypatch)
     calls: list[dict] = []
 
-    def issue(*args: object, **kwargs: object) -> SimpleNamespace:
+    async def issue(*args: object, **kwargs: object) -> SimpleNamespace:
         calls.append(kwargs)
         return SimpleNamespace(
             url="https://auth.example.test/auth#login:opaque",
             expires_at=datetime.now(UTC),
         )
 
-    monkeypatch.setattr("app.telegram.router.issue_action_link", issue)
+    monkeypatch.setattr("app.telegram.router.issue_action_link_async", issue)
     adapter = _FakeAdapter(_intent(kind=IntentKind.UNKNOWN))
 
     await receive_telegram_webhook(
@@ -2646,7 +2886,7 @@ async def test_login_command_issues_server_bound_link(
         x_telegram_bot_api_secret_token="correct-secret",
         adapters=_adapters(adapter),  # type: ignore[arg-type]
         settings=_settings(auth_public_base_url="https://auth.example.test"),
-        session=MagicMock(),
+        session=_async_session(),
     )
 
     assert calls[0]["user"] is fake_user
@@ -2662,12 +2902,15 @@ async def test_logout_revokes_active_session(
     fake_user = _fake_user()
     _patch_user(monkeypatch, fake_user)
     sends = _patch_send_message(monkeypatch)
-    monkeypatch.setattr("app.telegram.router.has_active_session", lambda *a, **k: True)
-    logout_calls: list[object] = []
     monkeypatch.setattr(
-        "app.telegram.router.logout",
-        lambda session, *, user: logout_calls.append(user),
+        "app.telegram.router.has_active_session_async", AsyncMock(return_value=True)
     )
+    logout_calls: list[object] = []
+
+    async def _fake_logout(session: object, *, user: object) -> None:
+        logout_calls.append(user)
+
+    monkeypatch.setattr("app.telegram.router.logout_async", _fake_logout)
     adapter = _FakeAdapter(_intent(kind=IntentKind.UNKNOWN))
 
     await receive_telegram_webhook(
@@ -2682,7 +2925,7 @@ async def test_logout_revokes_active_session(
         x_telegram_bot_api_secret_token="correct-secret",
         adapters=_adapters(adapter),  # type: ignore[arg-type]
         settings=_settings(),
-        session=MagicMock(),
+        session=_async_session(),
     )
 
     assert logout_calls == [fake_user]

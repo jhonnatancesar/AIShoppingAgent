@@ -21,8 +21,8 @@ from app.collection.errors import ProviderBlockedError
 from app.collection.models import CollectionRun, CollectionRunStatus, PriceObservation
 from app.collection.orchestration import CollectionOrchestrator, claim_due_collections
 from app.database.session import (
-    create_async_database_engine,
     create_async_session_factory,
+    create_collection_async_database_engine,
 )
 from app.events import Event, EventType
 from app.missions.models import (
@@ -360,7 +360,9 @@ def test_concurrent_claimers_never_duplicate_a_source(integration_database) -> N
         # SKIP LOCKED` precisa resolver corretamente -- igual a dois
         # processos de worker reais fariam.
         async def _claim_async() -> tuple:
-            engine = create_async_database_engine(integration_database.settings)
+            engine = create_collection_async_database_engine(
+                integration_database.settings
+            )
             sessions = create_async_session_factory(engine)
             try:
                 async with sessions() as session, session.begin():
@@ -1158,7 +1160,9 @@ def test_two_worker_processes_do_not_corrupt_or_duplicate_mission_state(
 
     def run_worker_instance(provider) -> None:
         async def _run():
-            engine = create_async_database_engine(integration_database.settings)
+            engine = create_collection_async_database_engine(
+                integration_database.settings
+            )
             sessions = create_async_session_factory(engine)
             orchestrator = CollectionOrchestrator(
                 sessions,

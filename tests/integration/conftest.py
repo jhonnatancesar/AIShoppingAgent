@@ -11,8 +11,8 @@ import psycopg
 import pytest
 from app.core.config import Settings, get_settings
 from app.database.session import (
-    create_async_database_engine,
     create_async_session_factory,
+    create_collection_async_database_engine,
     create_database_engine,
     create_session_factory,
 )
@@ -112,7 +112,7 @@ def integration_database(
     settings = Settings(_env_file=None)
     engine = create_database_engine(settings)
     sessions = create_session_factory(engine)
-    async_engine = create_async_database_engine(settings)
+    async_engine = create_collection_async_database_engine(settings)
     async_sessions = create_async_session_factory(async_engine)
 
     try:

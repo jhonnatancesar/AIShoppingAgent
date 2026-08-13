@@ -76,6 +76,33 @@ class Settings(BaseSettings):
     # sempre, mesmo diante de um bug futuro não coberto pelos timeouts
     # específicos (navegação, HTTP, IA, banco) já existentes.
     collection_claim_deadline_seconds: float = Field(default=300.0, gt=0, le=1800)
+    # Extensão da TASK-079: mesmos airbags de banco, agora para a conexão
+    # assíncrona dedicada ao webhook Telegram/API -- não alteram
+    # postgresql.conf nem outros serviços. A seção crítica deste caminho é
+    # pequena (dedupe/resolução de usuário/reserva, ou revalidação/persistência),
+    # por isso os limites são mais curtos que os do collection_worker.
+    telegram_lock_timeout_seconds: float = Field(default=5.0, gt=0, le=30)
+    telegram_statement_timeout_seconds: float = Field(default=10.0, gt=0, le=60)
+    telegram_idle_in_transaction_timeout_seconds: float = Field(
+        default=5.0, gt=0, le=30
+    )
+    # Extensão da TASK-079: teto de tempo para o processamento inteiro de um
+    # update do Telegram (fase A + IA fora de transação + fase C + envio da
+    # resposta). Calculado a partir do pior caso real, não arbitrário:
+    #   Fase A + Fase C (banco, 2 seções curtas):
+    #       2 x telegram_statement_timeout_seconds (10s)      = 20s
+    #   Fase B (IA, cascata Gemini -> Groq, sem espera entre
+    #       tiers -- AdminDevAIProviderManager não faz backoff
+    #       entre provedores, só tenta o próximo):
+    #       2 x external_http_timeout_seconds (10s)           = 20s
+    #   Fase D (envio Telegram, tentativa única via
+    #       asyncio.to_thread, sem retry interno):
+    #       1 x external_http_timeout_seconds (10s)           = 10s
+    #   Núcleo: 20s + 20s + 10s = 50s
+    #   Margem operacional (~80%, contenção de pool/scheduling
+    #       sob carga): ~40s
+    #   Total: 90s
+    telegram_message_deadline_seconds: float = Field(default=90.0, gt=0, le=300)
     max_request_body_bytes: int = Field(default=65_536, ge=1024, le=1_048_576)
     telegram_rate_limit_per_minute: int = Field(default=20, ge=1, le=1000)
     external_http_timeout_seconds: float = Field(default=10.0, gt=0, le=60)

@@ -1,8 +1,14 @@
-"""Política RBAC fail-closed da V1, separada da autenticação do canal."""
+"""Política RBAC fail-closed da V1, separada da autenticação do canal.
+
+Aceita `Session` ou `AsyncSession` (extensão da TASK-079): estas funções só
+chamam `session.add`, que não faz I/O nem precisa de `await` em nenhum dos
+dois tipos -- por isso não há (nem é necessária) uma versão `_async`
+separada."""
 
 from enum import StrEnum
 from uuid import UUID
 
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
 from app.audit.models import AuditEntry
@@ -86,7 +92,7 @@ def permissions_for_role(role: object) -> frozenset[Permission]:
 
 
 def authorize(
-    session: Session,
+    session: Session | AsyncSession,
     user: User,
     permission: Permission,
     *,
@@ -125,7 +131,7 @@ def authorize(
 
 
 def deny_resource_unavailable(
-    session: Session,
+    session: Session | AsyncSession,
     user: User,
     permission: Permission,
     *,
@@ -143,7 +149,7 @@ def deny_resource_unavailable(
     )
 
 
-def ai_profile_for_user(session: Session, user: User) -> UserRole:
+def ai_profile_for_user(session: Session | AsyncSession, user: User) -> UserRole:
     """Seleciona o perfil interno exclusivamente a partir do papel persistido."""
     role = getattr(user, "role", None)
     permission_by_role = {
@@ -159,7 +165,7 @@ def ai_profile_for_user(session: Session, user: User) -> UserRole:
 
 
 def _deny(
-    session: Session,
+    session: Session | AsyncSession,
     user: User,
     permission: Permission,
     reason: AuthorizationDenialReason,

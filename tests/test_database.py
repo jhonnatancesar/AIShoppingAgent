@@ -7,12 +7,14 @@ from app.core.config import Settings
 from app.database.base import Base
 from app.database.session import (
     DatabaseConfigurationError,
-    _collection_connect_options,
+    _connect_options,
     build_database_url,
     create_async_database_engine,
     create_async_session_factory,
+    create_collection_async_database_engine,
     create_database_engine,
     create_session_factory,
+    create_telegram_async_database_engine,
 )
 from sqlalchemy import Engine
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -76,33 +78,58 @@ def test_async_engine_and_session_factory_are_built_without_connecting() -> None
     asyncio.run(engine.dispose())
 
 
-def test_async_engine_connect_options_apply_configured_timeouts() -> None:
-    """TASK-079: os airbags de timeout só valem para a conexão dedicada do
-    `collection_worker` (via `options` libpq), nunca `postgresql.conf`
-    global."""
-    settings = Settings(
-        database_password="local-password",
-        collection_lock_timeout_seconds=5.0,
-        collection_statement_timeout_seconds=7.5,
-        collection_idle_in_transaction_timeout_seconds=3.0,
-        _env_file=None,
+def test_connect_options_applies_given_timeouts() -> None:
+    """Os airbags de timeout são específicos de cada engine dedicado (via
+    `options` libpq), nunca `postgresql.conf` global."""
+    options = _connect_options(
+        lock_timeout_seconds=5.0,
+        statement_timeout_seconds=7.5,
+        idle_in_transaction_timeout_seconds=3.0,
     )
-
-    options = _collection_connect_options(settings)
 
     assert "lock_timeout=5000" in options
     assert "statement_timeout=7500" in options
     assert "idle_in_transaction_session_timeout=3000" in options
 
 
-def test_async_engine_uses_default_timeout_settings() -> None:
+def test_async_database_engine_requires_all_three_timeouts_together() -> None:
     settings = Settings(database_password="local-password", _env_file=None)
 
-    options = _collection_connect_options(settings)
+    with pytest.raises(ValueError, match="devem ser fornecidos juntos"):
+        create_async_database_engine(settings, lock_timeout_seconds=5.0)
 
+
+def _connect_options_from_engine(engine: AsyncEngine) -> str:
+    """Os `connect_args` do psycopg async ficam presos no closure da função
+    `connect` fabricada internamente pelo SQLAlchemy -- não há um atributo
+    público equivalente ao `.func.keywords` de um `functools.partial`."""
+    creator = engine.sync_engine.pool._creator
+    cells = dict(zip(creator.__code__.co_freevars, creator.__closure__))
+    return cells["cparams"].cell_contents["options"]
+
+
+def test_collection_async_engine_uses_default_timeout_settings() -> None:
+    settings = Settings(database_password="local-password", _env_file=None)
+
+    engine = create_collection_async_database_engine(settings)
+
+    options = _connect_options_from_engine(engine)
     assert "lock_timeout=10000" in options
     assert "statement_timeout=15000" in options
     assert "idle_in_transaction_session_timeout=10000" in options
+    asyncio.run(engine.dispose())
+
+
+def test_telegram_async_engine_uses_default_timeout_settings() -> None:
+    settings = Settings(database_password="local-password", _env_file=None)
+
+    engine = create_telegram_async_database_engine(settings)
+
+    options = _connect_options_from_engine(engine)
+    assert "lock_timeout=5000" in options
+    assert "statement_timeout=10000" in options
+    assert "idle_in_transaction_session_timeout=5000" in options
+    asyncio.run(engine.dispose())
 
 
 def test_metadata_contains_only_implemented_tables() -> None:

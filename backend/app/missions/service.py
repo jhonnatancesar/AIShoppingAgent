@@ -1,4 +1,11 @@
-"""Execução atômica do ciclo de vida persistente de missões."""
+"""Execução atômica do ciclo de vida persistente de missões.
+
+`transition_mission`/`create_mission_from_criteria` têm uma versão síncrona
+(mantida para `scripts/validate_collection_worker.py`) e uma versão
+`_async` (extensão da TASK-079, usada pelo webhook Telegram) -- as duas
+compartilham exatamente a mesma lógica de validação, só divergindo nos
+pontos de I/O (`await`). `edit_mission_criteria` só tem chamador no webhook,
+por isso foi convertida diretamente, sem versão síncrona."""
 
 from collections.abc import Sequence
 from datetime import datetime
@@ -6,6 +13,7 @@ from decimal import Decimal
 from uuid import UUID, uuid4
 
 from sqlalchemy import delete, select
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
 from app.database.time import utc_now
@@ -151,6 +159,89 @@ def transition_mission(
     return transition
 
 
+async def transition_mission_async(
+    session: AsyncSession,
+    *,
+    mission_id: UUID,
+    command: MissionCommand,
+    expected_state_version: int,
+    actor_type: str,
+    actor_id: UUID | None = None,
+    reason: str | None = None,
+    transitioned_at: datetime | None = None,
+) -> MissionTransition:
+    """Equivalente assíncrono de `transition_mission` (extensão da
+    TASK-079). Usado pelo webhook Telegram; `scripts/validate_collection_worker.py`
+    continua na versão síncrona."""
+    if not actor_type.strip() or len(actor_type) > 32:
+        raise ValueError("actor_type deve conter entre 1 e 32 caracteres.")
+    if reason is not None and not reason.strip():
+        raise ValueError("reason não pode ser vazio.")
+    if expected_state_version < 0:
+        raise ValueError("expected_state_version não pode ser negativo.")
+
+    accepted_at = transitioned_at or utc_now()
+    if accepted_at.tzinfo is None or accepted_at.utcoffset() is None:
+        raise ValueError("transitioned_at deve possuir fuso horário.")
+
+    mission = await session.scalar(
+        select(Mission).where(Mission.id == mission_id).with_for_update()
+    )
+    if mission is None:
+        raise MissionNotFoundError("Missão não encontrada.")
+    if mission.state_version != expected_state_version:
+        raise MissionVersionConflictError("Versão de estado desatualizada.")
+
+    try:
+        next_status = TRANSITIONS[(mission.status, command)]
+    except KeyError as error:
+        raise InvalidMissionTransitionError(
+            f"Comando {command.value} inválido para o estado {mission.status.value}."
+        ) from error
+
+    if command in {MissionCommand.ACTIVATE, MissionCommand.RESUME}:
+        criteria_id = await session.scalar(
+            select(MissionCriteria.id).where(MissionCriteria.mission_id == mission.id)
+        )
+        if criteria_id is None:
+            raise MissionTransitionConditionError(
+                "A missão precisa de critérios válidos para ser ativada."
+            )
+        source_id = await session.scalar(
+            select(MissionSource.store_id).where(MissionSource.mission_id == mission.id)
+        )
+        if source_id is None:
+            raise MissionTransitionConditionError(
+                "A missão precisa de ao menos uma fonte selecionada."
+            )
+    if command is MissionCommand.RESUME and _deadline_reached(mission, accepted_at):
+        raise MissionTransitionConditionError(
+            "Uma missão expirada não pode ser retomada."
+        )
+    if command is MissionCommand.EXPIRE and not _deadline_reached(mission, accepted_at):
+        raise MissionTransitionConditionError(
+            "A missão só pode expirar depois de alcançar seu prazo."
+        )
+
+    previous_status = mission.status
+    mission.status = next_status
+    mission.state_version += 1
+    mission.updated_at = accepted_at
+    transition = MissionTransition(
+        mission_id=mission.id,
+        from_status=previous_status,
+        to_status=next_status,
+        command=command,
+        actor_type=actor_type,
+        actor_id=actor_id,
+        reason=reason,
+        transitioned_at=accepted_at,
+    )
+    session.add(transition)
+    await session.flush()
+    return transition
+
+
 def _deadline_reached(mission: Mission, accepted_at: datetime) -> bool:
     return mission.expires_at is not None and accepted_at >= mission.expires_at
 
@@ -245,8 +336,94 @@ def create_mission_from_criteria(
     return mission, effective_codes
 
 
-def edit_mission_criteria(
-    session: Session,
+async def create_mission_from_criteria_async(
+    session: AsyncSession,
+    *,
+    user_id: UUID,
+    search_query: str,
+    model: str | None = None,
+    target_amount: Decimal | None,
+    target_currency: str | None,
+    source_codes: Sequence[str],
+    requested_at: datetime,
+    schedule_interval_minutes: int = _DEFAULT_SCHEDULE_INTERVAL_MINUTES,
+    schedule_stagger_seconds: int = _DEFAULT_SCHEDULE_STAGGER_SECONDS,
+) -> tuple[Mission, tuple[str, ...]]:
+    """Equivalente assíncrono de `create_mission_from_criteria` (extensão
+    da TASK-079). Usado pelo webhook Telegram; `scripts/validate_collection_worker.py`
+    continua na versão síncrona."""
+    effective_codes = tuple(source_codes) or _DEFAULT_V1_SOURCE_CODES
+    if schedule_interval_minutes <= 0:
+        raise ValueError("schedule_interval_minutes deve ser positivo.")
+
+    mission = Mission(
+        id=uuid4(),
+        user_id=user_id,
+        title=search_query[:200],
+        status=MissionStatus.DRAFT,
+        state_version=0,
+        created_at=requested_at,
+        updated_at=requested_at,
+    )
+    session.add(mission)
+
+    session.add(
+        MissionCriteria(
+            mission_id=mission.id,
+            search_query=search_query,
+            model=model,
+            target_amount=target_amount,
+            target_currency=target_currency,
+            created_at=requested_at,
+            updated_at=requested_at,
+        )
+    )
+
+    stores_by_code = {
+        store.code: store
+        for store in await session.scalars(
+            select(Store).where(Store.code.in_(effective_codes))
+        )
+    }
+    missing_codes = set(effective_codes) - stores_by_code.keys()
+    if missing_codes:
+        raise MissionCreationError(
+            f"stores not seeded for codes: {', '.join(sorted(missing_codes))}"
+        )
+
+    for code in effective_codes:
+        session.add(
+            MissionSource(mission_id=mission.id, store_id=stores_by_code[code].id)
+        )
+    await session.flush()
+
+    await transition_mission_async(
+        session,
+        mission_id=mission.id,
+        command=MissionCommand.ACTIVATE,
+        expected_state_version=mission.state_version,
+        actor_type="telegram",
+        actor_id=user_id,
+        transitioned_at=requested_at,
+    )
+    session.add(
+        MissionSchedule(
+            mission_id=mission.id,
+            interval_minutes=schedule_interval_minutes,
+            next_run_at=staggered_next_run_at(
+                requested_at, max_stagger_seconds=schedule_stagger_seconds
+            ),
+            is_enabled=True,
+            created_at=requested_at,
+            updated_at=requested_at,
+        )
+    )
+    await session.flush()
+    return mission, effective_codes
+
+
+async def edit_mission_criteria(
+    session: AsyncSession,
     *,
     mission_id: UUID,
     expected_state_version: int,
@@ -287,7 +464,7 @@ def edit_mission_criteria(
     if accepted_at.tzinfo is None or accepted_at.utcoffset() is None:
         raise ValueError("edited_at deve possuir fuso horário.")
 
-    mission = session.scalar(
+    mission = await session.scalar(
         select(Mission).where(Mission.id == mission_id).with_for_update()
     )
     if mission is None:
@@ -300,7 +477,7 @@ def edit_mission_criteria(
         )
 
     if target_update is not None:
-        criteria = session.scalar(
+        criteria = await session.scalar(
             select(MissionCriteria).where(MissionCriteria.mission_id == mission.id)
         )
         if criteria is None:
@@ -314,7 +491,9 @@ def edit_mission_criteria(
         codes = tuple(dict.fromkeys(source_codes))
         stores_by_code = {
             store.code: store
-            for store in session.scalars(select(Store).where(Store.code.in_(codes)))
+            for store in await session.scalars(
+                select(Store).where(Store.code.in_(codes))
+            )
         }
         missing_codes = set(codes) - stores_by_code.keys()
         if missing_codes:
@@ -322,7 +501,7 @@ def edit_mission_criteria(
                 f"Loja(s) não reconhecida(s): {', '.join(sorted(missing_codes))}."
             )
         current_store_ids = set(
-            session.scalars(
+            await session.scalars(
                 select(MissionSource.store_id).where(
                     MissionSource.mission_id == mission.id
                 )
@@ -331,7 +510,7 @@ def edit_mission_criteria(
         target_store_ids = {stores_by_code[code].id for code in codes}
         removed_store_ids = current_store_ids - target_store_ids
         if removed_store_ids:
-            session.execute(
+            await session.execute(
                 delete(MissionSource).where(
                     MissionSource.mission_id == mission.id,
                     MissionSource.store_id.in_(removed_store_ids),
@@ -339,9 +518,9 @@ def edit_mission_criteria(
             )
         for store_id in target_store_ids - current_store_ids:
             session.add(MissionSource(mission_id=mission.id, store_id=store_id))
-        session.flush()
+        await session.flush()
         effective_codes = codes
 
     mission.updated_at = accepted_at
-    session.flush()
+    await session.flush()
     return mission, effective_codes

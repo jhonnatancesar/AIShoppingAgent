@@ -1,9 +1,12 @@
-"""Consultas somente leitura de missões por proprietário."""
+"""Consultas somente leitura de missões por proprietário.
+
+Assíncrono desde a extensão da TASK-079 (webhook Telegram) -- único
+chamador é `app.telegram.router`, então não há versão síncrona a manter."""
 
 from uuid import UUID
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.missions.models import Mission, MissionCriteria, MissionStatus
 
@@ -16,8 +19,8 @@ class MissionReferenceError(ValueError):
     """A referência em texto livre não resolveu para exatamente uma missão."""
 
 
-def list_missions_for_user(
-    session: Session,
+async def list_missions_for_user(
+    session: AsyncSession,
     *,
     user_id: UUID,
     limit: int = 10,
@@ -29,11 +32,11 @@ def list_missions_for_user(
         .order_by(Mission.created_at.desc())
         .limit(limit)
     )
-    return list(session.scalars(statement))
+    return list(await session.scalars(statement))
 
 
-def find_missions_by_reference(
-    session: Session,
+async def find_missions_by_reference(
+    session: AsyncSession,
     *,
     user_id: UUID,
     reference: str,
@@ -53,11 +56,11 @@ def find_missions_by_reference(
         )
         .order_by(Mission.created_at.desc())
     )
-    return list(session.scalars(statement))
+    return list(await session.scalars(statement))
 
 
-def resolve_mission_for_command(
-    session: Session,
+async def resolve_mission_for_command(
+    session: AsyncSession,
     *,
     user_id: UUID,
     reference: str | None,
@@ -70,13 +73,15 @@ def resolve_mission_for_command(
     ambiguidade real, não um detalhe de implementação.
     """
     if reference:
-        candidates = find_missions_by_reference(
+        candidates = await find_missions_by_reference(
             session, user_id=user_id, reference=reference
         )
     else:
         candidates = [
             mission
-            for mission in list_missions_for_user(session, user_id=user_id, limit=50)
+            for mission in await list_missions_for_user(
+                session, user_id=user_id, limit=50
+            )
             if mission.status not in _TERMINAL_STATUSES
         ]
 

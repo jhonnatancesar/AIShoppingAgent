@@ -17,8 +17,8 @@ from app.core.config import Settings
 from app.core.logging import configure_logging
 from app.core.resilience import RetryPolicy
 from app.database.session import (
-    create_async_database_engine,
     create_async_session_factory,
+    create_collection_async_database_engine,
 )
 from app.observability.metrics import (
     mark_worker_started,
@@ -92,7 +92,7 @@ async def run_worker(
     # TASK-079: engine assíncrono dedicado -- nenhuma chamada bloqueante do
     # SQLAlchemy/psycopg roda direto na thread do event loop neste
     # caminho (causa raiz comprovada do autodeadlock; ver docs/tasks/TASK-079.md).
-    engine = create_async_database_engine(settings)
+    engine = create_collection_async_database_engine(settings)
     session_factory = create_async_session_factory(engine)
     orchestrator = CollectionOrchestrator(
         session_factory,
