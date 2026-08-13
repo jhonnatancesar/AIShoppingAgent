@@ -1,10 +1,16 @@
 # TASK-081 — Processos Chromium/Playwright zumbis no `collection_worker`
 
-Status: **Reproduzido ao vivo com evidência fresca (2026-08-13, Etapa 2 da
-rodada de planejamento pós-v1.0.6)** — problema confirmado como ainda
-existente no ambiente atual (Windows Server 2025 + Docker Desktop +
-containers Linux, `v1.0.6`, servidor novo). Não implementada; aguarda
-investigação controlada completa antes de qualquer correção.
+Status: **CONCLUÍDA E VALIDADA EM RUNTIME (2026-08-13)** — `init: true`
+aplicado só no `collection_worker` (`compose.yaml`), comprovado por
+comparação real antes/depois (mesma missão real de 4 fontes: 13 zumbis
+sem a correção → 0 zumbis com ela). Confirmado em runtime após
+aprovação: `collection_worker` `healthy` (`RestartCount=0`), `Init=true`
+só nele (`api`/`telegram_notifier`/`database` com `Init=<nil>`), `PID 1`
+= `docker-init`, contagem de zumbis = `0`. Por instrução explícita do
+usuário, o roteiro exaustivo original (exceção forçada, timeout
+forçado, cancelamento, dois workers, `crashpad_handler`, regressão de
+longa duração) **não foi executado** — ver "Registro de implementação"
+no final deste documento para o que foi e não foi comprovado.
 
 Dependência: nenhuma bloqueante. Relacionada à `TASK-079` (onde os
 zumbis foram observados pela primeira vez, como hipótese inicial depois
@@ -183,3 +189,73 @@ zero no `collection_worker`, ou a correção não está completa.
 
 Nenhum esperado — problema de orquestração de processos/container, não
 de schema.
+
+## Registro de implementação (2026-08-13)
+
+**Baseline** (container novo, pós-recriação da validação da TASK-080):
+0 processos Chromium, 0 zumbis.
+
+**Reprodução (sem correção)**: missão real de 4 fontes (`RTX 4060`,
+via `backend/scripts/validate_collection_worker.py seed`, script já
+existente) → todos os 4 `collection_runs` `succeeded` → **13 zumbis**
+depois (`chrome-headless`×5, `chrome_crashpad`×4, `chrome`×4, todos
+`PPID=1`, todos estado `Z`). `Xvfb` (persistente, não é zumbi) intacto.
+Confirma o achado já registrado na auditoria da Etapa 2 em escala real
+(4 lojas, não só um ciclo manual).
+
+**Causa**: `HostConfig.Init=null` — PID 1 do container era o processo
+Python do worker direto, sem semântica de init/reaper. Auditoria do
+código (`BrowserSession.close()`, `try/finally` aninhado,
+`async with` em todo o único ponto de uso) não encontrou bug de
+cleanup no projeto — consistente com reparenting de processos internos
+do Chromium para um PID 1 sem reaper.
+
+**Correção aplicada**: `init: true` no serviço `collection_worker`
+(`compose.yaml`), nenhum outro serviço tocado (só ele lança
+Chromium/Playwright). Container recriado (`docker compose up -d
+--no-deps collection_worker`, sem rebuild de imagem — mudança é só de
+configuração do Compose). `PID 1` passou a ser `docker-init`; o worker
+Python virou `PID 7`, filho de `PID 1`.
+
+**Confirmação pós-correção**: segunda missão real de 4 fontes
+(`mouse gamer`, mesmo usuário de teste, 4 `collection_runs`
+`succeeded`) → **0 zumbis**, 5 processos totais (`docker-init`, `sh`
+do exec, `python`, `Xvfb`, mais um transitório).
+
+**Desvio deliberado do plano de investigação original, por instrução
+explícita do usuário** ("não quero teste, vai direto pra resolução"):
+os itens 2-9, 11-12 do "Plano de investigação" (rastreamento fino de
+PID/PPID por etapa, instrumentação de timestamps, exceção forçada,
+timeout forçado, cancelamento, comparação com `crashpad_handler`
+desabilitado, dois processos de worker, regressão de longa duração)
+**não foram executados**. O que foi comprovado é mais estreito que o
+"Critério de aceite obrigatório" original: uma comparação real
+antes/depois com coletas bem-sucedidas (13→0 zumbis), não uma bateria
+cobrindo sucesso+falha+timeout+cancelamento. Registrado aqui para não
+passar a falsa impressão de que o roteiro completo foi cumprido.
+
+**Riscos residuais não cobertos por esta validação**:
+- Comportamento em falha/timeout/cancelamento de coleta não testado
+  explicitamente com `init: true` — plausível que `tini` resolva
+  igualmente (reaping independe do motivo do encerramento), mas não
+  comprovado.
+- Memória do host durante a validação: servidor de 8 GB já operando
+  com pouca memória livre (~0,5 GB) por fatores externos a esta TASK
+  (VM do Docker Desktop/WSL2 + processos do próprio ambiente) — as
+  coletas desta validação não pioraram isso de forma perceptível, mas
+  não há folga para testes mais pesados (dois workers simultâneos,
+  sequência longa) sem risco real ao host.
+
+**Nota operacional**: a missão de teste desta TASK reaproveitou o
+usuário sintético `"TASK-062 Docker validation"` (já criado durante a
+TASK-081 original) — segunda missão real (`mouse gamer`) também ficou
+persistida na base de produção deste servidor.
+
+## Critérios de aceite — status real
+
+O "Critério de aceite obrigatório" original (zero crescimento após
+sucesso **e** falha controlada) **não foi integralmente verificado** —
+só o caminho de sucesso foi comparado antes/depois. Falha/timeout/
+cancelamento ficam como validação pendente, não bloqueante para esta
+correção por decisão explícita do usuário de priorizar a resolução
+sobre o roteiro completo de teste.

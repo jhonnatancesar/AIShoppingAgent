@@ -126,6 +126,14 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+    # TASK-081: PID 1 do container roda o worker Python direto, sem
+    # semantica de init -- processos internos do Chromium (renderer/GPU/
+    # crashpad_handler) ficam orfaos apos reparenting e nunca sao colhidos
+    # apos browser.close() do Playwright, acumulando como zumbis. init:
+    # true delega o PID 1 para o init embutido do Docker (tini), que colhe
+    # esses processos corretamente. Só neste servico -- nenhum outro lança
+    # Chromium/Playwright.
+    init: true
     environment:
       AISHOPPING_ENVIRONMENT: ${AISHOPPING_ENVIRONMENT:-development}
       AISHOPPING_LOG_LEVEL: ${AISHOPPING_LOG_LEVEL:-INFO}
