@@ -6,14 +6,17 @@ from app.telegram.bot_api import call_bot_api
 _COMMANDS = [
     {"command": "start", "description": "Iniciar o bot"},
     {"command": "ajuda", "description": "Ver ajuda"},
+    {"command": "missao", "description": "Criar ou entender uma missão de compra"},
+    {
+        "command": "editar-missao",
+        "description": "Editar lojas ou preço-alvo de uma missão",
+    },
     {"command": "cadastro", "description": "Cadastrar dados básicos do seu perfil"},
-    {"command": "senha", "description": "Criar ou alterar sua senha"},
     {"command": "entrar", "description": "Autenticar por senha"},
+    {"command": "recuperar", "description": "Criar ou recuperar sua senha"},
     {"command": "sair", "description": "Encerrar a sessão autenticada"},
-    {"command": "recuperar", "description": "Recuperar sua senha"},
     {"command": "preferencias", "description": "Configurar notificações"},
     {"command": "privacidade", "description": "Consultar uso e proteção de dados"},
-    {"command": "upgrade", "description": "Mudar de perfil (em breve)"},
 ]
 
 

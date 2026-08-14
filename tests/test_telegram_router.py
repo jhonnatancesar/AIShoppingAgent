@@ -156,15 +156,18 @@ def _intent(**overrides: object) -> Intent:
 
 
 def _patch_user(
-    monkeypatch: pytest.MonkeyPatch, user: SimpleNamespace
+    monkeypatch: pytest.MonkeyPatch,
+    user: SimpleNamespace,
+    *,
+    created_now: bool = False,
 ) -> list[tuple[int, str]]:
     resolve_calls: list[tuple[int, str]] = []
 
     async def _fake_get_or_create(
         session: object, *, telegram_user_id: int, display_name: str
-    ) -> SimpleNamespace:
+    ) -> tuple[SimpleNamespace, bool]:
         resolve_calls.append((telegram_user_id, display_name))
-        return user
+        return user, created_now
 
     monkeypatch.setattr(
         "app.telegram.authentication.get_or_create_telegram_user_async",
@@ -2974,6 +2977,315 @@ async def test_registration_full_flow_completes_and_clears_step(
     assert adapter.calls == []
     assert "cadastro confirmado" in send_calls[-1][1].lower()
     assert "#set_password:opaque" in send_calls[-1][1]
+
+
+@pytest.mark.anyio
+async def test_first_contact_start_shows_presentation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TASK-078: primeiro contato real (`created_now=True`) via `/start`."""
+    fake_user = _fake_user()
+    _patch_user(monkeypatch, fake_user, created_now=True)
+    send_calls = _patch_send_message(monkeypatch)
+    adapter = _FakeAdapter(_intent())
+
+    response = await receive_telegram_webhook(
+        update=_update(
+            message=_TelegramIncomingMessage(
+                text="/start",
+                date=1754586000,
+                chat=_TelegramChat(id=222, type=TelegramChatType.PRIVATE),
+                from_=_TelegramSender(id=222, first_name="Fulano"),
+            )
+        ),
+        x_telegram_bot_api_secret_token="correct-secret",
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        settings=_settings(),
+        session=_async_session(),
+    )
+
+    assert response.status_code == 204
+    assert adapter.calls == []
+    assert "Cláudio" in send_calls[0][1]
+    assert "/cadastro" in send_calls[0][1]
+
+
+@pytest.mark.anyio
+async def test_first_contact_free_text_shows_presentation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TASK-078: primeiro contato real via texto livre, sem chamar a IA."""
+    fake_user = _fake_user()
+    _patch_user(monkeypatch, fake_user, created_now=True)
+    send_calls = _patch_send_message(monkeypatch)
+    adapter = _FakeAdapter(_intent())
+
+    response = await receive_telegram_webhook(
+        update=_update(
+            message=_TelegramIncomingMessage(
+                text="oi, quero uma placa de vídeo",
+                date=1754586000,
+                chat=_TelegramChat(id=222, type=TelegramChatType.PRIVATE),
+                from_=_TelegramSender(id=222, first_name="Fulano"),
+            )
+        ),
+        x_telegram_bot_api_secret_token="correct-secret",
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        settings=_settings(),
+        session=_async_session(),
+    )
+
+    assert response.status_code == 204
+    assert adapter.calls == []
+    assert "Cláudio" in send_calls[0][1]
+
+
+@pytest.mark.anyio
+async def test_first_contact_cadastro_is_not_intercepted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TASK-078: `/cadastro` funciona normalmente mesmo em primeiro contato."""
+    fake_user = _fake_user()
+    _patch_user(monkeypatch, fake_user, created_now=True)
+    send_calls = _patch_send_message(monkeypatch)
+    monkeypatch.setattr(
+        "app.telegram.router.has_active_session_async", AsyncMock(return_value=False)
+    )
+    adapter = _FakeAdapter(_intent())
+
+    response = await receive_telegram_webhook(
+        update=_update(
+            message=_TelegramIncomingMessage(
+                text="/cadastro",
+                date=1754586000,
+                chat=_TelegramChat(id=222, type=TelegramChatType.PRIVATE),
+                from_=_TelegramSender(id=222, first_name="Fulano"),
+            )
+        ),
+        x_telegram_bot_api_secret_token="correct-secret",
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        settings=_settings(),
+        session=_async_session(),
+    )
+
+    assert response.status_code == 204
+    assert fake_user.registration_step == "username"
+    assert "Cláudio" not in send_calls[0][1]
+
+
+@pytest.mark.anyio
+async def test_first_contact_ajuda_is_not_intercepted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TASK-078: `/ajuda` funciona normalmente mesmo em primeiro contato."""
+    fake_user = _fake_user()
+    _patch_user(monkeypatch, fake_user, created_now=True)
+    send_calls = _patch_send_message(monkeypatch)
+    adapter = _FakeAdapter(_intent())
+
+    response = await receive_telegram_webhook(
+        update=_update(
+            message=_TelegramIncomingMessage(
+                text="/ajuda",
+                date=1754586000,
+                chat=_TelegramChat(id=222, type=TelegramChatType.PRIVATE),
+                from_=_TelegramSender(id=222, first_name="Fulano"),
+            )
+        ),
+        x_telegram_bot_api_secret_token="correct-secret",
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        settings=_settings(),
+        session=_async_session(),
+    )
+
+    assert response.status_code == 204
+    assert adapter.calls == []
+    assert "COMPRAS" in send_calls[0][1]
+    assert "Cláudio" not in send_calls[0][1]
+
+
+@pytest.mark.anyio
+async def test_start_returning_user_without_session_shows_login_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TASK-078: usuário já cadastrado, sem sessão -- `/start` orienta a
+    usar `/entrar`/`/recuperar` em vez do texto genérico antigo."""
+    fake_user = _fake_user(registration_step=None)
+    fake_user.username = "joaosilva"
+    _patch_user(monkeypatch, fake_user)
+    send_calls = _patch_send_message(monkeypatch)
+    monkeypatch.setattr(
+        "app.telegram.router.has_active_session_async", AsyncMock(return_value=False)
+    )
+    adapter = _FakeAdapter(_intent())
+
+    response = await receive_telegram_webhook(
+        update=_update(
+            message=_TelegramIncomingMessage(
+                text="/start",
+                date=1754586000,
+                chat=_TelegramChat(id=222, type=TelegramChatType.PRIVATE),
+                from_=_TelegramSender(id=222, first_name="Fulano"),
+            )
+        ),
+        x_telegram_bot_api_secret_token="correct-secret",
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        settings=_settings(),
+        session=_async_session(),
+    )
+
+    assert response.status_code == 204
+    assert adapter.calls == []
+    assert "você voltou" in send_calls[0][1].lower()
+    assert "/entrar" in send_calls[0][1]
+
+
+@pytest.mark.anyio
+async def test_ajuda_command_shows_grouped_help(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TASK-078: `/ajuda` organizado por grupos, sem mencionar `/senha`."""
+    _patch_user(monkeypatch, _fake_user())
+    send_calls = _patch_send_message(monkeypatch)
+    adapter = _FakeAdapter(_intent())
+
+    response = await receive_telegram_webhook(
+        update=_update(
+            message=_TelegramIncomingMessage(
+                text="/ajuda",
+                date=1754586000,
+                chat=_TelegramChat(id=222, type=TelegramChatType.PRIVATE),
+                from_=_TelegramSender(id=222, first_name="Fulano"),
+            )
+        ),
+        x_telegram_bot_api_secret_token="correct-secret",
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        settings=_settings(),
+        session=_async_session(),
+    )
+
+    assert response.status_code == 204
+    assert adapter.calls == []
+    body = send_calls[0][1]
+    assert "COMPRAS" in body
+    assert "CONTA" in body
+    assert "CONFIGURAÇÕES" in body
+    assert "/senha" not in body
+
+
+@pytest.mark.anyio
+async def test_missao_command_shows_mission_help(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TASK-078: `/missao` explica com exemplos, sem exigir sessão ativa."""
+    _patch_user(monkeypatch, _fake_user())
+    send_calls = _patch_send_message(monkeypatch)
+    adapter = _FakeAdapter(_intent())
+
+    response = await receive_telegram_webhook(
+        update=_update(
+            message=_TelegramIncomingMessage(
+                text="/missao",
+                date=1754586000,
+                chat=_TelegramChat(id=222, type=TelegramChatType.PRIVATE),
+                from_=_TelegramSender(id=222, first_name="Fulano"),
+            )
+        ),
+        x_telegram_bot_api_secret_token="correct-secret",
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        settings=_settings(),
+        session=_async_session(),
+    )
+
+    assert response.status_code == 204
+    assert adapter.calls == []
+    assert "9800X3D" in send_calls[0][1]
+
+
+@pytest.mark.anyio
+async def test_recuperar_without_credential_offers_set_password(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TASK-078: `/senha` deixou de existir -- `/recuperar` sem
+    `UserCredential` cadastrado gera a primeira senha (`SET_PASSWORD`)."""
+    fake_user = _fake_user()
+    fake_user.username = "cliente"
+    _patch_user(monkeypatch, fake_user)
+    _patch_send_message(monkeypatch)
+    calls: list[dict] = []
+
+    async def issue(*args: object, **kwargs: object) -> SimpleNamespace:
+        calls.append(kwargs)
+        return SimpleNamespace(
+            url="https://auth.example.test/auth#token",
+            expires_at=datetime.now(UTC),
+        )
+
+    monkeypatch.setattr("app.telegram.router.issue_action_link_async", issue)
+    session = _async_session()
+    session.get.return_value = None  # nenhum UserCredential ainda
+    adapter = _FakeAdapter(_intent(kind=IntentKind.UNKNOWN))
+
+    await receive_telegram_webhook(
+        update=_update(
+            message=_TelegramIncomingMessage(
+                text="/recuperar",
+                date=1754586000,
+                chat=_TelegramChat(id=222, type=TelegramChatType.PRIVATE),
+                from_=_TelegramSender(id=222, first_name="Fulano"),
+            )
+        ),
+        x_telegram_bot_api_secret_token="correct-secret",
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        settings=_settings(),
+        session=session,
+    )
+
+    assert calls[0]["action"].value == "set_password"
+    assert adapter.calls == []
+
+
+@pytest.mark.anyio
+async def test_recuperar_with_credential_offers_recover_password(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TASK-078: `/recuperar` com `UserCredential` já existente gera
+    recuperação real (`RECOVER_PASSWORD`), nunca `CHANGE_PASSWORD`."""
+    fake_user = _fake_user()
+    fake_user.username = "cliente"
+    _patch_user(monkeypatch, fake_user)
+    _patch_send_message(monkeypatch)
+    calls: list[dict] = []
+
+    async def issue(*args: object, **kwargs: object) -> SimpleNamespace:
+        calls.append(kwargs)
+        return SimpleNamespace(
+            url="https://auth.example.test/auth#token",
+            expires_at=datetime.now(UTC),
+        )
+
+    monkeypatch.setattr("app.telegram.router.issue_action_link_async", issue)
+    session = _async_session()
+    session.get.return_value = SimpleNamespace()  # já existe UserCredential
+    adapter = _FakeAdapter(_intent(kind=IntentKind.UNKNOWN))
+
+    await receive_telegram_webhook(
+        update=_update(
+            message=_TelegramIncomingMessage(
+                text="/recuperar",
+                date=1754586000,
+                chat=_TelegramChat(id=222, type=TelegramChatType.PRIVATE),
+                from_=_TelegramSender(id=222, first_name="Fulano"),
+            )
+        ),
+        x_telegram_bot_api_secret_token="correct-secret",
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        settings=_settings(),
+        session=session,
+    )
+
+    assert calls[0]["action"].value == "recover_password"
+    assert adapter.calls == []
 
 
 @pytest.mark.anyio

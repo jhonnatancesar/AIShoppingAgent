@@ -171,18 +171,20 @@ a palavra "dispositivo" por precisão. Bloquear aqui não altera
 nenhum campo do cadastro nem `registration_step`."""
 _CADASTRO_ALREADY_REGISTERED_REPLY = (
     "📋 Você já tem cadastro neste Telegram.\n\n"
-    "Use /entrar para acessar, /senha se ainda não criou sua senha, ou "
-    "/recuperar caso tenha esquecido."
+    "Use /entrar para acessar sua conta.\n\n"
+    "Se ainda não criou sua senha ou esqueceu, use /recuperar."
 )
-"""TASK-073: cadastro já concluído (`registration_step is None` e
+"""TASK-073/078: cadastro já concluído (`registration_step is None` e
 `username` preenchido) sem sessão ativa -- não reinicia o fluxo. Um
 cadastro em andamento (`registration_step` != None) continua caindo no
-`start_registration` de sempre, sem mudança de comportamento."""
+`start_registration` de sempre, sem mudança de comportamento. `/senha`
+não existe mais como comando -- `/recuperar` cobre os dois casos
+(primeira senha e recuperação, ver `_authentication_link_reply`)."""
 _UPGRADE_COMMAND = "/upgrade"
 _UPGRADE_REPLY = "🔒 Mudar de usuário/perfil — em breve."
 _START_COMMAND = "/start"
 _HELP_COMMAND = "/ajuda"
-_PASSWORD_COMMAND = "/senha"
+_MISSION_HELP_COMMAND = "/missao"
 _LOGIN_COMMAND = "/entrar"
 _LOGOUT_COMMAND = "/sair"
 _RECOVERY_COMMAND = "/recuperar"
@@ -199,7 +201,57 @@ usuário perceber) só se resolve removendo esse caminho de entrada,
 decisão explícita do usuário."""
 _SESSION_REQUIRED_REPLY = (
     "🔒 Sua sessão não está ativa.\n\n"
-    "Use /entrar para autenticar, ou /senha se ainda não criou uma senha."
+    "Use /entrar para autenticar. Esqueceu a senha? Use /recuperar."
+)
+
+_FIRST_CONTACT_REPLY = (
+    "👋 Opa! Eu sou o Cláudio, seu assistente de compras.\n\n"
+    "Posso procurar produtos em várias lojas, comparar preços e "
+    "acompanhar as ofertas pra você.\n\n"
+    "Pra começar, vamos criar seu acesso.\n\n"
+    "Use /cadastro e eu te guio por aqui. 🎯"
+)
+"""TASK-078: primeiro contato real (`created_now=True`, o `User` foi
+criado agora mesmo) -- nunca inferido por `registration_step`/`username`,
+que também valeriam para alguém que abandonou o cadastro no meio."""
+
+_RETURNING_NO_SESSION_REPLY = (
+    "👋 Opa, você voltou!\n\n"
+    "Sua conta já está cadastrada, só precisamos entrar novamente.\n\n"
+    "Use /entrar para acessar sua conta.\n\n"
+    "Esqueceu a senha? Sem problema — use /recuperar."
+)
+"""TASK-078: `/start` de alguém já cadastrado (`username` preenchido,
+cadastro concluído) sem sessão ativa."""
+
+_ALWAYS_AVAILABLE_COMMANDS = frozenset({_CADASTRO_COMMAND, PRIVACY_COMMAND})
+"""TASK-078: comandos que um usuário recém-criado (`created_now=True`)
+pode usar normalmente -- nunca interceptados pela apresentação inicial,
+só o texto livre/outros comandos que ainda não fazem sentido sem
+cadastro."""
+
+_HELP_REPLY = (
+    "📖 Aqui está o que posso fazer por você:\n\n"
+    "🛒 COMPRAS\n"
+    "/missao — criar ou entender como pedir uma missão de compra\n"
+    "/editar-missao — mudar lojas ou preço-alvo de uma missão pausada\n\n"
+    "👤 CONTA\n"
+    "/cadastro — completar seu perfil\n"
+    "/entrar — autenticar\n"
+    "/recuperar — criar ou recuperar sua senha\n"
+    "/sair — encerrar a sessão\n\n"
+    "⚙️ CONFIGURAÇÕES\n"
+    "/preferencias — notificações\n"
+    "/privacidade — uso e proteção de dados"
+)
+
+_MISSION_HELP_REPLY = (
+    "🛒 É só me dizer o que você quer comprar -- eu crio e acompanho a "
+    "missão pra você.\n\n"
+    'Exemplos: "Ryzen 7 9800X3D até R$ 3000", "RTX 5070 Ti na Kabum", '
+    '"mouse gamer".\n\n'
+    "Quero uma missão de verdade? É só escrever o produto na próxima "
+    "mensagem."
 )
 
 
@@ -442,6 +494,7 @@ async def _process_authenticated_message(
                 adapters=adapters,
                 session=session,
                 auth_public_base_url=settings.auth_public_base_url,
+                created_now=authentication.created_now,
             )
         except AuthorizationDenied as error:
             await session.commit()
@@ -488,13 +541,17 @@ async def _handle_message(
     adapters: dict[UserRole, TelegramIntentAdapter],
     session: AsyncSession,
     auth_public_base_url: str,
+    created_now: bool,
 ) -> str | None:
     lowered = message.text.strip().lower()
-    if lowered in {_START_COMMAND, _HELP_COMMAND}:
-        return (
-            "Eu acompanho suas missões de compra. Use /cadastro para completar "
-            "seu perfil, /senha para criar sua senha e /entrar para autenticar."
-        )
+    if lowered == _HELP_COMMAND:
+        return _HELP_REPLY
+    # TASK-078: primeiro contato real -- qualquer texto/comando que ainda
+    # não faz sentido sem cadastro (inclusive `/start`) recebe a mesma
+    # apresentação inicial. `/cadastro`, `/ajuda` (já respondido acima) e
+    # `/privacidade` seguem funcionando normalmente mesmo aqui.
+    if created_now and lowered not in _ALWAYS_AVAILABLE_COMMANDS:
+        return _FIRST_CONTACT_REPLY
     if lowered == PRIVACY_COMMAND:
         return privacy_notice()
     if lowered == _CADASTRO_COMMAND:
@@ -506,7 +563,19 @@ async def _handle_message(
         if user.registration_step is None and user.username is not None:
             return _CADASTRO_ALREADY_REGISTERED_REPLY
         return start_registration(user)
-    if lowered in {_PASSWORD_COMMAND, _LOGIN_COMMAND, _RECOVERY_COMMAND}:
+    if lowered == _MISSION_HELP_COMMAND:
+        return _MISSION_HELP_REPLY
+    if lowered == _START_COMMAND:
+        if user.registration_step is None and user.username is not None:
+            has_session = user.telegram_user_id is not None and (
+                await has_active_session_async(
+                    session, user_id=user.id, telegram_user_id=user.telegram_user_id
+                )
+            )
+            if not has_session:
+                return _RETURNING_NO_SESSION_REPLY
+        return _HELP_REPLY
+    if lowered in {_LOGIN_COMMAND, _RECOVERY_COMMAND}:
         authorize(session, user, Permission.PROFILE_MANAGE)
         return await _authentication_link_reply(
             lowered,
@@ -525,7 +594,7 @@ async def _handle_message(
         if user.registration_step is not None:
             return registration_reply
         password_reply = await _authentication_link_reply(
-            _PASSWORD_COMMAND,
+            _RECOVERY_COMMAND,
             user=user,
             session=session,
             public_base_url=auth_public_base_url,
@@ -586,15 +655,16 @@ async def _authentication_link_reply(
 ) -> str:
     if not user.username:
         return "Complete primeiro seu nome de usuário com /cadastro."
-    action = {
-        _LOGIN_COMMAND: CredentialAction.LOGIN,
-        _RECOVERY_COMMAND: CredentialAction.RECOVER_PASSWORD,
-    }.get(command)
-    if action is None:
+    if command == _LOGIN_COMMAND:
+        action = CredentialAction.LOGIN
+    else:
+        # TASK-078: `/senha` deixou de existir -- `/recuperar` cobre os
+        # dois casos (primeira senha e recuperação real), nunca escolhe
+        # CHANGE_PASSWORD, que só permanece no enum por compatibilidade.
         from app.authentication.models import UserCredential
 
         action = (
-            CredentialAction.CHANGE_PASSWORD
+            CredentialAction.RECOVER_PASSWORD
             if await session.get(UserCredential, user.id) is not None
             else CredentialAction.SET_PASSWORD
         )

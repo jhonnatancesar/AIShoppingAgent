@@ -301,7 +301,17 @@ momento da listagem, processamento item a item nunca tudo-ou-nada
 intercalar o par confirmar/cancelar da TASK-058. Ver
 `docs/tasks/TASK-085.md`. Só validação não-integração (suíte + ruff).
 
-Nenhum push/tag feito para nenhuma das três. Status individual das
+**TASK-078 concluída (2026-08-14)** — UX do Telegram simplificada:
+boas-vindas diferentes para primeiro contato (`created_now`, sem
+consulta nova) vs. retorno sem sessão; `/senha` deixou de existir como
+comando público, fundido em `/recuperar` (escolhe `SET_PASSWORD`/
+`RECOVER_PASSWORD` pela presença de `UserCredential`, nunca
+`CHANGE_PASSWORD`, TTL/rate limit/política inalterados); `/ajuda`
+reorganizado por grupos; `/missao` novo com exemplos concretos; menu
+final atualizado. Ver `docs/tasks/TASK-078.md`. Só validação
+não-integração (suíte + ruff).
+
+Nenhum push/tag feito para nenhuma das quatro. Status individual das
 demais duas (080, 081) e da 084 não reverificado nesta rodada — ver o
 commit log e `docs/tasks/` de cada uma para o estado real mais recente.)
 → V1.2

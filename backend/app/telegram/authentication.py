@@ -30,6 +30,9 @@ class TelegramAuthenticationResult:
 
     user: User | None = None
     failure: TelegramAuthenticationFailure | None = None
+    created_now: bool = False
+    """TASK-078: `True` só quando esta autenticação criou o `User` agora
+    -- primeiro contato real, não uma suposição sobre `registration_step`."""
 
     def __post_init__(self) -> None:
         if (self.user is None) == (self.failure is None):
@@ -66,7 +69,7 @@ def authenticate_telegram_user(
             failure=TelegramAuthenticationFailure.IDENTITY_MISMATCH
         )
 
-    user = get_or_create_telegram_user(
+    user, created_now = get_or_create_telegram_user(
         session,
         telegram_user_id=message.user_id,
         display_name=display_name,
@@ -75,7 +78,7 @@ def authenticate_telegram_user(
         return TelegramAuthenticationResult(
             failure=TelegramAuthenticationFailure.INACTIVE_USER
         )
-    return TelegramAuthenticationResult(user=user)
+    return TelegramAuthenticationResult(user=user, created_now=created_now)
 
 
 async def authenticate_telegram_user_async(
@@ -97,7 +100,7 @@ async def authenticate_telegram_user_async(
             failure=TelegramAuthenticationFailure.IDENTITY_MISMATCH
         )
 
-    user = await get_or_create_telegram_user_async(
+    user, created_now = await get_or_create_telegram_user_async(
         session,
         telegram_user_id=message.user_id,
         display_name=display_name,
@@ -106,4 +109,4 @@ async def authenticate_telegram_user_async(
         return TelegramAuthenticationResult(
             failure=TelegramAuthenticationFailure.INACTIVE_USER
         )
-    return TelegramAuthenticationResult(user=user)
+    return TelegramAuthenticationResult(user=user, created_now=created_now)

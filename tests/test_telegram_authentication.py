@@ -121,7 +121,7 @@ def test_private_matching_identity_resolves_and_checks_active_user(
     expected_failure: TelegramAuthenticationFailure | None,
 ) -> None:
     user = _user(active=active)
-    resolver = MagicMock(return_value=user)
+    resolver = MagicMock(return_value=(user, True))
     monkeypatch.setattr(
         "app.telegram.authentication.get_or_create_telegram_user", resolver
     )
@@ -138,6 +138,7 @@ def test_private_matching_identity_resolves_and_checks_active_user(
     )
     assert result.failure is expected_failure
     assert result.user is (user if active else None)
+    assert result.created_now is (True if active else False)
 
 
 @pytest.mark.parametrize(

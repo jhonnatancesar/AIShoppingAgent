@@ -20,14 +20,18 @@ def get_or_create_telegram_user(
     *,
     telegram_user_id: int,
     display_name: str,
-) -> User:
-    """Resolve, de forma idempotente, o `User` de uma pessoa no Telegram."""
+) -> tuple[User, bool]:
+    """Resolve, de forma idempotente, o `User` de uma pessoa no Telegram.
+
+    O segundo valor (`created_now`, TASK-078) é `True` só quando este
+    exato retorno criou o registro -- permite ao chamador distinguir
+    primeiro contato de retorno sem nenhuma consulta adicional."""
     if not display_name.strip():
         raise ValueError("display_name não pode ser vazio.")
 
     user = _find_by_telegram_user_id(session, telegram_user_id)
     if user is not None:
-        return user
+        return user, False
 
     try:
         with session.begin_nested():
@@ -42,7 +46,8 @@ def get_or_create_telegram_user(
         user = _find_by_telegram_user_id(session, telegram_user_id)
         if user is None:
             raise
-    return user
+        return user, False
+    return user, True
 
 
 async def get_or_create_telegram_user_async(
@@ -50,7 +55,7 @@ async def get_or_create_telegram_user_async(
     *,
     telegram_user_id: int,
     display_name: str,
-) -> User:
+) -> tuple[User, bool]:
     """Equivalente assíncrono de `get_or_create_telegram_user` (extensão da
     TASK-079). Usado pelo webhook Telegram;
     `scripts/validate_telegram_authentication.py` continua na versão
@@ -60,7 +65,7 @@ async def get_or_create_telegram_user_async(
 
     user = await _find_by_telegram_user_id_async(session, telegram_user_id)
     if user is not None:
-        return user
+        return user, False
 
     try:
         async with session.begin_nested():
@@ -75,7 +80,8 @@ async def get_or_create_telegram_user_async(
         user = await _find_by_telegram_user_id_async(session, telegram_user_id)
         if user is None:
             raise
-    return user
+        return user, False
+    return user, True
 
 
 def _find_by_telegram_user_id(session: Session, telegram_user_id: int) -> User | None:

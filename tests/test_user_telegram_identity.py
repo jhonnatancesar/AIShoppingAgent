@@ -28,13 +28,14 @@ def test_creates_a_new_user_on_first_contact() -> None:
     session = _session()
     session.scalar.side_effect = [None]
 
-    user = get_or_create_telegram_user(
+    user, created_now = get_or_create_telegram_user(
         session, telegram_user_id=123456789, display_name="Fulano"
     )
 
     assert user.telegram_user_id == 123456789
     assert user.display_name == "Fulano"
     assert user.role is UserRole.USER
+    assert created_now is True
     session.add.assert_called_once_with(user)
     session.flush.assert_called_once()
 
@@ -44,11 +45,12 @@ def test_returns_the_existing_user_without_inserting_again() -> None:
     existing = _existing_user(123456789)
     session.scalar.side_effect = [existing]
 
-    user = get_or_create_telegram_user(
+    user, created_now = get_or_create_telegram_user(
         session, telegram_user_id=123456789, display_name="Fulano"
     )
 
     assert user is existing
+    assert created_now is False
     session.add.assert_not_called()
     session.flush.assert_not_called()
 
@@ -71,11 +73,12 @@ def test_concurrent_first_contact_resolves_to_the_winning_insert() -> None:
     session.scalar.side_effect = [None, existing]
     session.flush.side_effect = IntegrityError("INSERT", {}, Exception("duplicate"))
 
-    user = get_or_create_telegram_user(
+    user, created_now = get_or_create_telegram_user(
         session, telegram_user_id=123456789, display_name="Fulano"
     )
 
     assert user is existing
+    assert created_now is False
     assert session.scalar.call_count == 2
 
 
