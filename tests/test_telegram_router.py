@@ -3467,6 +3467,9 @@ async def test_login_command_issues_server_bound_link(
     fake_user.username = "cliente"
     _patch_user(monkeypatch, fake_user)
     sends = _patch_send_message(monkeypatch)
+    monkeypatch.setattr(
+        "app.telegram.router.has_active_session_async", AsyncMock(return_value=False)
+    )
     calls: list[dict] = []
 
     async def issue(*args: object, **kwargs: object) -> SimpleNamespace:
@@ -3497,6 +3500,100 @@ async def test_login_command_issues_server_bound_link(
     assert calls[0]["user"] is fake_user
     assert calls[0]["action"].value == "login"
     assert "#login:opaque" in sends[0][1]
+    assert adapter.calls == []
+
+
+@pytest.mark.anyio
+async def test_login_command_blocked_when_already_authenticated(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TASK-078 (correção pós-deploy): `/entrar` com sessão ativa não gera
+    novo link -- mesma proteção que `/cadastro` já tinha (TASK-072)."""
+    fake_user = _fake_user()
+    fake_user.username = "cliente"
+    _patch_user(monkeypatch, fake_user)
+    sends = _patch_send_message(monkeypatch)
+    monkeypatch.setattr(
+        "app.telegram.router.has_active_session_async", AsyncMock(return_value=True)
+    )
+    calls: list[dict] = []
+
+    async def issue(*args: object, **kwargs: object) -> SimpleNamespace:
+        calls.append(kwargs)
+        return SimpleNamespace(
+            url="https://auth.example.test/auth#login:opaque",
+            expires_at=datetime.now(UTC),
+        )
+
+    monkeypatch.setattr("app.telegram.router.issue_action_link_async", issue)
+    adapter = _FakeAdapter(_intent(kind=IntentKind.UNKNOWN))
+
+    await receive_telegram_webhook(
+        update=_update(
+            message=_TelegramIncomingMessage(
+                text="/entrar",
+                date=1754586000,
+                chat=_TelegramChat(id=222, type=TelegramChatType.PRIVATE),
+                from_=_TelegramSender(id=222, first_name="Fulano"),
+            )
+        ),
+        x_telegram_bot_api_secret_token="correct-secret",
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        settings=_settings(auth_public_base_url="https://auth.example.test"),
+        session=_async_session(),
+    )
+
+    assert calls == []
+    assert "já está autenticado" in sends[0][1].lower()
+    assert adapter.calls == []
+
+
+@pytest.mark.anyio
+async def test_recuperar_still_works_when_already_authenticated(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TASK-078 (correção pós-deploy): diferente de `/entrar`, `/recuperar`
+    continua liberado com sessão ativa -- trocar/recuperar senha logado é
+    um caso legítimo."""
+    fake_user = _fake_user()
+    fake_user.username = "cliente"
+    _patch_user(monkeypatch, fake_user)
+    sends = _patch_send_message(monkeypatch)
+    monkeypatch.setattr(
+        "app.telegram.router.has_active_session_async", AsyncMock(return_value=True)
+    )
+    calls: list[dict] = []
+
+    async def issue(*args: object, **kwargs: object) -> SimpleNamespace:
+        calls.append(kwargs)
+        return SimpleNamespace(
+            url="https://auth.example.test/auth#recover:opaque",
+            expires_at=datetime.now(UTC),
+        )
+
+    monkeypatch.setattr("app.telegram.router.issue_action_link_async", issue)
+    session = _async_session()
+    session.get.return_value = None  # sem UserCredential ainda -> SET_PASSWORD
+    adapter = _FakeAdapter(_intent(kind=IntentKind.UNKNOWN))
+
+    await receive_telegram_webhook(
+        update=_update(
+            message=_TelegramIncomingMessage(
+                text="/recuperar",
+                date=1754586000,
+                chat=_TelegramChat(id=222, type=TelegramChatType.PRIVATE),
+                from_=_TelegramSender(id=222, first_name="Fulano"),
+            )
+        ),
+        x_telegram_bot_api_secret_token="correct-secret",
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        settings=_settings(auth_public_base_url="https://auth.example.test"),
+        session=session,
+    )
+
+    assert calls[0]["user"] is fake_user
+    assert calls[0]["action"].value == "set_password"
+    assert "#recover:opaque" in sends[0][1]
     assert adapter.calls == []
 
 

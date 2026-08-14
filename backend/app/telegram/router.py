@@ -203,6 +203,14 @@ _SESSION_REQUIRED_REPLY = (
     "🔒 Sua sessão não está ativa.\n\n"
     "Use /entrar para autenticar. Esqueceu a senha? Use /recuperar."
 )
+_LOGIN_ALREADY_AUTHENTICATED_REPLY = (
+    "✅ Você já está autenticado. Use /sair se quiser encerrar a sessão."
+)
+"""TASK-078 (correção pós-deploy): `/entrar` nunca teve checagem de
+sessão ativa, ao contrário de `/cadastro` (`_CADASTRO_ALREADY_AUTHENTICATED_REPLY`,
+TASK-072) -- pedido explícito do usuário após validar em produção.
+`/recuperar` continua liberado mesmo autenticado (recuperar/trocar senha
+com sessão ativa é um caso legítimo, diferente de logar de novo)."""
 
 _FIRST_CONTACT_REPLY = (
     "👋 Opa! Eu sou o Cláudio, seu assistente de compras.\n\n"
@@ -575,7 +583,19 @@ async def _handle_message(
             if not has_session:
                 return _RETURNING_NO_SESSION_REPLY
         return _HELP_REPLY
-    if lowered in {_LOGIN_COMMAND, _RECOVERY_COMMAND}:
+    if lowered == _LOGIN_COMMAND:
+        authorize(session, user, Permission.PROFILE_MANAGE)
+        if user.telegram_user_id is not None and await has_active_session_async(
+            session, user_id=user.id, telegram_user_id=user.telegram_user_id
+        ):
+            return _LOGIN_ALREADY_AUTHENTICATED_REPLY
+        return await _authentication_link_reply(
+            lowered,
+            user=user,
+            session=session,
+            public_base_url=auth_public_base_url,
+        )
+    if lowered == _RECOVERY_COMMAND:
         authorize(session, user, Permission.PROFILE_MANAGE)
         return await _authentication_link_reply(
             lowered,
