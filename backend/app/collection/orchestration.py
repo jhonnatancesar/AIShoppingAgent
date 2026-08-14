@@ -576,6 +576,37 @@ def _filter_deterministic_candidates(
     return tuple(survivors)
 
 
+_GENERIC_SEARCH_CANDIDATE_LIMIT = 3
+"""TASK-082: nenhum número foi fixado durante a auditoria original --
+derivado por analogia do único precedente já existente no pipeline de
+coleta para "quantos candidatos merecem atenção determinística extra por
+loja": `availability_fallback_max_candidates` (default 3,
+`Settings`/`PlaywrightStoreProvider`, TASK-075). Mesma ordem de grandeza,
+mesmo espírito -- poucos candidatos, por loja, antes de qualquer chamada
+de IA."""
+
+
+def _limit_generic_candidates(offers: tuple, *, limit: int) -> tuple:
+    """TASK-082: reduz candidatos de uma busca GENÉRICA (`criteria.model
+    is None`) a, no máximo, `limit` por loja -- nunca chamada quando
+    `criteria.model` está preenchido (busca específica já reduzida pelo
+    filtro de modelo da TASK-075, comportamento preservado). Reaproveita
+    o mesmo princípio já comprovado por `_select_amazon_lowest_price`
+    (menor preço, desempate determinístico por external_id/URL),
+    generalizado para manter mais de um candidato -- aqui não há
+    identidade confirmada que justifique colapsar para um só vencedor."""
+    if len(offers) <= limit:
+        return offers
+    ordered = sorted(
+        offers,
+        key=lambda item: (
+            item.amount,
+            item.raw_offer.external_id or item.raw_offer.url,
+        ),
+    )
+    return tuple(ordered[:limit])
+
+
 def _select_amazon_lowest_price(offers: tuple) -> tuple:
     """TASK-075: exclusivo da Amazon: só é chamada pelo chamador quando
     `criteria.model` já confirmou identidade forte (gate obrigatório --
@@ -674,6 +705,14 @@ async def _persist_phase_a(
         # sobrevivente segue independente, nunca "o mais barato" é
         # escolhido sem identidade confirmada.
         survivors = _filter_deterministic_candidates(criteria, normalized.offers)
+        # TASK-082: busca genérica (sem model) não tem o filtro de modelo
+        # da TASK-075 reduzindo nada -- limita aqui, por loja, antes de
+        # persistir/classificar. Busca específica (model preenchido)
+        # nunca passa por este passo, comportamento idêntico ao anterior.
+        if criteria.model is None:
+            survivors = _limit_generic_candidates(
+                survivors, limit=_GENERIC_SEARCH_CANDIDATE_LIMIT
+            )
         final_offers = (
             _select_amazon_lowest_price(survivors)
             if claim.source_code == "amazon" and criteria.model is not None

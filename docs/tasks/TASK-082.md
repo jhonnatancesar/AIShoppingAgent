@@ -1,8 +1,84 @@
 # TASK-082 — Limitar candidatos de pesquisas genéricas nas lojas (sem prejudicar pesquisas específicas)
 
-Status: **Auditada nesta rodada (2026-08-13, Etapa 3 do planejamento
-pós-v1.0.6)** — comportamento atual documentado com evidência de código;
-nenhum número de limite escolhido ainda; não implementada.
+Status: **Implementada e testada (2026-08-14)**. Suíte não-integração verde
+(1079 passed, 90,98% cobertura), ruff limpo. Nenhuma chamada real, nenhuma
+missão criada, nenhum rebuild Docker — validação só com testes
+determinísticos/mockados, reaproveitando a auditoria de código já registrada
+abaixo. Commit local pendente de aprovação final.
+
+## Implementação (resumo objetivo)
+
+Novo passo determinístico em `backend/app/collection/orchestration.py`,
+`_limit_generic_candidates`, chamado dentro de `_persist_phase_a` logo
+depois de `_filter_deterministic_candidates` e antes de qualquer
+persistência/classificação:
+
+```python
+survivors = _filter_deterministic_candidates(criteria, normalized.offers)
+if criteria.model is None:
+    survivors = _limit_generic_candidates(
+        survivors, limit=_GENERIC_SEARCH_CANDIDATE_LIMIT
+    )
+final_offers = (
+    _select_amazon_lowest_price(survivors)
+    if claim.source_code == "amazon" and criteria.model is not None
+    else survivors
+)
+```
+
+**Gate `específica` vs `genérica`**: continua sendo `criteria.model is
+None` (o único sinal existente hoje, exatamente o critério interino já
+documentado abaixo) — `criteria.model is not None` nunca passa por este
+passo novo, preservando o comportamento da TASK-075 sem nenhuma alteração
+(comprovado por teste de regressão explícito, `9800X3D`/`RTX 5070 Ti`
+simulados com muitos candidatos sobreviventes, nenhum cortado).
+
+**Limite escolhido: 3 candidatos por loja.** Nenhum número havia sido
+fixado durante a auditoria original (ver seção abaixo, mantida como
+histórico). Derivado por analogia do único precedente numérico já
+existente no próprio pipeline de coleta para "quantos candidatos merecem
+atenção determinística extra, por loja, antes de qualquer IA":
+`PlaywrightStoreProvider.availability_fallback_max_candidates` (default
+`3`, já em produção desde a TASK-075, mesmo arquivo/módulo). Mesma ordem
+de grandeza, mesmo espírito — não é o "número da regra da Amazon" (que
+não tem N configurável, colapsa sempre para 1 vencedor porque a
+identidade já foi confirmada), mas reaproveita o **princípio** da regra
+da Amazon: ordenar por menor preço (`amount` crescente) com desempate
+determinístico por `external_id`/URL, generalizado para manter mais de 1
+candidato — aqui não há identidade confirmada que justifique colapsar
+para um só.
+
+**Onde**: dentro de `_filter_deterministic_candidates`'s vizinhança
+(logo depois dela, mesma Fase A da TASK-079/080), nunca antes da
+extração bruta do provider — não altera nenhum provider, nenhum
+`max_offers`, nenhuma normalização.
+
+**Por loja, não global**: `_persist_phase_a` já roda uma vez por
+`ClaimedCollection` (uma fonte por vez) — o corte de 3 se aplica aos
+sobreviventes daquela única fonte; nenhum estado compartilhado entre
+lojas, nenhuma loja consome o limite de outra (estrutural, não precisou
+de mecanismo novo de contabilização).
+
+**Sem chamada nova de IA/provider**: `_limit_generic_candidates` é uma
+função pura sobre `NormalizedCollectedOffer` já em memória — nenhuma
+requisição adicional a `AIProviderManager` nem a nenhum `CollectionProvider`.
+
+## Testes adicionados
+
+`tests/test_collection_orchestration.py` (função pura
+`_limit_generic_candidates`): mantém os N mais baratos, desempate
+determinístico por `external_id`, menos candidatos que o limite mantém
+todos, entrada vazia não quebra.
+
+`tests/test_collection_orchestration_async.py` (integração com
+`_persist_phase_a`, mockado): busca genérica com 5 candidatos reduz a 3
+(os 3 mais baratos, nenhuma chamada extra a `_resolve_offer` para os 2
+descartados); busca específica com 5 candidatos todos batendo no filtro
+de modelo preserva os 5, comportamento idêntico ao anterior.
+
+---
+
+## Comportamento real atual auditado antes da implementação (histórico)
 
 Dependência: estende `TASK-075` (`docs/tasks/TASK-075.md`, filtro
 determinístico + regra exclusiva da Amazon) sem reabri-la nem alterá-la.
@@ -151,23 +227,23 @@ decisões em aberto para a implementação:
   TASK-083 (Etapa 4).
 - Qualquer mudança em `classify_offer_relevance`, pré-lista ou alertas.
 
-## Critérios de aceite (quando a implementação for decidida)
+## Critérios de aceite
 
-1. Busca específica (`criteria.model` preenchido, ex.: `9800X3D`, `RTX
+1. ✅ Busca específica (`criteria.model` preenchido, ex.: `9800X3D`, `RTX
    5070 Ti`) — comportamento **idêntico** ao atual, comprovado por teste
    de regressão explícito (nenhuma redução adicional desta TASK se
    aplica).
-2. Busca genérica (`criteria.model = None`) — número de candidatos que
-   chegam a `classify_offer_relevance` fica pequeno e limitado (valor
-   exato a definir), nunca ilimitado.
-3. Nenhuma oferta relevante conhecida é perdida por causa só do corte
-   (ex.: se o critério de corte for "ordem da loja", precisa de
-   validação real de que a loja já ordena por relevância/preço, não por
-   um critério arbitrário).
-4. Nenhuma mudança em `_filter_deterministic_candidates`/
-   `_select_amazon_lowest_price` além de receber um conjunto já
-   pré-limitado como entrada, quando aplicável.
-5. Pipeline oficial completo aprovado antes de qualquer commit.
+2. ✅ Busca genérica (`criteria.model = None`) — no máximo 3 candidatos
+   por loja chegam a `classify_offer_relevance`, nunca ilimitado.
+3. Critério de corte usa preço (`amount` crescente, mesmo princípio já
+   comprovado da Amazon), não a ordem bruta da loja — não depende de
+   validação real de ranking de relevância da própria loja.
+4. ✅ Nenhuma mudança em `_filter_deterministic_candidates`/
+   `_select_amazon_lowest_price` além de receberem um conjunto já
+   pré-limitado como entrada, quando aplicável (só busca genérica).
+5. ✅ Pipeline não-integração completo (suíte + ruff) aprovado antes do
+   commit. Validação real/Docker/missão explicitamente fora do escopo
+   desta rodada de implementação, por instrução direta do usuário.
 
 ## Impacto em banco/migration
 

@@ -382,6 +382,150 @@ def test_persist_phase_a_raises_when_mission_data_missing() -> None:
         asyncio.run(_persist_phase_a(_session_factory(session), claim, normalized))
 
 
+# --- TASK-082: limitação de candidatos em busca genérica, integrada na Fase A ---
+
+
+def test_persist_phase_a_limits_generic_search_candidates_per_source(
+    monkeypatch,
+) -> None:
+    mission_id, run_id, store_id = uuid4(), uuid4(), uuid4()
+    run = SimpleNamespace(
+        id=run_id,
+        mission_id=mission_id,
+        store_id=store_id,
+        status=CollectionRunStatus.RUNNING,
+        started_at=NOW,
+    )
+    mission = SimpleNamespace(id=mission_id)
+    criteria = SimpleNamespace(
+        mission_id=mission_id,
+        search_query="cadeira gamer",
+        model=None,
+        target_amount=None,
+        target_currency=None,
+    )
+    session = _mock_async_session()
+    # scalar: run, criteria, depois 1 "previous observation" por sobrevivente (3, pós-limite)
+    session.scalar.side_effect = [run, criteria, None, None, None]
+    product = SimpleNamespace(display_name="Cadeira")
+    # get: Mission, depois (relevance_cache, product) por sobrevivente (3, pós-limite)
+    session.get.side_effect = [mission] + [None, product] * 3
+    offer_stub = SimpleNamespace(id=uuid4(), product_id=uuid4())
+    monkeypatch.setattr(
+        "app.collection.orchestration._resolve_offer",
+        AsyncMock(return_value=offer_stub),
+    )
+    claim = ClaimedCollection(
+        run_id, mission_id, store_id, "kabum", "cadeira gamer", NOW
+    )
+    result = CollectionResult(
+        "kabum",
+        NOW,
+        NOW + timedelta(seconds=2),
+        (
+            _raw(
+                source="kabum",
+                external_id="1",
+                title="Cadeira A",
+                raw_price="R$ 900,00",
+            ),
+            _raw(
+                source="kabum",
+                external_id="2",
+                title="Cadeira B",
+                raw_price="R$ 500,00",
+            ),
+            _raw(
+                source="kabum",
+                external_id="3",
+                title="Cadeira C",
+                raw_price="R$ 700,00",
+            ),
+            _raw(
+                source="kabum",
+                external_id="4",
+                title="Cadeira D",
+                raw_price="R$ 300,00",
+            ),
+            _raw(
+                source="kabum",
+                external_id="5",
+                title="Cadeira E",
+                raw_price="R$ 1.000,00",
+            ),
+        ),
+    )
+    normalized = PriceNormalizer().normalize_result(result)
+
+    outcome = asyncio.run(
+        _persist_phase_a(_session_factory(session), claim, normalized)
+    )
+
+    # Só os 3 mais baratos (TASK-082) chegam a persistir/precisar de IA --
+    # nenhuma chamada extra a provider/IA acontece para os outros 2.
+    assert len(outcome.offers) == 3
+    assert [pending.raw_title for pending in outcome.offers] == [
+        "Cadeira D",
+        "Cadeira B",
+        "Cadeira C",
+    ]
+
+
+def test_persist_phase_a_specific_search_not_limited(monkeypatch) -> None:
+    """Busca específica (`criteria.model` preenchido) preserva o
+    comportamento da TASK-075 -- o corte novo da TASK-082 nunca se
+    aplica, mesmo com muitos candidatos sobrevivendo ao filtro de modelo."""
+    mission_id, run_id, store_id = uuid4(), uuid4(), uuid4()
+    run = SimpleNamespace(
+        id=run_id,
+        mission_id=mission_id,
+        store_id=store_id,
+        status=CollectionRunStatus.RUNNING,
+        started_at=NOW,
+    )
+    mission = SimpleNamespace(id=mission_id)
+    criteria = SimpleNamespace(
+        mission_id=mission_id,
+        search_query="Placa de Video RTX 5070 Ti",
+        model="RTX 5070 Ti",
+        target_amount=None,
+        target_currency=None,
+    )
+    session = _mock_async_session()
+    session.scalar.side_effect = [run, criteria, None, None, None, None, None]
+    product = SimpleNamespace(display_name="RTX 5070 Ti")
+    session.get.side_effect = [mission] + [None, product] * 5
+    offer_stub = SimpleNamespace(id=uuid4(), product_id=uuid4())
+    monkeypatch.setattr(
+        "app.collection.orchestration._resolve_offer",
+        AsyncMock(return_value=offer_stub),
+    )
+    claim = ClaimedCollection(
+        run_id, mission_id, store_id, "kabum", "Placa de Video RTX 5070 Ti", NOW
+    )
+    result = CollectionResult(
+        "kabum",
+        NOW,
+        NOW + timedelta(seconds=2),
+        tuple(
+            _raw(
+                source="kabum",
+                external_id=str(index),
+                title="Placa de Video RTX 5070 Ti",
+                raw_price=f"R$ {900 + index},00",
+            )
+            for index in range(5)
+        ),
+    )
+    normalized = PriceNormalizer().normalize_result(result)
+
+    outcome = asyncio.run(
+        _persist_phase_a(_session_factory(session), claim, normalized)
+    )
+
+    assert len(outcome.offers) == 5
+
+
 def test_run_phase_b_skips_offers_without_pending_ai() -> None:
     outcome = _PhaseAOutcome(
         run_id=uuid4(),

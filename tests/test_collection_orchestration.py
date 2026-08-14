@@ -29,10 +29,12 @@ from app.collection.errors import (
 )
 from app.collection.normalization import PriceNormalizer
 from app.collection.orchestration import (
+    _GENERIC_SEARCH_CANDIDATE_LIMIT,
     CollectionOrchestrator,
     _failure_code,
     _filter_deterministic_candidates,
     _is_confirmed_external_block,
+    _limit_generic_candidates,
     _raw_evidence,
     _safe_source,
     _select_amazon_lowest_price,
@@ -264,6 +266,49 @@ def test_select_amazon_lowest_price_tie_break_by_external_id() -> None:
 
 def test_select_amazon_lowest_price_empty_input() -> None:
     assert _select_amazon_lowest_price(()) == ()
+
+
+# --- TASK-082: limitação de candidatos em busca genérica ---
+
+
+def test_limit_generic_candidates_keeps_only_cheapest_up_to_limit() -> None:
+    offers = _normalized_offers(
+        _raw(external_id="1", title="Cadeira A", raw_price="R$ 900,00"),
+        _raw(external_id="2", title="Cadeira B", raw_price="R$ 500,00"),
+        _raw(external_id="3", title="Cadeira C", raw_price="R$ 700,00"),
+        _raw(external_id="4", title="Cadeira D", raw_price="R$ 300,00"),
+        _raw(external_id="5", title="Cadeira E", raw_price="R$ 1.000,00"),
+    )
+
+    survivors = _limit_generic_candidates(offers, limit=3)
+
+    assert [item.raw_offer.external_id for item in survivors] == ["4", "2", "3"]
+
+
+def test_limit_generic_candidates_tie_break_by_external_id() -> None:
+    offers = _normalized_offers(
+        _raw(external_id="9", title="Mouse A", raw_price="R$ 200,00"),
+        _raw(external_id="1", title="Mouse B", raw_price="R$ 200,00"),
+        _raw(external_id="5", title="Mouse C", raw_price="R$ 200,00"),
+    )
+
+    survivors = _limit_generic_candidates(offers, limit=2)
+
+    assert [item.raw_offer.external_id for item in survivors] == ["1", "5"]
+
+
+def test_limit_generic_candidates_fewer_than_limit_keeps_all() -> None:
+    offers = _normalized_offers(
+        _raw(external_id="1", title="Teclado A", raw_price="R$ 200,00"),
+    )
+
+    survivors = _limit_generic_candidates(offers, limit=_GENERIC_SEARCH_CANDIDATE_LIMIT)
+
+    assert len(survivors) == 1
+
+
+def test_limit_generic_candidates_empty_input() -> None:
+    assert _limit_generic_candidates((), limit=3) == ()
 
 
 @pytest.mark.parametrize(
