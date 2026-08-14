@@ -1109,8 +1109,8 @@ async def test_mission_command_intent_stages_confirmation_without_transitioning(
 
     _patch_user(monkeypatch, fake_user)
     monkeypatch.setattr(
-        "app.telegram.router.resolve_mission_for_command",
-        AsyncMock(return_value=fake_mission),
+        "app.telegram.router.list_mission_command_candidates",
+        AsyncMock(return_value=[fake_mission]),
     )
 
     async def _fail_transition(*args: object, **kwargs: object) -> object:
@@ -1195,22 +1195,315 @@ async def test_confirmed_pending_mission_command_executes_and_clears_step(
     assert "pausada" in send_calls[0][1]
 
 
+# --- TASK-085: seleção numérica de missão para comandos ambíguos ---
+
+
+def _fake_mission(*, title: str, status: MissionStatus, state_version: int = 1):
+    return SimpleNamespace(
+        id=uuid4(), title=title, status=status, state_version=state_version
+    )
+
+
+@pytest.mark.anyio
+async def test_mission_command_multiple_candidates_stages_numbered_choice(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.missions.models import MissionCommand
+
+    fake_user = _fake_user()
+    candidates = [
+        _fake_mission(title="Ryzen 7 9800X3D", status=MissionStatus.ACTIVE),
+        _fake_mission(title="Cadeira gamer", status=MissionStatus.ACTIVE),
+        _fake_mission(title="Mouse Logitech", status=MissionStatus.PAUSED),
+    ]
+
+    _patch_user(monkeypatch, fake_user)
+    monkeypatch.setattr(
+        "app.telegram.router.list_mission_command_candidates",
+        AsyncMock(return_value=candidates),
+    )
+    send_calls = _patch_send_message(monkeypatch)
+    intent = _intent(kind=IntentKind.MISSION_COMMAND, command=MissionCommand.CANCEL)
+    adapter = _FakeAdapter(intent)
+
+    response = await receive_telegram_webhook(
+        update=_update(),
+        x_telegram_bot_api_secret_token="correct-secret",
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        settings=_settings(),
+        session=_async_session(),
+    )
+
+    assert response.status_code == 204
+    body = send_calls[0][1]
+    assert "1." in body and "Ryzen 7 9800X3D" in body and "ativa" in body.lower()
+    assert "3." in body and "Mouse Logitech" in body and "pausada" in body.lower()
+    assert fake_user.pending_intent["kind"] == "mission_command_choice"
+    assert len(fake_user.pending_intent["missions"]) == 3
+
+
+def _staged_choice_user(*, missions: list, command: str = "cancel") -> SimpleNamespace:
+    return _fake_user(
+        pending_intent={
+            "kind": "mission_command_choice",
+            "command": command,
+            "missions": [
+                {
+                    "mission_id": str(mission.id),
+                    "mission_title": mission.title,
+                    "expected_state_version": mission.state_version,
+                }
+                for mission in missions
+            ],
+        }
+    )
+
+
+@pytest.mark.anyio
+async def test_mission_command_choice_single_selection_executes_without_ai(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    missions = [
+        _fake_mission(title="Ryzen 7 9800X3D", status=MissionStatus.ACTIVE),
+        _fake_mission(title="Cadeira gamer", status=MissionStatus.ACTIVE),
+    ]
+    fake_user = _staged_choice_user(missions=missions)
+    fake_transition = SimpleNamespace(to_status=MissionStatus.CANCELLED)
+
+    _patch_user(monkeypatch, fake_user)
+    monkeypatch.setattr(
+        "app.telegram.router.transition_mission_async",
+        AsyncMock(return_value=fake_transition),
+    )
+    send_calls = _patch_send_message(monkeypatch)
+    adapter = _FakeAdapter(_intent())
+    session = _async_session()
+    session.get.return_value = SimpleNamespace(user_id=fake_user.id)
+
+    response = await receive_telegram_webhook(
+        update=_update(
+            message=_TelegramIncomingMessage(
+                text="1",
+                date=1754586000,
+                chat=_TelegramChat(id=222, type=TelegramChatType.PRIVATE),
+                from_=_TelegramSender(id=222, first_name="Fulano"),
+            )
+        ),
+        x_telegram_bot_api_secret_token="correct-secret",
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        settings=_settings(),
+        session=session,
+    )
+
+    assert response.status_code == 204
+    assert adapter.calls == []  # nenhuma chamada de IA para resolver o número
+    assert fake_user.pending_intent is None
+    body = send_calls[0][1]
+    assert "✅" in body and "1." in body and "Ryzen 7 9800X3D" in body
+    assert "Cadeira gamer" not in body
+
+
+@pytest.mark.anyio
+async def test_mission_command_choice_multi_selection_processes_individually(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    missions = [
+        _fake_mission(title="Ryzen 7 9800X3D", status=MissionStatus.ACTIVE),
+        _fake_mission(title="Cadeira gamer", status=MissionStatus.ACTIVE),
+        _fake_mission(title="Mouse Logitech", status=MissionStatus.ACTIVE),
+    ]
+    fake_user = _staged_choice_user(missions=missions)
+    fake_transition = SimpleNamespace(to_status=MissionStatus.CANCELLED)
+
+    _patch_user(monkeypatch, fake_user)
+    monkeypatch.setattr(
+        "app.telegram.router.transition_mission_async",
+        AsyncMock(return_value=fake_transition),
+    )
+    send_calls = _patch_send_message(monkeypatch)
+    adapter = _FakeAdapter(_intent())
+    session = _async_session()
+    session.get.return_value = SimpleNamespace(user_id=fake_user.id)
+
+    response = await receive_telegram_webhook(
+        update=_update(
+            message=_TelegramIncomingMessage(
+                text="1, 3",
+                date=1754586000,
+                chat=_TelegramChat(id=222, type=TelegramChatType.PRIVATE),
+                from_=_TelegramSender(id=222, first_name="Fulano"),
+            )
+        ),
+        x_telegram_bot_api_secret_token="correct-secret",
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        settings=_settings(),
+        session=session,
+    )
+
+    assert response.status_code == 204
+    body = send_calls[0][1]
+    assert "1." in body and "Ryzen 7 9800X3D" in body
+    assert "3." in body and "Mouse Logitech" in body
+    assert "Cadeira gamer" not in body
+    assert fake_user.pending_intent is None
+
+
+@pytest.mark.anyio
+async def test_mission_command_choice_invalid_index_keeps_pending(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    missions = [_fake_mission(title="Ryzen 7 9800X3D", status=MissionStatus.ACTIVE)]
+    fake_user = _staged_choice_user(missions=missions)
+    original_payload = fake_user.pending_intent
+
+    _patch_user(monkeypatch, fake_user)
+
+    async def _fail_transition(*args: object, **kwargs: object) -> object:
+        raise AssertionError("transition_mission_async should not run")
+
+    monkeypatch.setattr(
+        "app.telegram.router.transition_mission_async", _fail_transition
+    )
+    send_calls = _patch_send_message(monkeypatch)
+    adapter = _FakeAdapter(_intent())
+
+    response = await receive_telegram_webhook(
+        update=_update(
+            message=_TelegramIncomingMessage(
+                text="9",
+                date=1754586000,
+                chat=_TelegramChat(id=222, type=TelegramChatType.PRIVATE),
+                from_=_TelegramSender(id=222, first_name="Fulano"),
+            )
+        ),
+        x_telegram_bot_api_secret_token="correct-secret",
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        settings=_settings(),
+        session=_async_session(),
+    )
+
+    assert response.status_code == 204
+    assert adapter.calls == []
+    assert fake_user.pending_intent == original_payload
+    assert "Não entendi" in send_calls[0][1]
+
+
+@pytest.mark.anyio
+async def test_mission_command_choice_mixed_results_per_item(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.missions.service import MissionVersionConflictError
+
+    missions = [
+        _fake_mission(title="Ryzen 7 9800X3D", status=MissionStatus.ACTIVE),
+        _fake_mission(title="Cadeira gamer", status=MissionStatus.PAUSED),
+        _fake_mission(title="Mouse Logitech", status=MissionStatus.ACTIVE),
+    ]
+    fake_user = _staged_choice_user(missions=missions)
+
+    _patch_user(monkeypatch, fake_user)
+
+    async def _transition(
+        _session: object, *, mission_id: object, **kwargs: object
+    ) -> object:
+        if str(mission_id) == str(missions[0].id):
+            return SimpleNamespace(to_status=MissionStatus.CANCELLED)
+        if str(mission_id) == str(missions[1].id):
+            raise MissionVersionConflictError("mudou")
+        raise AssertionError("unexpected mission")
+
+    monkeypatch.setattr("app.telegram.router.transition_mission_async", _transition)
+    send_calls = _patch_send_message(monkeypatch)
+    adapter = _FakeAdapter(_intent())
+    session = _async_session()
+    # 1ª missão: ownership ok; 2ª: ownership ok mas conflito de versão; 3ª:
+    # não encontrada (get devolve None) -- prova que um resultado ruim não
+    # impede os demais (nunca tudo-ou-nada).
+    session.get.side_effect = [
+        SimpleNamespace(user_id=fake_user.id, status=MissionStatus.PAUSED),
+        SimpleNamespace(user_id=fake_user.id, status=MissionStatus.PAUSED),
+        None,
+    ]
+
+    response = await receive_telegram_webhook(
+        update=_update(
+            message=_TelegramIncomingMessage(
+                text="1,2,3",
+                date=1754586000,
+                chat=_TelegramChat(id=222, type=TelegramChatType.PRIVATE),
+                from_=_TelegramSender(id=222, first_name="Fulano"),
+            )
+        ),
+        x_telegram_bot_api_secret_token="correct-secret",
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        settings=_settings(),
+        session=session,
+    )
+
+    assert response.status_code == 204
+    body = send_calls[0][1]
+    assert "✅ 1." in body
+    assert "⚠️ 2." in body
+    assert "❌ 3." in body
+    assert fake_user.pending_intent is None
+
+
+@pytest.mark.anyio
+async def test_mission_command_choice_ownership_mismatch_marks_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    missions = [_fake_mission(title="Ryzen 7 9800X3D", status=MissionStatus.ACTIVE)]
+    fake_user = _staged_choice_user(missions=missions)
+
+    _patch_user(monkeypatch, fake_user)
+
+    async def _fail_transition(*args: object, **kwargs: object) -> object:
+        raise AssertionError("transition_mission_async should not run")
+
+    monkeypatch.setattr(
+        "app.telegram.router.transition_mission_async", _fail_transition
+    )
+    send_calls = _patch_send_message(monkeypatch)
+    adapter = _FakeAdapter(_intent())
+    session = _async_session()
+    session.get.return_value = SimpleNamespace(user_id=uuid4())  # outro usuário
+
+    response = await receive_telegram_webhook(
+        update=_update(
+            message=_TelegramIncomingMessage(
+                text="1",
+                date=1754586000,
+                chat=_TelegramChat(id=222, type=TelegramChatType.PRIVATE),
+                from_=_TelegramSender(id=222, first_name="Fulano"),
+            )
+        ),
+        x_telegram_bot_api_secret_token="correct-secret",
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        settings=_settings(),
+        session=session,
+    )
+
+    assert response.status_code == 204
+    assert "❌" in send_calls[0][1]
+    assert fake_user.pending_intent is None
+
+
 @pytest.mark.anyio
 async def test_edit_mission_intent_via_free_text_redirects_to_editar_missao_command(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """TASK-071: o caminho antigo (texto livre interpretado pela IA) foi
-    desativado -- nunca mais encena nada nem toca em `resolve_mission_for_command`,
-    só orienta a usar `/editar-missao`."""
+    desativado -- nunca mais encena nada nem toca em
+    `list_mission_command_candidates`, só orienta a usar `/editar-missao`."""
     fake_user = _fake_user()
 
     _patch_user(monkeypatch, fake_user)
 
     async def _fail_resolve(*args: object, **kwargs: object) -> object:
-        raise AssertionError("resolve_mission_for_command should not run")
+        raise AssertionError("list_mission_command_candidates should not run")
 
     monkeypatch.setattr(
-        "app.telegram.router.resolve_mission_for_command", _fail_resolve
+        "app.telegram.router.list_mission_command_candidates", _fail_resolve
     )
     send_calls = _patch_send_message(monkeypatch)
 
@@ -2297,7 +2590,7 @@ async def test_mission_reference_error_at_staging_is_replied_without_pending_int
     async def _raise(*args: object, **kwargs: object) -> object:
         raise error
 
-    monkeypatch.setattr("app.telegram.router.resolve_mission_for_command", _raise)
+    monkeypatch.setattr("app.telegram.router.list_mission_command_candidates", _raise)
     send_calls = _patch_send_message(monkeypatch)
 
     intent = _intent(kind=IntentKind.MISSION_COMMAND, command=MissionCommand.PAUSE)

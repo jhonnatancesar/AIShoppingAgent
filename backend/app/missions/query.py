@@ -59,6 +59,23 @@ async def find_missions_by_reference(
     return list(await session.scalars(statement))
 
 
+async def _candidates_for_command(
+    session: AsyncSession,
+    *,
+    user_id: UUID,
+    reference: str | None,
+) -> list[Mission]:
+    if reference:
+        return await find_missions_by_reference(
+            session, user_id=user_id, reference=reference
+        )
+    return [
+        mission
+        for mission in await list_missions_for_user(session, user_id=user_id, limit=50)
+        if mission.status not in _TERMINAL_STATUSES
+    ]
+
+
 async def resolve_mission_for_command(
     session: AsyncSession,
     *,
@@ -72,19 +89,9 @@ async def resolve_mission_for_command(
     nunca expõe um identificador de missão, então mais de uma candidata é
     ambiguidade real, não um detalhe de implementação.
     """
-    if reference:
-        candidates = await find_missions_by_reference(
-            session, user_id=user_id, reference=reference
-        )
-    else:
-        candidates = [
-            mission
-            for mission in await list_missions_for_user(
-                session, user_id=user_id, limit=50
-            )
-            if mission.status not in _TERMINAL_STATUSES
-        ]
-
+    candidates = await _candidates_for_command(
+        session, user_id=user_id, reference=reference
+    )
     if not candidates:
         raise MissionReferenceError("Não encontrei nenhuma missão correspondente.")
     if len(candidates) > 1:
@@ -92,3 +99,15 @@ async def resolve_mission_for_command(
             "Encontrei mais de uma missão correspondente; seja mais específico."
         )
     return candidates[0]
+
+
+async def list_mission_command_candidates(
+    session: AsyncSession,
+    *,
+    user_id: UUID,
+    reference: str | None,
+) -> list[Mission]:
+    """TASK-085: mesmas candidatas de `resolve_mission_for_command`, mas
+    sem levantar erro de ambiguidade -- usado quando o chamador oferece
+    seleção numerada em vez do erro "seja mais específico"."""
+    return await _candidates_for_command(session, user_id=user_id, reference=reference)

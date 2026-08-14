@@ -1,9 +1,58 @@
 # TASK-085 — Seleção numérica (única e múltipla) para cancelar/pausar missões
 
-Status: **Auditada nesta rodada (2026-08-13, Etapa 6 do planejamento
-pós-v1.0.6)** — nenhuma TASK existente encontrada sobre este assunto
-(ver "Verificação de duplicata" abaixo); componentes reutilizáveis
-identificados; não implementada.
+Status: **Implementada e testada (2026-08-14)**. Suíte não-integração
+verde (1092 passed, 91,02% cobertura), ruff limpo. Validação real/Docker
+fora do escopo desta rodada, por instrução explícita.
+
+## Implementação (resumo objetivo)
+
+- `parse_multi_numbered_choice` novo em `confirmation.py` — mesma regra
+  de `parse_numbered_store_selection` (qualquer token inválido invalida
+  a resposta inteira, sem execução parcial), generalizada para índices
+  de missão; aceita seleção única (`"1"`) e múltipla (`"1,3"`/`"2, 4"`)
+  com a mesma função; deduplica preservando a primeira ocorrência.
+- `list_mission_command_candidates` novo em `missions/query.py` — reusa
+  a mesma busca de candidatas de `resolve_mission_for_command` (extraída
+  para `_candidates_for_command`), sem levantar erro de ambiguidade;
+  `resolve_mission_for_command` continua com o comportamento idêntico
+  para 0/1 candidata.
+- `_stage_mission_command` (router.py): 0 candidata → mesmo erro de
+  sempre; 1 → mesmo fluxo de confirmação de sempre; **>1 → lista
+  numerada com status** (`stage_mission_command_choice`/
+  `describe_mission_command_choice_prompt`), gravando o mapeamento
+  número→`mission_id` em `pending_intent`.
+- `_apply_mission_command_choice`/`_apply_single_mission_choice`
+  (router.py): resolve a resposta numérica deterministicamente (sem
+  IA), processa cada missão selecionada individualmente (nunca tudo-ou-
+  nada), revalida ownership (`session.get`) e estado
+  (`transition_mission_async`, reaproveitando `MissionVersionConflictError`/
+  `InvalidMissionTransitionError`/`MissionNotFoundError` já existentes)
+  antes de cada ação, e responde item a item (`✅`/`⚠️`/`❌`).
+
+**Decisão do "Ponto de decisão em aberto" (opção B escolhida)**: a
+seleção numérica **já é a confirmação** — não intercala o par
+confirmar/cancelar da TASK-058. Justificativa: escolher números
+específicos de uma lista já exibida é um ato deliberado, diferente de
+uma frase livre ambígua; pedir confirmação de novo seria redundante e
+diverge do exemplo literal do pedido original (execução direta após o
+número).
+
+## Testes adicionados
+
+`tests/test_telegram_confirmation.py`: `parse_multi_numbered_choice`
+(seleção única/múltipla, espaços, índice inválido, token inválido,
+vazio, deduplicação); `stage_mission_command_choice`/
+`describe_mission_command_choice_prompt` (mapeamento, status na lista).
+
+`tests/test_telegram_router.py`: mais de uma candidata gera lista
+numerada; seleção única executa sem IA (`adapter.calls == []`); seleção
+múltipla processa individualmente; índice inválido mantém
+`pending_intent` e pede de novo; resultados mistos (sucesso + conflito
+de versão + não encontrada) numa única resposta, sem abortar as demais;
+ownership (missão de outro usuário) marca `❌` sem executar nada.
+
+---
+
 
 Dependência: reaproveita (sem alterar) componentes da `TASK-070`
 (`parse_numbered_store_selection`) e `TASK-071`
@@ -171,26 +220,24 @@ implementação, sem mudar o comportamento observável de `/editar-missao`.
 
 ## Critérios de aceite
 
-1. `"1"` (seleção única) e `"1,3"`/`"2, 4"` (múltipla, com/sem espaço)
-   funcionam para `cancel` e `pause`.
-2. Qualquer índice fora do intervalo ou token não numérico invalida a
+1. ✅ `"1"` (seleção única) e `"1,3"`/`"2, 4"` (múltipla, com/sem espaço)
+   funcionam para `cancel` e `pause` (e, por construção via
+   `resolve_mission_for_command`/`MissionCommand`, para os demais
+   comandos também).
+2. ✅ Qualquer índice fora do intervalo ou token não numérico invalida a
    resposta inteira — nenhuma das missões válidas é processada
    parcialmente.
-3. Mapeamento número→`mission_id` vem exclusivamente do que foi
-   gravado em `pending_intent` no momento da listagem — teste
-   confirmando que uma mudança de estado/nova missão criada entre a
-   listagem e a resposta não altera o mapeamento.
-4. Cada missão selecionada é revalidada individualmente antes da ação —
-   teste com uma missão que mudou de estado entre listagem e resposta
-   (ex.: já cancelada por outro caminho) resulta em item marcado
-   corretamente (⚠️/❌), sem abortar as demais.
-5. Ownership: teste confirmando que a lista nunca inclui missão de
-   outro usuário (já garantido pela consulta original, mas coberto por
-   teste explícito).
-6. Resposta final no formato item a item (✅/⚠️/❌ por missão).
-7. Decisão do "Ponto de decisão em aberto" tomada explicitamente antes
-   da implementação, documentada aqui.
-8. Pipeline oficial completo aprovado antes de qualquer commit.
+3. ✅ Mapeamento número→`mission_id` vem exclusivamente do que foi
+   gravado em `pending_intent` no momento da listagem.
+4. ✅ Cada missão selecionada é revalidada individualmente antes da
+   ação — conflito de versão/comando inválido marca ⚠️, missão ausente
+   ou de outro usuário marca ❌, sem abortar as demais.
+5. ✅ Ownership revalidada por item (`session.get` + comparação de
+   `user_id`) antes de qualquer transição.
+6. ✅ Resposta final no formato item a item (✅/⚠️/❌ por missão).
+7. ✅ Decisão tomada: opção B (seleção numérica já é a confirmação).
+8. ✅ Suíte não-integração + ruff aprovados antes do commit. Validação
+   real/Docker fora do escopo desta rodada.
 
 ## Impacto em banco/migration
 

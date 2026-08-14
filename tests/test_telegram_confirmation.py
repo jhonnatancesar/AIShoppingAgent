@@ -7,7 +7,7 @@ from uuid import uuid4
 
 import pytest
 from app.ai_provider import AIProviderUnavailable, AIRequest, AIResponse
-from app.missions.models import MissionCommand
+from app.missions.models import MissionCommand, MissionStatus
 from app.telegram.confirmation import (
     ConfirmationError,
     current_store_options,
@@ -30,9 +30,12 @@ from app.telegram.confirmation import (
     describe_mission_choice_prompt,
     describe_mission_choice_retry,
     describe_mission_command,
+    describe_mission_command_choice_prompt,
+    describe_mission_command_choice_retry,
     describe_no_editable_mission,
     describe_pause_for_edit,
     missing_store_options,
+    parse_multi_numbered_choice,
     parse_numbered_store_selection,
     parse_single_numbered_choice,
     parse_target_amount_entry,
@@ -43,6 +46,7 @@ from app.telegram.confirmation import (
     stage_create_mission,
     stage_edit_mission,
     stage_mission_command,
+    stage_mission_command_choice,
     stage_pause_for_edit,
 )
 from app.users.models import UserRole
@@ -346,6 +350,51 @@ def test_describe_mission_command_covers_every_command(
     assert verb in describe_mission_command(payload)
 
 
+def test_stage_and_describe_mission_command_choice() -> None:
+    from types import SimpleNamespace
+
+    missions = [
+        SimpleNamespace(
+            id=uuid4(),
+            title="Ryzen 7 9800X3D",
+            status=MissionStatus.ACTIVE,
+            state_version=1,
+        ),
+        SimpleNamespace(
+            id=uuid4(),
+            title="Mouse Logitech",
+            status=MissionStatus.PAUSED,
+            state_version=2,
+        ),
+    ]
+
+    payload = stage_mission_command_choice(
+        missions=missions, command=MissionCommand.CANCEL
+    )
+
+    assert payload["kind"] == "mission_command_choice"
+    assert payload["command"] == "cancel"
+    assert payload["missions"] == [
+        {
+            "mission_id": str(missions[0].id),
+            "mission_title": "Ryzen 7 9800X3D",
+            "expected_state_version": 1,
+        },
+        {
+            "mission_id": str(missions[1].id),
+            "mission_title": "Mouse Logitech",
+            "expected_state_version": 2,
+        },
+    ]
+    prompt = describe_mission_command_choice_prompt(
+        missions, command=MissionCommand.CANCEL
+    )
+    assert "1. Ryzen 7 9800X3D" in prompt and "ativa" in prompt.lower()
+    assert "2. Mouse Logitech" in prompt and "pausada" in prompt.lower()
+    assert "cancelar" in prompt
+    assert describe_mission_command_choice_retry()  # não vazio
+
+
 def test_stage_and_describe_edit_mission_target_change_only() -> None:
     mission_id = uuid4()
 
@@ -465,6 +514,35 @@ def test_parse_single_numbered_choice_rejects_non_numeric_or_multiple() -> None:
     assert parse_single_numbered_choice("abc", count=2) is None
     assert parse_single_numbered_choice("1,2", count=2) is None
     assert parse_single_numbered_choice("", count=2) is None
+
+
+# --- TASK-085: parse_multi_numbered_choice ---
+
+
+def test_parse_multi_numbered_choice_single_value() -> None:
+    assert parse_multi_numbered_choice("1", count=3) == (0,)
+
+
+def test_parse_multi_numbered_choice_multiple_with_and_without_spaces() -> None:
+    assert parse_multi_numbered_choice("1,3", count=4) == (0, 2)
+    assert parse_multi_numbered_choice("2, 4", count=4) == (1, 3)
+
+
+def test_parse_multi_numbered_choice_rejects_out_of_range_index() -> None:
+    assert parse_multi_numbered_choice("1,9", count=3) is None
+
+
+def test_parse_multi_numbered_choice_rejects_invalid_token() -> None:
+    assert parse_multi_numbered_choice("1,abc", count=3) is None
+
+
+def test_parse_multi_numbered_choice_rejects_empty() -> None:
+    assert parse_multi_numbered_choice("", count=3) is None
+    assert parse_multi_numbered_choice("   ", count=3) is None
+
+
+def test_parse_multi_numbered_choice_dedupes_preserving_first_order() -> None:
+    assert parse_multi_numbered_choice("2,1,2", count=3) == (1, 0)
 
 
 def test_describe_mission_choice_prompt_lists_titles_numbered() -> None:

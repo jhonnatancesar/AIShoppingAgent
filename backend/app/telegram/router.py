@@ -63,8 +63,8 @@ from app.missions.models import (
 from app.missions.query import (
     MissionReferenceError,
     find_missions_by_reference,
+    list_mission_command_candidates,
     list_missions_for_user,
-    resolve_mission_for_command,
 )
 from app.missions.service import (
     InvalidMissionTransitionError,
@@ -108,9 +108,12 @@ from app.telegram.confirmation import (
     describe_mission_choice_prompt,
     describe_mission_choice_retry,
     describe_mission_command,
+    describe_mission_command_choice_prompt,
+    describe_mission_command_choice_retry,
     describe_no_editable_mission,
     describe_pause_for_edit,
     missing_store_options,
+    parse_multi_numbered_choice,
     parse_single_numbered_choice,
     parse_target_amount_entry,
     resolve_answer,
@@ -120,6 +123,7 @@ from app.telegram.confirmation import (
     stage_create_mission,
     stage_edit_mission,
     stage_mission_command,
+    stage_mission_command_choice,
     stage_pause_for_edit,
 )
 from app.telegram.contracts import (
@@ -642,6 +646,10 @@ async def _resolve_pending_intent(
         return _apply_edit_remove_sources(message.text, user=user)
     if kind == "await_edit_target_amount":
         return _apply_edit_target_amount(message.text, user=user)
+    if kind == "mission_command_choice":
+        return await _apply_mission_command_choice(
+            message.text, session=session, user=user
+        )
 
     profile = ai_profile_for_user(session, user)
     # Extensão da TASK-079: mesma regra do fim de `_handle_message` -- fecha
@@ -781,19 +789,28 @@ async def _handle_query_mission(
 async def _stage_mission_command(
     intent: Intent, *, session: AsyncSession, user: User
 ) -> str:
-    mission = await resolve_mission_for_command(
+    candidates = await list_mission_command_candidates(
         session,
         user_id=user.id,
         reference=intent.parameters.mission_reference,
     )
-    payload = stage_mission_command(
-        mission_id=mission.id,
-        mission_title=mission.title,
-        command=intent.command,
-        expected_state_version=mission.state_version,
-    )
+    if not candidates:
+        raise MissionReferenceError("Não encontrei nenhuma missão correspondente.")
+    if len(candidates) == 1:
+        mission = candidates[0]
+        payload = stage_mission_command(
+            mission_id=mission.id,
+            mission_title=mission.title,
+            command=intent.command,
+            expected_state_version=mission.state_version,
+        )
+        user.pending_intent = payload
+        return describe_mission_command(payload)
+    # TASK-085: mais de uma candidata -- lista numerada em vez do erro
+    # "seja mais específico"; aceita seleção única ou múltipla.
+    payload = stage_mission_command_choice(missions=candidates, command=intent.command)
     user.pending_intent = payload
-    return describe_mission_command(payload)
+    return describe_mission_command_choice_prompt(candidates, command=intent.command)
 
 
 async def _query_missions_by_status(
@@ -1158,6 +1175,68 @@ async def _execute_mission_command(
     icon = MISSION_STATUS_ICONS[transition.to_status]
     status = format_mission_status(transition.to_status)
     return f'{icon} "{payload["mission_title"]}" agora está {status}.'
+
+
+async def _apply_mission_command_choice(
+    text: str, *, session: AsyncSession, user: User
+) -> str:
+    """TASK-085: resposta numérica já é a confirmação -- resolve os
+    índices contra o `pending_intent` gravado no momento da listagem
+    (nunca uma nova consulta reordenada), processa cada missão
+    individualmente (nunca tudo-ou-nada) e limpa o estado pendente ao
+    final, com sucesso parcial ou total."""
+    payload = user.pending_intent
+    entries = payload["missions"]
+    indices = parse_multi_numbered_choice(text, count=len(entries))
+    if indices is None:
+        return describe_mission_command_choice_retry()
+    command = MissionCommand(payload["command"])
+    lines = [
+        await _apply_single_mission_choice(
+            index=index,
+            entry=entries[index],
+            command=command,
+            session=session,
+            user=user,
+        )
+        for index in indices
+    ]
+    user.pending_intent = None
+    return "\n".join(lines)
+
+
+async def _apply_single_mission_choice(
+    *,
+    index: int,
+    entry: dict[str, Any],
+    command: MissionCommand,
+    session: AsyncSession,
+    user: User,
+) -> str:
+    number = index + 1
+    title = entry["mission_title"]
+    mission_id = UUID(entry["mission_id"])
+    mission = await session.get(Mission, mission_id)
+    if mission is None or mission.user_id != user.id:
+        return f'❌ {number}. "{title}" — não encontrada.'
+    try:
+        transition = await transition_mission_async(
+            session,
+            mission_id=mission_id,
+            command=command,
+            expected_state_version=entry["expected_state_version"],
+            actor_type="telegram",
+            actor_id=user.id,
+        )
+    except MissionNotFoundError:
+        return f'❌ {number}. "{title}" — não encontrada.'
+    except MissionVersionConflictError, InvalidMissionTransitionError:
+        status = format_mission_status(mission.status)
+        return f'⚠️ {number}. "{title}" — já estava {status}.'
+    # TASK-085: ✅ marca sucesso da OPERAÇÃO (nunca o ícone por status da
+    # missão, ex.: ❌ para CANCELLED) -- formato do pedido do usuário.
+    status = format_mission_status(transition.to_status)
+    return f'✅ {number}. "{title}" — {status}.'
 
 
 async def _execute_edit_mission(

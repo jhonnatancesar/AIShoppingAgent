@@ -293,8 +293,16 @@ regra da Amazon. Busca específica preservada sem nenhuma alteração; ver
 `docs/tasks/TASK-082.md`. Só validação não-integração (suíte + ruff) —
 sem chamada real, missão ou rebuild Docker, por instrução explícita.
 
-Nenhum push/tag feito para nenhuma das duas. Status individual das
-demais três (080, 081, 084, 085) não reverificado nesta rodada — ver o
+**TASK-085 concluída (2026-08-14)** — seleção numérica única/múltipla
+(`"1"`/`"1,3"`) para `mission_command` ambíguo (`cancel`/`pause`/etc.),
+determinística sem IA, mapeamento gravado em `pending_intent` no
+momento da listagem, processamento item a item nunca tudo-ou-nada
+(✅/⚠️/❌ por missão); resposta numérica já é a confirmação, sem
+intercalar o par confirmar/cancelar da TASK-058. Ver
+`docs/tasks/TASK-085.md`. Só validação não-integração (suíte + ruff).
+
+Nenhum push/tag feito para nenhuma das três. Status individual das
+demais duas (080, 081) e da 084 não reverificado nesta rodada — ver o
 commit log e `docs/tasks/` de cada uma para o estado real mais recente.)
 → V1.2
 (evolução funcional, documento `docs/V1_2.md`, 12 itens,

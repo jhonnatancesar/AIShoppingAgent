@@ -34,8 +34,12 @@ from app.ai_provider import (
     AIProviderManager,
     AIRequest,
 )
-from app.missions.models import MissionCommand
-from app.telegram.formatting import format_money, format_store_list
+from app.missions.models import Mission, MissionCommand
+from app.telegram.formatting import (
+    format_mission_status,
+    format_money,
+    format_store_list,
+)
 from app.users.models import UserRole
 
 PURPOSE = "interpret_confirmation_reply"
@@ -396,6 +400,82 @@ def describe_mission_choice_prompt(titles: Sequence[str], *, header: str) -> str
 
 def describe_mission_choice_retry() -> str:
     return _MISSION_CHOICE_RETRY
+
+
+# TASK-085: seleção numérica (única ou múltipla) de missão para comandos
+# ambíguos (`cancel`/`pause`/etc. com mais de uma candidata). A resposta
+# numérica já É a confirmação -- escolher números específicos é um ato
+# deliberado, diferente de uma frase livre ambígua; não intercala o par
+# confirmar/cancelar da TASK-058 (decisão registrada em
+# `docs/tasks/TASK-085.md`, "Ponto de decisão em aberto", opção B).
+
+_MISSION_COMMAND_CHOICE_RETRY = (
+    "Não entendi. Digite o número de uma ou mais missões da lista, "
+    'separados por vírgula (ex.: "1" ou "1,3").'
+)
+
+
+def parse_multi_numbered_choice(raw: str, *, count: int) -> tuple[int, ...] | None:
+    """Índices zero-based de uma seleção múltipla (TASK-085) -- vírgula
+    como separador, espaços opcionais (mesmo princípio de
+    `parse_numbered_store_selection`: qualquer token não numérico ou
+    fora do intervalo `1..count` invalida a resposta inteira, nunca
+    aceita parcialmente). Repetição é deduplicada, preservando a ordem
+    da primeira ocorrência -- aceita `"1"` (seleção única) e `"1,3"`/
+    `"2, 4"` (múltipla) com a mesma função."""
+    tokens = [token.strip() for token in re.split(r"[,\s]+", raw) if token.strip()]
+    if not tokens:
+        return None
+    resolved: list[int] = []
+    for token in tokens:
+        if not token.isdigit():
+            return None
+        value = int(token)
+        if not (1 <= value <= count):
+            return None
+        index = value - 1
+        if index not in resolved:
+            resolved.append(index)
+    return tuple(resolved)
+
+
+def stage_mission_command_choice(
+    *, missions: Sequence[Mission], command: MissionCommand
+) -> dict[str, Any]:
+    """Grava o mapeamento número→missão exatamente como listado -- a
+    seleção do usuário nunca é resolvida contra uma nova consulta
+    reordenada no banco, só contra este payload."""
+    return {
+        "kind": "mission_command_choice",
+        "command": command.value,
+        "missions": [
+            {
+                "mission_id": str(mission.id),
+                "mission_title": mission.title,
+                "expected_state_version": mission.state_version,
+            }
+            for mission in missions
+        ],
+    }
+
+
+def describe_mission_command_choice_prompt(
+    missions: Sequence[Mission], *, command: MissionCommand
+) -> str:
+    verb = _COMMAND_VERBS[command]
+    lines = [f"Encontrei mais de uma missão para {verb}:", ""]
+    lines.extend(
+        f"{index + 1}. {mission.title} — {format_mission_status(mission.status)}"
+        for index, mission in enumerate(missions)
+    )
+    lines.extend(
+        ["", 'Digite o número (ex.: "1") ou vários separados por vírgula (ex.: "1,3").']
+    )
+    return "\n".join(lines)
+
+
+def describe_mission_command_choice_retry() -> str:
+    return _MISSION_COMMAND_CHOICE_RETRY
 
 
 _NO_EDITABLE_MISSION_REPLY = (
