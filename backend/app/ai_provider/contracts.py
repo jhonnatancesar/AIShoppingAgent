@@ -53,6 +53,20 @@ class AIProviderQuotaExceeded(AIProviderError):
         super().__init__(code, retryable=False, quota_reset_at=quota_reset_at)
 
 
+class AIProviderCapabilityUnsupported(AIProviderError):
+    """TASK-083: provider não suporta uma capability exigida pela
+    requisição (ex.: `require_search_grounding`). Nunca fallback
+    silencioso dentro do provider -- sempre este erro tipado, para o
+    chamador decidir explicitamente o que fazer (nunca uma `Exception`
+    genérica nem uma resposta comum disfarçada de atendida)."""
+
+    def __init__(self, capability: str) -> None:
+        if not _is_stable_code(capability):
+            raise ValueError("capability must use stable snake_case")
+        self.capability = capability
+        super().__init__(f"capability_unsupported_{capability}", retryable=False)
+
+
 class AIMessageRole(StrEnum):
     SYSTEM = "system"
     USER = "user"
@@ -77,6 +91,15 @@ class AIRequest:
     purpose: str
     messages: tuple[AIMessage, ...]
     requested_at: datetime
+    require_search_grounding: bool = False
+    """TASK-083: pede ao provider que dispõe do modelo de grounding via
+    busca web quando decidir a resposta -- não obriga o modelo a
+    pesquisar de fato (ver `AIResponse.grounding_performed`, a única
+    fonte de verdade sobre se a busca realmente aconteceu). Default
+    `False`: toda chamada existente continua funcionando sem alteração.
+    Provider que não suportar a capability levanta
+    `AIProviderCapabilityUnsupported` -- nunca finge suporte nem faz
+    fallback silencioso por conta própria."""
 
     def __post_init__(self) -> None:
         if not isinstance(self.request_id, UUID):
@@ -92,6 +115,8 @@ class AIRequest:
         ):
             raise AIRequestError("messages must be a tuple with at least one AIMessage")
         _require_aware(self.requested_at, "requested_at")
+        if not isinstance(self.require_search_grounding, bool):
+            raise AIRequestError("require_search_grounding must be a bool")
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,6 +126,22 @@ class AIResponse:
     model: str
     content: str
     finished_at: datetime
+    grounding_requested: bool = False
+    """TASK-083: eco de `AIRequest.require_search_grounding` -- permite ao
+    chamador ler o resultado sem precisar guardar a requisição original.
+    Distinção A do contrato: "pesquisa foi disponibilizada ao provider"."""
+    grounding_performed: bool = False
+    """TASK-083: distinção B -- só `True` quando o provider confirma, a
+    partir de metadado estruturado devolvido pela própria API (nunca por
+    inspeção de texto), que uma busca real aconteceu. Disponibilizar a
+    ferramenta (`grounding_requested=True`) não implica isto -- o modelo
+    pode decidir não pesquisar."""
+    grounding_sources: tuple[str, ...] = ()
+    """TASK-083: distinção C -- evidência (URIs citadas) quando o
+    provider expõe fontes da busca real. Pode ficar vazio mesmo com
+    `grounding_performed=True` (nem toda API expõe chunk de fonte, só a
+    confirmação de que buscou) -- por isso nunca é, sozinho, a condição
+    para considerar a resposta verificada; use `grounding_performed`."""
 
     def __post_init__(self) -> None:
         if not isinstance(self.request_id, UUID):
@@ -110,6 +151,25 @@ class AIResponse:
         _require_text(self.model, "model")
         _require_text(self.content, "response content")
         _require_aware(self.finished_at, "finished_at")
+        if not isinstance(self.grounding_requested, bool):
+            raise AIRequestError("grounding_requested must be a bool")
+        if not isinstance(self.grounding_performed, bool):
+            raise AIRequestError("grounding_performed must be a bool")
+        if self.grounding_performed and not self.grounding_requested:
+            raise AIRequestError(
+                "grounding_performed requires grounding_requested to be true"
+            )
+        if not isinstance(self.grounding_sources, tuple) or any(
+            not isinstance(source, str) or not source.strip()
+            for source in self.grounding_sources
+        ):
+            raise AIRequestError(
+                "grounding_sources must be a tuple of non-blank strings"
+            )
+        if self.grounding_sources and not self.grounding_performed:
+            raise AIRequestError(
+                "grounding_sources require grounding_performed to be true"
+            )
 
 
 @runtime_checkable

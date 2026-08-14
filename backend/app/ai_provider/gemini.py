@@ -44,10 +44,9 @@ class GeminiProvider:
 
     async def generate(self, request: AIRequest) -> AIResponse:
         contents, system_instruction = _translate_messages(request)
-        config = (
-            types.GenerateContentConfig(system_instruction=system_instruction)
-            if system_instruction
-            else None
+        config = _build_config(
+            system_instruction=system_instruction,
+            require_search_grounding=request.require_search_grounding,
         )
         client = None
         try:
@@ -75,13 +74,65 @@ class GeminiProvider:
 
         if not isinstance(content, str) or not content.strip():
             raise AIProviderError("provider_empty_response", retryable=False)
+        grounding_performed, grounding_sources = (
+            _extract_grounding_evidence(result)
+            if request.require_search_grounding
+            else (False, ())
+        )
         return AIResponse(
             request_id=request.request_id,
             provider=self.provider_id,
             model=self.model,
             content=content,
             finished_at=datetime.now(UTC),
+            grounding_requested=request.require_search_grounding,
+            grounding_performed=grounding_performed,
+            grounding_sources=grounding_sources,
         )
+
+
+def _build_config(
+    *, system_instruction: str | None, require_search_grounding: bool
+) -> types.GenerateContentConfig | None:
+    """TASK-083: `tools=[Tool(google_search=...)]` só disponibiliza a busca
+    ao modelo -- não força nem garante que ele pesquise (ver
+    `_extract_grounding_evidence`, a única fonte de verdade sobre se a
+    busca de fato aconteceu)."""
+    if not system_instruction and not require_search_grounding:
+        return None
+    tools = (
+        [types.Tool(google_search=types.GoogleSearch())]
+        if require_search_grounding
+        else None
+    )
+    return types.GenerateContentConfig(
+        system_instruction=system_instruction, tools=tools
+    )
+
+
+def _extract_grounding_evidence(result: object) -> tuple[bool, tuple[str, ...]]:
+    """Lê só o metadado estruturado devolvido pela API (`grounding_metadata`
+    do primeiro candidato) -- nunca infere grounding a partir do texto da
+    resposta. `performed=True` exige evidência real (consultas de busca
+    e/ou trechos de fonte não vazios); tool disponibilizada sem nenhum dos
+    dois presentes conta como não realizada."""
+    candidates = getattr(result, "candidates", None) or []
+    if not candidates:
+        return False, ()
+    metadata = getattr(candidates[0], "grounding_metadata", None)
+    if metadata is None:
+        return False, ()
+    queries = getattr(metadata, "web_search_queries", None) or []
+    chunks = getattr(metadata, "grounding_chunks", None) or []
+    sources = tuple(
+        uri
+        for chunk in chunks
+        if (web := getattr(chunk, "web", None)) is not None
+        and isinstance(uri := getattr(web, "uri", None), str)
+        and uri.strip()
+    )
+    performed = bool(queries) or bool(chunks)
+    return performed, sources
 
 
 def _translate_messages(

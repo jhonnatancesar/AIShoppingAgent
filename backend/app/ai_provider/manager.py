@@ -2,6 +2,7 @@
 
 from app.ai_provider.contracts import (
     AIProvider,
+    AIProviderCapabilityUnsupported,
     AIProviderError,
     AIProviderQuotaExceeded,
     AIProviderUnavailable,
@@ -20,49 +21,45 @@ from app.users.models import UserRole
 
 
 class UserAIProviderManager:
-    """Encaminha exclusivamente o perfil USER ao provider Gemini."""
+    """Encaminha exclusivamente o perfil USER ao provider Gemini.
+
+    TASK-083: `grounding_provider` é opcional -- quando ausente (default),
+    uma requisição com `require_search_grounding=True` levanta
+    `AIProviderCapabilityUnsupported` sem tentar `provider` (que nunca foi
+    configurado/validado para essa capability). Quando presente, toda
+    requisição de grounding vai exclusivamente para ele -- `provider`
+    normal nunca é tentado nesse caso.
+    """
 
     def __init__(
         self,
         provider: AIProvider,
         *,
+        grounding_provider: AIProvider | None = None,
         circuit_failure_threshold: int = 5,
         circuit_open_seconds: float = 30.0,
     ) -> None:
         self._provider = provider
+        self._grounding_provider = grounding_provider
         self._circuit_failure_threshold = circuit_failure_threshold
         self._circuit_open_seconds = circuit_open_seconds
 
     async def generate(self, request: AIRequest) -> AIResponse:
         if request.profile is not UserRole.USER:
             raise AIRequestError("USER manager accepts only USER profile")
-        circuit = _provider_circuit(
-            self._provider,
-            failure_threshold=self._circuit_failure_threshold,
-            open_seconds=self._circuit_open_seconds,
-        )
-        try:
-            circuit.before_call()
-            response = await self._provider.generate(request)
-            validate_provider_response(request, response)
-        except CircuitOpenError:
-            observe_resilience_event("ai", "circuit_open")
-            error = AIProviderUnavailable("provider_circuit_open")
-            _record_provider_error(request, self._provider, error, fallback=False)
-            raise error from None
-        except AIProviderError as error:
-            circuit.record_failure(transient=_counts_for_circuit(error))
-            _record_provider_error(request, self._provider, error, fallback=False)
-            raise
-        circuit.record_success()
-        record_ai_attempt(
+        if request.require_search_grounding:
+            if self._grounding_provider is None:
+                raise AIProviderCapabilityUnsupported("search_grounding")
+            provider = self._grounding_provider
+        else:
+            provider = self._provider
+        return await _attempt_provider(
             request,
-            provider=response.provider,
-            model=response.model,
-            outcome=AIAttemptOutcome.SUCCEEDED,
+            provider,
+            circuit_failure_threshold=self._circuit_failure_threshold,
+            circuit_open_seconds=self._circuit_open_seconds,
             fallback=False,
         )
-        return response
 
 
 class AdminDevAIProviderManager:
@@ -79,6 +76,7 @@ class AdminDevAIProviderManager:
         gemini: AIProvider,
         *,
         groq: AIProvider | None = None,
+        grounding_provider: AIProvider | None = None,
         max_attempts: int = 3,
         circuit_failure_threshold: int = 5,
         circuit_open_seconds: float = 30.0,
@@ -87,6 +85,7 @@ class AdminDevAIProviderManager:
             raise ValueError("AI max_attempts must be between 1 and 3")
         self._gemini = gemini
         self._groq = groq
+        self._grounding_provider = grounding_provider
         self._max_attempts = max_attempts
         self._circuit_failure_threshold = circuit_failure_threshold
         self._circuit_open_seconds = circuit_open_seconds
@@ -95,6 +94,22 @@ class AdminDevAIProviderManager:
         if request.profile not in {UserRole.ADMIN, UserRole.DEV}:
             raise AIRequestError("ADMIN/DEV manager accepts only ADMIN or DEV profile")
 
+        if request.require_search_grounding:
+            # TASK-083: grounding vai exclusivamente para o provider
+            # dedicado -- Groq nunca suporta essa capability, então
+            # incluí-lo aqui só adicionaria uma tentativa fadada ao erro
+            # (e arriscaria mascarar a falta de grounding real com uma
+            # resposta comum do Groq apresentada como verificada).
+            if self._grounding_provider is None:
+                raise AIProviderCapabilityUnsupported("search_grounding")
+            return await _attempt_provider(
+                request,
+                self._grounding_provider,
+                circuit_failure_threshold=self._circuit_failure_threshold,
+                circuit_open_seconds=self._circuit_open_seconds,
+                fallback=False,
+            )
+
         tiers = [self._gemini]
         if self._groq is not None:
             tiers.append(self._groq)
@@ -102,39 +117,23 @@ class AdminDevAIProviderManager:
         last_error: AIProviderError | None = None
         for index, provider in enumerate(tiers[: self._max_attempts]):
             fallback = index > 0
-            circuit = _provider_circuit(
-                provider,
-                failure_threshold=self._circuit_failure_threshold,
-                open_seconds=self._circuit_open_seconds,
-            )
             try:
-                circuit.before_call()
-                response = await provider.generate(request)
-                validate_provider_response(request, response)
-            except CircuitOpenError:
-                observe_resilience_event("ai", "circuit_open")
-                error = AIProviderUnavailable("provider_circuit_open")
-                _record_provider_error(request, provider, error, fallback=fallback)
-                last_error = error
-                continue
+                return await _attempt_provider(
+                    request,
+                    provider,
+                    circuit_failure_threshold=self._circuit_failure_threshold,
+                    circuit_open_seconds=self._circuit_open_seconds,
+                    fallback=fallback,
+                )
             except (AIProviderQuotaExceeded, AIProviderUnavailable) as error:
-                circuit.record_failure(transient=True)
-                _record_provider_error(request, provider, error, fallback=fallback)
+                # Inclui o `CircuitOpenError` já convertido por
+                # `_attempt_provider` (subclasse de AIProviderUnavailable)
+                # -- disponibilidade é o único motivo que avança pro
+                # próximo tier. `AIProviderCapabilityUnsupported` e
+                # qualquer outro `AIProviderError` propagam direto daqui,
+                # sem cair neste except (ver `_attempt_provider`).
                 last_error = error
                 continue
-            except AIProviderError as error:
-                circuit.record_failure(transient=False)
-                _record_provider_error(request, provider, error, fallback=fallback)
-                raise
-            circuit.record_success()
-            record_ai_attempt(
-                request,
-                provider=response.provider,
-                model=response.model,
-                outcome=AIAttemptOutcome.SUCCEEDED,
-                fallback=fallback,
-            )
-            return response
 
         if last_error is not None:
             raise last_error
@@ -155,8 +154,14 @@ def build_user_ai_provider_manager(
         current.gemini_model,
         timeout_seconds=current.external_http_timeout_seconds,
     )
+    grounding_provider = GeminiProvider(
+        current.gemini_api_key_user,
+        current.gemini_grounding_model,
+        timeout_seconds=current.external_http_timeout_seconds,
+    )
     return UserAIProviderManager(
         provider,
+        grounding_provider=grounding_provider,
         circuit_failure_threshold=current.circuit_failure_threshold,
         circuit_open_seconds=current.circuit_open_seconds,
     )
@@ -183,6 +188,11 @@ def build_admin_dev_ai_provider_manager(
         current.gemini_model,
         timeout_seconds=current.external_http_timeout_seconds,
     )
+    grounding_provider = GeminiProvider(
+        current.gemini_api_key_admin_dev,
+        current.gemini_grounding_model,
+        timeout_seconds=current.external_http_timeout_seconds,
+    )
     groq = (
         GroqProvider(
             current.groq_api_key,
@@ -195,6 +205,7 @@ def build_admin_dev_ai_provider_manager(
     return AdminDevAIProviderManager(
         gemini,
         groq=groq,
+        grounding_provider=grounding_provider,
         max_attempts=current.safe_retry_max_attempts,
         circuit_failure_threshold=current.circuit_failure_threshold,
         circuit_open_seconds=current.circuit_open_seconds,
@@ -213,8 +224,61 @@ def _provider_circuit(
     )
 
 
-def _counts_for_circuit(error: AIProviderError) -> bool:
-    return isinstance(error, (AIProviderQuotaExceeded, AIProviderUnavailable))
+async def _attempt_provider(
+    request: AIRequest,
+    provider: AIProvider,
+    *,
+    circuit_failure_threshold: int,
+    circuit_open_seconds: float,
+    fallback: bool,
+) -> AIResponse:
+    """Uma única tentativa contra um provider, com circuit breaker e
+    telemetria -- comportamento compartilhado entre `UserAIProviderManager`,
+    a cascata normal do `AdminDevAIProviderManager` e o caminho dedicado de
+    grounding dos dois, para as três nunca divergirem sutilmente.
+
+    Sempre propaga a exceção (nunca "engole" para tentar de novo aqui
+    dentro) -- decidir se continua para o próximo tier é responsabilidade
+    exclusiva de quem chama, olhando o tipo da exceção propagada.
+    """
+    circuit = _provider_circuit(
+        provider,
+        failure_threshold=circuit_failure_threshold,
+        open_seconds=circuit_open_seconds,
+    )
+    try:
+        circuit.before_call()
+        response = await provider.generate(request)
+        validate_provider_response(request, response)
+    except CircuitOpenError:
+        observe_resilience_event("ai", "circuit_open")
+        error = AIProviderUnavailable("provider_circuit_open")
+        _record_provider_error(request, provider, error, fallback=fallback)
+        raise error from None
+    except AIProviderCapabilityUnsupported as error:
+        # TASK-083: incapacidade de capability nunca conta como falha do
+        # circuit breaker -- isso poluiria o estado do provider com
+        # "falhas" que sempre vão se repetir para requisições comuns, sem
+        # grounding, que continuam funcionando normalmente.
+        _record_provider_error(request, provider, error, fallback=fallback)
+        raise
+    except (AIProviderQuotaExceeded, AIProviderUnavailable) as error:
+        circuit.record_failure(transient=True)
+        _record_provider_error(request, provider, error, fallback=fallback)
+        raise
+    except AIProviderError as error:
+        circuit.record_failure(transient=False)
+        _record_provider_error(request, provider, error, fallback=fallback)
+        raise
+    circuit.record_success()
+    record_ai_attempt(
+        request,
+        provider=response.provider,
+        model=response.model,
+        outcome=AIAttemptOutcome.SUCCEEDED,
+        fallback=fallback,
+    )
+    return response
 
 
 def _record_provider_error(

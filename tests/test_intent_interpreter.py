@@ -4,15 +4,32 @@ from decimal import Decimal
 from uuid import uuid4
 
 import pytest
-from app.ai_provider import AIMessageRole, AIRequest, AIResponse
+from app.ai_provider import (
+    AIMessageRole,
+    AIProviderCapabilityUnsupported,
+    AIProviderQuotaExceeded,
+    AIProviderUnavailable,
+    AIRequest,
+    AIResponse,
+)
 from app.intent import (
     Intent,
     IntentError,
     IntentInterpreter,
     IntentKind,
+    IntentParameters,
     parse_intent_response,
 )
-from app.intent.interpreter import _SYSTEM_PROMPT, PURPOSE
+from app.intent.interpreter import (
+    _SYSTEM_PROMPT,
+    _VERIFY_SYSTEM_PROMPT,
+    PURPOSE,
+    VERIFY_PURPOSE,
+    _apply_safe_fallback,
+    _build_verification_request,
+    _needs_identity_verification,
+    _parse_verified_search_query,
+)
 from app.missions.models import MissionCommand
 from app.users.models import UserRole
 
@@ -428,3 +445,468 @@ def test_parse_falls_back_to_unknown_on_edit_mission_with_no_actual_change() -> 
     )
 
     assert intent.kind is IntentKind.UNKNOWN
+
+
+# ---------------------------------------------------------------------------
+# TASK-083 SUBETAPA 3: gatilho de verificação externa + fallback seguro.
+# Só mocks -- nenhuma chamada real de IA.
+# ---------------------------------------------------------------------------
+
+
+class _SequencedManager:
+    """Fake manager que responde chamadas em sequência -- usado para testar
+    o fluxo de duas chamadas (interpretação + verificação de identidade).
+    Cada item de `responders` é uma exceção (levantada) ou uma função
+    `AIRequest -> AIResponse`. Levanta `IndexError` se houver mais chamadas
+    do que responders configurados -- prova, por si só, que nenhuma
+    chamada extra e não esperada aconteceu."""
+
+    def __init__(self, *responders: BaseException | object) -> None:
+        self._responders = list(responders)
+        self.captured_requests: list[AIRequest] = []
+
+    async def generate(self, request: AIRequest) -> AIResponse:
+        self.captured_requests.append(request)
+        responder = self._responders.pop(0)
+        if isinstance(responder, BaseException):
+            raise responder
+        return responder(request)
+
+
+def _plain(content: str):
+    def _respond(request: AIRequest) -> AIResponse:
+        return AIResponse(
+            request_id=request.request_id,
+            provider="fake_provider",
+            model="fake-model",
+            content=content,
+            finished_at=datetime.now(UTC),
+        )
+
+    return _respond
+
+
+def _grounded(
+    content: str,
+    *,
+    performed: bool = True,
+    sources: tuple[str, ...] | None = None,
+):
+    if sources is None:
+        sources = ("https://example.invalid/fonte",) if performed else ()
+
+    def _respond(request: AIRequest) -> AIResponse:
+        return AIResponse(
+            request_id=request.request_id,
+            provider="fake_provider",
+            model="fake-model",
+            content=content,
+            finished_at=datetime.now(UTC),
+            grounding_requested=True,
+            grounding_performed=performed,
+            grounding_sources=sources,
+        )
+
+    return _respond
+
+
+def _first_response(**parameters: object) -> str:
+    payload: dict[str, object] = {
+        "search_query": None,
+        "model": None,
+        "model_confidence": None,
+        "target_amount": None,
+        "target_currency": None,
+        "sources": [],
+        "mission_reference": None,
+    }
+    payload.update(parameters)
+    return json.dumps(
+        {"kind": "create_mission", "command": None, "parameters": payload}
+    )
+
+
+# --- A: model=null -> nenhuma chamada de verificação ---
+
+
+@pytest.mark.anyio
+async def test_scenario_a_no_model_never_triggers_verification() -> None:
+    manager = _SequencedManager(_plain(_first_response(search_query="cadeira gamer")))
+    interpreter = IntentInterpreter(manager)
+
+    intent = await interpreter.interpret("quero uma cadeira gamer")
+
+    assert intent.parameters.search_query == "cadeira gamer"
+    assert intent.parameters.model is None
+    assert len(manager.captured_requests) == 1
+
+
+# --- B: identidade específica, alta confiança, sem contradição/enriquecimento ---
+
+
+@pytest.mark.anyio
+async def test_scenario_b_safe_identity_never_triggers_verification() -> None:
+    manager = _SequencedManager(
+        _plain(
+            _first_response(
+                search_query="Placa de Vídeo NVIDIA RTX 4070 Ti",
+                model="RTX 4070 Ti",
+                model_confidence="alta",
+            )
+        )
+    )
+    interpreter = IntentInterpreter(manager)
+
+    intent = await interpreter.interpret("quero uma 4070 ti")
+
+    assert intent.parameters.search_query == "Placa de Vídeo NVIDIA RTX 4070 Ti"
+    assert intent.parameters.model == "RTX 4070 Ti"
+    assert len(manager.captured_requests) == 1
+
+
+# --- C: contradição detectada, grounding válido -> corrige a família ---
+
+
+@pytest.mark.anyio
+async def test_scenario_c_known_contradiction_corrected_by_valid_grounding() -> None:
+    manager = _SequencedManager(
+        _plain(
+            _first_response(
+                search_query="AMD Ryzen 9 9800X3D",
+                model="9800X3D",
+                model_confidence="baixa",
+            )
+        ),
+        _grounded(
+            json.dumps({"search_query": "AMD Ryzen 7 9800X3D"}),
+            sources=("https://amd.example.invalid/9800x3d",),
+        ),
+    )
+    interpreter = IntentInterpreter(manager)
+
+    intent = await interpreter.interpret("me acha um 9800x3d pfvr")
+
+    assert intent.parameters.search_query == "AMD Ryzen 7 9800X3D"
+    assert intent.parameters.model == "9800X3D"
+    assert intent.parameters.model_confidence is None
+    assert len(manager.captured_requests) == 2
+    verify_request = manager.captured_requests[1]
+    assert verify_request.purpose == VERIFY_PURPOSE
+    assert verify_request.require_search_grounding is True
+
+
+# --- D: contradição detectada, grounding indisponível -> fallback seguro ---
+
+
+@pytest.mark.anyio
+async def test_scenario_d_grounding_unavailable_falls_back_to_bare_model() -> None:
+    manager = _SequencedManager(
+        _plain(
+            _first_response(
+                search_query="AMD Ryzen 9 9800X3D",
+                model="9800X3D",
+                model_confidence="baixa",
+            )
+        ),
+        AIProviderUnavailable(),
+    )
+    interpreter = IntentInterpreter(manager)
+
+    intent = await interpreter.interpret("me acha um 9800x3d pfvr")
+
+    assert intent.parameters.search_query == "9800X3D"
+    assert intent.parameters.model == "9800X3D"
+    assert len(manager.captured_requests) == 2
+
+
+@pytest.mark.anyio
+async def test_scenario_d_variant_quota_and_capability_errors_also_fall_back() -> None:
+    """A cascata inteira do AIProviderManager só pode devolver
+    subclasses de AIProviderError -- todas tratadas do mesmo jeito pelo
+    fallback seguro, nunca travando a criação da missão."""
+    for error in (AIProviderQuotaExceeded(), AIProviderCapabilityUnsupported("x")):
+        manager = _SequencedManager(
+            _plain(
+                _first_response(
+                    search_query="AMD Ryzen 9 9800X3D",
+                    model="9800X3D",
+                    model_confidence="baixa",
+                )
+            ),
+            error,
+        )
+        interpreter = IntentInterpreter(manager)
+
+        intent = await interpreter.interpret("me acha um 9800x3d pfvr")
+
+        assert intent.parameters.search_query == "9800X3D"
+
+
+# --- E: grounding solicitado mas não executado -> fallback seguro ---
+
+
+@pytest.mark.anyio
+async def test_scenario_e_grounding_not_performed_falls_back() -> None:
+    manager = _SequencedManager(
+        _plain(
+            _first_response(
+                search_query="AMD Ryzen 9 9800X3D",
+                model="9800X3D",
+                model_confidence="baixa",
+            )
+        ),
+        _grounded(json.dumps({"search_query": "AMD Ryzen 7 9800X3D"}), performed=False),
+    )
+    interpreter = IntentInterpreter(manager)
+
+    intent = await interpreter.interpret("me acha um 9800x3d pfvr")
+
+    assert intent.parameters.search_query == "9800X3D"
+
+
+# --- F: grounding executado mas sem fontes -> inconclusiva -> fallback seguro ---
+
+
+@pytest.mark.anyio
+async def test_scenario_f_grounding_performed_without_sources_falls_back() -> None:
+    manager = _SequencedManager(
+        _plain(
+            _first_response(
+                search_query="AMD Ryzen 9 9800X3D",
+                model="9800X3D",
+                model_confidence="baixa",
+            )
+        ),
+        _grounded(
+            json.dumps({"search_query": "AMD Ryzen 7 9800X3D"}),
+            performed=True,
+            sources=(),
+        ),
+    )
+    interpreter = IntentInterpreter(manager)
+
+    intent = await interpreter.interpret("me acha um 9800x3d pfvr")
+
+    assert intent.parameters.search_query == "9800X3D"
+
+
+# --- G: model_confidence baixa aciona verificação sem tabela guardrail ---
+
+
+@pytest.mark.anyio
+async def test_scenario_g_low_confidence_triggers_even_without_guardrail_table() -> (
+    None
+):
+    manager = _SequencedManager(
+        _plain(
+            _first_response(
+                search_query="Placa de Vídeo NVIDIA RTX 9090",
+                model="RTX 9090",
+                model_confidence="baixa",
+            )
+        ),
+        _grounded(json.dumps({"search_query": "Placa de Vídeo NVIDIA RTX 9090"})),
+    )
+    interpreter = IntentInterpreter(manager)
+
+    intent = await interpreter.interpret("quero uma rtx9090 ate 3000")
+
+    assert len(manager.captured_requests) == 2
+    assert intent.parameters.search_query == "Placa de Vídeo NVIDIA RTX 9090"
+
+
+# --- H: enriquecimento não comprovado em modelo desconhecido isolado ---
+
+
+@pytest.mark.anyio
+async def test_scenario_h_unproven_enrichment_triggers_for_unknown_model() -> None:
+    manager = _SequencedManager(
+        _plain(
+            _first_response(
+                search_query="Processador Desconhecido ZX9999KX",
+                model="ZX9999KX",
+                model_confidence="alta",  # propositalmente "alta": prova que o
+                # gatilho não depende do autorrelato nem de tabela manual.
+            )
+        ),
+        _grounded(json.dumps({"search_query": "ZX9999KX"}), performed=False),
+    )
+    interpreter = IntentInterpreter(manager)
+
+    intent = await interpreter.interpret("quero um zx9999kx")
+
+    assert len(manager.captured_requests) == 2
+    assert intent.parameters.search_query == "ZX9999KX"
+
+
+# --- I: segunda resposta tenta alterar outros critérios -> só identidade muda ---
+
+
+@pytest.mark.anyio
+async def test_scenario_i_second_response_cannot_alter_other_parameters() -> None:
+    manager = _SequencedManager(
+        _plain(
+            _first_response(
+                search_query="AMD Ryzen 9 9800X3D",
+                model="9800X3D",
+                model_confidence="baixa",
+                target_amount="3500.00",
+                target_currency="BRL",
+                sources=["kabum"],
+            )
+        ),
+        _grounded(
+            json.dumps(
+                {
+                    "search_query": "AMD Ryzen 7 9800X3D",
+                    "target_amount": "1.00",
+                }
+            )
+        ),
+    )
+    interpreter = IntentInterpreter(manager)
+
+    intent = await interpreter.interpret("me acha um 9800x3d pfvr ate 3500")
+
+    # Chave extra invalida o parsing da verificação -> tratado como
+    # inconclusivo -> fallback seguro, nunca a injeção maliciosa.
+    assert intent.parameters.search_query == "9800X3D"
+    assert intent.parameters.target_amount == Decimal("3500.00")
+    assert intent.parameters.target_currency == "BRL"
+    assert intent.parameters.sources == ("kabum",)
+
+
+# --- model_confidence nunca escapa do IntentInterpreter ---
+
+
+@pytest.mark.anyio
+async def test_model_confidence_is_always_stripped_from_final_parameters() -> None:
+    manager = _SequencedManager(
+        _plain(
+            _first_response(
+                search_query="Placa de Vídeo NVIDIA RTX 4070 Ti",
+                model="RTX 4070 Ti",
+                model_confidence="alta",
+            )
+        )
+    )
+    interpreter = IntentInterpreter(manager)
+
+    intent = await interpreter.interpret("quero uma 4070 ti")
+
+    assert intent.parameters.model_confidence is None
+
+
+# --- unidade pura: _needs_identity_verification ---
+
+
+def _params(**overrides: object) -> IntentParameters:
+    defaults: dict[str, object] = {"search_query": None, "model": None}
+    defaults.update(overrides)
+    return IntentParameters(**defaults)
+
+
+def test_needs_verification_false_when_model_is_none() -> None:
+    assert _needs_identity_verification("qualquer coisa", _params()) is False
+
+
+def test_needs_verification_true_on_low_confidence_regardless_of_rest() -> None:
+    parameters = _params(
+        model="RTX 9090",
+        search_query="Placa de Vídeo NVIDIA RTX 9090",
+        model_confidence="baixa",
+    )
+    assert _needs_identity_verification("qualquer coisa", parameters) is True
+
+
+def test_needs_verification_true_on_known_family_contradiction() -> None:
+    parameters = _params(model="9800X3D", search_query="AMD Ryzen 9 9800X3D")
+    assert _needs_identity_verification("9800x3d", parameters) is True
+
+
+def test_needs_verification_true_on_unproven_enrichment_for_bare_input() -> None:
+    parameters = _params(model="ZX9999KX", search_query="Processador ZX9999KX")
+    assert _needs_identity_verification("quero um zx9999kx", parameters) is True
+
+
+def test_needs_verification_false_when_nothing_suspicious() -> None:
+    parameters = _params(
+        model="RTX 4070 Ti",
+        search_query="Placa de Vídeo NVIDIA RTX 4070 Ti",
+        model_confidence="alta",
+    )
+    assert _needs_identity_verification("quero uma 4070 ti", parameters) is False
+
+
+# --- unidade pura: _apply_safe_fallback ---
+
+
+def test_apply_safe_fallback_reduces_search_query_to_bare_model() -> None:
+    parameters = _params(
+        model="9800X3D",
+        search_query="AMD Ryzen 9 9800X3D",
+        target_amount=Decimal("3500.00"),
+        target_currency="BRL",
+        sources=("kabum",),
+    )
+    fallback = _apply_safe_fallback(parameters)
+
+    assert fallback.search_query == "9800X3D"
+    assert fallback.model == "9800X3D"
+    assert fallback.target_amount == Decimal("3500.00")
+    assert fallback.sources == ("kabum",)
+
+
+# --- unidade pura: _parse_verified_search_query ---
+
+
+def test_parse_verified_query_accepts_minimal_valid_shape() -> None:
+    content = json.dumps({"search_query": "AMD Ryzen 7 9800X3D"})
+    assert _parse_verified_search_query(content) == "AMD Ryzen 7 9800X3D"
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "isto não é json",
+        json.dumps({"search_query": "ok", "target_amount": "1.00"}),
+        json.dumps({"model": "9800X3D"}),
+        json.dumps({"search_query": ""}),
+        json.dumps({"search_query": "   "}),
+        json.dumps({"search_query": 123}),
+        json.dumps(["9800X3D"]),
+    ],
+)
+def test_parse_verified_query_rejects_any_deviation(content: str) -> None:
+    assert _parse_verified_search_query(content) is None
+
+
+# --- unidade pura: _build_verification_request ---
+
+
+def test_build_verification_request_is_scoped_to_identity_only() -> None:
+    request = _build_verification_request(
+        raw_message="me acha um 9800x3d pfvr",
+        model="9800X3D",
+        search_query="AMD Ryzen 9 9800X3D",
+        requested_at=datetime.now(UTC),
+        profile=UserRole.ADMIN,
+    )
+
+    assert request.purpose == VERIFY_PURPOSE
+    assert request.purpose != PURPOSE
+    assert request.require_search_grounding is True
+    assert request.profile is UserRole.ADMIN
+    assert "9800x3d" in request.messages[-1].content.lower()
+    assert "9800X3D" in request.messages[-1].content
+
+
+def test_verify_system_prompt_states_scope_is_identity_only() -> None:
+    assert "nunca decide" in _VERIFY_SYSTEM_PROMPT.lower()
+    assert "search_query" in _VERIFY_SYSTEM_PROMPT
+
+
+def test_system_prompt_documents_model_confidence_contract() -> None:
+    assert "model_confidence" in _SYSTEM_PROMPT
+    assert '"alta"' in _SYSTEM_PROMPT
+    assert '"baixa"' in _SYSTEM_PROMPT

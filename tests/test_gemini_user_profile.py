@@ -300,6 +300,31 @@ def test_user_manager_factory_requires_key_and_uses_configured_model() -> None:
     assert isinstance(manager, UserAIProviderManager)
 
 
+def test_user_manager_factory_wires_dedicated_grounding_provider() -> None:
+    """TASK-083: grounding usa um GeminiProvider dedicado, mesma chave do
+    perfil USER, com o modelo de `gemini_grounding_model` -- nunca o mesmo
+    provider/model das requisições comuns."""
+    manager = build_user_ai_provider_manager(
+        Settings(
+            _env_file=None,
+            gemini_api_key_user="configured-key",
+            gemini_model="gemini-3.6-flash",
+        )
+    )
+    assert manager._grounding_provider is not None  # noqa: SLF001
+    assert manager._grounding_provider.model == "gemini-2.5-flash"  # noqa: SLF001
+    assert manager._provider.model == "gemini-3.6-flash"  # noqa: SLF001
+
+    custom = build_user_ai_provider_manager(
+        Settings(
+            _env_file=None,
+            gemini_api_key_user="configured-key",
+            gemini_grounding_model="gemini-2.5-flash-custom",
+        )
+    )
+    assert custom._grounding_provider.model == "gemini-2.5-flash-custom"  # noqa: SLF001
+
+
 def test_admin_dev_factory_requires_key_and_configures_flash_model() -> None:
     with pytest.raises(AIRequestError, match="AISHOPPING_GEMINI_API_KEY_ADMIN_DEV"):
         build_admin_dev_ai_provider_manager(Settings(_env_file=None))
@@ -312,6 +337,22 @@ def test_admin_dev_factory_requires_key_and_configures_flash_model() -> None:
         )
     )
     assert isinstance(manager, AdminDevAIProviderManager)
+    assert manager._gemini.model == "gemini-3.6-flash"  # noqa: SLF001
+
+
+def test_admin_dev_factory_wires_dedicated_grounding_provider() -> None:
+    """TASK-083: grounding usa um GeminiProvider dedicado, mesma chave de
+    ADMIN/DEV, com o modelo de `gemini_grounding_model` (default
+    gemini-2.5-flash) -- nunca o mesmo model das requisições comuns."""
+    manager = build_admin_dev_ai_provider_manager(
+        Settings(
+            _env_file=None,
+            gemini_api_key_admin_dev="configured-key",
+            gemini_model="gemini-3.6-flash",
+        )
+    )
+    assert manager._grounding_provider is not None  # noqa: SLF001
+    assert manager._grounding_provider.model == "gemini-2.5-flash"  # noqa: SLF001
     assert manager._gemini.model == "gemini-3.6-flash"  # noqa: SLF001
 
 

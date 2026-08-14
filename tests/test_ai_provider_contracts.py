@@ -6,6 +6,7 @@ from app.ai_provider import (
     AIMessage,
     AIMessageRole,
     AIProvider,
+    AIProviderCapabilityUnsupported,
     AIProviderError,
     AIProviderManager,
     AIProviderQuotaExceeded,
@@ -159,3 +160,99 @@ def test_provider_errors_expose_only_stable_code_and_retryability() -> None:
 def test_quota_reset_must_include_timezone() -> None:
     with pytest.raises(AIRequestError, match="timezone"):
         AIProviderQuotaExceeded(quota_reset_at=datetime.now())
+
+
+# TASK-083: contrato de grounding -- request continua funcionando sem
+# declarar nada (compatibilidade), e a resposta distingue estruturalmente
+# "solicitado" de "realmente executado" de "evidência disponível".
+
+
+def test_request_grounding_defaults_to_false_and_existing_calls_are_unaffected() -> (
+    None
+):
+    request = _request()
+    assert request.require_search_grounding is False
+
+
+def test_request_rejects_non_bool_grounding_flag() -> None:
+    with pytest.raises(AIRequestError, match="require_search_grounding"):
+        AIRequest(
+            request_id=uuid4(),
+            profile=UserRole.USER,
+            purpose="interpret_purchase_intent",
+            messages=(AIMessage(AIMessageRole.USER, "oi"),),
+            requested_at=datetime.now(UTC),
+            require_search_grounding="yes",  # type: ignore[arg-type]
+        )
+
+
+def test_response_grounding_fields_default_to_false_and_empty() -> None:
+    response = AIResponse(
+        uuid4(), "fake_provider", "fake-model", "resposta", datetime.now(UTC)
+    )
+    assert response.grounding_requested is False
+    assert response.grounding_performed is False
+    assert response.grounding_sources == ()
+
+
+def test_response_rejects_performed_without_requested() -> None:
+    with pytest.raises(AIRequestError, match="grounding_performed"):
+        AIResponse(
+            uuid4(),
+            "fake_provider",
+            "fake-model",
+            "resposta",
+            datetime.now(UTC),
+            grounding_requested=False,
+            grounding_performed=True,
+        )
+
+
+def test_response_rejects_sources_without_performed() -> None:
+    with pytest.raises(AIRequestError, match="grounding_sources"):
+        AIResponse(
+            uuid4(),
+            "fake_provider",
+            "fake-model",
+            "resposta",
+            datetime.now(UTC),
+            grounding_requested=True,
+            grounding_performed=False,
+            grounding_sources=("https://example.invalid/fonte",),
+        )
+
+
+def test_response_rejects_blank_grounding_source() -> None:
+    with pytest.raises(AIRequestError, match="grounding_sources"):
+        AIResponse(
+            uuid4(),
+            "fake_provider",
+            "fake-model",
+            "resposta",
+            datetime.now(UTC),
+            grounding_requested=True,
+            grounding_performed=True,
+            grounding_sources=("  ",),
+        )
+
+
+def test_response_accepts_fully_grounded_shape() -> None:
+    response = AIResponse(
+        uuid4(),
+        "gemini",
+        "gemini-3.6-flash",
+        "resposta",
+        datetime.now(UTC),
+        grounding_requested=True,
+        grounding_performed=True,
+        grounding_sources=("https://example.invalid/fonte",),
+    )
+    assert response.grounding_performed is True
+    assert response.grounding_sources == ("https://example.invalid/fonte",)
+
+
+def test_capability_unsupported_error_exposes_capability_and_stable_code() -> None:
+    error = AIProviderCapabilityUnsupported("search_grounding")
+    assert error.capability == "search_grounding"
+    assert error.retryable is False
+    assert str(error) == "capability_unsupported_search_grounding"

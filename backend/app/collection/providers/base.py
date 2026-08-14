@@ -60,6 +60,7 @@ class PlaywrightStoreProvider:
         retry_policy: RetryPolicy | None = None,
         circuit_failure_threshold: int = 5,
         circuit_open_seconds: float = 30.0,
+        circuit_namespace: str = "search",
         availability_fallback_max_candidates: int = 3,
     ) -> None:
         if max_offers <= 0:
@@ -68,6 +69,8 @@ class PlaywrightStoreProvider:
             raise ValueError(
                 "availability_fallback_max_candidates must not be negative"
             )
+        if not circuit_namespace.strip():
+            raise ValueError("circuit_namespace must not be blank")
         self.settings = settings or BrowserSettings()
         self.max_offers = max_offers
         self._clock = clock or (lambda: datetime.now(UTC))
@@ -75,8 +78,14 @@ class PlaywrightStoreProvider:
         self._availability_fallback_max_candidates = (
             availability_fallback_max_candidates
         )
+        # TASK-083: `circuit_namespace` default ("search") preserva
+        # exatamente a chave já usada pela coleta normal -- só um consumidor
+        # que precisa de isolamento (ex.: resolução de identidade, que usa
+        # instâncias dedicadas com timeout/volume bem menores) passa um
+        # namespace diferente, para que falhas de um propósito nunca abram
+        # o circuito do outro propósito na mesma fonte.
         self._circuit = CIRCUITS.get(
-            f"store:{self.source_code}:search",
+            f"store:{self.source_code}:{circuit_namespace}",
             failure_threshold=circuit_failure_threshold,
             open_seconds=circuit_open_seconds,
         )

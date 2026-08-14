@@ -9,6 +9,7 @@ partir de retornos controlados.
 """
 
 import asyncio
+import inspect
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
@@ -18,7 +19,11 @@ from uuid import uuid4
 import pytest
 from app.ai_provider import AIResponse
 from app.collection.adapter import CollectionAdapter
-from app.collection.contracts import CollectionResult, RawCollectedOffer
+from app.collection.contracts import (
+    CollectionResult,
+    RawCollectedOffer,
+    ResolvedProductIdentity,
+)
 from app.collection.errors import ProviderBlockedError
 from app.collection.models import CollectionRunStatus
 from app.collection.normalization import Availability, PriceNormalizer
@@ -183,7 +188,7 @@ def test_claim_due_schedule_creates_runs_and_advances(monkeypatch) -> None:
         next_run_at=NOW,
         is_enabled=True,
     )
-    criteria = SimpleNamespace(search_query="GPU")
+    criteria = SimpleNamespace(search_query="GPU", model=None)
     store_ids = (uuid4(), uuid4())
     session = _mock_async_session()
     session.scalar.side_effect = [None, criteria]
@@ -848,3 +853,426 @@ def test_orchestrator_claim_deadline_exceeded_records_failure_and_returns_false(
     assert asyncio.run(orchestrator._process(claim)) is False
     record.assert_awaited_once()
     assert record.call_args.args[2] == "claim_deadline_exceeded"
+
+
+# ---------------------------------------------------------------------------
+# Fase B (TASK-083 SUBETAPA 4): resolução de identidade antes do fan-out
+# ---------------------------------------------------------------------------
+
+
+class _FakeIdentityResolver:
+    """Fake de `ProductIdentityResolver` -- resultado fixo por `model`,
+    ou exceção fixa."""
+
+    def __init__(
+        self,
+        results: dict[str, ResolvedProductIdentity] | None = None,
+        *,
+        error: BaseException | None = None,
+    ) -> None:
+        self._results = results or {}
+        self._error = error
+        self.calls: list[str] = []
+
+    async def resolve(self, model: str) -> ResolvedProductIdentity | None:
+        self.calls.append(model)
+        if self._error is not None:
+            raise self._error
+        return self._results.get(model)
+
+
+def _patch_phase_a(monkeypatch, claims: tuple[ClaimedCollection, ...]) -> None:
+    monkeypatch.setattr(
+        "app.collection.orchestration.ensure_missing_schedules",
+        AsyncMock(return_value=0),
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration.recover_stale_runs", AsyncMock(return_value=0)
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration.claim_due_collections",
+        AsyncMock(return_value=claims),
+    )
+
+
+def _mission_claims(
+    mission_id, *, search_query: str, model: str | None, sources=("kabum", "amazon")
+) -> tuple[ClaimedCollection, ...]:
+    return tuple(
+        ClaimedCollection(
+            uuid4(), mission_id, uuid4(), source, search_query, NOW, model
+        )
+        for source in sources
+    )
+
+
+async def _run_batch_recording_processed(
+    orchestrator: CollectionOrchestrator, monkeypatch
+) -> list[ClaimedCollection]:
+    processed: list[ClaimedCollection] = []
+
+    async def process(claim: ClaimedCollection) -> bool:
+        processed.append(claim)
+        return True
+
+    monkeypatch.setattr(orchestrator, "_process", process)
+    await orchestrator.run_batch(now=NOW)
+    return processed
+
+
+# --- A: resolve uma vez, enriquece os 4 claims da missão ---
+
+
+def test_scenario_a_resolves_once_and_enriches_all_claims(monkeypatch) -> None:
+    mission_id = uuid4()
+    claims = _mission_claims(
+        mission_id,
+        search_query="9800X3D",
+        model="9800X3D",
+        sources=("kabum", "amazon", "pichau", "terabyte"),
+    )
+    _patch_phase_a(monkeypatch, claims)
+    resolver = _FakeIdentityResolver(
+        {
+            "9800X3D": ResolvedProductIdentity(
+                model="9800X3D", search_query="AMD Ryzen 7 9800X3D", source="kabum"
+            )
+        }
+    )
+    orchestrator = CollectionOrchestrator(
+        _session_factory(_mock_async_session()),
+        CollectionAdapter(),
+        ai_manager=_StubAIManager(),
+        identity_resolver=resolver,
+    )
+
+    processed = asyncio.run(_run_batch_recording_processed(orchestrator, monkeypatch))
+
+    assert resolver.calls == ["9800X3D"]
+    assert len(processed) == 4
+    assert all(c.search_query == "AMD Ryzen 7 9800X3D" for c in processed)
+    assert all(c.model == "9800X3D" for c in processed)
+
+
+# --- B: resolver devolve None -> coleta continua com a query original ---
+
+
+def test_scenario_b_resolver_returns_none_keeps_original_query(monkeypatch) -> None:
+    mission_id = uuid4()
+    claims = _mission_claims(mission_id, search_query="9800X3D", model="9800X3D")
+    _patch_phase_a(monkeypatch, claims)
+    resolver = _FakeIdentityResolver()  # nenhum resultado configurado -> None
+    orchestrator = CollectionOrchestrator(
+        _session_factory(_mock_async_session()),
+        CollectionAdapter(),
+        ai_manager=_StubAIManager(),
+        identity_resolver=resolver,
+    )
+
+    processed = asyncio.run(_run_batch_recording_processed(orchestrator, monkeypatch))
+
+    assert resolver.calls == ["9800X3D"]
+    assert all(c.search_query == "9800X3D" for c in processed)
+
+
+# --- C: resolver falha operacionalmente -> batch não cai, query original ---
+
+
+def test_scenario_c_resolver_operational_failure_does_not_break_batch(
+    monkeypatch,
+) -> None:
+    mission_id = uuid4()
+    claims = _mission_claims(mission_id, search_query="9800X3D", model="9800X3D")
+    _patch_phase_a(monkeypatch, claims)
+    resolver = _FakeIdentityResolver(error=RuntimeError("falha operacional"))
+    orchestrator = CollectionOrchestrator(
+        _session_factory(_mock_async_session()),
+        CollectionAdapter(),
+        ai_manager=_StubAIManager(),
+        identity_resolver=resolver,
+    )
+
+    processed = asyncio.run(_run_batch_recording_processed(orchestrator, monkeypatch))
+
+    assert len(processed) == 2  # batch completou -- não caiu
+    assert all(c.search_query == "9800X3D" for c in processed)
+
+
+# --- D: model=None -> resolver nunca chamado ---
+
+
+def test_scenario_d_generic_search_never_calls_resolver(monkeypatch) -> None:
+    mission_id = uuid4()
+    claims = _mission_claims(
+        mission_id, search_query="cadeira gamer", model=None, sources=("kabum",)
+    )
+    _patch_phase_a(monkeypatch, claims)
+    resolver = _FakeIdentityResolver()
+    orchestrator = CollectionOrchestrator(
+        _session_factory(_mock_async_session()),
+        CollectionAdapter(),
+        ai_manager=_StubAIManager(),
+        identity_resolver=resolver,
+    )
+
+    asyncio.run(_run_batch_recording_processed(orchestrator, monkeypatch))
+
+    assert resolver.calls == []
+
+
+# --- E: search_query já canonicalizada -> resolver nunca chamado ---
+
+
+def test_scenario_e_already_canonical_query_never_calls_resolver(monkeypatch) -> None:
+    mission_id = uuid4()
+    claims = _mission_claims(
+        mission_id,
+        search_query="AMD Ryzen 7 9800X3D",
+        model="9800X3D",
+        sources=("kabum",),
+    )
+    _patch_phase_a(monkeypatch, claims)
+    resolver = _FakeIdentityResolver()
+    orchestrator = CollectionOrchestrator(
+        _session_factory(_mock_async_session()),
+        CollectionAdapter(),
+        ai_manager=_StubAIManager(),
+        identity_resolver=resolver,
+    )
+
+    asyncio.run(_run_batch_recording_processed(orchestrator, monkeypatch))
+
+    assert resolver.calls == []
+
+
+# --- F: separador tolerado -> reconhecido como identidade crua ---
+
+
+def test_scenario_f_separator_variant_is_recognized_as_raw_identity(
+    monkeypatch,
+) -> None:
+    mission_id = uuid4()
+    claims = _mission_claims(
+        mission_id, search_query="9800-X3D", model="9800X3D", sources=("kabum",)
+    )
+    _patch_phase_a(monkeypatch, claims)
+    resolver = _FakeIdentityResolver()
+    orchestrator = CollectionOrchestrator(
+        _session_factory(_mock_async_session()),
+        CollectionAdapter(),
+        ai_manager=_StubAIManager(),
+        identity_resolver=resolver,
+    )
+
+    asyncio.run(_run_batch_recording_processed(orchestrator, monkeypatch))
+
+    assert resolver.calls == ["9800X3D"]
+
+
+# --- G: duas missões específicas -> resolve 1x cada, sem misturar ---
+
+
+def test_scenario_g_two_missions_resolved_independently(monkeypatch) -> None:
+    mission_a, mission_b = uuid4(), uuid4()
+    claims = _mission_claims(
+        mission_a, search_query="9800X3D", model="9800X3D", sources=("kabum",)
+    ) + _mission_claims(
+        mission_b, search_query="RTX5070TI", model="RTX5070TI", sources=("kabum",)
+    )
+    _patch_phase_a(monkeypatch, claims)
+    resolver = _FakeIdentityResolver(
+        {
+            "9800X3D": ResolvedProductIdentity(
+                model="9800X3D", search_query="AMD Ryzen 7 9800X3D", source="kabum"
+            ),
+            "RTX5070TI": ResolvedProductIdentity(
+                model="RTX5070TI",
+                search_query="NVIDIA RTX 5070 Ti",
+                source="kabum",
+            ),
+        }
+    )
+    orchestrator = CollectionOrchestrator(
+        _session_factory(_mock_async_session()),
+        CollectionAdapter(),
+        ai_manager=_StubAIManager(),
+        identity_resolver=resolver,
+    )
+
+    processed = asyncio.run(_run_batch_recording_processed(orchestrator, monkeypatch))
+
+    assert sorted(resolver.calls) == ["9800X3D", "RTX5070TI"]
+    by_mission = {c.mission_id: c.search_query for c in processed}
+    assert by_mission[mission_a] == "AMD Ryzen 7 9800X3D"
+    assert by_mission[mission_b] == "NVIDIA RTX 5070 Ti"
+
+
+# --- H: uma missão específica + uma genérica -> só a específica resolve ---
+
+
+def test_scenario_h_only_specific_mission_calls_resolver(monkeypatch) -> None:
+    specific, generic = uuid4(), uuid4()
+    claims = _mission_claims(
+        specific, search_query="9800X3D", model="9800X3D", sources=("kabum",)
+    ) + _mission_claims(
+        generic, search_query="cadeira gamer", model=None, sources=("kabum",)
+    )
+    _patch_phase_a(monkeypatch, claims)
+    resolver = _FakeIdentityResolver()
+    orchestrator = CollectionOrchestrator(
+        _session_factory(_mock_async_session()),
+        CollectionAdapter(),
+        ai_manager=_StubAIManager(),
+        identity_resolver=resolver,
+    )
+
+    asyncio.run(_run_batch_recording_processed(orchestrator, monkeypatch))
+
+    assert resolver.calls == ["9800X3D"]
+
+
+# --- I: identity_resolver=None -> comportamento anterior preservado ---
+
+
+def test_scenario_i_no_resolver_configured_preserves_previous_behavior(
+    monkeypatch,
+) -> None:
+    mission_id = uuid4()
+    claims = _mission_claims(
+        mission_id, search_query="9800X3D", model="9800X3D", sources=("kabum",)
+    )
+    _patch_phase_a(monkeypatch, claims)
+    orchestrator = CollectionOrchestrator(
+        _session_factory(_mock_async_session()),
+        CollectionAdapter(),
+        ai_manager=_StubAIManager(),
+        # identity_resolver não informado -- default None
+    )
+
+    processed = asyncio.run(_run_batch_recording_processed(orchestrator, monkeypatch))
+
+    assert processed[0].search_query == "9800X3D"
+
+
+# --- J: resolve() só acontece depois que a transação da Fase A fechou ---
+
+
+class _TransactionTracker:
+    def __init__(self) -> None:
+        self.in_transaction = False
+
+
+class _TrackingBeginCM:
+    def __init__(self, tracker: _TransactionTracker) -> None:
+        self._tracker = tracker
+
+    async def __aenter__(self) -> _TrackingBeginCM:
+        self._tracker.in_transaction = True
+        return self
+
+    async def __aexit__(self, *exc_info: object) -> bool:
+        self._tracker.in_transaction = False
+        return False
+
+
+def test_scenario_j_resolve_happens_after_phase_a_transaction_closes(
+    monkeypatch,
+) -> None:
+    tracker = _TransactionTracker()
+    session = _mock_async_session()
+    session.begin = MagicMock(side_effect=lambda: _TrackingBeginCM(tracker))
+
+    mission_id = uuid4()
+    claims = _mission_claims(
+        mission_id, search_query="9800X3D", model="9800X3D", sources=("kabum",)
+    )
+    _patch_phase_a(monkeypatch, claims)
+
+    observed_in_transaction: list[bool] = []
+
+    class _ObservingResolver:
+        async def resolve(self, model: str) -> ResolvedProductIdentity | None:
+            observed_in_transaction.append(tracker.in_transaction)
+            return None
+
+    orchestrator = CollectionOrchestrator(
+        _session_factory(session),
+        CollectionAdapter(),
+        ai_manager=_StubAIManager(),
+        identity_resolver=_ObservingResolver(),
+    )
+
+    asyncio.run(_run_batch_recording_processed(orchestrator, monkeypatch))
+
+    assert observed_in_transaction == [False]
+
+
+# --- K: fan-out continua processando todos os claims após a resolução ---
+
+
+def test_scenario_k_fan_out_still_processes_every_claim_after_resolution(
+    monkeypatch,
+) -> None:
+    mission_id = uuid4()
+    claims = _mission_claims(
+        mission_id,
+        search_query="9800X3D",
+        model="9800X3D",
+        sources=("kabum", "amazon", "pichau"),
+    )
+    _patch_phase_a(monkeypatch, claims)
+    resolver = _FakeIdentityResolver(
+        {
+            "9800X3D": ResolvedProductIdentity(
+                model="9800X3D", search_query="AMD Ryzen 7 9800X3D", source="kabum"
+            )
+        }
+    )
+    orchestrator = CollectionOrchestrator(
+        _session_factory(_mock_async_session()),
+        CollectionAdapter(),
+        ai_manager=_StubAIManager(),
+        identity_resolver=resolver,
+    )
+
+    processed = asyncio.run(_run_batch_recording_processed(orchestrator, monkeypatch))
+
+    assert len(processed) == 3
+    assert {c.source_code for c in processed} == {"kabum", "amazon", "pichau"}
+    assert all(c.search_query == "AMD Ryzen 7 9800X3D" for c in processed)
+
+
+# --- L: nenhuma alteração persistente em MissionCriteria ---
+
+
+def test_scenario_l_resolution_never_touches_the_database(monkeypatch) -> None:
+    """`_resolve_identities` não recebe `session` -- estruturalmente não
+    pode escrever em `MissionCriteria`/nenhuma tabela. Confirma também que
+    nenhuma chamada extra a `session.execute`/`session.scalar` acontece
+    além das já feitas (mockadas) na Fase A."""
+    session = _mock_async_session()
+    mission_id = uuid4()
+    claims = _mission_claims(
+        mission_id, search_query="9800X3D", model="9800X3D", sources=("kabum",)
+    )
+    _patch_phase_a(monkeypatch, claims)
+    resolver = _FakeIdentityResolver(
+        {
+            "9800X3D": ResolvedProductIdentity(
+                model="9800X3D", search_query="AMD Ryzen 7 9800X3D", source="kabum"
+            )
+        }
+    )
+    orchestrator = CollectionOrchestrator(
+        _session_factory(session),
+        CollectionAdapter(),
+        ai_manager=_StubAIManager(),
+        identity_resolver=resolver,
+    )
+
+    asyncio.run(_run_batch_recording_processed(orchestrator, monkeypatch))
+
+    signature = inspect.signature(CollectionOrchestrator._resolve_identities)
+    assert "session" not in signature.parameters
+    session.execute.assert_not_awaited()
+    session.scalar.assert_not_awaited()

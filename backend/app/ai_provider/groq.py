@@ -8,6 +8,7 @@ from pydantic import SecretStr
 
 from app.ai_provider.contracts import (
     AIMessageRole,
+    AIProviderCapabilityUnsupported,
     AIProviderError,
     AIProviderQuotaExceeded,
     AIProviderUnavailable,
@@ -47,6 +48,13 @@ class GroqProvider:
         self._timeout_seconds = timeout_seconds
 
     async def generate(self, request: AIRequest) -> AIResponse:
+        if request.require_search_grounding:
+            # TASK-083: Groq/llama-3.3-70b-versatile não tem grounding via
+            # busca web neste projeto -- erro tipado e imediato, nunca uma
+            # tentativa de responder mesmo assim nem fallback silencioso
+            # aqui dentro. O nível acima (AIProviderManager/chamador)
+            # decide o que fazer com essa incapacidade.
+            raise AIProviderCapabilityUnsupported("search_grounding")
         payload = {
             "model": self.model,
             "messages": [

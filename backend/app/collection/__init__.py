@@ -6,7 +6,9 @@ from app.collection.contracts import (
     CollectionProvider,
     CollectionRequest,
     CollectionResult,
+    ProductIdentityResolver,
     RawCollectedOffer,
+    ResolvedProductIdentity,
 )
 from app.collection.errors import (
     CollectionContractError,
@@ -24,6 +26,7 @@ from app.collection.history import (
     get_latest_price_observation,
     list_price_history,
 )
+from app.collection.identity_resolution import StoreProductIdentityResolver
 from app.collection.normalization import (
     Availability,
     NormalizedCollectedOffer,
@@ -53,14 +56,17 @@ __all__ = [
     "PriceNormalizer",
     "PriceHistoryPage",
     "PriceHistoryQueryError",
+    "ProductIdentityResolver",
     "DuplicateProviderError",
     "ProviderBlockedError",
     "ProviderCircuitOpenError",
     "ProviderNavigationError",
     "RawCollectedOffer",
+    "ResolvedProductIdentity",
     "AmazonProvider",
     "KabumProvider",
     "PichauProvider",
+    "StoreProductIdentityResolver",
     "TerabyteProvider",
     "UnsupportedSourceError",
     "get_latest_price_observation",

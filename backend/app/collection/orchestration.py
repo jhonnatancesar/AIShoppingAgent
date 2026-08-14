@@ -10,10 +10,8 @@ transações jamais mantém um `await` externo (IA, HTTP, Playwright) aberto.
 
 import asyncio
 import logging
-import re
-import unicodedata
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Any
@@ -27,7 +25,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.ai_provider import AIProviderManager
 from app.alerts import evaluate_price_alerts
 from app.collection.adapter import CollectionAdapter
-from app.collection.contracts import CollectionRequest
+from app.collection.contracts import (
+    CollectionRequest,
+    ProductIdentityResolver,
+    ResolvedProductIdentity,
+)
 from app.collection.errors import (
     CollectionContractError,
     CollectionNormalizationError,
@@ -35,6 +37,11 @@ from app.collection.errors import (
     ProviderCircuitOpenError,
     ProviderNavigationError,
 )
+from app.collection.model_matching import (
+    normalize_for_matching as _normalize_for_matching,
+)
+from app.collection.model_matching import same_code as _same_code
+from app.collection.model_matching import title_matches_model as _title_matches_model
 from app.collection.models import (
     CollectionRun,
     CollectionRunStatus,
@@ -110,11 +117,6 @@ _OFFER_IDENTITY_INDEXES = frozenset(
 )
 _SELLER_IDENTITY_INDEX = "uq_sellers_store_external_id"
 
-# TASK-075: sufixos de variante oficiais de fabricante (NVIDIA: Ti/Super;
-# AMD: XT/XTX/GRE) -- sempre indicam SKU/chip realmente diferente, nunca
-# personalização de vendedor. OC/PRO/PLUS/MAX ficam de fora de propósito
-# (uso inconsistente entre categorias, alto risco de falso-positivo).
-_STRONG_VARIANT_SUFFIXES = frozenset({"TI", "SUPER", "XT", "XTX", "GRE"})
 # Palavras-sinal de sistema completo/kit -- ausentes no search_query da
 # missão mas presentes no título do candidato indicam um resultado que não
 # é o componente avulso pedido.
@@ -126,7 +128,6 @@ _BUNDLE_SIGNAL_WORDS = (
     "combo",
     "notebook",
 )
-_SEPARATOR_PATTERN = re.compile(r"[\s\-_]+")
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,6 +138,12 @@ class ClaimedCollection:
     source_code: str
     search_query: str
     requested_at: datetime
+    model: str | None = None
+    """TASK-083: espelha `MissionCriteria.model` no momento do claim -- só
+    para decidir, na Fase B (fora de transação), se a identidade ainda está
+    crua e vale a pena resolver. Default `None` preserva toda construção
+    posicional existente (`ClaimedCollection(run_id, ..., requested_at)`)
+    sem quebrar nenhum teste/chamador anterior à TASK-083."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -294,6 +301,7 @@ async def claim_due_collections(
                     source_code,
                     criteria.search_query,
                     effective_now,
+                    criteria.model,
                 )
             )
         if mission_claims:
@@ -321,6 +329,7 @@ class CollectionOrchestrator:
         ai_manager: AIProviderManager,
         ai_profile: UserRole = UserRole.ADMIN,
         normalizer: PriceNormalizer | None = None,
+        identity_resolver: ProductIdentityResolver | None = None,
         schedule_interval_minutes: int = 60,
         schedule_stagger_seconds: int = 0,
         stale_run_minutes: int = 10,
@@ -342,6 +351,7 @@ class CollectionOrchestrator:
         self._ai_manager = ai_manager
         self._ai_profile = ai_profile
         self._normalizer = normalizer or PriceNormalizer()
+        self._identity_resolver = identity_resolver
         self._schedule_interval_minutes = schedule_interval_minutes
         self._schedule_stagger_seconds = schedule_stagger_seconds
         self._stale_after = timedelta(minutes=stale_run_minutes)
@@ -352,6 +362,8 @@ class CollectionOrchestrator:
         self, *, now: datetime | None = None, limit: int = 25
     ) -> CollectionBatchResult:
         effective_now = now or utc_now()
+        # Fase A: transação curta, só dados locais -- nenhum Playwright,
+        # HTTP ou IA acontece dentro deste bloco.
         async with self._session_factory() as session, session.begin():
             schedules = await ensure_missing_schedules(
                 session,
@@ -365,15 +377,71 @@ class CollectionOrchestrator:
             claims = await claim_due_collections(
                 session, now=effective_now, limit=limit
             )
+        # Transação da Fase A já fechada neste ponto (fim do `async with`
+        # acima) -- a Fase B (TASK-083) roda inteiramente fora dela.
         if schedules:
             logger.info(
                 "collection_schedules_created", extra={"schedule_count": schedules}
             )
+        claims = await self._resolve_identities(claims)
         outcomes = await asyncio.gather(*(self._process(claim) for claim in claims))
         succeeded = sum(outcome for outcome in outcomes)
         return CollectionBatchResult(
             len(claims), succeeded, len(claims) - succeeded, stale
         )
+
+    async def _resolve_identities(
+        self, claims: tuple[ClaimedCollection, ...]
+    ) -> tuple[ClaimedCollection, ...]:
+        """Fase B (TASK-083): sempre roda fora de qualquer transação do
+        orchestrator -- só é alcançada depois que o `async with` da Fase A
+        em `run_batch` já terminou. Resolve cada `mission_id` com
+        identidade ainda crua no máximo uma vez neste batch (dedupe
+        determinístico), e aplica o resultado em memória a todos os claims
+        daquela missão -- nunca escreve em `MissionCriteria` nem em
+        nenhuma outra tabela. Resolver ausente, retorno `None`, timeout ou
+        falha operacional nunca impedem a coleta: o pior caso é manter
+        `search_query` original em todos os claims."""
+        if self._identity_resolver is None:
+            return claims
+
+        resolved: dict[UUID, str] = {}
+        attempted: set[UUID] = set()
+        for claim in claims:
+            if claim.mission_id in attempted or not _needs_identity_resolution(claim):
+                continue
+            attempted.add(claim.mission_id)
+            identity = await self._resolve_identity_safely(claim)
+            if identity is not None:
+                resolved[claim.mission_id] = identity.search_query
+
+        if not resolved:
+            return claims
+        return tuple(
+            replace(claim, search_query=resolved[claim.mission_id])
+            if claim.mission_id in resolved
+            else claim
+            for claim in claims
+        )
+
+    async def _resolve_identity_safely(
+        self, claim: ClaimedCollection
+    ) -> ResolvedProductIdentity | None:
+        try:
+            return await self._identity_resolver.resolve(claim.model)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # TASK-083: mesmo boundary de `_process_claim` -- resolução de
+            # identidade é enriquecimento, nunca requisito para a coleta
+            # existir. Logado para não esconder bug de programação real,
+            # mas nunca derruba o batch.
+            logger.warning(
+                "identity_resolution_failed",
+                extra={"mission_id": str(claim.mission_id)},
+                exc_info=True,
+            )
+            return None
 
     async def _process(self, claim: ClaimedCollection) -> bool:
         """Teto de tempo para a claim inteira (TASK-079, item 7): nenhuma
@@ -459,47 +527,16 @@ class CollectionOrchestrator:
             )
 
 
-def _normalize_for_matching(text: str) -> str:
-    """TASK-075: maiúsculo, sem acento -- base para comparação determinística."""
-    decomposed = unicodedata.normalize("NFKD", text)
-    without_accents = "".join(ch for ch in decomposed if not unicodedata.combining(ch))
-    return without_accents.upper()
-
-
-def _model_search_pattern(model: str) -> re.Pattern[str]:
-    """TASK-075: casa `model` no título tolerando espaço/hífen/underscore
-    entre os pedaços (ex.: "RTX 4070 Ti" == "RTX-4070-Ti" == "RTX4070Ti"),
-    exigindo limite alfanumérico nas duas pontas do trecho inteiro --
-    resolve "9950X3D" x "9950X3D2"/"A9950X3D" ao mesmo tempo que tolera
-    estilo de separador diferente."""
-    normalized = _normalize_for_matching(model)
-    chunks = [
-        re.escape(chunk) for chunk in _SEPARATOR_PATTERN.split(normalized) if chunk
-    ]
-    core = r"[\s\-_]*".join(chunks)
-    return re.compile(rf"(?<![A-Z0-9]){core}(?![A-Z0-9])")
-
-
-def _title_matches_model(model: str, title: str) -> bool:
-    """TASK-075: False só quando o título comprovadamente não é o modelo
-    pedido -- modelo ausente/colado a outro caractere (checagem via
-    `_model_search_pattern`), ou seguido de um sufixo de variante forte
-    (`_STRONG_VARIANT_SUFFIXES`) que a missão não pediu. Qualquer outra
-    palavra depois do modelo (ex.: "OC", "Gaming", capacidade) não rejeita
-    -- conservador por design."""
-    normalized_title = _normalize_for_matching(title)
-    match = _model_search_pattern(model).search(normalized_title)
-    if match is None:
-        return False
-    remainder = normalized_title[match.end() :].lstrip(" \t-_")
-    next_word_match = re.match(r"[A-Z0-9]+", remainder)
-    if next_word_match is None:
-        return True
-    next_word = next_word_match.group(0)
-    if next_word not in _STRONG_VARIANT_SUFFIXES:
-        return True
-    model_tokens = set(_SEPARATOR_PATTERN.split(_normalize_for_matching(model)))
-    return next_word in model_tokens
+def _needs_identity_resolution(claim: ClaimedCollection) -> bool:
+    """TASK-083: identidade ainda crua -- `model` existe e `search_query`
+    é essencialmente só o próprio código (tolerando separador/maiúscula
+    via `same_code`), sem nenhuma canonicalização incorporada. Nunca usa
+    comparação textual literal (`==`): "9800-X3D"/"9800 X3D"/"9800x3d" são
+    todos reconhecidos como o mesmo `model` "9800X3D". Uma `search_query`
+    com qualquer palavra a mais (ex.: "AMD Ryzen 7 9800X3D") já não bate
+    mais em `same_code` -- não é tratada como crua. Busca genérica
+    (`model is None`) nunca aciona resolução."""
+    return claim.model is not None and _same_code(claim.search_query, claim.model)
 
 
 def _title_looks_like_bundle(search_query: str, title: str) -> bool:

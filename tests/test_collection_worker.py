@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from app.collection.identity_resolution import StoreProductIdentityResolver
 from app.collection.worker import build_collection_adapter, run_worker
 from app.core.config import Settings
 from app.observability.metrics import mark_worker_started, observe_worker_failure
@@ -65,6 +66,12 @@ def test_worker_once_records_batch_and_disposes(monkeypatch) -> None:
 
     orchestrator.run_batch = result
     observe = MagicMock()
+    captured_kwargs: dict[str, object] = {}
+
+    def _capture_orchestrator(*_args, **kwargs):
+        captured_kwargs.update(kwargs)
+        return orchestrator
+
     monkeypatch.setattr(
         "app.collection.worker.create_collection_async_database_engine",
         lambda *_: engine,
@@ -77,7 +84,7 @@ def test_worker_once_records_batch_and_disposes(monkeypatch) -> None:
         "app.collection.worker.build_admin_dev_ai_provider_manager", MagicMock()
     )
     monkeypatch.setattr(
-        "app.collection.worker.CollectionOrchestrator", lambda *_a, **_k: orchestrator
+        "app.collection.worker.CollectionOrchestrator", _capture_orchestrator
     )
     monkeypatch.setattr("app.collection.worker.observe_worker_batch", observe)
     monkeypatch.setattr(
@@ -91,6 +98,17 @@ def test_worker_once_records_batch_and_disposes(monkeypatch) -> None:
 
     observe.assert_called_once()
     engine.dispose.assert_called_once()
+    assert isinstance(
+        captured_kwargs["identity_resolver"], StoreProductIdentityResolver
+    )
+
+
+def test_worker_identity_resolver_uses_dedicated_kabum_amazon_providers() -> None:
+    """TASK-083: nunca reutiliza os providers da coleta normal -- instâncias
+    próprias, namespace de circuito separado ("identity")."""
+    resolver = StoreProductIdentityResolver()
+    source_codes = [provider.source_code for provider in resolver._providers]  # noqa: SLF001
+    assert source_codes == ["kabum", "amazon"]
 
 
 @pytest.mark.parametrize(("poll", "batch"), [(0, 1), (1, 0), (1, 1001)])

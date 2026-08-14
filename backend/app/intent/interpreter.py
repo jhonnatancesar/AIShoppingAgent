@@ -7,6 +7,7 @@ não esteja claramente presente na mensagem: qualquer resposta fora do
 contrato esperado cai em `IntentKind.UNKNOWN`.
 """
 
+import dataclasses
 import json
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
@@ -16,14 +17,23 @@ from uuid import uuid4
 from app.ai_provider import (
     AIMessage,
     AIMessageRole,
+    AIProviderError,
     AIProviderManager,
     AIRequest,
 )
 from app.intent.contracts import Intent, IntentError, IntentKind, IntentParameters
+from app.intent.nomenclature import (
+    check_known_family_contradiction,
+    detect_unproven_enrichment,
+)
 from app.missions.models import MissionCommand
 from app.users.models import UserRole
 
 PURPOSE = "interpret_purchase_intent"
+VERIFY_PURPOSE = "verify_product_identity"
+"""TASK-083: propósito da segunda chamada, estritamente limitada a
+verificar/corrigir a identidade de um produto já identificado -- nunca
+uma nova interpretação completa da intenção original."""
 
 _PARSING_ERRORS = (IntentError, ValueError, TypeError, KeyError, ArithmeticError)
 
@@ -32,6 +42,7 @@ _ALLOWED_PARAMETER_KEYS = frozenset(
     {
         "search_query",
         "model",
+        "model_confidence",
         "target_amount",
         "target_currency",
         "sources",
@@ -52,6 +63,7 @@ _SYSTEM_PROMPT = (
     '"parameters": {'
     '"search_query": string ou null, '
     '"model": string ou null, '
+    '"model_confidence": "alta" | "baixa" | null, '
     '"target_amount": string decimal (ex.: "1500.00") ou null, '
     '"target_currency": string ISO 4217 de 3 letras maiúsculas (ex.: "BRL") ou null, '
     '"sources": lista com zero ou mais valores entre "pichau", "terabyte", "amazon", "kabum", '
@@ -103,61 +115,113 @@ _SYSTEM_PROMPT = (
     '"4070", nunca invente ou complete uma variante que a pessoa não '
     'mencionou. Sem modelo específico identificável (ex.: "notebook '
     'gamer", "mouse sem fio"), use null -- não force um modelo.\n\n'
+    'Preencha "model_confidence" sempre que "model" for preenchido, e '
+    'use null quando "model" for null. Use "alta" quando a marca/linha/'
+    "família do produto for certa -- porque o usuário já escreveu isso "
+    "na mensagem, ou porque o padrão do código não deixa dúvida (só "
+    'existe uma marca/linha possível para aquele código). Use "baixa" '
+    "quando você estiver completando marca, linha ou família só a "
+    "partir do próprio código, sem confirmação direta na mensagem, e "
+    "existir risco real de confundir com uma variante semelhante da "
+    "mesma geração (ex.: linhas irmãs como Ryzen 7 e Ryzen 9 dentro da "
+    'mesma família X3D). Continue preenchendo "search_query" com sua '
+    'melhor estimativa mesmo quando marcar "baixa" -- nunca deixe de '
+    "responder por incerteza.\n\n"
     "Exemplos de mensagens reais e a resposta esperada, apenas para ilustrar "
     "o padrão — generalize o critério, nunca copie um exemplo literalmente:\n\n"
     'Mensagem: "eu qria uma rtx 4060 ate uns 2500 pila na kabum, bora"\n'
     'Resposta: {"kind": "create_mission", "command": null, "parameters": '
     '{"search_query": "Placa de Vídeo NVIDIA RTX 4060", "model": "RTX 4060", '
+    '"model_confidence": "alta", '
     '"target_amount": "2500.00", '
     '"target_currency": "BRL", "sources": ["kabum"], "mission_reference": null, '
     '"clear_target": false}}\n\n'
     'Mensagem: "ate 3000 reais me acha um notebook gamer, comeca a procurar ai"\n'
     'Resposta: {"kind": "create_mission", "command": null, "parameters": '
-    '{"search_query": "notebook gamer", "model": null, "target_amount": "3000.00", '
+    '{"search_query": "notebook gamer", "model": null, "model_confidence": null, '
+    '"target_amount": "3000.00", '
     '"target_currency": "BRL", "sources": [], "mission_reference": null, '
     '"clear_target": false}}\n\n'
     'Mensagem: "quero um 9950x3d ate 3500"\n'
     'Resposta: {"kind": "create_mission", "command": null, "parameters": '
     '{"search_query": "Processador AMD Ryzen 9 9950X3D", "model": "9950X3D", '
+    '"model_confidence": "baixa", '
     '"target_amount": "3500.00", '
     '"target_currency": "BRL", "sources": [], "mission_reference": null, '
+    '"clear_target": false}}\n\n'
+    'Mensagem: "me acha um 9800x3d pfvr"\n'
+    'Resposta: {"kind": "create_mission", "command": null, "parameters": '
+    '{"search_query": "AMD Ryzen 7 9800X3D", "model": "9800X3D", '
+    '"model_confidence": "baixa", '
+    '"target_amount": null, '
+    '"target_currency": null, "sources": [], "mission_reference": null, '
     '"clear_target": false}}\n\n'
     'Mensagem: "quero uma 4070 ti"\n'
     'Resposta: {"kind": "create_mission", "command": null, "parameters": '
     '{"search_query": "Placa de Vídeo NVIDIA RTX 4070 Ti", "model": "RTX 4070 Ti", '
+    '"model_confidence": "alta", '
     '"target_amount": null, '
     '"target_currency": null, "sources": [], "mission_reference": null, '
     '"clear_target": false}}\n\n'
     'Mensagem: "procura um mouse logitek barato"\n'
     'Resposta: {"kind": "create_mission", "command": null, "parameters": '
-    '{"search_query": "mouse logitech", "model": null, "target_amount": null, '
+    '{"search_query": "mouse logitech", "model": null, "model_confidence": null, '
+    '"target_amount": null, '
     '"target_currency": null, "sources": [], "mission_reference": null, '
     '"clear_target": false}}\n\n'
     'Mensagem: "e ai cade minha missao do notebook, achou algo?"\n'
     'Resposta: {"kind": "query_mission", "command": null, "parameters": '
-    '{"search_query": null, "model": null, "target_amount": null, "target_currency": null, '
+    '{"search_query": null, "model": null, "model_confidence": null, '
+    '"target_amount": null, "target_currency": null, '
     '"sources": [], "mission_reference": "notebook", "clear_target": false}}\n\n'
     'Mensagem: "pausa ai a missao do teclado mecanico pfvr"\n'
     'Resposta: {"kind": "mission_command", "command": "pause", "parameters": '
-    '{"search_query": null, "model": null, "target_amount": null, "target_currency": null, '
+    '{"search_query": null, "model": null, "model_confidence": null, '
+    '"target_amount": null, "target_currency": null, '
     '"sources": [], "mission_reference": "teclado mecanico", "clear_target": false}}\n\n'
     'Mensagem: "cancela essa busca do monitor curvo, nao quero mais nao"\n'
     'Resposta: {"kind": "mission_command", "command": "cancel", "parameters": '
-    '{"search_query": null, "model": null, "target_amount": null, "target_currency": null, '
+    '{"search_query": null, "model": null, "model_confidence": null, '
+    '"target_amount": null, "target_currency": null, '
     '"sources": [], "mission_reference": "monitor curvo", "clear_target": false}}\n\n'
     'Mensagem: "troca a missao do teclado pra kabum e pichau, deixa o alvo em 300"\n'
     'Resposta: {"kind": "edit_mission", "command": null, "parameters": '
-    '{"search_query": null, "model": null, "target_amount": "300.00", "target_currency": "BRL", '
+    '{"search_query": null, "model": null, "model_confidence": null, '
+    '"target_amount": "300.00", "target_currency": "BRL", '
     '"sources": ["kabum", "pichau"], "mission_reference": "teclado", '
     '"clear_target": false}}\n\n'
     'Mensagem: "tira o preco alvo da missao do monitor, so quero acompanhar os precos"\n'
     'Resposta: {"kind": "edit_mission", "command": null, "parameters": '
-    '{"search_query": null, "model": null, "target_amount": null, "target_currency": null, '
+    '{"search_query": null, "model": null, "model_confidence": null, '
+    '"target_amount": null, "target_currency": null, '
     '"sources": [], "mission_reference": "monitor", "clear_target": true}}\n\n'
     'Mensagem: "bom dia, tudo certo?"\n'
     'Resposta: {"kind": "unknown", "command": null, "parameters": '
-    '{"search_query": null, "model": null, "target_amount": null, "target_currency": null, '
+    '{"search_query": null, "model": null, "model_confidence": null, '
+    '"target_amount": null, "target_currency": null, '
     '"sources": [], "mission_reference": null, "clear_target": false}}'
+)
+
+_VERIFY_SYSTEM_PROMPT = (
+    "Você verifica a identidade de um único produto de hardware, usando "
+    "exclusivamente a ferramenta de busca disponível para confirmar fatos "
+    "reais -- nunca complete com o seu próprio conhecimento sem "
+    "confirmação. Você recebe o código/modelo já identificado de um "
+    "produto e uma descrição candidata, que pode estar errada quanto à "
+    "marca, linha ou família. Pesquise e confirme a que marca/linha/"
+    "família esse código realmente pertence.\n\n"
+    "Responda somente com um objeto JSON válido, sem texto adicional, "
+    "comentários ou blocos de código, exatamente neste formato: "
+    '{"search_query": string}.\n\n'
+    'O valor de "search_query" deve ser a descrição canônica completa do '
+    "produto, na ordem Tipo Marca Linha/Família Modelo, exatamente como "
+    "ele aparece de verdade nas lojas, sempre preservando o código do "
+    "modelo recebido sem alterá-lo. Nunca mantenha nem invente marca, "
+    "linha ou família que a busca não confirmar com segurança -- se a "
+    "busca não confirmar, responda só com o próprio código do modelo, "
+    "sem acrescentar nenhuma marca, linha, família ou categoria. Você "
+    "nunca decide sobre orçamento, lojas, quantidade ou qualquer outro "
+    "critério -- responda apenas sobre a identidade do produto."
 )
 
 
@@ -199,12 +263,149 @@ class IntentInterpreter:
             requested_at=moment,
         )
         response = await self._manager.generate(request)
-        return parse_intent_response(
+        intent = parse_intent_response(
             response.content,
             correlation_id=request.request_id,
             raw_message=message,
             interpreted_at=response.finished_at,
         )
+
+        parameters = intent.parameters
+        if parameters.model is not None:
+            if _needs_identity_verification(message, parameters):
+                parameters = await self._verify_identity(
+                    raw_message=message,
+                    parameters=parameters,
+                    requested_at=moment,
+                    profile=profile,
+                )
+            if parameters.model_confidence is not None:
+                # TASK-083: model_confidence é só um sinal de acionamento
+                # interno -- já foi usado acima para decidir a verificação,
+                # não persiste além do IntentInterpreter (não espelha
+                # nenhuma coluna de domínio).
+                parameters = dataclasses.replace(parameters, model_confidence=None)
+
+        if parameters is intent.parameters:
+            return intent
+        return dataclasses.replace(intent, parameters=parameters)
+
+    async def _verify_identity(
+        self,
+        *,
+        raw_message: str,
+        parameters: IntentParameters,
+        requested_at: datetime,
+        profile: UserRole,
+    ) -> IntentParameters:
+        """Uma única chamada adicional, com objetivo estritamente limitado
+        a verificar/corrigir a identidade do produto -- nunca uma nova
+        interpretação completa da intenção. Qualquer falha, indisponibilidade
+        ou evidência insuficiente aplica o fallback seguro em vez de manter
+        o `search_query` original, já classificado como suspeito."""
+        model = parameters.model
+        if model is None:
+            raise IntentError("_verify_identity requires a model")
+        verify_request = _build_verification_request(
+            raw_message=raw_message,
+            model=model,
+            search_query=parameters.search_query,
+            requested_at=requested_at,
+            profile=profile,
+        )
+        try:
+            verify_response = await self._manager.generate(verify_request)
+        except AIProviderError:
+            return _apply_safe_fallback(parameters)
+
+        if not (
+            verify_response.grounding_requested
+            and verify_response.grounding_performed
+            and verify_response.grounding_sources
+        ):
+            return _apply_safe_fallback(parameters)
+
+        verified_query = _parse_verified_search_query(verify_response.content)
+        if verified_query is None:
+            return _apply_safe_fallback(parameters)
+
+        return dataclasses.replace(parameters, search_query=verified_query)
+
+
+def _needs_identity_verification(
+    raw_message: str, parameters: IntentParameters
+) -> bool:
+    """Gatilho econômico (TASK-083): só aciona verificação externa nos
+    casos documentados -- nunca por padrão, nunca para busca genérica sem
+    `model`. `model_confidence == "baixa"` é checado primeiro por ser o
+    sinal mais barato; os dois detectores determinísticos de
+    `nomenclature.py` cobrem o resto sem depender desse autorrelato."""
+    model = parameters.model
+    if model is None:
+        return False
+    if parameters.model_confidence == "baixa":
+        return True
+    search_query = parameters.search_query
+    if (
+        search_query is not None
+        and check_known_family_contradiction(model, search_query) is not None
+    ):
+        return True
+    return detect_unproven_enrichment(raw_message, model, search_query)
+
+
+def _apply_safe_fallback(parameters: IntentParameters) -> IntentParameters:
+    """TASK-083: nunca preserva o `search_query` original quando a
+    verificação era necessária e não pôde confirmar a identidade -- reduz
+    ao próprio código/modelo, o único valor que o usuário efetivamente
+    forneceu e que o sistema pode considerar seguro."""
+    return dataclasses.replace(parameters, search_query=parameters.model)
+
+
+_ALLOWED_VERIFICATION_KEYS = frozenset({"search_query"})
+
+
+def _build_verification_request(
+    *,
+    raw_message: str,
+    model: str,
+    search_query: str | None,
+    requested_at: datetime,
+    profile: UserRole,
+) -> AIRequest:
+    candidate = search_query or model
+    user_content = (
+        f'Mensagem original do usuário: "{raw_message}"\n'
+        f'Código/modelo já identificado: "{model}"\n'
+        f'Descrição candidata, que pode estar errada: "{candidate}"'
+    )
+    return AIRequest(
+        request_id=uuid4(),
+        profile=profile,
+        purpose=VERIFY_PURPOSE,
+        messages=(
+            AIMessage(AIMessageRole.SYSTEM, _VERIFY_SYSTEM_PROMPT),
+            AIMessage(AIMessageRole.USER, user_content),
+        ),
+        requested_at=requested_at,
+        require_search_grounding=True,
+    )
+
+
+def _parse_verified_search_query(content: str) -> str | None:
+    """Parsing estrito e de escopo mínimo: só aceita a chave esperada, e
+    trata qualquer desvio -- JSON inválido, chave extra, valor vazio ou de
+    tipo errado -- como verificação inconclusiva, nunca como erro fatal."""
+    try:
+        payload = json.loads(content)
+    except ValueError, TypeError:
+        return None
+    if not isinstance(payload, dict) or set(payload) - _ALLOWED_VERIFICATION_KEYS:
+        return None
+    value = payload.get("search_query")
+    if not isinstance(value, str) or not value.strip():
+        return None
+    return value
 
 
 def parse_intent_response(
@@ -273,6 +474,7 @@ def _parse_parameters(raw: Any) -> IntentParameters:
 
     search_query = _optional_str(raw.get("search_query"))
     model = _optional_str(raw.get("model"))
+    model_confidence = _optional_str(raw.get("model_confidence"))
     mission_reference = _optional_str(raw.get("mission_reference"))
     target_currency = _optional_str(raw.get("target_currency"))
 
@@ -301,6 +503,7 @@ def _parse_parameters(raw: Any) -> IntentParameters:
     return IntentParameters(
         search_query=search_query,
         model=model,
+        model_confidence=model_confidence,
         target_amount=target_amount,
         target_currency=target_currency,
         sources=tuple(sources_raw),

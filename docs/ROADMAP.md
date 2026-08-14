@@ -271,9 +271,21 @@ adicional", é o item 1 desta lista, já coberto acima):
    componentes já existentes das TASK-070/071
    (`parse_numbered_store_selection`, `parse_single_numbered_choice`).
 
-Nenhuma das seis (080-085) tem tag/push pendente nem foi implementada —
-só auditadas e documentadas nesta rodada, aguardando aprovação explícita
-do usuário antes de qualquer código.) → V1.2
+**TASK-083 concluída e validada (2026-08-14)** — verificação em camadas
+implementada (gatilho determinístico + `model_confidence`, grounding
+dedicado via `AIProviderManager`/`gemini-2.5-flash`, fallback seguro nunca
+mantendo canonicalização suspeita, `ProductIdentityResolver` Kabum→Amazon
+rodando só no `collection_worker`, fora do webhook e fora de transação,
+uma vez por `mission_id`); ver `docs/tasks/TASK-083.md` para arquitetura
+completa e resultado da validação real (grounding bloqueado nesta chave/
+projeto: `gemini-2.5-flash` e `gemini-2.5-flash-lite` aparecem no catálogo
+mas `generate_content` recusa os dois com `404` — causa exata não
+comprovada —, fallback via `ProductIdentityResolver` real confirmado: Kabum
+resolveu `9800X3D` →
+`"Processador AMD Ryzen 7 9800X3D"` na primeira tentativa). Nenhum
+commit/push feito ainda para TASK-083. Status individual das demais cinco
+(080, 081, 082, 084, 085) não reverificado nesta rodada — ver o commit log
+e `docs/tasks/` de cada uma para o estado real mais recente.) → V1.2
 (evolução funcional, documento `docs/V1_2.md`, 12 itens,
 incluindo Magalu como quinta loja, redução de `PriceObservation`
 redundante, e comparação de menor preço histórico externo/interno estilo

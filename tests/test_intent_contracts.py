@@ -138,6 +138,26 @@ def test_parameters_model_defaults_to_none_and_accepts_variant_text() -> None:
     assert IntentParameters(model="RTX 4070 Ti").model == "RTX 4070 Ti"
 
 
+def test_parameters_model_confidence_defaults_to_none() -> None:
+    assert IntentParameters().model_confidence is None
+
+
+@pytest.mark.parametrize("value", ["alta", "baixa"])
+def test_parameters_model_confidence_accepts_closed_vocabulary(value: str) -> None:
+    parameters = IntentParameters(model="9800X3D", model_confidence=value)
+    assert parameters.model_confidence == value
+
+
+def test_parameters_model_confidence_rejects_value_outside_vocabulary() -> None:
+    with pytest.raises(IntentError, match="model_confidence"):
+        IntentParameters(model="9800X3D", model_confidence="media")
+
+
+def test_parameters_model_confidence_requires_model() -> None:
+    with pytest.raises(IntentError, match="model_confidence"):
+        IntentParameters(model=None, model_confidence="alta")
+
+
 def test_parameters_reject_non_bool_clear_target() -> None:
     with pytest.raises(IntentError, match="clear_target must be a bool"):
         IntentParameters(clear_target="yes")  # type: ignore[arg-type]

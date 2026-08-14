@@ -11,6 +11,7 @@ from opentelemetry.trace import SpanKind
 from app.ai_provider import build_admin_dev_ai_provider_manager
 from app.collection.adapter import CollectionAdapter
 from app.collection.browser import BrowserSettings
+from app.collection.identity_resolution import StoreProductIdentityResolver
 from app.collection.orchestration import CollectionOrchestrator
 from app.collection.providers import V1_PROVIDER_TYPES
 from app.core.config import Settings
@@ -98,6 +99,11 @@ async def run_worker(
         session_factory,
         build_collection_adapter(settings),
         ai_manager=build_admin_dev_ai_provider_manager(settings),
+        # TASK-083: instâncias dedicadas (Kabum -> Amazon), nunca as da
+        # coleta normal registrada em `build_collection_adapter` acima --
+        # namespace de circuit breaker, volume e timeout próprios (ver
+        # `StoreProductIdentityResolver`).
+        identity_resolver=StoreProductIdentityResolver(),
         schedule_interval_minutes=settings.collection_schedule_interval_minutes,
         schedule_stagger_seconds=settings.collection_schedule_stagger_seconds,
         stale_run_minutes=settings.collection_stale_run_minutes,

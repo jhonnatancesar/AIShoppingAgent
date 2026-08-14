@@ -2,6 +2,7 @@
 
 from app.intent.contracts import (
     MISSION_SOURCE_CODES,
+    MODEL_CONFIDENCE_VALUES,
     Intent,
     IntentError,
     IntentKind,
@@ -9,13 +10,16 @@ from app.intent.contracts import (
 )
 from app.intent.interpreter import (
     PURPOSE,
+    VERIFY_PURPOSE,
     IntentInterpreter,
     parse_intent_response,
 )
 
 __all__ = [
     "MISSION_SOURCE_CODES",
+    "MODEL_CONFIDENCE_VALUES",
     "PURPOSE",
+    "VERIFY_PURPOSE",
     "Intent",
     "IntentError",
     "IntentInterpreter",

@@ -45,6 +45,12 @@ class Settings(BaseSettings):
     gemini_api_key_admin_dev: SecretStr | None = None
     gemini_api_key_admin_dev_file: Path | None = None
     gemini_model: str = Field(default="gemini-3.6-flash", min_length=1)
+    # TASK-083: modelo dedicado só para requisições que exigem
+    # `require_search_grounding=True` -- nunca usado nas chamadas comuns,
+    # que continuam com `gemini_model`. Separado porque grounding via
+    # Google Search é uma capability específica, não simplesmente "a
+    # versão mais nova do Gemini".
+    gemini_grounding_model: str = Field(default="gemini-2.5-flash", min_length=1)
     groq_api_key: SecretStr | None = None
     groq_api_key_file: Path | None = None
     groq_model: str = Field(default="llama-3.3-70b-versatile", min_length=1)

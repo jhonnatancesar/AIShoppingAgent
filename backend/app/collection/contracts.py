@@ -85,3 +85,30 @@ class CollectionProvider(Protocol):
     source_code: str
 
     async def collect(self, request: CollectionRequest) -> CollectionResult: ...
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedProductIdentity:
+    """TASK-083: identidade de um `model` cru confirmada por um provider de
+    loja dedicado à resolução -- `search_query` vem sempre de um título de
+    candidato real que bateu com o modelo, nunca de invenção/canonicalização
+    nova."""
+
+    model: str
+    search_query: str
+    source: str
+
+    def __post_init__(self) -> None:
+        _require_text(self.model, "model")
+        _require_text(self.search_query, "search_query")
+        _require_text(self.source, "source")
+
+
+@runtime_checkable
+class ProductIdentityResolver(Protocol):
+    """TASK-083: porta para resolver um `model` cru contra fontes de
+    produto reais. A implementação concreta (Playwright, providers de
+    loja dedicados) pertence à camada `collection` -- nunca exposta ao
+    `IntentInterpreter`/webhook."""
+
+    async def resolve(self, model: str) -> ResolvedProductIdentity | None: ...

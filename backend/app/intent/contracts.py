@@ -17,6 +17,11 @@ from app.missions.models import MissionCommand
 MISSION_SOURCE_CODES = frozenset({"pichau", "terabyte", "amazon", "kabum"})
 """Fontes selecionáveis na V1, conforme `docs/TELEGRAM.md` e a TASK-055."""
 
+MODEL_CONFIDENCE_VALUES = frozenset({"alta", "baixa"})
+"""TASK-083: vocabulário fechado do autorrelato de confiança da IA sobre
+`model`. Nunca decide sozinho -- é um entre vários sinais que podem
+acionar verificação externa em `interpreter.py`."""
+
 
 class IntentError(ValueError):
     """Indica intenção malformada antes de qualquer decisão de domínio."""
@@ -51,6 +56,12 @@ class IntentParameters:
     Espelha MissionCriteria.model -- None quando não há modelo específico
     identificável com segurança; nunca reduzido (preserva sufixos como
     Ti/SUPER/XT/XTX/GRE)."""
+    model_confidence: str | None = None
+    """TASK-083: autorrelato da IA sobre a própria confiança em `model`/
+    `search_query` -- "alta" ou "baixa" (`MODEL_CONFIDENCE_VALUES`).
+    Sempre `None` quando `model` também é `None`. Não persiste no
+    domínio (não espelha nenhuma coluna) -- é só um sinal de
+    acionamento de verificação, descartado depois do `IntentInterpreter`."""
     target_amount: Decimal | None = None
     target_currency: str | None = None
     sources: tuple[str, ...] = ()
@@ -66,6 +77,11 @@ class IntentParameters:
             raise IntentError("search_query must not be blank when informed")
         if self.model is not None and not self.model.strip():
             raise IntentError("model must not be blank when informed")
+        if self.model_confidence is not None:
+            if self.model is None:
+                raise IntentError("model_confidence requires model to be informed")
+            if self.model_confidence not in MODEL_CONFIDENCE_VALUES:
+                raise IntentError("model_confidence must use MODEL_CONFIDENCE_VALUES")
         if (self.target_amount is None) != (self.target_currency is None):
             raise IntentError("target_amount and target_currency must be paired")
         if self.target_amount is not None and (
