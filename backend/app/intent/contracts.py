@@ -62,6 +62,16 @@ class IntentParameters:
     Sempre `None` quando `model` também é `None`. Não persiste no
     domínio (não espelha nenhuma coluna) -- é só um sinal de
     acionamento de verificação, descartado depois do `IntentInterpreter`."""
+    display_query: str | None = None
+    """TASK-083 (correção de regressão): candidato plausível da IA normal
+    quando a verificação externa era necessária mas não confirmou nada
+    -- só presente quando não há contradição determinística conhecida
+    (`check_known_family_contradiction`). Espelha `Mission.title`
+    (apresentação/contexto), nunca `MissionCriteria.search_query`
+    (identidade operacional, que continua reduzida ao `model` cru
+    enquanto não confirmada -- é o sinal que `_needs_identity_resolution`
+    usa para saber que ainda precisa acionar o `ProductIdentityResolver`).
+    `None` sempre que não houver candidato provisório a preservar."""
     target_amount: Decimal | None = None
     target_currency: str | None = None
     sources: tuple[str, ...] = ()
@@ -82,6 +92,11 @@ class IntentParameters:
                 raise IntentError("model_confidence requires model to be informed")
             if self.model_confidence not in MODEL_CONFIDENCE_VALUES:
                 raise IntentError("model_confidence must use MODEL_CONFIDENCE_VALUES")
+        if self.display_query is not None:
+            if self.model is None:
+                raise IntentError("display_query requires model to be informed")
+            if not self.display_query.strip():
+                raise IntentError("display_query must not be blank when informed")
         if (self.target_amount is None) != (self.target_currency is None):
             raise IntentError("target_amount and target_currency must be paired")
         if self.target_amount is not None and (

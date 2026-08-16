@@ -126,14 +126,19 @@ def stage_create_mission(
     *,
     search_query: str,
     model: str | None = None,
+    display_query: str | None = None,
     target_amount: object,
     target_currency: str | None,
     sources: tuple[str, ...],
 ) -> dict[str, Any]:
+    """`display_query` (TASK-083, correção de regressão) é só
+    apresentação -- vira `Mission.title` na criação; `search_query`
+    continua a identidade operacional (o que é pesquisado nas lojas)."""
     return {
         "kind": "create_mission",
         "search_query": search_query,
         "model": model,
+        "display_query": display_query,
         "target_amount": str(target_amount) if target_amount is not None else None,
         "target_currency": target_currency,
         "sources": list(sources),
@@ -157,7 +162,8 @@ def stage_mission_command(
 
 
 def describe_create_mission(payload: dict[str, Any]) -> str:
-    lines = ["🔎 Confirmar nova missão?", "", f'Produto: "{payload["search_query"]}"']
+    display = payload.get("display_query") or payload["search_query"]
+    lines = ["🔎 Confirmar nova missão?", "", f'Produto: "{display}"']
     amount, currency = payload.get("target_amount"), payload.get("target_currency")
     if amount and currency:
         lines.append(f"🎯 Alvo: {format_money(Decimal(amount), currency)}")
@@ -238,16 +244,21 @@ def stage_await_create_mission_sources(
     *,
     search_query: str,
     model: str | None = None,
+    display_query: str | None = None,
     target_amount: object,
     target_currency: str | None,
 ) -> dict[str, Any]:
     """TASK-070: guarda os critérios já interpretados (produto e, se
     houver, preço-alvo) enquanto aguarda a escolha das lojas -- não cria a
-    missão nem encena a confirmação normal ainda."""
+    missão nem encena a confirmação normal ainda. `display_query`
+    (TASK-083, correção de regressão) atravessa esse estado intermediário
+    sem mudança -- só é usado quando `stage_create_mission` for chamado
+    de fato, após a escolha das lojas."""
     return {
         "kind": "await_create_mission_sources",
         "search_query": search_query,
         "model": model,
+        "display_query": display_query,
         "target_amount": str(target_amount) if target_amount is not None else None,
         "target_currency": target_currency,
     }

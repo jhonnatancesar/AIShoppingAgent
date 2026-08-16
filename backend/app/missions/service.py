@@ -252,6 +252,7 @@ def create_mission_from_criteria(
     user_id: UUID,
     search_query: str,
     model: str | None = None,
+    title: str | None = None,
     target_amount: Decimal | None,
     target_currency: str | None,
     source_codes: Sequence[str],
@@ -265,6 +266,12 @@ def create_mission_from_criteria(
     selecionáveis da V1: toda missão criada por este serviço sai `active`,
     nunca `draft` por falta de fonte. Devolve a missão e as fontes
     efetivamente usadas, para que o chamador possa relatá-las ao usuário.
+
+    `title` (TASK-083, correção de regressão) é opcional -- quando
+    ausente, usa `search_query` como sempre. Existe para permitir um
+    título de apresentação mais rico (`display_query` do
+    `IntentInterpreter`) sem afetar `MissionCriteria.search_query`, que
+    continua sendo a identidade operacional usada nas lojas.
     """
     effective_codes = tuple(source_codes) or _DEFAULT_V1_SOURCE_CODES
     if schedule_interval_minutes <= 0:
@@ -273,7 +280,7 @@ def create_mission_from_criteria(
     mission = Mission(
         id=uuid4(),
         user_id=user_id,
-        title=search_query[:200],
+        title=(title or search_query)[:200],
         status=MissionStatus.DRAFT,
         state_version=0,
         created_at=requested_at,
@@ -342,6 +349,7 @@ async def create_mission_from_criteria_async(
     user_id: UUID,
     search_query: str,
     model: str | None = None,
+    title: str | None = None,
     target_amount: Decimal | None,
     target_currency: str | None,
     source_codes: Sequence[str],
@@ -351,7 +359,8 @@ async def create_mission_from_criteria_async(
 ) -> tuple[Mission, tuple[str, ...]]:
     """Equivalente assíncrono de `create_mission_from_criteria` (extensão
     da TASK-079). Usado pelo webhook Telegram; `scripts/validate_collection_worker.py`
-    continua na versão síncrona."""
+    continua na versão síncrona. `title` -- ver docstring da versão síncrona
+    (TASK-083, correção de regressão)."""
     effective_codes = tuple(source_codes) or _DEFAULT_V1_SOURCE_CODES
     if schedule_interval_minutes <= 0:
         raise ValueError("schedule_interval_minutes deve ser positivo.")
@@ -359,7 +368,7 @@ async def create_mission_from_criteria_async(
     mission = Mission(
         id=uuid4(),
         user_id=user_id,
-        title=search_query[:200],
+        title=(title or search_query)[:200],
         status=MissionStatus.DRAFT,
         state_version=0,
         created_at=requested_at,
@@ -524,3 +533,54 @@ async def edit_mission_criteria(
     mission.updated_at = accepted_at
     await session.flush()
     return mission, effective_codes
+
+
+async def promote_confirmed_product_identity_async(
+    session: AsyncSession,
+    *,
+    mission_id: UUID,
+    confirmed_search_query: str,
+    promoted_at: datetime | None = None,
+) -> bool:
+    """Promove uma identidade confirmada por `ProductIdentityResolver`
+    (Kabum/Amazon, `collection_worker`) à missão (TASK-083, correção de
+    regressão).
+
+    Chamado só depois de uma correspondência real de título contra uma
+    loja -- nunca por invenção/enriquecimento da IA. Atualiza
+    `MissionCriteria.search_query` (identidade operacional -- passa a ser
+    o texto confirmado, o que também faz `_needs_identity_resolution` não
+    disparar de novo em nenhum próximo batch, já que deixa de bater no
+    padrão "só o código cru") e `Mission.title` (apresentação). Nunca
+    altera `MissionCriteria.model`: o código cru continua correto e é o
+    que o matcher determinístico usa contra candidatos reais em toda
+    coleta futura -- nunca foi a origem do problema.
+
+    Não faz nenhuma chamada externa (Playwright/IA) -- só leitura/escrita
+    local, chamado pelo `collection_worker` inteiramente fora da janela
+    de tempo em que a resolução externa aconteceu. `mission_id` ausente
+    (missão apagada/inexistente) é tratado como no-op silencioso: a
+    resolução em memória já serviu a coleta deste batch, persistir a
+    identidade é só um enriquecimento, nunca um requisito.
+    """
+    if not confirmed_search_query.strip():
+        raise ValueError("confirmed_search_query não pode ser vazio.")
+    accepted_at = promoted_at or utc_now()
+
+    mission = await session.scalar(
+        select(Mission).where(Mission.id == mission_id).with_for_update()
+    )
+    if mission is None:
+        return False
+    criteria = await session.scalar(
+        select(MissionCriteria).where(MissionCriteria.mission_id == mission_id)
+    )
+    if criteria is None:
+        return False
+
+    criteria.search_query = confirmed_search_query
+    criteria.updated_at = accepted_at
+    mission.title = confirmed_search_query[:200]
+    mission.updated_at = accepted_at
+    await session.flush()
+    return True

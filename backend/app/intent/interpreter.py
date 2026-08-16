@@ -272,12 +272,14 @@ class IntentInterpreter:
 
         parameters = intent.parameters
         if parameters.model is not None:
-            if _needs_identity_verification(message, parameters):
+            reason = _identity_verification_reason(message, parameters)
+            if reason is not None:
                 parameters = await self._verify_identity(
                     raw_message=message,
                     parameters=parameters,
                     requested_at=moment,
                     profile=profile,
+                    reason=reason,
                 )
             if parameters.model_confidence is not None:
                 # TASK-083: model_confidence é só um sinal de acionamento
@@ -297,69 +299,100 @@ class IntentInterpreter:
         parameters: IntentParameters,
         requested_at: datetime,
         profile: UserRole,
+        reason: str,
     ) -> IntentParameters:
         """Uma única chamada adicional, com objetivo estritamente limitado
         a verificar/corrigir a identidade do produto -- nunca uma nova
         interpretação completa da intenção. Qualquer falha, indisponibilidade
         ou evidência insuficiente aplica o fallback seguro em vez de manter
-        o `search_query` original, já classificado como suspeito."""
+        o `search_query` original, já classificado como suspeito. `reason`
+        (TASK-083, correção de regressão) decide o que o fallback preserva
+        como `display_query` -- ver `_apply_safe_fallback`."""
         model = parameters.model
         if model is None:
             raise IntentError("_verify_identity requires a model")
+        candidate = parameters.search_query
         verify_request = _build_verification_request(
             raw_message=raw_message,
             model=model,
-            search_query=parameters.search_query,
+            search_query=candidate,
             requested_at=requested_at,
             profile=profile,
         )
         try:
             verify_response = await self._manager.generate(verify_request)
         except AIProviderError:
-            return _apply_safe_fallback(parameters)
+            return _apply_safe_fallback(parameters, reason=reason, candidate=candidate)
 
         if not (
             verify_response.grounding_requested
             and verify_response.grounding_performed
             and verify_response.grounding_sources
         ):
-            return _apply_safe_fallback(parameters)
+            return _apply_safe_fallback(parameters, reason=reason, candidate=candidate)
 
         verified_query = _parse_verified_search_query(verify_response.content)
         if verified_query is None:
-            return _apply_safe_fallback(parameters)
+            return _apply_safe_fallback(parameters, reason=reason, candidate=candidate)
 
-        return dataclasses.replace(parameters, search_query=verified_query)
+        return dataclasses.replace(
+            parameters,
+            search_query=verified_query,
+            display_query=None,
+        )
 
 
-def _needs_identity_verification(
+def _identity_verification_reason(
     raw_message: str, parameters: IntentParameters
-) -> bool:
-    """Gatilho econômico (TASK-083): só aciona verificação externa nos
-    casos documentados -- nunca por padrão, nunca para busca genérica sem
-    `model`. `model_confidence == "baixa"` é checado primeiro por ser o
-    sinal mais barato; os dois detectores determinísticos de
-    `nomenclature.py` cobrem o resto sem depender desse autorrelato."""
+) -> str | None:
+    """Gatilho econômico (TASK-083) + motivo (correção de regressão): só
+    aciona verificação externa nos casos documentados -- nunca por
+    padrão, nunca para busca genérica sem `model`. `None` = não precisa
+    verificar. `"contradiction"` = o guardrail determinístico já provou
+    que a interpretação está errada (checado primeiro -- é o sinal mais
+    forte, tem prioridade mesmo se `model_confidence` também tivesse
+    disparado). `"unconfirmed"` = só falta confirmação externa, a
+    interpretação pode estar certa (autorrelato de baixa confiança ou
+    enriquecimento não comprovado, TASK-083 original)."""
     model = parameters.model
     if model is None:
-        return False
-    if parameters.model_confidence == "baixa":
-        return True
+        return None
     search_query = parameters.search_query
     if (
         search_query is not None
         and check_known_family_contradiction(model, search_query) is not None
     ):
-        return True
-    return detect_unproven_enrichment(raw_message, model, search_query)
+        return "contradiction"
+    if parameters.model_confidence == "baixa":
+        return "unconfirmed"
+    if detect_unproven_enrichment(raw_message, model, search_query):
+        return "unconfirmed"
+    return None
 
 
-def _apply_safe_fallback(parameters: IntentParameters) -> IntentParameters:
-    """TASK-083: nunca preserva o `search_query` original quando a
-    verificação era necessária e não pôde confirmar a identidade -- reduz
-    ao próprio código/modelo, o único valor que o usuário efetivamente
-    forneceu e que o sistema pode considerar seguro."""
-    return dataclasses.replace(parameters, search_query=parameters.model)
+def _apply_safe_fallback(
+    parameters: IntentParameters, *, reason: str, candidate: str | None
+) -> IntentParameters:
+    """TASK-083 (correção de regressão): a identidade OPERACIONAL
+    (`search_query`, usada nas lojas e por `_needs_identity_resolution`
+    no `collection_worker`) nunca preserva o `search_query` original
+    quando a verificação era necessária e não pôde confirmar -- reduz
+    sempre ao próprio código/modelo, o único valor que o usuário
+    efetivamente forneceu e que o sistema pode considerar seguro pra
+    pesquisar. Isso é intencional e continua igual à TASK-083 original.
+
+    A regressão estava em jogar fora, junto, o enriquecimento plausível
+    da interpretação normal (ex.: "AMD Ryzen 9 9950X3D") mesmo quando ele
+    nunca foi contradito por nenhum guardrail -- só não confirmado ainda.
+    `display_query` (TASK-083, correção) preserva esse candidato só para
+    apresentação/contexto (`Mission.title`), e só quando `reason ==
+    "unconfirmed"`: uma contradição confirmada (`reason ==
+    "contradiction"`) não tem nada de útil para preservar, nem como
+    provisório -- já provou estar errada."""
+    display_query = candidate if reason == "unconfirmed" else None
+    return dataclasses.replace(
+        parameters, search_query=parameters.model, display_query=display_query
+    )
 
 
 _ALLOWED_VERIFICATION_KEYS = frozenset({"search_query"})

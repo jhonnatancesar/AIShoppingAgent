@@ -27,7 +27,7 @@ from app.intent.interpreter import (
     VERIFY_PURPOSE,
     _apply_safe_fallback,
     _build_verification_request,
-    _needs_identity_verification,
+    _identity_verification_reason,
     _parse_verified_search_query,
 )
 from app.missions.models import MissionCommand
@@ -776,6 +776,56 @@ async def test_scenario_i_second_response_cannot_alter_other_parameters() -> Non
     assert intent.parameters.sources == ("kabum",)
 
 
+# ---------------------------------------------------------------------------
+# TASK-083 (correção de regressão): Caso A (não confirmado, sem
+# contradição -- preserva display_query) vs Caso B (contradição
+# confirmada -- nunca preserva nada como provisório). Exemplos literais
+# do pedido do usuário.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_regression_case_a_unconfirmed_identity_preserves_display_query() -> None:
+    manager = _SequencedManager(
+        _plain(
+            _first_response(
+                search_query="AMD Ryzen 9 9950X3D",
+                model="9950X3D",
+                model_confidence="baixa",
+            )
+        ),
+        AIProviderUnavailable(),  # grounding indisponível
+    )
+    interpreter = IntentInterpreter(manager)
+
+    intent = await interpreter.interpret("me acha um 9950x3d pfvr")
+
+    assert intent.parameters.search_query == "9950X3D"
+    assert intent.parameters.model == "9950X3D"
+    assert intent.parameters.display_query == "AMD Ryzen 9 9950X3D"
+
+
+@pytest.mark.anyio
+async def test_regression_case_b_contradiction_never_leaks_wrong_identity() -> None:
+    manager = _SequencedManager(
+        _plain(
+            _first_response(
+                search_query="AMD Ryzen 9 9800X3D",
+                model="9800X3D",
+                model_confidence="baixa",
+            )
+        ),
+        AIProviderUnavailable(),  # grounding indisponível
+    )
+    interpreter = IntentInterpreter(manager)
+
+    intent = await interpreter.interpret("me acha um 9800x3d pfvr")
+
+    assert intent.parameters.search_query == "9800X3D"
+    assert intent.parameters.model == "9800X3D"
+    assert intent.parameters.display_query is None
+
+
 # --- model_confidence nunca escapa do IntentInterpreter ---
 
 
@@ -797,7 +847,7 @@ async def test_model_confidence_is_always_stripped_from_final_parameters() -> No
     assert intent.parameters.model_confidence is None
 
 
-# --- unidade pura: _needs_identity_verification ---
+# --- unidade pura: _identity_verification_reason ---
 
 
 def _params(**overrides: object) -> IntentParameters:
@@ -806,36 +856,53 @@ def _params(**overrides: object) -> IntentParameters:
     return IntentParameters(**defaults)
 
 
-def test_needs_verification_false_when_model_is_none() -> None:
-    assert _needs_identity_verification("qualquer coisa", _params()) is False
+def test_verification_reason_none_when_model_is_none() -> None:
+    assert _identity_verification_reason("qualquer coisa", _params()) is None
 
 
-def test_needs_verification_true_on_low_confidence_regardless_of_rest() -> None:
+def test_verification_reason_unconfirmed_on_low_confidence_regardless_of_rest() -> None:
     parameters = _params(
         model="RTX 9090",
         search_query="Placa de Vídeo NVIDIA RTX 9090",
         model_confidence="baixa",
     )
-    assert _needs_identity_verification("qualquer coisa", parameters) is True
+    assert _identity_verification_reason("qualquer coisa", parameters) == "unconfirmed"
 
 
-def test_needs_verification_true_on_known_family_contradiction() -> None:
+def test_verification_reason_contradiction_on_known_family_contradiction() -> None:
     parameters = _params(model="9800X3D", search_query="AMD Ryzen 9 9800X3D")
-    assert _needs_identity_verification("9800x3d", parameters) is True
+    assert _identity_verification_reason("9800x3d", parameters) == "contradiction"
 
 
-def test_needs_verification_true_on_unproven_enrichment_for_bare_input() -> None:
+def test_verification_reason_contradiction_takes_priority_over_low_confidence() -> None:
+    """TASK-083 (correção): quando os dois sinais disparam ao mesmo tempo,
+    o motivo reportado precisa ser a contradição -- é o sinal mais forte,
+    e é ele quem decide se `_apply_safe_fallback` pode preservar
+    `display_query` ou não."""
+    parameters = _params(
+        model="9800X3D",
+        search_query="AMD Ryzen 9 9800X3D",
+        model_confidence="baixa",
+    )
+    assert _identity_verification_reason("9800x3d", parameters) == "contradiction"
+
+
+def test_verification_reason_unconfirmed_on_unproven_enrichment_for_bare_input() -> (
+    None
+):
     parameters = _params(model="ZX9999KX", search_query="Processador ZX9999KX")
-    assert _needs_identity_verification("quero um zx9999kx", parameters) is True
+    assert (
+        _identity_verification_reason("quero um zx9999kx", parameters) == "unconfirmed"
+    )
 
 
-def test_needs_verification_false_when_nothing_suspicious() -> None:
+def test_verification_reason_none_when_nothing_suspicious() -> None:
     parameters = _params(
         model="RTX 4070 Ti",
         search_query="Placa de Vídeo NVIDIA RTX 4070 Ti",
         model_confidence="alta",
     )
-    assert _needs_identity_verification("quero uma 4070 ti", parameters) is False
+    assert _identity_verification_reason("quero uma 4070 ti", parameters) is None
 
 
 # --- unidade pura: _apply_safe_fallback ---
@@ -849,12 +916,42 @@ def test_apply_safe_fallback_reduces_search_query_to_bare_model() -> None:
         target_currency="BRL",
         sources=("kabum",),
     )
-    fallback = _apply_safe_fallback(parameters)
+    fallback = _apply_safe_fallback(
+        parameters, reason="contradiction", candidate=parameters.search_query
+    )
 
     assert fallback.search_query == "9800X3D"
     assert fallback.model == "9800X3D"
     assert fallback.target_amount == Decimal("3500.00")
     assert fallback.sources == ("kabum",)
+
+
+def test_apply_safe_fallback_never_preserves_display_query_on_contradiction() -> None:
+    """Caso B do pedido do usuário: 9800X3D interpretado como Ryzen 9 é
+    contradição confirmada -- não pode sobrar em `display_query` nem como
+    provisório."""
+    parameters = _params(model="9800X3D", search_query="AMD Ryzen 9 9800X3D")
+    fallback = _apply_safe_fallback(
+        parameters, reason="contradiction", candidate=parameters.search_query
+    )
+
+    assert fallback.search_query == "9800X3D"
+    assert fallback.display_query is None
+
+
+def test_apply_safe_fallback_preserves_display_query_when_unconfirmed() -> None:
+    """Caso A do pedido do usuário: 9950X3D interpretado como Ryzen 9 não
+    tem contradição conhecida, só falta confirmação -- `search_query`
+    operacional reduz ao código cru, mas `display_query` preserva o
+    candidato plausível para UX/contexto."""
+    parameters = _params(model="9950X3D", search_query="AMD Ryzen 9 9950X3D")
+    fallback = _apply_safe_fallback(
+        parameters, reason="unconfirmed", candidate=parameters.search_query
+    )
+
+    assert fallback.search_query == "9950X3D"
+    assert fallback.model == "9950X3D"
+    assert fallback.display_query == "AMD Ryzen 9 9950X3D"
 
 
 # --- unidade pura: _parse_verified_search_query ---

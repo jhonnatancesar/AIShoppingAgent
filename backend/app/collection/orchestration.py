@@ -83,6 +83,7 @@ from app.missions.schedule import (
     next_source_backoff,
     staggered_next_run_at,
 )
+from app.missions.service import promote_confirmed_product_identity_async
 from app.offers.models import Offer
 from app.products.models import Product
 from app.stores.models import Seller, Store
@@ -397,11 +398,13 @@ class CollectionOrchestrator:
         orchestrator -- só é alcançada depois que o `async with` da Fase A
         em `run_batch` já terminou. Resolve cada `mission_id` com
         identidade ainda crua no máximo uma vez neste batch (dedupe
-        determinístico), e aplica o resultado em memória a todos os claims
-        daquela missão -- nunca escreve em `MissionCriteria` nem em
-        nenhuma outra tabela. Resolver ausente, retorno `None`, timeout ou
-        falha operacional nunca impedem a coleta: o pior caso é manter
-        `search_query` original em todos os claims."""
+        determinístico), aplica o resultado em memória a todos os claims
+        daquela missão para a coleta deste batch, e promove a identidade
+        confirmada à missão (Fase B.1, correção de regressão --
+        `_promote_resolved_identities`) para que o próximo batch não
+        precise resolver de novo. Resolver ausente, retorno `None`,
+        timeout ou falha operacional nunca impedem a coleta: o pior caso
+        é manter `search_query` original em todos os claims."""
         if self._identity_resolver is None:
             return claims
 
@@ -417,6 +420,7 @@ class CollectionOrchestrator:
 
         if not resolved:
             return claims
+        await self._promote_resolved_identities(resolved)
         return tuple(
             replace(claim, search_query=resolved[claim.mission_id])
             if claim.mission_id in resolved
@@ -442,6 +446,32 @@ class CollectionOrchestrator:
                 exc_info=True,
             )
             return None
+
+    async def _promote_resolved_identities(self, resolved: dict[UUID, str]) -> None:
+        """Fase B.1 (TASK-083, correção de regressão): persiste, uma vez
+        por `mission_id`, a identidade que acabou de ser confirmada por
+        `ProductIdentityResolver` -- sempre depois que a Fase B (Playwright)
+        já terminou por completo, cada missão em sua própria transação
+        curta (nunca uma transação por claim, nunca uma transação
+        compartilhada entre missões diferentes). Falha ao persistir nunca
+        derruba o batch nem desfaz o enriquecimento em memória já aplicado
+        aos claims -- o pior caso é resolver de novo no próximo batch."""
+        for mission_id, confirmed_search_query in resolved.items():
+            try:
+                async with self._session_factory() as session, session.begin():
+                    await promote_confirmed_product_identity_async(
+                        session,
+                        mission_id=mission_id,
+                        confirmed_search_query=confirmed_search_query,
+                    )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.warning(
+                    "identity_promotion_failed",
+                    extra={"mission_id": str(mission_id)},
+                    exc_info=True,
+                )
 
     async def _process(self, claim: ClaimedCollection) -> bool:
         """Teto de tempo para a claim inteira (TASK-079, item 7): nenhuma

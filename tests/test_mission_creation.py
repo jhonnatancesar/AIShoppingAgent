@@ -62,6 +62,34 @@ def test_create_mission_with_explicit_sources_activates_with_exactly_those() -> 
     assert sources == ("pichau", "kabum")
     assert mission.status is MissionStatus.ACTIVE
     assert mission.title == "notebook gamer"
+
+
+def test_create_mission_with_explicit_title_uses_it_instead_of_search_query() -> None:
+    """TASK-083 (correção de regressão): `title` (`display_query` do
+    `IntentInterpreter`) vira `Mission.title`; `MissionCriteria.search_query`
+    continua o valor operacional passado separadamente."""
+    stores = [_FakeStore("kabum")]
+    session = _session(stores)
+
+    mission, _ = create_mission_from_criteria(
+        session,
+        user_id=uuid4(),
+        search_query="9950X3D",
+        model="9950X3D",
+        title="AMD Ryzen 9 9950X3D",
+        target_amount=None,
+        target_currency=None,
+        source_codes=("kabum",),
+        requested_at=NOW,
+    )
+
+    assert mission.title == "AMD Ryzen 9 9950X3D"
+    criteria = next(
+        call.args[0]
+        for call in session.add.call_args_list
+        if isinstance(call.args[0], MissionCriteria)
+    )
+    assert criteria.search_query == "9950X3D"
     schedule = next(
         call.args[0]
         for call in session.add.call_args_list

@@ -1386,29 +1386,77 @@ def test_scenario_k_fan_out_still_processes_every_claim_after_resolution(
     assert all(c.search_query == "AMD Ryzen 7 9800X3D" for c in processed)
 
 
-# --- L: nenhuma alteração persistente em MissionCriteria ---
+# --- L: _resolve_identities em si continua sem `session` (Fase B "pura") ---
 
 
-def test_scenario_l_resolution_never_touches_the_database(monkeypatch) -> None:
-    """`_resolve_identities` não recebe `session` -- estruturalmente não
-    pode escrever em `MissionCriteria`/nenhuma tabela. Confirma também que
-    nenhuma chamada extra a `session.execute`/`session.scalar` acontece
-    além das já feitas (mockadas) na Fase A."""
+def test_scenario_l_resolve_identities_method_has_no_session_param(monkeypatch) -> None:
+    """`_resolve_identities` continua sem receber `session` -- a Fase B
+    (Playwright) em si continua estruturalmente incapaz de abrir
+    transação. A persistência da identidade confirmada (TASK-083,
+    correção de regressão) acontece à parte, depois, via
+    `_promote_resolved_identities` -- ver a seção "Fase B.1" abaixo."""
+    signature = inspect.signature(CollectionOrchestrator._resolve_identities)
+    assert "session" not in signature.parameters
+
+
+# ---------------------------------------------------------------------------
+# TASK-083 (correção de regressão): Fase B.1 -- promoção da identidade
+# confirmada à missão, para o próximo batch não resolver de novo.
+# ---------------------------------------------------------------------------
+
+
+def _mission_and_criteria_session(mission, criteria) -> MagicMock:
+    """Sessão mockada para a transação curta de `_promote_resolved_identities`
+    -- `session.scalar` devolve a `Mission` na 1ª chamada e a
+    `MissionCriteria` na 2ª, reproduzindo `promote_confirmed_product_identity_async`."""
     session = _mock_async_session()
+    session.scalar = AsyncMock(side_effect=[mission, criteria])
+    return session
+
+
+def test_scenario_m_confirmed_identity_is_promoted_to_the_mission(monkeypatch) -> None:
+    from app.missions.models import Mission, MissionCriteria, MissionStatus
+
     mission_id = uuid4()
-    claims = _mission_claims(
-        mission_id, search_query="9800X3D", model="9800X3D", sources=("kabum",)
-    )
+    claims = _mission_claims(mission_id, search_query="9950X3D", model="9950X3D")
     _patch_phase_a(monkeypatch, claims)
     resolver = _FakeIdentityResolver(
         {
-            "9800X3D": ResolvedProductIdentity(
-                model="9800X3D", search_query="AMD Ryzen 7 9800X3D", source="kabum"
+            "9950X3D": ResolvedProductIdentity(
+                model="9950X3D",
+                search_query="Processador AMD Ryzen 9 9950X3D",
+                source="kabum",
             )
         }
     )
+    mission = Mission(
+        id=mission_id,
+        user_id=uuid4(),
+        title="9950X3D",
+        status=MissionStatus.ACTIVE,
+        state_version=0,
+        created_at=NOW,
+        updated_at=NOW,
+    )
+    criteria = MissionCriteria(
+        id=uuid4(),
+        mission_id=mission_id,
+        search_query="9950X3D",
+        model="9950X3D",
+        created_at=NOW,
+        updated_at=NOW,
+    )
+    promote_session = _mission_and_criteria_session(mission, criteria)
+    phase_a_session = _mock_async_session()
+
+    call_count = {"n": 0}
+
+    def _factory():
+        call_count["n"] += 1
+        return phase_a_session if call_count["n"] == 1 else promote_session
+
     orchestrator = CollectionOrchestrator(
-        _session_factory(session),
+        _factory,
         CollectionAdapter(),
         ai_manager=_StubAIManager(),
         identity_resolver=resolver,
@@ -1416,7 +1464,261 @@ def test_scenario_l_resolution_never_touches_the_database(monkeypatch) -> None:
 
     asyncio.run(_run_batch_recording_processed(orchestrator, monkeypatch))
 
-    signature = inspect.signature(CollectionOrchestrator._resolve_identities)
-    assert "session" not in signature.parameters
-    session.execute.assert_not_awaited()
-    session.scalar.assert_not_awaited()
+    assert criteria.search_query == "Processador AMD Ryzen 9 9950X3D"
+    assert mission.title == "Processador AMD Ryzen 9 9950X3D"
+    assert criteria.model == "9950X3D"  # nunca alterado
+    promote_session.flush.assert_awaited_once_with()
+
+
+def test_scenario_n_promotion_happens_once_per_mission_even_with_many_claims(
+    monkeypatch,
+) -> None:
+    """Vários claims da mesma mission_id -- resolve 1x, persiste 1x."""
+    from app.missions.models import Mission, MissionCriteria, MissionStatus
+
+    mission_id = uuid4()
+    claims = _mission_claims(
+        mission_id,
+        search_query="9950X3D",
+        model="9950X3D",
+        sources=("kabum", "amazon", "pichau", "terabyte"),
+    )
+    _patch_phase_a(monkeypatch, claims)
+    resolver = _FakeIdentityResolver(
+        {
+            "9950X3D": ResolvedProductIdentity(
+                model="9950X3D",
+                search_query="Processador AMD Ryzen 9 9950X3D",
+                source="kabum",
+            )
+        }
+    )
+    mission = Mission(
+        id=mission_id,
+        user_id=uuid4(),
+        title="9950X3D",
+        status=MissionStatus.ACTIVE,
+        state_version=0,
+        created_at=NOW,
+        updated_at=NOW,
+    )
+    criteria = MissionCriteria(
+        id=uuid4(),
+        mission_id=mission_id,
+        search_query="9950X3D",
+        model="9950X3D",
+        created_at=NOW,
+        updated_at=NOW,
+    )
+    promote_calls: list[MagicMock] = []
+    phase_a_session = _mock_async_session()
+
+    def _factory():
+        if not promote_calls:
+            promote_calls.append(_mission_and_criteria_session(mission, criteria))
+            return phase_a_session
+        return promote_calls[0]
+
+    orchestrator = CollectionOrchestrator(
+        _factory,
+        CollectionAdapter(),
+        ai_manager=_StubAIManager(),
+        identity_resolver=resolver,
+    )
+
+    asyncio.run(_run_batch_recording_processed(orchestrator, monkeypatch))
+
+    assert resolver.calls == ["9950X3D"]  # resolveu 1x
+    promote_calls[0].flush.assert_awaited_once_with()  # persistiu 1x
+
+
+def test_scenario_o_resolver_fails_both_stores_never_persists_invented_identity(
+    monkeypatch,
+) -> None:
+    """Kabum + Amazon falham (resolver devolve `None`) -- nenhuma
+    identidade inventada é persistida; missão continua funcional com o
+    fallback seguro."""
+    mission_id = uuid4()
+    claims = _mission_claims(mission_id, search_query="9950X3D", model="9950X3D")
+    _patch_phase_a(monkeypatch, claims)
+    resolver = _FakeIdentityResolver()  # nenhum resultado -> None
+    promote_session = _mock_async_session()
+    phase_a_session = _mock_async_session()
+    call_count = {"n": 0}
+
+    def _factory():
+        call_count["n"] += 1
+        return phase_a_session if call_count["n"] == 1 else promote_session
+
+    orchestrator = CollectionOrchestrator(
+        _factory,
+        CollectionAdapter(),
+        ai_manager=_StubAIManager(),
+        identity_resolver=resolver,
+    )
+
+    processed = asyncio.run(_run_batch_recording_processed(orchestrator, monkeypatch))
+
+    assert all(c.search_query == "9950X3D" for c in processed)  # segue operacional
+    promote_session.scalar.assert_not_awaited()  # nunca tentou persistir nada
+    promote_session.flush.assert_not_awaited()
+
+
+def test_scenario_p_promotion_failure_never_breaks_the_batch(monkeypatch) -> None:
+    """Persistência falha (ex.: erro de banco na Fase B.1) -- batch
+    continua, coleta deste ciclo já usou a identidade em memória."""
+    mission_id = uuid4()
+    claims = _mission_claims(mission_id, search_query="9950X3D", model="9950X3D")
+    _patch_phase_a(monkeypatch, claims)
+    resolver = _FakeIdentityResolver(
+        {
+            "9950X3D": ResolvedProductIdentity(
+                model="9950X3D",
+                search_query="Processador AMD Ryzen 9 9950X3D",
+                source="kabum",
+            )
+        }
+    )
+
+    async def _broken_promote(*args: object, **kwargs: object) -> bool:
+        raise RuntimeError("falha de banco simulada")
+
+    monkeypatch.setattr(
+        "app.collection.orchestration.promote_confirmed_product_identity_async",
+        _broken_promote,
+    )
+    orchestrator = CollectionOrchestrator(
+        _session_factory(_mock_async_session()),
+        CollectionAdapter(),
+        ai_manager=_StubAIManager(),
+        identity_resolver=resolver,
+    )
+
+    processed = asyncio.run(_run_batch_recording_processed(orchestrator, monkeypatch))
+
+    assert len(processed) == 2  # batch completou -- não caiu
+    assert all(c.search_query == "Processador AMD Ryzen 9 9950X3D" for c in processed)
+
+
+def test_scenario_q_no_transaction_open_during_playwright_resolution(
+    monkeypatch,
+) -> None:
+    """Extensão do cenário J: a transação de promoção (Fase B.1) só abre
+    depois que a resolução via Playwright (Fase B) já terminou -- nenhuma
+    transação fica aberta durante `identity_resolver.resolve`."""
+    tracker = _TransactionTracker()
+    session = _mock_async_session()
+    session.begin = MagicMock(side_effect=lambda: _TrackingBeginCM(tracker))
+
+    mission_id = uuid4()
+    claims = _mission_claims(mission_id, search_query="9950X3D", model="9950X3D")
+    _patch_phase_a(monkeypatch, claims)
+
+    observed_in_transaction: list[bool] = []
+
+    class _ObservingResolver:
+        async def resolve(self, model: str) -> ResolvedProductIdentity | None:
+            observed_in_transaction.append(tracker.in_transaction)
+            return ResolvedProductIdentity(
+                model=model,
+                search_query="Processador AMD Ryzen 9 9950X3D",
+                source="kabum",
+            )
+
+    orchestrator = CollectionOrchestrator(
+        _session_factory(session),
+        CollectionAdapter(),
+        ai_manager=_StubAIManager(),
+        identity_resolver=_ObservingResolver(),
+    )
+
+    asyncio.run(_run_batch_recording_processed(orchestrator, monkeypatch))
+
+    assert observed_in_transaction == [False]
+
+
+def test_scenario_r_next_batch_does_not_resolve_promoted_identity(monkeypatch) -> None:
+    """Critério obrigatório da correção: o primeiro batch resolve e
+    promove; a Fase A do segundo batch já lê a `search_query` confirmada,
+    portanto `_needs_identity_resolution` não chama o resolver novamente."""
+    mission_id = uuid4()
+    persisted = SimpleNamespace(
+        search_query="9950X3D",
+        model="9950X3D",
+    )
+    resolver = _FakeIdentityResolver(
+        {
+            "9950X3D": ResolvedProductIdentity(
+                model="9950X3D",
+                search_query="Processador AMD Ryzen 9 9950X3D",
+                source="kabum",
+            )
+        }
+    )
+
+    monkeypatch.setattr(
+        "app.collection.orchestration.ensure_missing_schedules",
+        AsyncMock(return_value=0),
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration.recover_stale_runs",
+        AsyncMock(return_value=0),
+    )
+
+    async def _dynamic_claims(*args: object, **kwargs: object):
+        return _mission_claims(
+            mission_id,
+            search_query=persisted.search_query,
+            model=persisted.model,
+            sources=("kabum", "amazon"),
+        )
+
+    monkeypatch.setattr(
+        "app.collection.orchestration.claim_due_collections",
+        _dynamic_claims,
+    )
+    promotion_calls: list[tuple[object, str]] = []
+
+    async def _promote(
+        session: object,
+        *,
+        mission_id: object,
+        confirmed_search_query: str,
+        promoted_at: datetime | None = None,
+    ) -> bool:
+        promotion_calls.append((mission_id, confirmed_search_query))
+        persisted.search_query = confirmed_search_query
+        return True
+
+    monkeypatch.setattr(
+        "app.collection.orchestration.promote_confirmed_product_identity_async",
+        _promote,
+    )
+    orchestrator = CollectionOrchestrator(
+        _session_factory(_mock_async_session()),
+        CollectionAdapter(),
+        ai_manager=_StubAIManager(),
+        identity_resolver=resolver,
+    )
+
+    async def _run_twice() -> None:
+        processed: list[ClaimedCollection] = []
+
+        async def _process(claim: ClaimedCollection) -> bool:
+            processed.append(claim)
+            return True
+
+        monkeypatch.setattr(orchestrator, "_process", _process)
+        await orchestrator.run_batch(now=NOW)
+        await orchestrator.run_batch(now=NOW + timedelta(hours=1))
+
+        assert len(processed) == 4
+        assert all(
+            claim.search_query == "Processador AMD Ryzen 9 9950X3D"
+            for claim in processed
+        )
+
+    asyncio.run(_run_twice())
+
+    assert resolver.calls == ["9950X3D"]
+    assert promotion_calls == [(mission_id, "Processador AMD Ryzen 9 9950X3D")]

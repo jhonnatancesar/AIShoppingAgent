@@ -166,6 +166,7 @@ def test_stage_and_describe_create_mission_with_target_and_sources() -> None:
         "kind": "create_mission",
         "search_query": "notebook gamer",
         "model": None,
+        "display_query": None,
         "target_amount": "5000.00",
         "target_currency": "BRL",
         "sources": ["pichau", "kabum"],
@@ -176,6 +177,24 @@ def test_stage_and_describe_create_mission_with_target_and_sources() -> None:
     assert "Pichau, Kabum" in description
     assert "sim" in description.lower()
     assert "não" in description.lower()
+
+
+def test_describe_create_mission_prefers_display_query_when_present() -> None:
+    """TASK-083 (correção de regressão): identidade provisória plausível
+    aparece na confirmação, mesmo com `search_query` operacional ainda
+    reduzida ao código cru."""
+    payload = stage_create_mission(
+        search_query="9950X3D",
+        model="9950X3D",
+        display_query="AMD Ryzen 9 9950X3D",
+        target_amount=None,
+        target_currency=None,
+        sources=(),
+    )
+
+    description = describe_create_mission(payload)
+    assert "AMD Ryzen 9 9950X3D" in description
+    assert '"9950X3D"' not in description
 
 
 def test_stage_and_describe_create_mission_without_target_or_sources() -> None:
@@ -276,6 +295,7 @@ def test_stage_await_create_mission_sources_preserves_other_criteria() -> None:
         "kind": "await_create_mission_sources",
         "search_query": "notebook gamer",
         "model": None,
+        "display_query": None,
         "target_amount": "5000.00",
         "target_currency": "BRL",
     }

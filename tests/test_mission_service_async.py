@@ -13,6 +13,7 @@ import pytest
 from app.missions.models import (
     Mission,
     MissionCommand,
+    MissionCriteria,
     MissionSchedule,
     MissionStatus,
 )
@@ -20,6 +21,7 @@ from app.missions.service import (
     MissionNotFoundError,
     MissionVersionConflictError,
     create_mission_from_criteria_async,
+    promote_confirmed_product_identity_async,
     transition_mission_async,
 )
 
@@ -166,3 +168,136 @@ def test_create_mission_from_criteria_async_activates_with_explicit_sources() ->
     assert schedule.mission_id == mission.id
     assert schedule.next_run_at == NOW
     assert schedule.interval_minutes == 60
+
+
+# ---------------------------------------------------------------------------
+# TASK-083 (correção de regressão): promote_confirmed_product_identity_async
+# ---------------------------------------------------------------------------
+
+
+def _criteria(
+    mission_id: object, *, search_query: str = "9950X3D", model: str | None = "9950X3D"
+) -> MissionCriteria:
+    return MissionCriteria(
+        id=uuid4(),
+        mission_id=mission_id,
+        search_query=search_query,
+        model=model,
+        created_at=NOW - timedelta(days=1),
+        updated_at=NOW - timedelta(days=1),
+    )
+
+
+def test_promote_confirmed_identity_updates_search_query_and_title() -> None:
+    mission = _mission(MissionStatus.ACTIVE)
+    criteria = _criteria(mission.id)
+    session = _session(mission, criteria)
+
+    promoted = asyncio.run(
+        promote_confirmed_product_identity_async(
+            session,
+            mission_id=mission.id,
+            confirmed_search_query="Processador AMD Ryzen 9 9950X3D",
+            promoted_at=NOW,
+        )
+    )
+
+    assert promoted is True
+    assert criteria.search_query == "Processador AMD Ryzen 9 9950X3D"
+    assert mission.title == "Processador AMD Ryzen 9 9950X3D"
+    # TASK-083 (correção): model é o código cru usado pelo matcher
+    # determinístico em toda coleta futura -- nunca é a origem do
+    # problema, então nunca é alterado pela promoção.
+    assert criteria.model == "9950X3D"
+    session.flush.assert_called_once_with()
+
+
+def test_promote_confirmed_identity_corrects_9800x3d_without_changing_model() -> None:
+    """Caso B aprovado: a identidade provisória contraditória nunca foi
+    persistida; depois da confirmação real, a promoção grava Ryzen 7 e
+    preserva o código cru que alimenta o matcher determinístico."""
+    mission = _mission(MissionStatus.ACTIVE)
+    mission.title = "9800X3D"
+    criteria = _criteria(
+        mission.id,
+        search_query="9800X3D",
+        model="9800X3D",
+    )
+    session = _session(mission, criteria)
+
+    promoted = asyncio.run(
+        promote_confirmed_product_identity_async(
+            session,
+            mission_id=mission.id,
+            confirmed_search_query="Processador AMD Ryzen 7 9800X3D",
+            promoted_at=NOW,
+        )
+    )
+
+    assert promoted is True
+    assert criteria.search_query == "Processador AMD Ryzen 7 9800X3D"
+    assert mission.title == "Processador AMD Ryzen 7 9800X3D"
+    assert criteria.model == "9800X3D"
+
+
+def test_promote_confirmed_identity_truncates_title_to_200_chars() -> None:
+    mission = _mission(MissionStatus.ACTIVE)
+    criteria = _criteria(mission.id)
+    session = _session(mission, criteria)
+    long_confirmed = "Processador " + "X" * 250
+
+    asyncio.run(
+        promote_confirmed_product_identity_async(
+            session,
+            mission_id=mission.id,
+            confirmed_search_query=long_confirmed,
+            promoted_at=NOW,
+        )
+    )
+
+    assert mission.title == long_confirmed[:200]
+    assert criteria.search_query == long_confirmed  # sem truncar (Text, sem limite)
+
+
+def test_promote_confirmed_identity_missing_mission_is_a_safe_no_op() -> None:
+    session = _session(None)  # session.scalar(mission) -> None
+
+    promoted = asyncio.run(
+        promote_confirmed_product_identity_async(
+            session,
+            mission_id=uuid4(),
+            confirmed_search_query="Processador AMD Ryzen 9 9950X3D",
+        )
+    )
+
+    assert promoted is False
+    session.flush.assert_not_called()
+
+
+def test_promote_confirmed_identity_missing_criteria_is_a_safe_no_op() -> None:
+    mission = _mission(MissionStatus.ACTIVE)
+    original_title = mission.title
+    session = _session(mission, None)  # criteria não encontrada
+
+    promoted = asyncio.run(
+        promote_confirmed_product_identity_async(
+            session,
+            mission_id=mission.id,
+            confirmed_search_query="Processador AMD Ryzen 9 9950X3D",
+        )
+    )
+
+    assert promoted is False
+    assert mission.title == original_title
+    session.flush.assert_not_called()
+
+
+def test_promote_confirmed_identity_rejects_blank_search_query() -> None:
+    session = _session()
+
+    with pytest.raises(ValueError, match="confirmed_search_query"):
+        asyncio.run(
+            promote_confirmed_product_identity_async(
+                session, mission_id=uuid4(), confirmed_search_query="   "
+            )
+        )

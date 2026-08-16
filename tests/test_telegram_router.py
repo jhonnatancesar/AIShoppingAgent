@@ -685,6 +685,7 @@ async def test_create_mission_intent_stages_confirmation_without_creating(
         "kind": "create_mission",
         "search_query": "notebook gamer",
         "model": None,
+        "display_query": None,
         "target_amount": "5000.00",
         "target_currency": "BRL",
         "sources": ["pichau", "kabum"],
@@ -745,6 +746,59 @@ async def test_confirmed_pending_create_mission_executes_and_clears_step(
     assert create_calls[0]["source_codes"] == ("pichau", "kabum")
     assert fake_user.pending_intent is None
     assert "notebook gamer" in send_calls[0][1]
+
+
+@pytest.mark.anyio
+async def test_confirmed_pending_create_mission_uses_display_query_as_title(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TASK-083 (correção de regressão): `display_query` do `pending_intent`
+    vira `title` na criação real -- `search_query` operacional (o que foi
+    pesquisado nas lojas) continua intocado."""
+    fake_user = _fake_user(
+        pending_intent={
+            "kind": "create_mission",
+            "search_query": "9950X3D",
+            "model": "9950X3D",
+            "display_query": "AMD Ryzen 9 9950X3D",
+            "target_amount": None,
+            "target_currency": None,
+            "sources": ["kabum"],
+        }
+    )
+    fake_mission = SimpleNamespace(title="AMD Ryzen 9 9950X3D")
+    create_calls: list[dict[str, object]] = []
+
+    _patch_user(monkeypatch, fake_user)
+    _patch_resolve_answer(monkeypatch, True)
+
+    async def _fake_create_mission(session: object, **kwargs: object):
+        create_calls.append(kwargs)
+        return fake_mission, ("kabum",)
+
+    monkeypatch.setattr(
+        "app.telegram.router.create_mission_from_criteria_async", _fake_create_mission
+    )
+    _patch_send_message(monkeypatch)
+    adapter = _FakeAdapter(_intent())
+
+    await receive_telegram_webhook(
+        update=_update(
+            message=_TelegramIncomingMessage(
+                text="sim",
+                date=1754586000,
+                chat=_TelegramChat(id=222, type=TelegramChatType.PRIVATE),
+                from_=_TelegramSender(id=222, first_name="Fulano"),
+            )
+        ),
+        x_telegram_bot_api_secret_token="correct-secret",
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        settings=_settings(),
+        session=_async_session(),
+    )
+
+    assert create_calls[0]["search_query"] == "9950X3D"
+    assert create_calls[0]["title"] == "AMD Ryzen 9 9950X3D"
 
 
 @pytest.mark.anyio
@@ -833,6 +887,7 @@ async def test_create_mission_without_sources_stages_source_selection_and_preser
         "kind": "await_create_mission_sources",
         "search_query": "notebook gamer",
         "model": None,
+        "display_query": None,
         "target_amount": "5000.00",
         "target_currency": "BRL",
     }
@@ -882,6 +937,7 @@ async def test_valid_source_selection_answer_advances_to_normal_confirmation(
         "kind": "create_mission",
         "search_query": "notebook gamer",
         "model": None,
+        "display_query": None,
         "target_amount": "5000.00",
         "target_currency": "BRL",
         "sources": ["pichau", "kabum"],
