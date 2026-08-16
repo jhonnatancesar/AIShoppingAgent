@@ -75,7 +75,7 @@ Docker/produção, o nome do modelo é sempre o default de
 ### 2. `Settings` — campos continuam existindo e sendo usados (não tocados)
 
 `backend/app/core/config.py` define `gemini_model` (default
-`gemini-3.6-flash`) e `groq_model` (default `llama-3.3-70b-versatile`),
+`gemini-3.6-flash`) e `groq_model` (default `openai/gpt-oss-120b`),
 ambos lidos por `backend/app/ai_provider/manager.py` para montar a
 cascata. Esses dois campos **não foram alterados** — continuam sendo a
 única fonte do nome do modelo, só deixam de ser anunciados como

@@ -1157,7 +1157,7 @@ parte acima que dispensava composição; Argon2id, blocklist, limite máximo de
   testar a chave `AISHOPPING_GROQ_API_KEY` já presente em `backend/.env`,
   fora do `AIProviderManager` e sem tocar em nenhum módulo do app (script
   descartável em `scratchpad`, nunca importado por `backend/app`). A chave
-  respondeu `200` com conteúdo coerente (`llama-3.3-70b-versatile`). O
+  respondeu `200` com conteúdo coerente (`openai/gpt-oss-120b`). O
   usuário pediu para registrar a possibilidade de usar o Groq como fallback
   para quando a cota gratuita do Gemini se esgotar.
 - **Classificação:** Nova TASK do MVP
@@ -1423,24 +1423,25 @@ aliases com hífen continuam aceitos como texto digitado.
 - **Classificação:** Implementar agora
 - **Justificativa:** a alteração afeta somente a política de ambiente, não amplia o escopo funcional do MVP e evita instalar uma versão antiga quando a versão estável atual é compatível. Cada atualização continua condicionada à validação das dependências e dos testes aplicáveis.
 - **Próxima ação:** registrar em `docs/DEPENDENCIES.md` a versão mais recente efetivamente validada e repetir a validação quando uma nova versão estável for adotada.
-### DEC-061 — Separar roteamento gratuito USER do perfil pago DEV via OpenRouter
+### DEC-061 — Compartilhar roteamento gratuito entre USER e DEV
 
 - **Data:** 2026-08-15
 - **Ideia:** manter toda IA atrás do `AIProviderManager`, ampliar o perfil
   `USER` exclusivamente com fallbacks gratuitos
   Gemini → Groq (`openai/gpt-oss-120b`) → OpenRouter (`openrouter/free`) e
-  separar o perfil `DEV` para usar somente
-  `anthropic/claude-sonnet-4` via OpenRouter. Pesquisa web do DEV permanece
-  opt-in por `AIRequest.require_search_grounding`; o provider disponibiliza
-  o server tool `openrouter:web_search`, preferindo o engine `firecrawl`, e o
-  próprio modelo decide se precisa pesquisar. `ADMIN` preserva a cascata
-  gratuita existente, pois o pedido não autoriza alterar seu custo.
+  dar ao perfil `DEV` a mesma capacidade gratuita. Em requisições normais,
+  ambos seguem Gemini → Groq (`openai/gpt-oss-120b`) → OpenRouter
+  (`openrouter/free`). Pesquisa web é exclusiva de DEV e opt-in por
+  `AIRequest.require_search_grounding`; nesse caso a requisição vai diretamente
+  à Firecrawl Search API v2 direta e, após fontes válidas, à mesma cascata
+  gratuita de LLM. `ADMIN`, papel histórico do domínio, compartilha a mesma cascata
+  gratuita e não constitui uma terceira política de IA.
 - **Classificação:** Implementar agora
 - **Justificativa:** pedido explícito do usuário para corrigir a continuidade
-  após timeout/HTTP 504 do Gemini, remover o modelo Groq antigo e isolar de
-  forma verificável o saldo pago do OpenRouter. A mudança reutiliza contratos,
+  após timeout/HTTP 504 do Gemini, remover o modelo Groq antigo e impedir uso
+  intencional de modelos pagos. A mudança reutiliza contratos,
   circuit breaker, telemetria e capability de grounding já existentes; não
   altera fluxos determinísticos do Telegram, coleta, preços ou missões.
 - **Próxima ação:** implementar e validar somente o roteamento descrito, sem
-  chamadas reais, push, rebuild ou deploy. Depois registrar, sem executar, a
-  próxima TASK livre para o drift conhecido do `alembic check`.
+  no máximo duas chamadas reais gratuitas e controladas, sem push, rebuild ou
+  deploy. A TASK-086 do drift conhecido do `alembic check` permanece não iniciada.

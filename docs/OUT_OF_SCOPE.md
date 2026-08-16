@@ -23,9 +23,8 @@ Este documento impede aumento de escopo durante o desenvolvimento da primeira ve
 - Plano PLUS.
 - Planos FREE/PLUS/PRO, assinatura e entitlements.
 - Múltiplos papéis, `user_roles` e gestão administrativa de papéis na V1.
-- Usuário comum pago, compra de créditos e planos comerciais na V1. O uso
-  operacional do Claude via OpenRouter fica restrito ao papel DEV, conforme
-  `DEC-061`, sem criar plano pago para USER.
+- Usuário pago, compra de créditos, modelos pagos e planos comerciais na V1.
+  A `DEC-061` mantém USER e DEV exclusivamente gratuitos.
 - IA local.
 - Orquestração multi-IA além dos perfis previstos para a V1.
 

@@ -92,10 +92,10 @@ class AIRequest:
     messages: tuple[AIMessage, ...]
     requested_at: datetime
     require_search_grounding: bool = False
-    """TASK-083: pede ao provider que dispõe do modelo de grounding via
-    busca web quando decidir a resposta -- não obriga o modelo a
-    pesquisar de fato (ver `AIResponse.grounding_performed`, a única
-    fonte de verdade sobre se a busca realmente aconteceu). Default
+    """TASK-083: exige do provider uma resposta apoiada em busca web.
+    `AIResponse.grounding_performed` é a única fonte de verdade sobre se
+    a busca realmente aconteceu; resposta sem evidência deve falhar fechada.
+    Default
     `False`: toda chamada existente continua funcionando sem alteração.
     Provider que não suportar a capability levanta
     `AIProviderCapabilityUnsupported` -- nunca finge suporte nem faz

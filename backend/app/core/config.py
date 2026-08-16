@@ -15,6 +15,7 @@ _SECRET_FILE_FIELDS = {
     "gemini_api_key_admin_dev": "gemini_api_key_admin_dev_file",
     "groq_api_key": "groq_api_key_file",
     "openrouter_api_key": "openrouter_api_key_file",
+    "firecrawl_api_key": "firecrawl_api_key_file",
     "telegram_bot_token": "telegram_bot_token_file",
     "telegram_webhook_secret": "telegram_webhook_secret_file",
 }
@@ -58,12 +59,8 @@ class Settings(BaseSettings):
     openrouter_api_key: SecretStr | None = None
     openrouter_api_key_file: Path | None = None
     openrouter_free_model: Literal["openrouter/free"] = "openrouter/free"
-    openrouter_dev_model: Literal["anthropic/claude-sonnet-4"] = (
-        "anthropic/claude-sonnet-4"
-    )
-    openrouter_web_search_engine: Literal[
-        "auto", "native", "exa", "firecrawl", "parallel", "perplexity"
-    ] = "firecrawl"
+    firecrawl_api_key: SecretStr | None = None
+    firecrawl_api_key_file: Path | None = None
     telegram_bot_token: SecretStr | None = None
     telegram_bot_token_file: Path | None = None
     telegram_webhook_secret: SecretStr | None = None

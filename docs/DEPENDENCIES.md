@@ -78,11 +78,11 @@ Exige `AISHOPPING_GROQ_API_KEY`; o nome do modelo é fixado em
 propaga nenhuma variável de override para ele, então `AISHOPPING_GROQ_MODEL`
 foi removida dos arquivos de exemplo (TASK-065); alterar o modelo exige
 mudar o default no código, não uma variável de ambiente. Sem a chave, o
-`AdminDevAIProviderManager` mantém o comportamento gratuito do ADMIN. O
-OpenRouter exige `AISHOPPING_OPENROUTER_API_KEY`; USER fixa
-`openrouter/free`, DEV fixa `anthropic/claude-sonnet-4`. O web search DEV usa
-o server tool do OpenRouter com Firecrawl configurado na conta OpenRouter;
-nenhuma chamada Firecrawl direta foi criada. A execução local
+`AdminDevAIProviderManager` mantém ADMIN/DEV na mesma capacidade gratuita. O
+OpenRouter exige `AISHOPPING_OPENROUTER_API_KEY`; USER e DEV fixam
+`openrouter/free`. O grounding opt-in do DEV usa a Firecrawl Search API v2
+direta por `AISHOPPING_FIRECRAWL_API_KEY`/`_FILE`, interpreta resultados web em
+`data.web` e só depois chama a cascata gratuita de LLM. A execução local
 fora do Docker pode usar `backend/.env`; Compose/produção usam secret file.
 
 O webhook do Telegram (TASK-034) não usa SDK — chama a Bot API diretamente com

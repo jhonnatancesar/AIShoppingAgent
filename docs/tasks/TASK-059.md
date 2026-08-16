@@ -34,7 +34,7 @@ no script de validação teria efeito sem essa mudança.
   `AIProviderError` para autenticação/rejeição/resposta vazia), sem vazar
   corpo bruto nem credenciais.
 - `AISHOPPING_GROQ_API_KEY` e `AISHOPPING_GROQ_MODEL` (default
-  `llama-3.3-70b-versatile`) em `backend/app/core/config.py`,
+  `openai/gpt-oss-120b`) em `backend/app/core/config.py`,
   `backend/.env.example` e `docs/DEPENDENCIES.md`. `httpx` declarado
   explicitamente em `backend/requirements.txt` (já presente de forma
   transitiva).
@@ -85,7 +85,7 @@ completa aprovada (`scripts\check.cmd`).
 ## Resultado da validação real (2026-08-08)
 
 - `GroqProvider` chamado de verdade via `AIProviderManager`
-  (`llama-3.3-70b-versatile`), resposta coerente recebida.
+  (`openai/gpt-oss-120b`), resposta coerente recebida.
 - Cascata de 3 níveis validada de ponta a ponta: um premium real forçado a
   falhar por cota (`AIProviderQuotaExceeded`) resultou em resposta real do
   Groq (`response.provider == "groq"`), confirmando que o fallback alcança

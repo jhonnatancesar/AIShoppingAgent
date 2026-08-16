@@ -57,7 +57,7 @@ da V1.
 | | Valor atual | Fonte |
 | --- | --- | --- |
 | Modelo premium (1ª camada) | `gemini-3.1-pro-preview` | `Settings.gemini_premium_model` |
-| Groq (2ª camada, opcional) | `llama-3.3-70b-versatile` | `Settings.groq_model` |
+| Groq (2ª camada, opcional) | `openai/gpt-oss-120b` | `Settings.groq_model` |
 | Modelo gratuito (3ª camada) | `gemini-3.6-flash` | `Settings.gemini_model` |
 | Tentativas máximas na cascata | `3` (= nº de camadas) | `Settings.safe_retry_max_attempts` |
 | Timeout por chamada | `10s` | `Settings.external_http_timeout_seconds` |
@@ -284,7 +284,7 @@ diferença continua sendo só permissão) e autorizou a implementação.
   independentes. (1) Script isolado com Gemini forçado a falhar
   (`AIProviderQuotaExceeded`, sem chamada real) e um `GroqProvider` real
   configurado com a chave/modelo de produção — resposta real do Groq
-  (`llama-3.3-70b-versatile`, conteúdo `"ok"`) recebida com sucesso. (2) O
+  (`openai/gpt-oss-120b`, conteúdo `"ok"`) recebida com sucesso. (2) O
   mesmo padrão ocorreu organicamente durante a coleta real abaixo: toda vez
   que o Flash falhou (quota real ou `unavailable`), o Groq real respondeu
   como segunda e última camada — nunca uma terceira tentativa contra o

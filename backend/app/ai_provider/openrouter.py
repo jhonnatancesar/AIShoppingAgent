@@ -1,4 +1,4 @@
-"""Adaptador OpenRouter usado pelas rotas gratuita USER e paga DEV."""
+"""Adaptador OpenRouter usado somente como LLM gratuito para USER e DEV."""
 
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
@@ -32,8 +32,6 @@ class OpenRouterProvider:
         api_key: SecretStr,
         model: str,
         *,
-        web_search_enabled: bool = False,
-        web_search_engine: str = "firecrawl",
         client_factory: Callable[..., httpx.AsyncClient] = httpx.AsyncClient,
         timeout_seconds: float = 10.0,
     ) -> None:
@@ -45,13 +43,11 @@ class OpenRouterProvider:
             raise AIRequestError("OpenRouter timeout must be positive")
         self._api_key = api_key
         self.model = model
-        self._web_search_enabled = web_search_enabled
-        self._web_search_engine = web_search_engine
         self._client_factory = client_factory
         self._timeout_seconds = timeout_seconds
 
     async def generate(self, request: AIRequest) -> AIResponse:
-        if request.require_search_grounding and not self._web_search_enabled:
+        if request.require_search_grounding:
             from app.ai_provider.contracts import AIProviderCapabilityUnsupported
 
             raise AIProviderCapabilityUnsupported("search_grounding")
@@ -63,14 +59,6 @@ class OpenRouterProvider:
                 for message in request.messages
             ],
         }
-        if request.require_search_grounding:
-            payload["tools"] = [
-                {
-                    "type": "openrouter:web_search",
-                    "parameters": {"engine": self._web_search_engine},
-                }
-            ]
-
         try:
             async with self._client_factory(timeout=self._timeout_seconds) as client:
                 response = await client.post(
@@ -92,16 +80,12 @@ class OpenRouterProvider:
         content = _extract_content(body)
         if content is None:
             raise AIProviderError("provider_empty_response", retryable=False)
-        performed, sources = _extract_web_search_evidence(body)
         return AIResponse(
             request_id=request.request_id,
             provider=self.provider_id,
             model=self.model,
             content=content,
             finished_at=datetime.now(UTC),
-            grounding_requested=request.require_search_grounding,
-            grounding_performed=performed,
-            grounding_sources=sources,
         )
 
 
@@ -121,35 +105,6 @@ def _extract_content(body: dict[str, object]) -> str | None:
     except KeyError, IndexError, TypeError:
         return None
     return content if isinstance(content, str) and content.strip() else None
-
-
-def _extract_web_search_evidence(
-    body: dict[str, object],
-) -> tuple[bool, tuple[str, ...]]:
-    annotations: object = None
-    try:
-        annotations = body["choices"][0]["message"].get("annotations")  # type: ignore[index,union-attr]
-    except KeyError, IndexError, TypeError, AttributeError:
-        pass
-    sources: list[str] = []
-    if isinstance(annotations, list):
-        for annotation in annotations:
-            if not isinstance(annotation, dict):
-                continue
-            citation = annotation.get("url_citation")
-            if isinstance(citation, dict):
-                url = citation.get("url")
-                if isinstance(url, str) and url.strip() and url not in sources:
-                    sources.append(url)
-    usage = body.get("usage")
-    server_tools = usage.get("server_tool_use") if isinstance(usage, dict) else None
-    searches = (
-        server_tools.get("web_search_requests")
-        if isinstance(server_tools, dict)
-        else None
-    )
-    performed = bool(sources) or isinstance(searches, int) and searches > 0
-    return performed, tuple(sources)
 
 
 def _translate_api_error(response: httpx.Response) -> AIProviderError:

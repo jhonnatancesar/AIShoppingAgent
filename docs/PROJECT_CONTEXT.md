@@ -1,11 +1,17 @@
 # Project Context
 
-**Atualização 2026-08-15 (roteamento de IA):** `DEC-061` separa os perfis:
-USER usa somente Gemini → Groq `openai/gpt-oss-120b` → OpenRouter
-`openrouter/free`; ADMIN preserva a cadeia gratuita; DEV usa exclusivamente
-OpenRouter `anthropic/claude-sonnet-4`, com `openrouter:web_search` opt-in e
-engine Firecrawl. Nenhuma chamada real, push, rebuild ou deploy foi feita. A
-TASK-086 foi registrada para o drift do Alembic e permanece não iniciada.
+**Atualização 2026-08-15 (roteamento de IA):** `DEC-061` mantém USER e DEV
+exclusivamente gratuitos: requisições normais usam Gemini → Groq
+`openai/gpt-oss-120b` → OpenRouter `openrouter/free`. Grounding é opt-in e
+exclusivo de DEV: Firecrawl Search API v2 direta pesquisa primeiro e somente
+fontes válidas seguem como dados não confiáveis para a mesma cascata gratuita.
+ADMIN compartilha a cascata histórica, sem política separada. A TASK-086
+permanece não iniciada.
+
+**Firecrawl direto (preparação local):** o cliente mínimo da Search API v2 lê
+`data.web` e preserva `warning`, `id` e `creditsUsed`; uma validação real isolada
+retornou HTTP 200, dois resultados web e `creditsUsed=2`. A porta agora antecede
+a cascata gratuita no grounding DEV; nenhuma validação real adicional foi feita.
 
 ## Estado
 

@@ -30,7 +30,6 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from app.ai_provider import (
     AIProviderError,
     build_admin_dev_ai_provider_manager,
-    build_dev_ai_provider_manager,
     build_user_ai_provider_manager,
 )
 from app.authentication.models import CredentialAction
@@ -350,17 +349,17 @@ class TelegramUpdate(BaseModel):
 def get_telegram_intent_adapters() -> dict[UserRole, TelegramIntentAdapter]:
     """Monta um adaptador por perfil, uma única vez, reaproveitando os managers.
 
-    `USER` usa exclusivamente providers gratuitos; `ADMIN` preserva a
-    cascata Gemini/Groq e `DEV` usa a rota paga isolada do OpenRouter. Qual
+    `USER` usa exclusivamente providers gratuitos; os papéis históricos
+    `ADMIN`/`DEV` compartilham a mesma cascata gratuita, sem uma terceira
+    cadeia de roteamento. Qual
     adaptador é usado numa interação real depende de `User.role`
     (TASK-060), nunca de escolha do próprio usuário.
     """
     user_interpreter = IntentInterpreter(build_user_ai_provider_manager())
-    admin_interpreter = IntentInterpreter(build_admin_dev_ai_provider_manager())
-    dev_interpreter = IntentInterpreter(build_dev_ai_provider_manager())
+    dev_interpreter = IntentInterpreter(build_admin_dev_ai_provider_manager())
     return {
         UserRole.USER: TelegramIntentAdapter(user_interpreter),
-        UserRole.ADMIN: TelegramIntentAdapter(admin_interpreter),
+        UserRole.ADMIN: TelegramIntentAdapter(dev_interpreter),
         UserRole.DEV: TelegramIntentAdapter(dev_interpreter),
     }
 

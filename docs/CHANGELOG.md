@@ -1,17 +1,24 @@
 # Changelog
 
-## 2026-08-15 (3) — Roteamento USER/DEV isolado e TASK-086 registrada
+## 2026-08-15 (3) — Roteamento gratuito USER/DEV e TASK-086 registrada
 
 - USER passa a usar somente a cadeia gratuita Gemini → Groq
   (`openai/gpt-oss-120b`) → OpenRouter (`openrouter/free`), com fallback
   apenas para indisponibilidade/cota e erro controlado ao final.
-- DEV passa a usar exclusivamente OpenRouter com
-  `anthropic/claude-sonnet-4`; `openrouter:web_search` fica disponível apenas
-  em requisições opt-in de grounding, preferindo Firecrawl. ADMIN preserva a
-  cadeia gratuita existente.
+- DEV normal passa a usar a mesma cadeia gratuita do USER. Quando DEV solicita
+  grounding, pesquisa diretamente pela Firecrawl v2 e envia as fontes válidas
+  à mesma cascata gratuita. ADMIN compartilha a cadeia
+  gratuita histórica, sem uma terceira política de IA.
 - OpenRouter foi integrado como `AIProvider` interno, mantendo circuit breaker,
   telemetria sanitizada e segredo por configuração/arquivo. Nenhuma chamada
-  real foi feita; o secret local ainda precisa ser provisionado pelo operador.
+  real paga foi criada; o secret local é provisionado pelo operador.
+- A tentativa intermediária de pesquisa via OpenRouter foi substituída pela
+  integração Firecrawl direta; OpenRouter permanece somente fallback de LLM.
+- Adicionado contrato mínimo da Firecrawl Search API v2 direta: resultados são
+  lidos de `data.web`, metadados `warning`/`id`/`creditsUsed` são preservados e
+  lista vazia não conta como pesquisa executada. Uma chamada real com
+  `sources=["web"]` e `limit=2` retornou HTTP 200, dois resultados e
+  `creditsUsed=2`; o cliente agora antecede a cascata gratuita no fluxo DEV.
 - Fluxos determinísticos do Telegram, cancelamento, coleta, preços, Alembic e
   banco ativo não foram alterados.
 - TASK-086 registrada para o drift conhecido do `alembic check`; não iniciada.
@@ -1386,7 +1393,7 @@
   (`tests/test_gemini_user_profile.py`, `tests/test_intent_interpreter.py`).
   `scripts\check.cmd` completo aprovado: 316 testes, 94,96% de cobertura.
 - **Validação real**: chamada direta ao Groq real via `AIProviderManager`
-  (resposta coerente do `llama-3.3-70b-versatile`); cascata de 3 níveis
+  (resposta coerente do `openai/gpt-oss-120b`); cascata de 3 níveis
   validada de ponta a ponta com um premium real forçado a falhar por cota,
   confirmando que o Groq real é alcançado e responde. As 19 mensagens
   diversas da TASK-057 foram classificadas corretamente via `--profile

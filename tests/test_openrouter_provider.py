@@ -7,6 +7,7 @@ from uuid import uuid4
 import httpx
 import pytest
 from app.ai_provider import (
+    AdminDevAIProviderManager,
     AIMessage,
     AIMessageRole,
     AIProviderError,
@@ -14,15 +15,20 @@ from app.ai_provider import (
     AIProviderUnavailable,
     AIRequest,
     AIResponse,
-    DevAIProviderManager,
     OpenRouterProvider,
     UserAIProviderManager,
-    build_dev_ai_provider_manager,
+    build_admin_dev_ai_provider_manager,
     build_user_ai_provider_manager,
 )
 from app.core.config import Settings
+from app.core.resilience import CircuitRegistry
 from app.users.models import UserRole
 from pydantic import SecretStr
+
+
+@pytest.fixture(autouse=True)
+def _isolated_ai_circuits(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("app.ai_provider.manager.CIRCUITS", CircuitRegistry())
 
 
 def _request(
@@ -92,14 +98,13 @@ class _Client:
 
 
 def _openrouter(
-    response: object, *, model: str = "openrouter/free", web: bool = False
+    response: object, *, model: str = "openrouter/free"
 ) -> tuple[OpenRouterProvider, _Client]:
     client = _Client(response)
     return (
         OpenRouterProvider(
             SecretStr("secret-canary"),
             model,
-            web_search_enabled=web,
             client_factory=lambda **_kwargs: client,
         ),
         client,
@@ -190,7 +195,11 @@ async def test_user_all_free_failures_never_reach_paid_model() -> None:
         await UserAIProviderManager(
             tiers[0], groq=tiers[1], openrouter=tiers[2]
         ).generate(_request(UserRole.USER))
-    assert all(tier.model != "anthropic/claude-sonnet-4" for tier in tiers)
+    assert [tier.model for tier in tiers] == [
+        "gemini-3.6-flash",
+        "openai/gpt-oss-120b",
+        "openrouter/free",
+    ]
     assert [tier.calls for tier in tiers] == [1, 1, 1]
 
 
@@ -210,68 +219,46 @@ async def test_nonretryable_authentication_error_does_not_loop() -> None:
 
 
 @pytest.mark.anyio
-async def test_dev_uses_only_paid_openrouter_provider() -> None:
-    paid = _Provider("openrouter", "anthropic/claude-sonnet-4", "ok")
-    manager = DevAIProviderManager(paid)
+async def test_dev_normal_request_uses_same_free_cascade_as_user() -> None:
+    gemini = _Provider("gemini", "gemini-3.6-flash", AIProviderUnavailable())
+    groq = _Provider("groq", "openai/gpt-oss-120b", AIProviderUnavailable())
+    free = _Provider("openrouter", "openrouter/free", "ok")
+    manager = AdminDevAIProviderManager(gemini, groq=groq, openrouter=free)
     response = await manager.generate(_request(UserRole.DEV))
-    assert (response.provider, response.model) == (
-        "openrouter",
-        "anthropic/claude-sonnet-4",
-    )
-    with pytest.raises(Exception, match="DEV manager"):
+    assert (response.provider, response.model) == ("openrouter", "openrouter/free")
+    assert (gemini.calls, groq.calls, free.calls) == (1, 1, 1)
+    with pytest.raises(Exception, match="ADMIN/DEV manager"):
         await manager.generate(_request(UserRole.USER))
 
 
-def test_builders_keep_user_and_dev_models_isolated() -> None:
+def test_builders_keep_user_and_dev_on_free_models() -> None:
     settings = Settings(
         _env_file=None,
         gemini_api_key_user="gemini",
+        gemini_api_key_admin_dev="gemini-dev",
         groq_api_key="groq",
         openrouter_api_key="openrouter",
+        firecrawl_api_key="firecrawl",
     )
     user = build_user_ai_provider_manager(settings)
-    dev = build_dev_ai_provider_manager(settings)
+    dev = build_admin_dev_ai_provider_manager(settings)
     assert user._groq.model == "openai/gpt-oss-120b"  # noqa: SLF001
     assert user._openrouter.model == "openrouter/free"  # noqa: SLF001
-    assert dev._provider.model == "anthropic/claude-sonnet-4"  # noqa: SLF001
+    assert dev._groq.model == "openai/gpt-oss-120b"  # noqa: SLF001
+    assert dev._openrouter.model == "openrouter/free"  # noqa: SLF001
+    assert dev._search_provider is not None  # noqa: SLF001
 
 
 @pytest.mark.anyio
-async def test_dev_web_search_is_optional_server_tool_with_firecrawl() -> None:
-    body = {
-        "choices": [
-            {
-                "message": {
-                    "content": "atualizado",
-                    "annotations": [
-                        {"url_citation": {"url": "https://example.test/source"}}
-                    ],
-                }
-            }
-        ],
-        "usage": {"server_tool_use": {"web_search_requests": 1}},
-    }
+async def test_openrouter_is_only_an_llm_and_rejects_grounding_requests() -> None:
     provider, client = _openrouter(
-        _Response(body=body), model="anthropic/claude-sonnet-4", web=True
+        _Response(body={"choices": [{"message": {"content": "normal"}}]})
     )
-    response = await provider.generate(_request(UserRole.DEV, grounding=True))
-    payload = client.calls[0]["json"]
-    assert payload["tools"] == [  # type: ignore[index]
-        {
-            "type": "openrouter:web_search",
-            "parameters": {"engine": "firecrawl"},
-        }
-    ]
-    assert response.grounding_performed is True
-    assert response.grounding_sources == ("https://example.test/source",)
 
-    normal_provider, normal_client = _openrouter(
-        _Response(body={"choices": [{"message": {"content": "normal"}}]}),
-        model="anthropic/claude-sonnet-4",
-        web=True,
-    )
-    await normal_provider.generate(_request(UserRole.DEV, grounding=False))
-    assert "tools" not in normal_client.calls[0]["json"]  # type: ignore[operator]
+    with pytest.raises(AIProviderError, match="capability_unsupported"):
+        await provider.generate(_request(UserRole.DEV, grounding=True))
+
+    assert client.calls == []
 
 
 @pytest.mark.anyio

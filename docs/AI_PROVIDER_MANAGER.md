@@ -21,25 +21,26 @@ Perfis previstos:
 - `USER`: cadeia exclusivamente gratuita: `gemini-3.6-flash`, Groq
   `openai/gpt-oss-120b` e OpenRouter `openrouter/free`. Nenhuma rota paga é
   elegível para esse manager.
-- `ADMIN`: política preservada de 2 camadas — `gemini-3.6-flash` (o mesmo
+- `ADMIN`: papel histórico do domínio que compartilha a mesma política
+  gratuita do DEV — `gemini-3.6-flash` (o mesmo
   modelo Gemini Flash do perfil `USER`, via `Settings.gemini_model`, sobre a
   chave dedicada `AISHOPPING_GEMINI_API_KEY_ADMIN_DEV`) e, se configurado, o
-  Groq (`GroqProvider`, TASK-059, opcional — só entra se
-  `AISHOPPING_GROQ_API_KEY` estiver configurada) como fallback de
-  disponibilidade. Sem a chave do Groq, `ADMIN`/`DEV` usa só o Flash, sem
-  fallback (mesmo comportamento de `USER`, chave separada). **Nenhum nível
+  Groq (`GroqProvider`, TASK-059, opcional) e OpenRouter `openrouter/free`
+  como fallbacks de disponibilidade. **Nenhum nível
   Gemini Pro/preview participa da cascata (TASK-064/DEC-050)** — a
-  perfil não recebe o provider pago do DEV.
-- `DEV`: rota isolada no OpenRouter com `anthropic/claude-sonnet-4`. Quando a
-  requisição define `require_search_grounding=True`, disponibiliza o server
-  tool `openrouter:web_search` com engine Firecrawl; o modelo decide se busca.
+  perfil recebe provider pago.
+- `DEV`: em chamadas normais usa a mesma cadeia exclusivamente gratuita do
+  USER. Quando `require_search_grounding=True`, a aplicação pesquisa primeiro
+  pela Firecrawl Search API v2 direta, exige ao menos uma fonte web válida e
+  então envia o contexto não confiável à mesma cascata gratuita. Falha ou
+  resultado vazio da pesquisa fecha o fluxo antes de qualquer LLM.
 - `PLUS`: futuro; não existe no contrato nem na V1.
 
 O perfil USER traduz mensagens para o contrato de cada provider e
 após cada chamada e converte quota, indisponibilidade, autenticação e rejeição em
 erros sanitizados. Ao atingir o limite, `AIProviderQuotaExceeded` permite ao canal
-informar que o usuário tente novamente mais tarde. USER nunca recebe
-`anthropic/claude-sonnet-4` nem qualquer fallback pago.
+informar que o usuário tente novamente mais tarde. USER e DEV nunca recebem
+fallback pago.
 
 `GroqProvider` (TASK-059) chama a API compatível com OpenAI do Groq via
 `httpx`, traduzindo os papéis `system`/`user`/`assistant` diretamente (sem a
@@ -62,7 +63,8 @@ o premium retornou `429` com reset e o Flash gratuito concluiu o fallback. Nenhu
 credencial é versionada.
 
 Em 2026-08-08 (TASK-059), o `GroqProvider` foi validado com uma chamada real
-autenticada contra a API do Groq (`llama-3.3-70b-versatile`), e a cascata de
+autenticada contra a API do Groq (modelo posteriormente substituído por
+`openai/gpt-oss-120b`), e a cascata de
 3 níveis do `AdminDevAIProviderManager` foi validada de ponta a ponta com um
 premium real forçado a falhar por cota, confirmando que o Groq real é
 alcançado e responde. As 19 mensagens diversas de validação do

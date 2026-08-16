@@ -37,9 +37,8 @@ Para cada item novo, registrar uma descrição curta, a motivação e eventuais 
 - Ampliar ainda mais a robustez do `IntentInterpreter` (TASK-032/057) para
   novos tipos e estilos de linguagem informal além do conjunto já validado,
   com nova rodada de validação real (`DEC-017`).
-- Perfil pago para usuários na V2, com créditos e entitlements próprios. O
-  uso operacional do Claude pelo papel DEV foi antecipado de forma isolada
-  pela `DEC-061` e não cria plano pago nem fallback pago para USER.
+- Perfil pago para usuários na V2, com créditos e entitlements próprios.
+  A `DEC-061` mantém USER e DEV exclusivamente gratuitos na V1.
 - OCR para extrair informações de imagens, comprovantes ou páginas.
 - IA local.
 - Plano PLUS com uso de múltiplos provedores de IA.

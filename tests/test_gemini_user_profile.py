@@ -20,9 +20,15 @@ from app.ai_provider import (
     build_user_ai_provider_manager,
 )
 from app.core.config import Settings
+from app.core.resilience import CircuitRegistry
 from app.users.models import UserRole
 from google.genai import errors
 from pydantic import SecretStr
+
+
+@pytest.fixture(autouse=True)
+def _isolated_ai_circuits(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("app.ai_provider.manager.CIRCUITS", CircuitRegistry())
 
 
 def _request(
@@ -148,11 +154,12 @@ class _PoisonProvider:
 
 
 @pytest.mark.anyio
-async def test_admin_uses_gemini_flash_first() -> None:
+@pytest.mark.parametrize("profile", [UserRole.ADMIN, UserRole.DEV])
+async def test_admin_and_dev_use_gemini_flash_first(profile: UserRole) -> None:
     gemini, _ = _provider(_FakeModels(response_text="Resposta Flash"))
     manager = AdminDevAIProviderManager(gemini)
 
-    response = await manager.generate(_request(UserRole.ADMIN))
+    response = await manager.generate(_request(profile))
 
     assert response.model == "gemini-3.6-flash"
     assert response.content == "Resposta Flash"
@@ -163,22 +170,22 @@ async def test_admin_dev_manager_rejects_user() -> None:
     gemini, _ = _provider(_FakeModels())
     manager = AdminDevAIProviderManager(gemini)
 
-    with pytest.raises(AIRequestError, match="ADMIN"):
+    with pytest.raises(AIRequestError, match="ADMIN/DEV"):
         await manager.generate(_request(UserRole.USER))
-    with pytest.raises(AIRequestError, match="ADMIN"):
-        await manager.generate(_request(UserRole.DEV))
 
 
 @pytest.mark.anyio
 @pytest.mark.parametrize("error", [AIProviderQuotaExceeded(), AIProviderUnavailable()])
+@pytest.mark.parametrize("profile", [UserRole.ADMIN, UserRole.DEV])
 async def test_admin_dev_falls_back_to_groq_when_gemini_fails(
     error: AIProviderError,
+    profile: UserRole,
 ) -> None:
     gemini, _ = _provider(_FakeModels(error=error))
     groq = _StaticProvider("groq", "openai/gpt-oss-120b", response_text="Groq")
     manager = AdminDevAIProviderManager(gemini, groq=groq)
 
-    response = await manager.generate(_request(UserRole.ADMIN))
+    response = await manager.generate(_request(profile))
 
     assert response.provider == "groq"
     assert response.content == "Groq"
@@ -223,6 +230,7 @@ def test_admin_dev_factory_wires_groq_only_when_key_configured() -> None:
         )
     )
     assert without_groq._groq is None  # noqa: SLF001
+    assert without_groq._openrouter is None  # noqa: SLF001
 
     with_groq = build_admin_dev_ai_provider_manager(
         Settings(
@@ -341,19 +349,17 @@ def test_admin_dev_factory_requires_key_and_configures_flash_model() -> None:
     assert manager._gemini.model == "gemini-3.6-flash"  # noqa: SLF001
 
 
-def test_admin_dev_factory_wires_dedicated_grounding_provider() -> None:
-    """TASK-083: grounding usa um GeminiProvider dedicado, mesma chave de
-    ADMIN/DEV, com o modelo de `gemini_grounding_model` (default
-    gemini-2.5-flash) -- nunca o mesmo model das requisições comuns."""
+def test_admin_dev_factory_wires_firecrawl_for_grounding() -> None:
     manager = build_admin_dev_ai_provider_manager(
         Settings(
             _env_file=None,
             gemini_api_key_admin_dev="configured-key",
             gemini_model="gemini-3.6-flash",
+            openrouter_api_key="configured-openrouter-key",
+            firecrawl_api_key="configured-firecrawl-key",
         )
     )
-    assert manager._grounding_provider is not None  # noqa: SLF001
-    assert manager._grounding_provider.model == "gemini-2.5-flash"  # noqa: SLF001
+    assert manager._search_provider is not None  # noqa: SLF001
     assert manager._gemini.model == "gemini-3.6-flash"  # noqa: SLF001
 
 

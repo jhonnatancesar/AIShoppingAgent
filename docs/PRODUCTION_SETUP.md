@@ -289,7 +289,7 @@ quiser mudar o comportamento padrão, adicione-as ao seu `.env`:
 > **Correção aplicada (TASK-065, 2026-08-10):** `AISHOPPING_GEMINI_MODEL` e
 > `AISHOPPING_GROQ_MODEL` tinham o mesmo problema (sem propagação real pelo
 > `compose.yaml`, nome do modelo sempre o default do código —
-> `gemini-3.6-flash`/`llama-3.3-70b-versatile`) e foram **removidas** de
+> `gemini-3.6-flash`/`openai/gpt-oss-120b`) e foram **removidas** de
 > `.env.example` (raiz) e `backend/.env.example` — nenhum código,
 > `compose.yaml` ou o servidor de produção da `v1.0.1` já implantado foram
 > alterados por essa limpeza; um `.env` de produção antigo que ainda tenha

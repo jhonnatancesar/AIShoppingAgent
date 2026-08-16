@@ -11,9 +11,9 @@ Este documento define integralmente a V1. Qualquer item que não esteja listado 
 - Criação, consulta e acompanhamento de missões de compra.
 - Coleta e normalização de preços das lojas e marketplaces selecionados, preservando cada observação no histórico.
 - Alertas de preço e eventos relacionados às missões.
-- AI Provider Manager como única porta de acesso a IA, com USER restrito a
-  provedores gratuitos, ADMIN preservado na cascata gratuita e DEV isolado em
-  modelo pago configurado explicitamente.
+- AI Provider Manager como única porta de acesso a IA, com USER e DEV restritos
+  à mesma capacidade gratuita; pesquisa web é capability opt-in exclusiva de
+  DEV via OpenRouter Free.
 - Interação e notificações essenciais via Telegram.
 - Recomendações e comparação básica de ofertas com evidências de preço.
 - Controles mínimos de autenticação, autorização, proteção de segredos, resiliência, observabilidade e auditoria.
