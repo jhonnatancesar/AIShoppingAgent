@@ -86,3 +86,6 @@ head, guard, bancos clonados por teste e cleanup. Os dois alvos desta correção
 (senha/token e cancelamento com desativação da agenda) passaram. Container e
 volume descartáveis foram removidos; o banco e os containers do stack ativo
 não foram alterados.
+
+O relatório independente para diagnóstico e critérios de correção está em
+`docs/ALEMBIC_CHECK_ISSUE.md`.

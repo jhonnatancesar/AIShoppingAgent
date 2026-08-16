@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-08-15 (2) — Handoff para continuidade no Windows Server
+
+- Definido `C:\app\AIShoppingAgent` como repositório autoritativo para a
+  próxima sessão; registrado o commit local `fd68939` do pacote funcional.
+- Adicionados `docs/HANDOFF_SERVER_2026-08-15.md` e
+  `docs/ALEMBIC_CHECK_ISSUE.md` com estado, limites operacionais, reprodução
+  segura e critérios de aceite do drift.
+- Sincronizadas as memórias permanentes (`CLAUDE.md` e
+  `docs/PROJECT_CONTEXT.md`) e o estado atual em `AGENTS.md`.
+- Nenhuma nova TASK, correção Alembic, migration, push, build ou deploy.
+
 ## 2026-08-15 — Consolidação pontual do fluxo público de senha em `/recuperar`
 
 - Confirmado por auditoria que `/recuperar` escolhe `SET_PASSWORD` sem

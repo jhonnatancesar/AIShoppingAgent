@@ -29,3 +29,17 @@ A V1 permitirá pesquisar Pichau, Terabyte, Amazon e Kabum, conforme seleção d
 ## Fonte de verdade
 
 `docs/PROJECT_CONTEXT.md` registra o estado vivo; `docs/ROADMAP.md` registra a ordem de trabalho; `docs/tasks/` contém o escopo unitário.
+
+## Continuidade no servidor — 2026-08-15
+
+O ambiente autoritativo passou a ser `C:\app\AIShoppingAgent`, no Windows
+Server. O pacote de consolidação dos fluxos determinísticos do Telegram e de
+recuperação de senha foi commitado localmente em
+`fd68939bcaac3d5926af6bc43eee7c05913f727c`, sem push, rebuild ou deploy.
+
+O próximo problema registrado, ainda não corrigido, é o drift do
+`alembic check` nas constraints `mission_command_values`,
+`store_source_type_values` e `user_role_values`. Antes de qualquer ação, ler
+`docs/HANDOFF_SERVER_2026-08-15.md` e `docs/ALEMBIC_CHECK_ISSUE.md`. Toda
+reprodução deve usar PostgreSQL 18.4 descartável; o banco ativo e os
+containers em execução não podem ser alterados sem autorização explícita.

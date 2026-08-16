@@ -331,3 +331,11 @@ validados — todo o escopo registrado desta versão está concluído.**
 Nenhuma tag `v1.0.2` criada ainda; publicação final pendente de decisão
 explícita do usuário; produção da `v1.0.1` intocada; nenhuma outra TASK
 iniciada.
+
+**Atualização 2026-08-15:** a continuidade passa a ocorrer diretamente no
+Windows Server, no repositório autoritativo `C:\app\AIShoppingAgent`. O pacote
+pontual de Telegram/autenticação foi commitado localmente em `fd68939`, sem
+push, rebuild ou deploy; os containers permanecem na imagem anterior. O drift
+preexistente do `alembic check` está aberto e documentado em
+`docs/ALEMBIC_CHECK_ISSUE.md`. O handoff completo está em
+`docs/HANDOFF_SERVER_2026-08-15.md`. Nenhuma nova TASK foi iniciada.

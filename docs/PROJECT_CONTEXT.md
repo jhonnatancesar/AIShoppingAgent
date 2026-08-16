@@ -1021,3 +1021,15 @@ secrets e do ponto de rollback (`v1.0.5`). Exige diagnóstico completo
 reprodução controlada sem init, comparação objetiva com `init: true`)
 antes de declarar causa raiz confirmada ou implementar qualquer
 correção — investigação em andamento.
+
+**Atualização 2026-08-15:** o repositório autoritativo para continuidade é
+`C:\app\AIShoppingAgent`, no Windows Server. O pacote pontual que consolidou
+`/recuperar`, removeu `/senha` do fluxo público e tornou determinísticos os
+comandos e confirmações do Telegram foi commitado localmente em `fd68939`, sem
+push, rebuild ou deploy; os containers ativos continuam usando a imagem
+anterior. A validação encontrou novamente o drift preexistente do
+`alembic check` em `mission_command_values`, `store_source_type_values` e
+`user_role_values`. A pendência está descrita em
+`docs/ALEMBIC_CHECK_ISSUE.md`; o estado de retomada está em
+`docs/HANDOFF_SERVER_2026-08-15.md`. Nenhuma correção do Alembic e nenhuma
+nova TASK foram iniciadas.
