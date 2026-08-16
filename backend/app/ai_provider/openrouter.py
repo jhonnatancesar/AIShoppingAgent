@@ -1,4 +1,4 @@
-"""Adaptador Groq usado como fallback opcional do perfil ADMIN/DEV."""
+"""Adaptador OpenRouter usado pelas rotas gratuita USER e paga DEV."""
 
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
@@ -8,7 +8,6 @@ from pydantic import SecretStr
 
 from app.ai_provider.contracts import (
     AIMessageRole,
-    AIProviderCapabilityUnsupported,
     AIProviderError,
     AIProviderQuotaExceeded,
     AIProviderUnavailable,
@@ -17,7 +16,7 @@ from app.ai_provider.contracts import (
     AIResponse,
 )
 
-_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions"
+_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
 _ROLE_MAP = {
     AIMessageRole.SYSTEM: "system",
     AIMessageRole.USER: "user",
@@ -25,43 +24,53 @@ _ROLE_MAP = {
 }
 
 
-class GroqProvider:
-    provider_id = "groq"
+class OpenRouterProvider:
+    provider_id = "openrouter"
 
     def __init__(
         self,
         api_key: SecretStr,
-        model: str = "openai/gpt-oss-120b",
+        model: str,
         *,
+        web_search_enabled: bool = False,
+        web_search_engine: str = "firecrawl",
         client_factory: Callable[..., httpx.AsyncClient] = httpx.AsyncClient,
         timeout_seconds: float = 10.0,
     ) -> None:
         if not api_key.get_secret_value().strip():
-            raise AIRequestError("Groq API key is required")
+            raise AIRequestError("OpenRouter API key is required")
         if not model.strip():
-            raise AIRequestError("Groq model is required")
+            raise AIRequestError("OpenRouter model is required")
+        if timeout_seconds <= 0:
+            raise AIRequestError("OpenRouter timeout must be positive")
         self._api_key = api_key
         self.model = model
+        self._web_search_enabled = web_search_enabled
+        self._web_search_engine = web_search_engine
         self._client_factory = client_factory
-        if timeout_seconds <= 0:
-            raise AIRequestError("Groq timeout must be positive")
         self._timeout_seconds = timeout_seconds
 
     async def generate(self, request: AIRequest) -> AIResponse:
-        if request.require_search_grounding:
-            # TASK-083: Groq não tem grounding via
-            # busca web neste projeto -- erro tipado e imediato, nunca uma
-            # tentativa de responder mesmo assim nem fallback silencioso
-            # aqui dentro. O nível acima (AIProviderManager/chamador)
-            # decide o que fazer com essa incapacidade.
+        if request.require_search_grounding and not self._web_search_enabled:
+            from app.ai_provider.contracts import AIProviderCapabilityUnsupported
+
             raise AIProviderCapabilityUnsupported("search_grounding")
-        payload = {
+
+        payload: dict[str, object] = {
             "model": self.model,
             "messages": [
                 {"role": _ROLE_MAP[message.role], "content": message.content}
                 for message in request.messages
             ],
         }
+        if request.require_search_grounding:
+            payload["tools"] = [
+                {
+                    "type": "openrouter:web_search",
+                    "parameters": {"engine": self._web_search_engine},
+                }
+            ]
+
         try:
             async with self._client_factory(timeout=self._timeout_seconds) as client:
                 response = await client.post(
@@ -79,37 +88,78 @@ class GroqProvider:
 
         if response.status_code != 200:
             raise _translate_api_error(response)
-
-        content = _extract_content(response)
-        if not content:
+        body = _response_body(response)
+        content = _extract_content(body)
+        if content is None:
             raise AIProviderError("provider_empty_response", retryable=False)
+        performed, sources = _extract_web_search_evidence(body)
         return AIResponse(
             request_id=request.request_id,
             provider=self.provider_id,
             model=self.model,
             content=content,
             finished_at=datetime.now(UTC),
+            grounding_requested=request.require_search_grounding,
+            grounding_performed=performed,
+            grounding_sources=sources,
         )
 
 
-def _extract_content(response: httpx.Response) -> str | None:
+def _response_body(response: httpx.Response) -> dict[str, object]:
     try:
         body = response.json()
-        content = body["choices"][0]["message"]["content"]
-    except ValueError, KeyError, IndexError, TypeError:
+    except ValueError:
+        return {}
+    return body if isinstance(body, dict) else {}
+
+
+def _extract_content(body: dict[str, object]) -> str | None:
+    try:
+        choices = body["choices"]
+        message = choices[0]["message"]  # type: ignore[index]
+        content = message["content"]
+    except KeyError, IndexError, TypeError:
         return None
     return content if isinstance(content, str) and content.strip() else None
 
 
+def _extract_web_search_evidence(
+    body: dict[str, object],
+) -> tuple[bool, tuple[str, ...]]:
+    annotations: object = None
+    try:
+        annotations = body["choices"][0]["message"].get("annotations")  # type: ignore[index,union-attr]
+    except KeyError, IndexError, TypeError, AttributeError:
+        pass
+    sources: list[str] = []
+    if isinstance(annotations, list):
+        for annotation in annotations:
+            if not isinstance(annotation, dict):
+                continue
+            citation = annotation.get("url_citation")
+            if isinstance(citation, dict):
+                url = citation.get("url")
+                if isinstance(url, str) and url.strip() and url not in sources:
+                    sources.append(url)
+    usage = body.get("usage")
+    server_tools = usage.get("server_tool_use") if isinstance(usage, dict) else None
+    searches = (
+        server_tools.get("web_search_requests")
+        if isinstance(server_tools, dict)
+        else None
+    )
+    performed = bool(sources) or isinstance(searches, int) and searches > 0
+    return performed, tuple(sources)
+
+
 def _translate_api_error(response: httpx.Response) -> AIProviderError:
-    status = response.status_code
-    if status == 429:
+    if response.status_code == 429:
         return AIProviderQuotaExceeded(quota_reset_at=_extract_reset_at(response))
-    if status in {408, 500, 502, 503, 504}:
+    if response.status_code in {408, 500, 502, 503, 504}:
         return AIProviderUnavailable()
-    if status in {401, 403}:
+    if response.status_code in {401, 403}:
         return AIProviderError("provider_authentication_failed", retryable=False)
-    if status == 400:
+    if response.status_code == 400:
         return AIProviderError("provider_request_rejected", retryable=False)
     return AIProviderError("provider_error", retryable=False)
 

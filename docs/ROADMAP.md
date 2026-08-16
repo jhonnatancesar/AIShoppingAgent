@@ -24,6 +24,7 @@
 | Testes E2E e lançamento | TASK-053 e TASK-054 | Validação ponta a ponta do fluxo real e preparação da release |
 | Relevância e apresentação de alertas | TASK-063 | Corrige rastreabilidade do alerta ao anúncio real e filtro de correspondência produto-missão, antes da release ser definitiva (`DEC-048`) |
 | Disponibilidade e fallback dos provedores de IA | TASK-064 | Revisa a cascata ADMIN/DEV do `AIProviderManager` (modelos, ordem, taxonomia de erro) achada degradada durante a validação da TASK-063, antes da release ser definitiva (`DEC-049`) |
+| Drift de constraints no Alembic | TASK-086 | Investigar e corrigir o `alembic check` em PostgreSQL 18.4 descartável; registrada, não iniciada |
 | Expansão de fontes (futuro) | Tarefas a definir | Mercado Livre, Shopee, AliExpress e outras fontes futuras |
 
 As TASKs 000 a 053 e as TASKs 055 a 062 estão

@@ -339,3 +339,11 @@ push, rebuild ou deploy; os containers permanecem na imagem anterior. O drift
 preexistente do `alembic check` está aberto e documentado em
 `docs/ALEMBIC_CHECK_ISSUE.md`. O handoff completo está em
 `docs/HANDOFF_SERVER_2026-08-15.md`. Nenhuma nova TASK foi iniciada.
+
+**Atualização 2026-08-15 (2):** `DEC-061` implementa roteamento isolado de IA:
+USER somente gratuito (Gemini → Groq `openai/gpt-oss-120b` → OpenRouter
+`openrouter/free`), ADMIN preservado na cadeia gratuita e DEV exclusivamente
+OpenRouter `anthropic/claude-sonnet-4`, com web search opt-in via server tool e
+Firecrawl. Validação apenas local com mocks/fakes, sem chamadas reais, rebuild,
+deploy ou push. A TASK-086, "Corrigir drift de constraints no `alembic check`",
+foi registrada e **não iniciada**.

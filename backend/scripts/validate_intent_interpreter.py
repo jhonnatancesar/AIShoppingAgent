@@ -23,6 +23,7 @@ from app.ai_provider import (
     AIRequest,
     AIResponse,
     build_admin_dev_ai_provider_manager,
+    build_dev_ai_provider_manager,
     build_user_ai_provider_manager,
 )
 from app.intent import Intent, IntentInterpreter, parse_intent_response
@@ -102,7 +103,11 @@ def _build_manager(profile_name: str) -> _CapturingManager:
     base: AIProviderManager = (
         build_user_ai_provider_manager()
         if profile_name == "user"
-        else build_admin_dev_ai_provider_manager()
+        else (
+            build_dev_ai_provider_manager()
+            if profile_name == "dev"
+            else build_admin_dev_ai_provider_manager()
+        )
     )
     return _CapturingManager(base)
 

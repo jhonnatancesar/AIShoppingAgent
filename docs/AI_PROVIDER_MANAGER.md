@@ -18,9 +18,10 @@ diretamente. `AIProvider` é uma porta interna usada apenas pelo manager.
 
 Perfis previstos:
 
-- `USER`: implementado com o SDK oficial `google-genai` e o modelo configurável
-  `gemini-3.6-flash`; exige `AISHOPPING_GEMINI_API_KEY_USER`. Sem fallback.
-- `ADMIN/DEV`: política única de 2 camadas — `gemini-3.6-flash` (o mesmo
+- `USER`: cadeia exclusivamente gratuita: `gemini-3.6-flash`, Groq
+  `openai/gpt-oss-120b` e OpenRouter `openrouter/free`. Nenhuma rota paga é
+  elegível para esse manager.
+- `ADMIN`: política preservada de 2 camadas — `gemini-3.6-flash` (o mesmo
   modelo Gemini Flash do perfil `USER`, via `Settings.gemini_model`, sobre a
   chave dedicada `AISHOPPING_GEMINI_API_KEY_ADMIN_DEV`) e, se configurado, o
   Groq (`GroqProvider`, TASK-059, opcional — só entra se
@@ -28,17 +29,17 @@ Perfis previstos:
   disponibilidade. Sem a chave do Groq, `ADMIN`/`DEV` usa só o Flash, sem
   fallback (mesmo comportamento de `USER`, chave separada). **Nenhum nível
   Gemini Pro/preview participa da cascata (TASK-064/DEC-050)** — a
-  distinção `USER`/`ADMIN`/`DEV` é só de permissão/autorização do resto do
-  sistema, nunca de modelo de IA.
+  perfil não recebe o provider pago do DEV.
+- `DEV`: rota isolada no OpenRouter com `anthropic/claude-sonnet-4`. Quando a
+  requisição define `require_search_grounding=True`, disponibiliza o server
+  tool `openrouter:web_search` com engine Firecrawl; o modelo decide se busca.
 - `PLUS`: futuro; não existe no contrato nem na V1.
 
-O perfil USER traduz mensagens para o contrato Gemini, fecha o cliente assíncrono
+O perfil USER traduz mensagens para o contrato de cada provider e
 após cada chamada e converte quota, indisponibilidade, autenticação e rejeição em
 erros sanitizados. Ao atingir o limite, `AIProviderQuotaExceeded` permite ao canal
-informar que o usuário tente novamente mais tarde. USER nunca tenta o Groq.
-OpenAI, Claude, usuário pago e comparação multi-IA ficam para a V2 — o Groq só
-existe como fallback interno de infraestrutura do ADMIN/DEV, nunca como escolha
-exposta ao usuário final.
+informar que o usuário tente novamente mais tarde. USER nunca recebe
+`anthropic/claude-sonnet-4` nem qualquer fallback pago.
 
 `GroqProvider` (TASK-059) chama a API compatível com OpenAI do Groq via
 `httpx`, traduzindo os papéis `system`/`user`/`assistant` diretamente (sem a

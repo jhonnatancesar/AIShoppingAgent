@@ -1423,3 +1423,24 @@ aliases com hífen continuam aceitos como texto digitado.
 - **Classificação:** Implementar agora
 - **Justificativa:** a alteração afeta somente a política de ambiente, não amplia o escopo funcional do MVP e evita instalar uma versão antiga quando a versão estável atual é compatível. Cada atualização continua condicionada à validação das dependências e dos testes aplicáveis.
 - **Próxima ação:** registrar em `docs/DEPENDENCIES.md` a versão mais recente efetivamente validada e repetir a validação quando uma nova versão estável for adotada.
+### DEC-061 — Separar roteamento gratuito USER do perfil pago DEV via OpenRouter
+
+- **Data:** 2026-08-15
+- **Ideia:** manter toda IA atrás do `AIProviderManager`, ampliar o perfil
+  `USER` exclusivamente com fallbacks gratuitos
+  Gemini → Groq (`openai/gpt-oss-120b`) → OpenRouter (`openrouter/free`) e
+  separar o perfil `DEV` para usar somente
+  `anthropic/claude-sonnet-4` via OpenRouter. Pesquisa web do DEV permanece
+  opt-in por `AIRequest.require_search_grounding`; o provider disponibiliza
+  o server tool `openrouter:web_search`, preferindo o engine `firecrawl`, e o
+  próprio modelo decide se precisa pesquisar. `ADMIN` preserva a cascata
+  gratuita existente, pois o pedido não autoriza alterar seu custo.
+- **Classificação:** Implementar agora
+- **Justificativa:** pedido explícito do usuário para corrigir a continuidade
+  após timeout/HTTP 504 do Gemini, remover o modelo Groq antigo e isolar de
+  forma verificável o saldo pago do OpenRouter. A mudança reutiliza contratos,
+  circuit breaker, telemetria e capability de grounding já existentes; não
+  altera fluxos determinísticos do Telegram, coleta, preços ou missões.
+- **Próxima ação:** implementar e validar somente o roteamento descrito, sem
+  chamadas reais, push, rebuild ou deploy. Depois registrar, sem executar, a
+  próxima TASK livre para o drift conhecido do `alembic check`.

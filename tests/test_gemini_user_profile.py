@@ -148,12 +148,11 @@ class _PoisonProvider:
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("profile", [UserRole.ADMIN, UserRole.DEV])
-async def test_admin_dev_uses_gemini_flash_first(profile: UserRole) -> None:
+async def test_admin_uses_gemini_flash_first() -> None:
     gemini, _ = _provider(_FakeModels(response_text="Resposta Flash"))
     manager = AdminDevAIProviderManager(gemini)
 
-    response = await manager.generate(_request(profile))
+    response = await manager.generate(_request(UserRole.ADMIN))
 
     assert response.model == "gemini-3.6-flash"
     assert response.content == "Resposta Flash"
@@ -164,8 +163,10 @@ async def test_admin_dev_manager_rejects_user() -> None:
     gemini, _ = _provider(_FakeModels())
     manager = AdminDevAIProviderManager(gemini)
 
-    with pytest.raises(AIRequestError, match="ADMIN/DEV"):
+    with pytest.raises(AIRequestError, match="ADMIN"):
         await manager.generate(_request(UserRole.USER))
+    with pytest.raises(AIRequestError, match="ADMIN"):
+        await manager.generate(_request(UserRole.DEV))
 
 
 @pytest.mark.anyio
@@ -174,7 +175,7 @@ async def test_admin_dev_falls_back_to_groq_when_gemini_fails(
     error: AIProviderError,
 ) -> None:
     gemini, _ = _provider(_FakeModels(error=error))
-    groq = _StaticProvider("groq", "llama-3.3-70b-versatile", response_text="Groq")
+    groq = _StaticProvider("groq", "openai/gpt-oss-120b", response_text="Groq")
     manager = AdminDevAIProviderManager(gemini, groq=groq)
 
     response = await manager.generate(_request(UserRole.ADMIN))
@@ -228,11 +229,11 @@ def test_admin_dev_factory_wires_groq_only_when_key_configured() -> None:
             _env_file=None,
             gemini_api_key_admin_dev="configured-key",
             groq_api_key="configured-groq-key",
-            groq_model="llama-3.3-70b-versatile",
+            groq_model="openai/gpt-oss-120b",
         )
     )
     assert isinstance(with_groq._groq, GroqProvider)  # noqa: SLF001
-    assert with_groq._groq.model == "llama-3.3-70b-versatile"  # noqa: SLF001
+    assert with_groq._groq.model == "openai/gpt-oss-120b"  # noqa: SLF001
 
 
 @pytest.mark.anyio

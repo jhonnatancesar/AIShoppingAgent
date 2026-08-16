@@ -26,6 +26,7 @@ services:
       AISHOPPING_GEMINI_API_KEY_USER_FILE: /run/secrets/gemini_api_key_user
       AISHOPPING_GEMINI_API_KEY_ADMIN_DEV_FILE: /run/secrets/gemini_api_key_admin_dev
       AISHOPPING_GROQ_API_KEY_FILE: /run/secrets/groq_api_key
+      AISHOPPING_OPENROUTER_API_KEY_FILE: /run/secrets/openrouter_api_key
       AISHOPPING_TELEGRAM_BOT_TOKEN_FILE: /run/secrets/telegram_bot_token
       AISHOPPING_TELEGRAM_WEBHOOK_SECRET_FILE: /run/secrets/telegram_webhook_secret
       AISHOPPING_OBSERVABILITY_ENABLED: "true"
@@ -55,6 +56,7 @@ services:
       - gemini_api_key_user
       - gemini_api_key_admin_dev
       - groq_api_key
+      - openrouter_api_key
       - telegram_bot_token
       - telegram_webhook_secret
     depends_on:
@@ -287,6 +289,8 @@ secrets:
     file: ${AISHOPPING_SECRETS_DIR:-./.secrets}/gemini_api_key_admin_dev
   groq_api_key:
     file: ${AISHOPPING_SECRETS_DIR:-./.secrets}/groq_api_key
+  openrouter_api_key:
+    file: ${AISHOPPING_SECRETS_DIR:-./.secrets}/openrouter_api_key
   telegram_bot_token:
     file: ${AISHOPPING_SECRETS_DIR:-./.secrets}/telegram_bot_token
   telegram_webhook_secret:

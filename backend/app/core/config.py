@@ -14,6 +14,7 @@ _SECRET_FILE_FIELDS = {
     "gemini_api_key_user": "gemini_api_key_user_file",
     "gemini_api_key_admin_dev": "gemini_api_key_admin_dev_file",
     "groq_api_key": "groq_api_key_file",
+    "openrouter_api_key": "openrouter_api_key_file",
     "telegram_bot_token": "telegram_bot_token_file",
     "telegram_webhook_secret": "telegram_webhook_secret_file",
 }
@@ -53,7 +54,16 @@ class Settings(BaseSettings):
     gemini_grounding_model: str = Field(default="gemini-2.5-flash", min_length=1)
     groq_api_key: SecretStr | None = None
     groq_api_key_file: Path | None = None
-    groq_model: str = Field(default="llama-3.3-70b-versatile", min_length=1)
+    groq_model: Literal["openai/gpt-oss-120b"] = "openai/gpt-oss-120b"
+    openrouter_api_key: SecretStr | None = None
+    openrouter_api_key_file: Path | None = None
+    openrouter_free_model: Literal["openrouter/free"] = "openrouter/free"
+    openrouter_dev_model: Literal["anthropic/claude-sonnet-4"] = (
+        "anthropic/claude-sonnet-4"
+    )
+    openrouter_web_search_engine: Literal[
+        "auto", "native", "exa", "firecrawl", "parallel", "perplexity"
+    ] = "firecrawl"
     telegram_bot_token: SecretStr | None = None
     telegram_bot_token_file: Path | None = None
     telegram_webhook_secret: SecretStr | None = None

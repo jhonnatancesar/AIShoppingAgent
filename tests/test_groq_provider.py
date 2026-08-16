@@ -86,7 +86,7 @@ async def test_groq_generates_response_and_sends_authenticated_messages() -> Non
     response = await provider.generate(request)
 
     assert response.provider == "groq"
-    assert response.model == "llama-3.3-70b-versatile"
+    assert response.model == "openai/gpt-oss-120b"
     assert response.content == "Resposta Groq"
     assert client.captured_call is not None
     assert client.captured_call["headers"]["Authorization"] == "Bearer test-groq-key"

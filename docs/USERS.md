@@ -82,9 +82,9 @@ fechado. O papel `PLUS`, planos e múltiplos papéis permanecem fora do MVP.
   (`app.users.service.get_or_create_telegram_user`) não autentica sozinha e não
   conhece missões nem qualquer outra lógica de domínio.
 - O papel (`role`) determina qual perfil de IA uma interação real usa
-  (TASK-060): o webhook do Telegram escolhe entre `USER` (Gemini gratuito,
-  sem fallback) e a cascata `ADMIN`/`DEV` (`AdminDevAIProviderManager`,
-  TASK-059) a partir do `User.role` já resolvido — nunca por escolha do
+  (TASK-060/DEC-061): o webhook escolhe `USER` (cadeia exclusivamente
+  gratuita), `ADMIN` (Gemini/Groq gratuito) ou `DEV` (Claude Sonnet 4 pago
+  via OpenRouter) a partir do `User.role` já resolvido — nunca por escolha do
   próprio usuário. O proprietário da V1 foi promovido uma única vez de ADMIN
   para DEV por UUID validado, com auditoria append-only. Não existe migration,
   rotina de startup nem conversão geral de ADMIN para DEV.

@@ -60,7 +60,7 @@ async def test_fallback_records_gemini_failure_and_groq_success(
             AIProviderQuotaExceeded(quota_reset_at=reset_at),
         ),
         groq=_Provider(
-            "llama-3.3-70b-versatile",
+            "openai/gpt-oss-120b",
             "resposta que também não deve ir ao log",
             provider_id="groq",
         ),
@@ -70,7 +70,7 @@ async def test_fallback_records_gemini_failure_and_groq_success(
     with caplog.at_level(logging.INFO, logger="app.ai_provider"):
         response = await manager.generate(request)
 
-    assert response.model == "llama-3.3-70b-versatile"
+    assert response.model == "openai/gpt-oss-120b"
     records = [record for record in caplog.records if record.name == "app.ai_provider"]
     assert [record.ai_outcome for record in records] == [  # type: ignore[attr-defined]
         "quota_exceeded",

@@ -150,7 +150,7 @@ async def test_ai_provider_circuits_are_independent() -> None:
     )
     request = AIRequest(
         uuid4(),
-        UserRole.DEV,
+        UserRole.ADMIN,
         "resilience_test",
         (AIMessage(AIMessageRole.USER, "teste"),),
         datetime.now(UTC),

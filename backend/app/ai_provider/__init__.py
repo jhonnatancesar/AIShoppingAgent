@@ -19,14 +19,18 @@ from app.ai_provider.gemini import GeminiProvider
 from app.ai_provider.groq import GroqProvider
 from app.ai_provider.manager import (
     AdminDevAIProviderManager,
+    DevAIProviderManager,
     UserAIProviderManager,
     build_admin_dev_ai_provider_manager,
+    build_dev_ai_provider_manager,
     build_user_ai_provider_manager,
 )
+from app.ai_provider.openrouter import OpenRouterProvider
 from app.ai_provider.telemetry import AIAttemptOutcome, AIQuotaNotice
 
 __all__ = [
     "AdminDevAIProviderManager",
+    "DevAIProviderManager",
     "AIAttemptOutcome",
     "AIQuotaNotice",
     "AIManagerError",
@@ -43,8 +47,10 @@ __all__ = [
     "AIResponse",
     "GeminiProvider",
     "GroqProvider",
+    "OpenRouterProvider",
     "UserAIProviderManager",
     "build_admin_dev_ai_provider_manager",
+    "build_dev_ai_provider_manager",
     "build_user_ai_provider_manager",
     "validate_provider_response",
 ]

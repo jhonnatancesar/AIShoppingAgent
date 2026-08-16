@@ -1,5 +1,22 @@
 # Changelog
 
+## 2026-08-15 (3) — Roteamento USER/DEV isolado e TASK-086 registrada
+
+- USER passa a usar somente a cadeia gratuita Gemini → Groq
+  (`openai/gpt-oss-120b`) → OpenRouter (`openrouter/free`), com fallback
+  apenas para indisponibilidade/cota e erro controlado ao final.
+- DEV passa a usar exclusivamente OpenRouter com
+  `anthropic/claude-sonnet-4`; `openrouter:web_search` fica disponível apenas
+  em requisições opt-in de grounding, preferindo Firecrawl. ADMIN preserva a
+  cadeia gratuita existente.
+- OpenRouter foi integrado como `AIProvider` interno, mantendo circuit breaker,
+  telemetria sanitizada e segredo por configuração/arquivo. Nenhuma chamada
+  real foi feita; o secret local ainda precisa ser provisionado pelo operador.
+- Fluxos determinísticos do Telegram, cancelamento, coleta, preços, Alembic e
+  banco ativo não foram alterados.
+- TASK-086 registrada para o drift conhecido do `alembic check`; não iniciada.
+- Sem push, rebuild ou deploy.
+
 ## 2026-08-15 (2) — Handoff para continuidade no Windows Server
 
 - Definido `C:\app\AIShoppingAgent` como repositório autoritativo para a

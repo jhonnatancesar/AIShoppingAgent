@@ -70,16 +70,19 @@ Docker, as chaves podem ficar
 no ambiente ou `.env` ignorado. No Compose e em produção, ficam somente em
 arquivos montados por `/run/secrets`, conforme `docs/SECRETS.md`.
 
-`httpx` 0.28.1 (TASK-059) é usado por `GroqProvider` para chamar a API
+`httpx` 0.28.1 é usado por `GroqProvider` e `OpenRouterProvider`. O Groq
 compatível com OpenAI do Groq (`/openai/v1/chat/completions`), fallback
 opcional do perfil ADMIN/DEV entre o Gemini premium e o Gemini gratuito.
 Exige `AISHOPPING_GROQ_API_KEY`; o nome do modelo é fixado em
-`Settings.groq_model` (`llama-3.3-70b-versatile`) — `compose.yaml` não
+`Settings.groq_model` (`openai/gpt-oss-120b`) — `compose.yaml` não
 propaga nenhuma variável de override para ele, então `AISHOPPING_GROQ_MODEL`
 foi removida dos arquivos de exemplo (TASK-065); alterar o modelo exige
 mudar o default no código, não uma variável de ambiente. Sem a chave, o
-`AdminDevAIProviderManager` mantém o comportamento de dois níveis (Gemini
-premium → Gemini gratuito) já validado nas TASKs 029–031. A execução local
+`AdminDevAIProviderManager` mantém o comportamento gratuito do ADMIN. O
+OpenRouter exige `AISHOPPING_OPENROUTER_API_KEY`; USER fixa
+`openrouter/free`, DEV fixa `anthropic/claude-sonnet-4`. O web search DEV usa
+o server tool do OpenRouter com Firecrawl configurado na conta OpenRouter;
+nenhuma chamada Firecrawl direta foi criada. A execução local
 fora do Docker pode usar `backend/.env`; Compose/produção usam secret file.
 
 O webhook do Telegram (TASK-034) não usa SDK — chama a Bot API diretamente com

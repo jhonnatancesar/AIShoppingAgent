@@ -1,5 +1,12 @@
 # Project Context
 
+**Atualização 2026-08-15 (roteamento de IA):** `DEC-061` separa os perfis:
+USER usa somente Gemini → Groq `openai/gpt-oss-120b` → OpenRouter
+`openrouter/free`; ADMIN preserva a cadeia gratuita; DEV usa exclusivamente
+OpenRouter `anthropic/claude-sonnet-4`, com `openrouter:web_search` opt-in e
+engine Firecrawl. Nenhuma chamada real, push, rebuild ou deploy foi feita. A
+TASK-086 foi registrada para o drift do Alembic e permanece não iniciada.
+
 ## Estado
 
 Fase: perfis e telemetria de IA concluídos e validados contra o Gemini real nas
