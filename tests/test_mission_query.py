@@ -10,6 +10,7 @@ from app.missions.query import (
     MissionReferenceError,
     find_missions_by_reference,
     list_missions_for_user,
+    list_visible_missions_for_user,
     resolve_mission_for_command,
 )
 
@@ -33,6 +34,23 @@ def test_list_missions_for_user_returns_scalars_result() -> None:
     result = asyncio.run(list_missions_for_user(session, user_id=uuid4()))
 
     assert result == missions
+
+
+def test_list_visible_missions_for_user_filters_owner_and_allowed_statuses() -> None:
+    missions = [_FakeMission(MissionStatus.ACTIVE)]
+    session = _session(missions)
+    user_id = uuid4()
+
+    result = asyncio.run(
+        list_visible_missions_for_user(session, user_id=user_id, limit=16)
+    )
+
+    assert result == missions
+    statement = session.scalars.await_args.args[0]
+    compiled = str(statement.compile(compile_kwargs={"literal_binds": True}))
+    assert user_id.hex in compiled
+    assert "missions.status IN ('active', 'paused', 'cancelled')" in compiled
+    assert "LIMIT 16" in compiled
 
 
 def test_find_missions_by_reference_returns_scalars_result() -> None:

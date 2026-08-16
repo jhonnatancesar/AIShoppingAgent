@@ -1,5 +1,12 @@
 # Project Context
 
+**Atualização 2026-08-16 (TASK-088):** `/listar_missoes`, o alias com hífen e
+as entradas textuais `missoes`/`missões` restauram a consulta explícita sem
+reintroduzir o roteador universal por IA. A resposta autenticada lista até 15
+missões recentes em formato numerado, somente nos estados ativa, pausada e
+cancelada, sempre com ownership no banco. `completed`, `expired` e missões de
+outro usuário ficam fora. O menu nativo inclui o novo comando.
+
 **Atualização operacional 2026-08-16 (estado autoritativo):** o Windows Server
 executa o HEAD `0e90cf0805a24cfd873d4d0257dacd8ae03c7920`, já presente em
 `origin/main`. Foram implantados os pacotes de IA/Firecrawl, TASK-086,

@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-08-16 — TASK-088
+
+- Adicionado `/listar_missoes` determinístico, com alias `/listar-missoes` e
+  compatibilidade textual para `missoes`/`missões`, sem chamar IA.
+- A listagem usa numeração e rótulos localizados, limitada às missões recentes
+  `active`, `paused` e `cancelled` do proprietário autenticado.
+- O menu oficial do Telegram inclui o novo comando e é reaplicado por
+  `setMyCommands` no deploy.
+- Aprovados 152 testes focados, 1.192 testes não-integração (1 ignorado,
+  cobertura 90,69%), teste real em PostgreSQL 18.4 descartável, Ruff e
+  `git diff --check`.
+
 ## 2026-08-16 — Manutenção, limite WSL2 e deploy do HEAD aprovado
 
 - Aplicado `%UserProfile%\.wslconfig` com 4 GB de RAM, 2 GB de swap e

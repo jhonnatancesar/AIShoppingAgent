@@ -369,6 +369,13 @@ funcionais permanecem inalterados. Foram aprovados 294 testes focados e 1.186
 testes não-integração (1 ignorado, cobertura 90,68%). Permanecem pendentes
 TASK-077 e TASK-084; nenhuma foi iniciada.
 
+**Atualização 2026-08-16 (5):** a TASK-088 está concluída. O comando
+`/listar_missoes`, seu alias com hífen e as entradas `missoes`/`missões`
+listam, sem IA, até 15 missões recentes do proprietário nos estados ativa,
+pausada e cancelada, em formato numerado. Concluídas/expiradas e missões de
+outro usuário não aparecem. O menu nativo do Telegram inclui o novo comando.
+Permanecem pendentes TASK-077 e TASK-084; nenhuma foi iniciada.
+
 **Atualização 2026-08-16 (4) — estado operacional autoritativo:** a `main` no
 Windows Server está em `0e90cf0805a24cfd873d4d0257dacd8ae03c7920`, igual a
 `origin/main`; os commits da TASK-086 (`f5c69e5`), TASK-076 (`c4b1e5e`),

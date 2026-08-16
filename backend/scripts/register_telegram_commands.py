@@ -8,6 +8,10 @@ _COMMANDS = [
     {"command": "ajuda", "description": "Ver ajuda"},
     {"command": "criar_missao", "description": "Criar uma nova missão"},
     {"command": "cancelar_missao", "description": "Cancelar uma missão existente"},
+    {
+        "command": "listar_missoes",
+        "description": "Listar missões ativas, pausadas e canceladas",
+    },
     {"command": "missao", "description": "Entender o fluxo de missões"},
     {
         "command": "editar_missao",

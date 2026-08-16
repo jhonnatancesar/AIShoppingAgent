@@ -1199,6 +1199,78 @@ async def test_query_mission_intent_lists_missions_found(
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize(
+    "command", ["/listar_missoes", "/listar-missoes", "missoes", "missões"]
+)
+async def test_list_missions_command_is_numbered_and_deterministic(
+    monkeypatch: pytest.MonkeyPatch,
+    command: str,
+) -> None:
+    fake_user = _fake_user()
+    fake_user.username = "cliente"
+    missions = [
+        _fake_mission(title="Processador Ryzen", status=MissionStatus.ACTIVE),
+        _fake_mission(title="Memória DDR5", status=MissionStatus.CANCELLED),
+        _fake_mission(title="Monitor 4K", status=MissionStatus.PAUSED),
+    ]
+    monkeypatch.setattr(
+        "app.telegram.router.has_active_session_async", AsyncMock(return_value=True)
+    )
+    list_mock = AsyncMock(return_value=missions)
+    monkeypatch.setattr(
+        "app.telegram.router.list_visible_missions_for_user", list_mock
+    )
+    adapter = _FakeAdapter(_intent(kind=IntentKind.UNKNOWN))
+    session = _async_session()
+
+    reply = await _handle_message(
+        _message(command),
+        user=fake_user,
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        session=session,
+        auth_public_base_url="https://auth.example.test",
+        created_now=False,
+    )
+
+    assert reply == (
+        "📋 Suas missões:\n\n"
+        "1 — Processador Ryzen — ativa\n"
+        "2 — Memória DDR5 — cancelada\n"
+        "3 — Monitor 4K — pausada"
+    )
+    assert adapter.calls == []
+    list_mock.assert_awaited_once_with(session, user_id=fake_user.id, limit=16)
+
+
+@pytest.mark.anyio
+async def test_list_missions_command_handles_empty_result_without_ai(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_user = _fake_user()
+    fake_user.username = "cliente"
+    monkeypatch.setattr(
+        "app.telegram.router.has_active_session_async", AsyncMock(return_value=True)
+    )
+    monkeypatch.setattr(
+        "app.telegram.router.list_visible_missions_for_user",
+        AsyncMock(return_value=[]),
+    )
+    adapter = _FakeAdapter(_intent(kind=IntentKind.UNKNOWN))
+
+    reply = await _handle_message(
+        _message("missões"),
+        user=fake_user,
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        session=_async_session(),
+        auth_public_base_url="https://auth.example.test",
+        created_now=False,
+    )
+
+    assert reply == "Você não tem missões ativas, pausadas ou canceladas."
+    assert adapter.calls == []
+
+
+@pytest.mark.anyio
 async def test_mission_command_intent_stages_confirmation_without_transitioning(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -4045,7 +4117,12 @@ async def test_ambiguous_confirmation_retries_without_ai_and_keeps_state() -> No
 def test_registered_telegram_commands_use_only_bot_api_compatible_names() -> None:
     names = {command["command"] for command in _COMMANDS}
 
-    assert {"criar_missao", "cancelar_missao", "editar_missao"} <= names
+    assert {
+        "criar_missao",
+        "cancelar_missao",
+        "editar_missao",
+        "listar_missoes",
+    } <= names
     assert all(
         name.replace("_", "").isalnum() and name == name.lower() for name in names
     )

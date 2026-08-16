@@ -615,11 +615,12 @@ docker compose run --rm api python -m scripts.register_telegram_commands
 
 `--action info` não exibe o token nem o segredo do webhook — só confirma a
 URL registrada e o status da entrega. Comandos registrados atualmente pelo
-projeto (`backend/scripts/register_telegram_commands.py`, 12 comandos):
-`/start`, `/ajuda`, `/criar_missao`, `/cancelar_missao`, `/missao`,
+projeto (`backend/scripts/register_telegram_commands.py`, 13 comandos):
+`/start`, `/ajuda`, `/criar_missao`, `/cancelar_missao`, `/listar_missoes`, `/missao`,
 `/editar_missao`, `/cadastro`, `/entrar`, `/recuperar`, `/sair`,
 `/preferencias` e `/privacidade`. O campo formal da Bot API usa underscore;
-o webhook também aceita os três aliases digitados com hífen.
+o webhook também aceita os aliases digitados com hífen. `missoes` e `missões`
+também acionam a listagem de forma determinística.
 
 Para desenvolvimento/validação temporária (nunca como URL definitiva de
 produção), o projeto usa `cloudflared`; remova o webhook temporário ao

@@ -1,5 +1,9 @@
 # Tarefas
 
+**TASK-088 concluída:** `/listar_missoes`, seus aliases e as palavras
+`missoes`/`missões` listam deterministicamente missões ativas, pausadas e
+canceladas; o menu nativo passa a publicar o novo comando.
+
 Cada arquivo descreve uma unidade de trabalho. Antes de executar uma tarefa, leia os documentos obrigatórios definidos em `AGENTS.md`.
 
 **TASK-076, TASK-086 e TASK-087 concluídas:** o drift das três constraints foi corrigido na metadata
@@ -8,7 +12,7 @@ aprovados em PostgreSQL 18.4 descartável. A revisão transversal de copy foi
 aplicada sem mudança funcional. Permanecem pendentes TASK-077 e TASK-084.
 
 **Próximas TASKs pendentes:** TASK-077 e TASK-084. Nenhuma foi iniciada pela
-conclusão da TASK-087.
+conclusão da TASK-088.
 
 **Deploy 2026-08-16:** TASK-076, TASK-086, o pacote de IA/Firecrawl e
 TASK-087 estão presentes em `origin/main` e implantados no Windows Server no

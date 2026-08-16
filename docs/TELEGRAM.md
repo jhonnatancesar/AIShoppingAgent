@@ -121,6 +121,8 @@ fechado do `IntentInterpreter`:
   `/editar-missao` continua aceito como alias. Detalhes em
   `docs/MISSION_COMMANDS.md`.
 - `/start` e `/ajuda`: orientação de onboarding e autenticação.
+- `/listar_missoes` (também `/listar-missoes`, `missoes` e `missões`): lista
+  numerada e sem IA das missões ativas, pausadas e canceladas do proprietário.
 
 Confirmações de missão são locais: `sim`/`s`/`1` confirmam e
 `não`/`nao`/`n`/`2` recusam. Resposta inválida pede novamente e nunca é

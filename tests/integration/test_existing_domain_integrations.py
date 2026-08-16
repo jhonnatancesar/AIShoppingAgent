@@ -1,5 +1,7 @@
 """Validações permanentes dos serviços que exigem PostgreSQL real."""
 
+import asyncio
+import selectors
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
@@ -10,6 +12,7 @@ from app.missions.models import (
     MissionSchedule,
     MissionStatus,
 )
+from app.missions.query import list_visible_missions_for_user
 from app.missions.service import transition_mission
 from app.users.models import User, UserRole
 
@@ -25,6 +28,70 @@ from backend.scripts.validate_recommendation_flow import (
 )
 
 pytestmark = pytest.mark.integration
+
+
+def test_visible_mission_list_filters_owner_and_status_in_postgresql(
+    integration_database,
+) -> None:
+    """TASK-088: ownership e estados são filtrados pelo PostgreSQL real."""
+    now = datetime.now(UTC)
+    with integration_database.sessions.begin() as session:
+        owner = User(
+            display_name="Proprietário da listagem",
+            role=UserRole.USER,
+            is_active=True,
+            telegram_user_id=8_150_000_088,
+        )
+        other = User(
+            display_name="Outro proprietário",
+            role=UserRole.USER,
+            is_active=True,
+            telegram_user_id=8_150_000_089,
+        )
+        session.add_all([owner, other])
+        session.flush()
+        session.add_all(
+            [
+                Mission(user_id=owner.id, title="Ativa", status=MissionStatus.ACTIVE),
+                Mission(user_id=owner.id, title="Pausada", status=MissionStatus.PAUSED),
+                Mission(
+                    user_id=owner.id,
+                    title="Cancelada",
+                    status=MissionStatus.CANCELLED,
+                ),
+                Mission(
+                    user_id=owner.id,
+                    title="Concluída",
+                    status=MissionStatus.COMPLETED,
+                ),
+                Mission(
+                    user_id=owner.id,
+                    title="Expirada",
+                    status=MissionStatus.EXPIRED,
+                    expires_at=now - timedelta(minutes=1),
+                    created_at=now - timedelta(minutes=2),
+                    updated_at=now - timedelta(minutes=1),
+                ),
+                Mission(
+                    user_id=other.id,
+                    title="Missão alheia",
+                    status=MissionStatus.ACTIVE,
+                ),
+            ]
+        )
+        owner_id = owner.id
+
+    async def _query() -> list[Mission]:
+        async with integration_database.async_sessions() as session:
+            return await list_visible_missions_for_user(
+                session, user_id=owner_id, limit=16
+            )
+
+    missions = asyncio.run(
+        _query(),
+        loop_factory=lambda: asyncio.SelectorEventLoop(selectors.SelectSelector()),
+    )
+    assert {mission.title for mission in missions} == {"Ativa", "Pausada", "Cancelada"}
 
 
 def test_recommendation_comparison_and_confirmation(integration_database) -> None:

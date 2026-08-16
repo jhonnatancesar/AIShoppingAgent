@@ -65,6 +65,7 @@ from app.missions.query import (
     find_missions_by_reference,
     list_mission_command_candidates,
     list_missions_for_user,
+    list_visible_missions_for_user,
 )
 from app.missions.service import (
     InvalidMissionTransitionError,
@@ -190,6 +191,11 @@ _CANCEL_MISSION_COMMAND = "/cancelar_missao"
 _CANCEL_MISSION_COMMAND_ALIAS = "/cancelar-missao"
 _EDIT_MISSION_COMMAND = "/editar_missao"
 _EDIT_MISSION_COMMAND_ALIAS = "/editar-missao"
+_LIST_MISSIONS_COMMAND = "/listar_missoes"
+_LIST_MISSIONS_ALIASES = frozenset(
+    {_LIST_MISSIONS_COMMAND, "/listar-missoes", "missoes", "missões"}
+)
+_LIST_MISSIONS_DISPLAY_LIMIT = 15
 _MISSION_DESCRIPTION_TTL = timedelta(minutes=10)
 _AWAIT_CREATE_MISSION_DESCRIPTION = "await_create_mission_description"
 _CANCEL_MISSION_CHOICE = "cancel_mission_choice"
@@ -260,6 +266,7 @@ _HELP_REPLY = (
     "🛒 COMPRAS\n"
     "/criar_missao — criar uma nova missão\n"
     "/cancelar_missao — cancelar uma missão existente\n"
+    "/listar_missoes — listar missões ativas, pausadas e canceladas\n"
     "/missao — entender como funcionam as missões\n"
     "/editar_missao — mudar lojas ou preço-alvo de uma missão pausada\n\n"
     "👤 CONTA\n"
@@ -669,6 +676,9 @@ async def _handle_message(
     if lowered in {_EDIT_MISSION_COMMAND, _EDIT_MISSION_COMMAND_ALIAS}:
         authorize(session, user, Permission.MISSION_EDIT)
         return await _start_edit_mission_flow(session=session, user=user)
+    if lowered in _LIST_MISSIONS_ALIASES:
+        authorize(session, user, Permission.MISSION_READ)
+        return await _list_missions_reply(session=session, user=user)
     if user.pending_intent is not None:
         return await _resolve_pending_intent(
             message, adapters=adapters, session=session, user=user
@@ -940,6 +950,32 @@ async def _handle_query_mission(
         f"{format_mission_status(mission.status)}"
         for mission in missions
     )
+    return "\n".join(lines)
+
+
+async def _list_missions_reply(*, session: AsyncSession, user: User) -> str:
+    """TASK-088: listagem explícita, numerada e sem passagem pela IA."""
+    missions = await list_visible_missions_for_user(
+        session,
+        user_id=user.id,
+        limit=_LIST_MISSIONS_DISPLAY_LIMIT + 1,
+    )
+    if not missions:
+        return "Você não tem missões ativas, pausadas ou canceladas."
+
+    visible = missions[:_LIST_MISSIONS_DISPLAY_LIMIT]
+    lines = ["📋 Suas missões:", ""]
+    lines.extend(
+        f"{index} — {mission.title} — {format_mission_status(mission.status)}"
+        for index, mission in enumerate(visible, start=1)
+    )
+    if len(missions) > _LIST_MISSIONS_DISPLAY_LIMIT:
+        lines.extend(
+            [
+                "",
+                f"Mostrando as {_LIST_MISSIONS_DISPLAY_LIMIT} missões mais recentes.",
+            ]
+        )
     return "\n".join(lines)
 
 

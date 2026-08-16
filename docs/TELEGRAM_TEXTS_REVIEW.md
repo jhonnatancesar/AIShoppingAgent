@@ -49,6 +49,7 @@ Use /recuperar.
 🛒 COMPRAS
 /criar_missao — criar uma nova missão
 /cancelar_missao — cancelar uma missão existente
+/listar_missoes — listar missões ativas, pausadas e canceladas
 /missao — entender como funcionam as missões
 /editar_missao — mudar lojas ou preço-alvo de uma missão pausada
 

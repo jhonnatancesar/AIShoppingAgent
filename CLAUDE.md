@@ -42,5 +42,7 @@ do `alembic check` foi resolvido pela TASK-086 sem migration; o head permanece
 `20260811_0001`. TASK-076 e TASK-087 também estão concluídas. O WSL2 opera com
 limite de 4 GB, swap de 2 GB e reclaim gradual. Somente schedules de missões
 `active` podem ficar habilitados; `cancelled`, `completed` e `expired` ficam
-desabilitados. Próximas TASKs pendentes: TASK-077 e TASK-084, ambas não
-iniciadas.
+desabilitados. A TASK-088 adiciona listagem determinística e numerada por
+`/listar_missoes`, `/listar-missoes`, `missoes` ou `missões`, sem IA, apenas
+para ativa/pausada/cancelada do proprietário. Próximas TASKs pendentes:
+TASK-077 e TASK-084, ambas não iniciadas.

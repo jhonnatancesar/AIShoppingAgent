@@ -26,6 +26,7 @@
 | Disponibilidade e fallback dos provedores de IA | TASK-064 | Revisa a cascata ADMIN/DEV do `AIProviderManager` (modelos, ordem, taxonomia de erro) achada degradada durante a validação da TASK-063, antes da release ser definitiva (`DEC-049`) |
 | Drift de constraints no Alembic | TASK-086 | Concluída; metadata corrigida e runner aprovado em PostgreSQL 18.4 descartável |
 | Padronização de textos visíveis | TASK-087 | Concluída; catálogo aplicado sem mudança funcional e suíte não-integração aprovada |
+| Listagem de missões e menu Telegram | TASK-088 | Concluída; comando determinístico numerado para ativas, pausadas e canceladas; menu oficial sincronizado no deploy |
 | Estado operacional no Windows Server | manutenção 2026-08-16 | HEAD `0e90cf0` implantado; 7 serviços saudáveis; WSL2 limitado a 4 GB; somente schedules de missões ativas habilitados |
 | Expansão de fontes (futuro) | Tarefas a definir | Mercado Livre, Shopee, AliExpress e outras fontes futuras |
 

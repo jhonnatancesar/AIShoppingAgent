@@ -13,6 +13,11 @@ from app.missions.models import Mission, MissionCriteria, MissionStatus
 _TERMINAL_STATUSES = frozenset(
     {MissionStatus.COMPLETED, MissionStatus.CANCELLED, MissionStatus.EXPIRED}
 )
+_VISIBLE_LIST_STATUSES = (
+    MissionStatus.ACTIVE,
+    MissionStatus.PAUSED,
+    MissionStatus.CANCELLED,
+)
 
 
 class MissionReferenceError(ValueError):
@@ -29,6 +34,29 @@ async def list_missions_for_user(
     statement = (
         select(Mission)
         .where(Mission.user_id == user_id)
+        .order_by(Mission.created_at.desc())
+        .limit(limit)
+    )
+    return list(await session.scalars(statement))
+
+
+async def list_visible_missions_for_user(
+    session: AsyncSession,
+    *,
+    user_id: UUID,
+    limit: int = 16,
+) -> list[Mission]:
+    """TASK-088: lista recente determinística para o comando do Telegram.
+
+    O filtro de proprietário e status ocorre no banco; `completed` e `expired`
+    nunca ocupam o limite destinado às missões visíveis.
+    """
+    statement = (
+        select(Mission)
+        .where(
+            Mission.user_id == user_id,
+            Mission.status.in_(_VISIBLE_LIST_STATUSES),
+        )
         .order_by(Mission.created_at.desc())
         .limit(limit)
     )

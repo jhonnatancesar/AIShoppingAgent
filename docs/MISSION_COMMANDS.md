@@ -126,9 +126,13 @@ impede uma confirmação nem um cancelamento.
 
 A Bot API aceita apenas letras minúsculas, dígitos e underscore no campo
 `BotCommand.command`. Por isso o menu registra `/criar_missao`,
-`/cancelar_missao` e `/editar_missao`. Os equivalentes com hífen são aceitos
+`/cancelar_missao`, `/listar_missoes` e `/editar_missao`. Os equivalentes com hífen são aceitos
 pelo roteador quando digitados como texto, mas não são enviados a
 `setMyCommands`.
+
+`/listar_missoes`, `/listar-missoes`, `missoes` e `missões` compartilham uma
+consulta determinística, sem IA, numerada e restrita ao proprietário. São
+exibidos somente os estados ativa, pausada e cancelada.
 
 ## Limite entre `204` e `500`
 

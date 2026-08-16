@@ -1,5 +1,19 @@
 # Decision Log
 
+## DEC-065 — Listagem determinística de missões e menu Telegram sincronizado
+
+- **Data:** 2026-08-16
+- **Classificação:** Nova TASK do MVP.
+- **Decisão:** criar a TASK-088 para adicionar `/listar_missoes`, restrito ao
+  proprietário autenticado, sem IA, exibindo somente missões `active`,
+  `paused` e `cancelled`; publicar o menu nativo pelo `setMyCommands` oficial.
+- **Justificativa:** `/ajuda` já descreve os comandos atuais, mas o menu do
+  Telegram não foi reaplicado depois do deploy. A consulta semântica por IA já
+  lista missões, porém não substitui um comando explícito, previsível e barato.
+- **Guardrails:** nenhuma transição, agenda, coleta, migration ou mudança de IA;
+  `completed` e `expired` não entram na nova listagem.
+
+
 ## DEC-064 — Revisão transversal de UX/copy como TASK própria
 
 - **Data:** 2026-08-16
