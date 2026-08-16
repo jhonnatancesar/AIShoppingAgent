@@ -1,5 +1,13 @@
 # Project Context
 
+**Atualização 2026-08-16 (TASK-087):** a revisão completa de UX/copy dos textos
+visíveis está concluída. Telegram, autenticação web, cadastro, preferências,
+notificações e privacidade seguem o catálogo aprovado, com listas em
+`1 — Opção`, confirmações em linhas próprias e melhor leitura móvel. Comandos,
+parsers, estados, TTLs e regras funcionais foram preservados. A suíte focada
+aprovou 294 testes; a não-integração aprovou 1.186 testes, 1 ignorado e 90,68%
+de cobertura.
+
 **Atualização 2026-08-16 (TASK-076):** falhas dos Store Providers agora deixam
 diagnóstico estruturado suficiente em `collection_source_failed` (classe,
 detalhe seguro, status, etapa e traceback limitado), somente no ponto local da

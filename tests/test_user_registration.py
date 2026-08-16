@@ -164,9 +164,9 @@ def test_registration_prompt_offers_numbered_stores_and_all_option() -> None:
 
     prompt = asyncio.run(advance_registration(user, answer="pular", session=_session()))
 
-    assert "1 - Kabum" in prompt
-    assert "4 - Amazon" in prompt
-    assert "5 - Todas" in prompt
+    assert "1 — Kabum" in prompt
+    assert "4 — Amazon" in prompt
+    assert "5 — Todas" in prompt
 
 
 @pytest.mark.parametrize(
@@ -218,9 +218,9 @@ def test_registration_prompt_offers_numbered_categories_and_all_option() -> None
 
     prompt = asyncio.run(advance_registration(user, answer="pular", session=_session()))
 
-    assert "1 - Hardware / Componentes de PC" in prompt
-    assert "15 - Geek e Colecionáveis" in prompt
-    assert "16 - Todas" in prompt
+    assert "1 — Hardware / Componentes de PC" in prompt
+    assert "15 — Geek e Colecionáveis" in prompt
+    assert "16 — Todas" in prompt
 
 
 @pytest.mark.parametrize(

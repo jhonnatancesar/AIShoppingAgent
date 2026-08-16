@@ -238,8 +238,8 @@ async def test_registration_numbered_stores_password_and_login_are_one_onboardin
             _post(client, 200, _PRIMARY_TELEGRAM_ID, "/cadastro")
             _post(client, 201, _PRIMARY_TELEGRAM_ID, "pessoa_e2e")
             _post(client, 202, _PRIMARY_TELEGRAM_ID, "pular")
-            assert "1 - Kabum" in replies[-1][1]
-            assert "5 - Todas" in replies[-1][1]
+            assert "1 — Kabum" in replies[-1][1]
+            assert "5 — Todas" in replies[-1][1]
             _post(client, 203, _PRIMARY_TELEGRAM_ID, "5")
             _post(client, 204, _PRIMARY_TELEGRAM_ID, "informatica")
             registration_reply = replies[-1][1]

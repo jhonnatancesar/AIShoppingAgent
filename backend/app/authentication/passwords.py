@@ -69,7 +69,10 @@ def validate_password(password: str, *, username: str | None = None) -> str:
             f"{folded_username}123456789",
         }
     if blocked or comparable in {"aishoppingagent", "aishoppingagent123"}:
-        raise PasswordPolicyError("Essa senha é muito comum ou previsível.")
+        raise PasswordPolicyError(
+            "Essa senha é muito comum ou previsível.\n\n"
+            "Escolha uma senha mais difícil de adivinhar."
+        )
     if not any(character.isupper() for character in normalized):
         raise PasswordPolicyError("A senha precisa ter pelo menos uma letra maiúscula.")
     if not any(character.islower() for character in normalized):

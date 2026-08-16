@@ -228,7 +228,9 @@ def test_fifth_bad_login_locks_temporarily_and_does_not_consume_token() -> None:
         _result(optional=credential),
     ]
 
-    with pytest.raises(AuthenticationError, match="Credenciais inválidas"):
+    with pytest.raises(
+        AuthenticationError, match="As credenciais informadas são inválidas"
+    ):
         complete_action(
             session,
             raw_token="token-seguro",
@@ -327,7 +329,7 @@ def test_terminal_or_expired_token_cannot_be_replayed(terminal: str) -> None:
     session = MagicMock()
     session.execute.return_value = _result(optional=token)
 
-    with pytest.raises(AuthenticationError, match="inválido ou expirado"):
+    with pytest.raises(AuthenticationError, match="inválido ou já expirou"):
         complete_action(
             session,
             raw_token="token-seguro",

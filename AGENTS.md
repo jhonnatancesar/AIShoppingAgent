@@ -360,3 +360,11 @@ foram tocados. A TASK-076, pausada para remover esse bloqueio, deve ser retomada
 traceback local limitado; o `JsonFormatter` compartilhado permanece inalterado.
 Testes focados e o runner oficial PostgreSQL 18.4 foram aprovados. Permanecem
 pendentes TASK-077 e TASK-084.
+
+**Atualização 2026-08-16 (3):** a TASK-087 está concluída. O catálogo aprovado
+de textos visíveis foi aplicado ao Telegram, autenticação web, cadastro,
+preferências, notificações e privacidade. Listas usam `1 — Opção` e confirmações
+mostram as opções em linhas próprias; comandos, parsers, estados, TTLs e regras
+funcionais permanecem inalterados. Foram aprovados 294 testes focados e 1.186
+testes não-integração (1 ignorado, cobertura 90,68%). Permanecem pendentes
+TASK-077 e TASK-084; nenhuma foi iniciada.

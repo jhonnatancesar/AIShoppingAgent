@@ -891,7 +891,7 @@ async def test_cancelled_pending_create_mission_does_not_execute(
     assert response.status_code == 204
     assert adapter.calls == []
     assert fake_user.pending_intent is None
-    assert "cancel" in send_calls[0][1].lower()
+    assert "não vou criar essa missão" in send_calls[0][1].lower()
 
 
 @pytest.mark.anyio
@@ -941,11 +941,11 @@ async def test_create_mission_without_sources_stages_source_selection_and_preser
         "target_currency": "BRL",
     }
     reply = send_calls[0][1]
-    assert "1 - Pichau" in reply
-    assert "2 - Terabyte" in reply
-    assert "3 - Amazon" in reply
-    assert "4 - Kabum" in reply
-    assert "5 - Todas" in reply
+    assert "1 — Pichau" in reply
+    assert "2 — Terabyte" in reply
+    assert "3 — Amazon" in reply
+    assert "4 — Kabum" in reply
+    assert "5 — Todas" in reply
 
 
 @pytest.mark.anyio
@@ -1029,7 +1029,7 @@ async def test_invalid_source_selection_answer_keeps_pending_state_and_asks_agai
     assert response.status_code == 204
     assert adapter.calls == []
     assert fake_user.pending_intent == pending
-    assert "Não reconheci" in send_calls[0][1]
+    assert "Não entendi essa opção" in send_calls[0][1]
 
 
 @pytest.mark.anyio
@@ -1311,8 +1311,8 @@ async def test_mission_command_multiple_candidates_stages_numbered_choice(
     )
     intent = _intent(kind=IntentKind.MISSION_COMMAND, command=MissionCommand.CANCEL)
     body = await _dispatch_intent(intent, session=_async_session(), user=fake_user)
-    assert "1." in body and "Ryzen 7 9800X3D" in body and "ativa" in body.lower()
-    assert "3." in body and "Mouse Logitech" in body and "pausada" in body.lower()
+    assert "1 — Ryzen 7 9800X3D — ativa" in body
+    assert "3 — Mouse Logitech — pausada" in body
     assert fake_user.pending_intent["kind"] == "mission_command_choice"
     assert len(fake_user.pending_intent["missions"]) == 3
 
@@ -1374,7 +1374,7 @@ async def test_mission_command_choice_single_selection_executes_without_ai(
     assert adapter.calls == []  # nenhuma chamada de IA para resolver o número
     assert fake_user.pending_intent is None
     body = send_calls[0][1]
-    assert "✅" in body and "1." in body and "Ryzen 7 9800X3D" in body
+    assert "✅ 1 —" in body and "Ryzen 7 9800X3D" in body
     assert "Cadeira gamer" not in body
 
 
@@ -1417,8 +1417,8 @@ async def test_mission_command_choice_multi_selection_processes_individually(
 
     assert response.status_code == 204
     body = send_calls[0][1]
-    assert "1." in body and "Ryzen 7 9800X3D" in body
-    assert "3." in body and "Mouse Logitech" in body
+    assert "1 —" in body and "Ryzen 7 9800X3D" in body
+    assert "3 —" in body and "Mouse Logitech" in body
     assert "Cadeira gamer" not in body
     assert fake_user.pending_intent is None
 
@@ -1517,9 +1517,9 @@ async def test_mission_command_choice_mixed_results_per_item(
 
     assert response.status_code == 204
     body = send_calls[0][1]
-    assert "✅ 1." in body
-    assert "⚠️ 2." in body
-    assert "❌ 3." in body
+    assert "✅ 1 —" in body
+    assert "⚠️ 2 —" in body
+    assert "❌ 3 —" in body
     assert fake_user.pending_intent is None
 
 
@@ -1836,8 +1836,8 @@ async def test_editar_missao_with_one_paused_mission_shows_main_menu(
     }
     reply = send_calls[0][1]
     assert "teclado mecanico" in reply
-    assert "1 - Lojas" in reply
-    assert "2 - Preço-alvo" in reply
+    assert "1 — Lojas" in reply
+    assert "2 — Preço-alvo" in reply
 
 
 @pytest.mark.anyio
@@ -1866,8 +1866,8 @@ async def test_editar_missao_with_multiple_paused_missions_asks_which_one(
         "mission_state_versions": [1, 3],
     }
     reply = send_calls[0][1]
-    assert "1 - teclado mecanico" in reply
-    assert "2 - monitor curvo" in reply
+    assert "1 — teclado mecanico" in reply
+    assert "2 — monitor curvo" in reply
 
 
 @pytest.mark.anyio
@@ -2111,7 +2111,7 @@ async def test_edit_menu_choice_preco_shows_price_prompt(
         "previous_target_amount": "500.00",
         "previous_target_currency": "BRL",
     }
-    assert "novo valor" in send_calls[0][1]
+    assert "novo preço-alvo" in send_calls[0][1]
 
 
 @pytest.mark.anyio
@@ -2176,9 +2176,9 @@ async def test_lojas_choice_add_shows_missing_stores(
         "option_map": {"1": "terabyte", "2": "amazon", "3": "kabum"},
     }
     reply = send_calls[0][1]
-    assert "1 - Terabyte" in reply
-    assert "2 - Amazon" in reply
-    assert "3 - Kabum" in reply
+    assert "1 — Terabyte" in reply
+    assert "2 — Amazon" in reply
+    assert "3 — Kabum" in reply
     assert "Pichau" not in reply
 
 
@@ -2217,8 +2217,8 @@ async def test_lojas_choice_remove_shows_current_stores(
         "option_map": {"1": "pichau", "2": "kabum"},
     }
     reply = send_calls[0][1]
-    assert "1 - Pichau" in reply
-    assert "2 - Kabum" in reply
+    assert "1 — Pichau" in reply
+    assert "2 — Kabum" in reply
 
 
 @pytest.mark.anyio
@@ -2247,7 +2247,7 @@ async def test_lojas_choice_remove_blocked_when_only_one_store(
     )
 
     assert fake_user.pending_intent is None
-    assert "não é possível remover" in send_calls[0][1]
+    assert "Não dá para remover a última loja" in send_calls[0][1]
 
 
 @pytest.mark.anyio
@@ -2276,7 +2276,7 @@ async def test_lojas_choice_add_blocked_when_all_stores_already_linked(
     )
 
     assert fake_user.pending_intent is None
-    assert "já tem todas" in send_calls[0][1]
+    assert "já está vinculada a todas" in send_calls[0][1]
 
 
 @pytest.mark.anyio
@@ -2351,7 +2351,7 @@ async def test_add_sources_invalid_selection_retries(
     )
 
     assert fake_user.pending_intent == pending
-    assert "Não reconheci" in send_calls[0][1]
+    assert "Não entendi essa opção" in send_calls[0][1]
 
 
 @pytest.mark.anyio
@@ -3755,7 +3755,7 @@ async def test_create_mission_command_starts_user_scoped_waiting_state(
     )
 
     assert adapter.calls == []
-    assert "me diga o que você quer procurar" in reply.lower()
+    assert "me diga o que você quer encontrar" in reply.lower()
     assert user.pending_intent["kind"] == "await_create_mission_description"
     assert datetime.fromisoformat(user.pending_intent["expires_at"]) > datetime.now(UTC)
 
@@ -3843,7 +3843,7 @@ async def test_expired_create_waiting_state_is_cleared_without_ai(
 
     assert adapter.calls == []
     assert user.pending_intent is None
-    assert "expirou" in reply.lower()
+    assert "tempo para descrever a missão acabou" in reply.lower()
 
 
 @pytest.mark.anyio
@@ -3912,10 +3912,10 @@ async def test_cancel_mission_numeric_choice_advances_to_local_confirmation(
     )
 
     assert adapter.calls == []
-    assert "1 - Ryzen" in first and "2 - RTX" in first
+    assert "1 — Ryzen" in first and "2 — RTX" in first
     assert user.pending_intent["kind"] == "mission_command"
     assert user.pending_intent["mission_id"] == str(missions[1].id)
-    assert "confirmar" in second.lower()
+    assert "1 — sim" in second.lower()
 
 
 @pytest.mark.anyio
@@ -3956,7 +3956,7 @@ async def test_invalid_cancel_mission_choice_is_deterministic_and_keeps_state(
 
     assert adapter.calls == []
     assert user.pending_intent == original
-    assert reply == "Opção inválida. Escolha uma opção da lista."
+    assert reply == "Opção inválida.\n\nEscolha uma das opções mostradas na lista."
 
 
 @pytest.mark.anyio
@@ -4037,7 +4037,7 @@ async def test_ambiguous_confirmation_retries_without_ai_and_keeps_state() -> No
         user=user,
     )
 
-    assert "responda" in reply.lower()
+    assert "pode responder" in reply.lower()
     assert adapter.calls == []
     assert user.pending_intent == pending
 

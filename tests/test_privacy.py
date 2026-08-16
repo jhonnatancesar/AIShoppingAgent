@@ -86,7 +86,7 @@ def test_privacy_command_is_registered_and_does_not_overpromise() -> None:
     assert any(item["command"] == "privacidade" for item in _COMMANDS)
     notice = privacy_notice()
     assert "pseudônimo" in notice
-    assert "não é uma garantia de anonimização irreversível" in notice
+    assert "não representa garantia de anonimização irreversível" in notice
     assert "conformidade" not in notice.casefold()
 
 

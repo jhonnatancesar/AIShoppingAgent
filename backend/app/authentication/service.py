@@ -170,7 +170,7 @@ def complete_action(
     current = _aware_now(now)
     token = _locked_token(session, raw_token)
     if not _token_is_usable(token, current):
-        raise AuthenticationError("Link inválido ou expirado.")
+        raise AuthenticationError("Este link é inválido ou já expirou.")
     user = session.get(User, token.user_id)
     if (
         user is None
@@ -285,14 +285,14 @@ def _complete_login(
 ) -> None:
     if credential is None:
         _fail_token(token, now)
-        raise AuthenticationError("Credenciais inválidas.")
+        raise AuthenticationError("As credenciais informadas são inválidas.")
     if credential.login_locked_until and now < credential.login_locked_until:
         raise AuthenticationRateLimited("Tente novamente mais tarde.")
     if not verify_password(credential.password_hash, password):
         _record_login_failure(credential, now)
         _fail_token(token, now)
         _audit(session, user.id, "authentication.login_failed")
-        raise AuthenticationError("Credenciais inválidas.")
+        raise AuthenticationError("As credenciais informadas são inválidas.")
     credential.failed_login_attempts = 0
     credential.login_window_started_at = None
     credential.login_locked_until = None
@@ -452,14 +452,14 @@ async def _enforce_issuance_limit_async(
 
 def _locked_token(session: Session, raw_token: str) -> CredentialActionToken:
     if not raw_token or len(raw_token) > 128:
-        raise AuthenticationError("Link inválido ou expirado.")
+        raise AuthenticationError("Este link é inválido ou já expirou.")
     token = session.execute(
         select(CredentialActionToken)
         .where(CredentialActionToken.token_hash == token_digest(raw_token))
         .with_for_update()
     ).scalar_one_or_none()
     if token is None:
-        raise AuthenticationError("Link inválido ou expirado.")
+        raise AuthenticationError("Este link é inválido ou já expirou.")
     return token
 
 

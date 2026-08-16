@@ -153,8 +153,8 @@ logger = logging.getLogger("app.telegram")
 router = APIRouter(tags=["telegram"])
 
 _UNKNOWN_REPLY = (
-    "Para criar uma nova missão, use /criar_missao. "
-    "Para ver as opções disponíveis, use /ajuda."
+    "Quer criar uma missão?\nUse /criar_missao.\n\n"
+    "Para ver tudo o que posso fazer, use /ajuda."
 )
 
 _CADASTRO_COMMAND = "/cadastro"
@@ -177,7 +177,7 @@ cadastro em andamento (`registration_step` != None) continua caindo no
 não existe mais como comando -- `/recuperar` cobre os dois casos
 (primeira senha e recuperação, ver `_authentication_link_reply`)."""
 _UPGRADE_COMMAND = "/upgrade"
-_UPGRADE_REPLY = "🔒 Mudar de usuário/perfil — em breve."
+_UPGRADE_REPLY = "🔒 Mudar de usuário ou perfil estará disponível em breve."
 _START_COMMAND = "/start"
 _HELP_COMMAND = "/ajuda"
 _MISSION_HELP_COMMAND = "/missao"
@@ -194,16 +194,20 @@ _MISSION_DESCRIPTION_TTL = timedelta(minutes=10)
 _AWAIT_CREATE_MISSION_DESCRIPTION = "await_create_mission_description"
 _CANCEL_MISSION_CHOICE = "cancel_mission_choice"
 _CREATE_MISSION_PROMPT = (
-    "Beleza. Me diga o que você quer procurar. "
+    "Beleza! Me diga o que você quer encontrar.\n\n"
+    "Se quiser, já informe o modelo, preço-alvo ou loja.\n\n"
     "Você tem 10 minutos para enviar a descrição."
 )
 _CREATE_MISSION_FLOW_EXPIRED = (
-    "O tempo para descrever a missão expirou. Use /criar_missao para começar de novo."
+    "⌛ O tempo para descrever a missão acabou.\n\n"
+    "Use /criar_missao quando quiser começar novamente."
 )
-_CANCEL_MISSION_CHOICE_RETRY = "Opção inválida. Escolha uma opção da lista."
+_CANCEL_MISSION_CHOICE_RETRY = (
+    "Opção inválida.\n\nEscolha uma das opções mostradas na lista."
+)
 _EDIT_MISSION_FREE_TEXT_REDIRECT = (
-    "✏️ Editar lojas ou preço-alvo agora é sempre pelo menu guiado -- "
-    f"envie {_EDIT_MISSION_COMMAND}."
+    f"✏️ Para editar lojas ou preço-alvo, use {_EDIT_MISSION_COMMAND}.\n\n"
+    "A edição é feita por um menu guiado."
 )
 """TASK-071: o `IntentKind.EDIT_MISSION` continua existindo no
 vocabulário do `IntentInterpreter`, mas deixou de ser executado -- o
@@ -213,10 +217,11 @@ usuário perceber) só se resolve removendo esse caminho de entrada,
 decisão explícita do usuário."""
 _SESSION_REQUIRED_REPLY = (
     "🔒 Sua sessão não está ativa.\n\n"
-    "Use /entrar para autenticar. Esqueceu a senha? Use /recuperar."
+    "Use /entrar para acessar sua conta.\n\n"
+    "Esqueceu a senha?\nUse /recuperar."
 )
 _LOGIN_ALREADY_AUTHENTICATED_REPLY = (
-    "✅ Você já está autenticado. Use /sair se quiser encerrar a sessão."
+    "✅ Você já está autenticado.\n\nUse /sair se quiser encerrar a sessão."
 )
 """TASK-078 (correção pós-deploy): `/entrar` nunca teve checagem de
 sessão ativa, ao contrário de `/cadastro` (`_CADASTRO_ALREADY_AUTHENTICATED_REPLY`,
@@ -227,7 +232,7 @@ com sessão ativa é um caso legítimo, diferente de logar de novo)."""
 _FIRST_CONTACT_REPLY = (
     "👋 Opa! Eu sou o Cláudio, seu assistente de compras.\n\n"
     "Posso procurar produtos em várias lojas, comparar preços e "
-    "acompanhar as ofertas pra você.\n\n"
+    "acompanhar ofertas pra você.\n\n"
     "Pra começar, vamos criar seu acesso.\n\n"
     "Use /cadastro e eu te guio por aqui. 🎯"
 )
@@ -237,9 +242,9 @@ que também valeriam para alguém que abandonou o cadastro no meio."""
 
 _RETURNING_NO_SESSION_REPLY = (
     "👋 Opa, você voltou!\n\n"
-    "Sua conta já está cadastrada, só precisamos entrar novamente.\n\n"
+    "Sua conta já está cadastrada. Agora só precisamos entrar novamente.\n\n"
     "Use /entrar para acessar sua conta.\n\n"
-    "Esqueceu a senha? Sem problema — use /recuperar."
+    "Esqueceu a senha? Sem problema.\nUse /recuperar."
 )
 """TASK-078: `/start` de alguém já cadastrado (`username` preenchido,
 cadastro concluído) sem sessão ativa."""
@@ -255,23 +260,25 @@ _HELP_REPLY = (
     "🛒 COMPRAS\n"
     "/criar_missao — criar uma nova missão\n"
     "/cancelar_missao — cancelar uma missão existente\n"
-    "/missao — entender o fluxo de missões\n"
+    "/missao — entender como funcionam as missões\n"
     "/editar_missao — mudar lojas ou preço-alvo de uma missão pausada\n\n"
     "👤 CONTA\n"
     "/cadastro — completar seu perfil\n"
-    "/entrar — autenticar\n"
+    "/entrar — acessar sua conta\n"
     "/recuperar — criar ou recuperar sua senha\n"
     "/sair — encerrar a sessão\n\n"
     "⚙️ CONFIGURAÇÕES\n"
-    "/preferencias — notificações\n"
-    "/privacidade — uso e proteção de dados"
+    "/preferencias — configurar notificações\n"
+    "/privacidade — entender o uso e a proteção dos seus dados"
 )
 
 _MISSION_HELP_REPLY = (
-    "🛒 Para criar uma missão, use /criar_missao. Depois eu peço a descrição "
-    "do produto que você quer acompanhar.\n\n"
-    'Exemplos: "Ryzen 7 9800X3D até R$ 3000", "RTX 5070 Ti na Kabum", '
-    '"mouse gamer".'
+    "🛒 Para criar uma missão, use /criar_missao.\n\n"
+    "Depois é só me dizer o que você quer acompanhar.\n\n"
+    "Exemplos:\n"
+    "• Ryzen 7 9800X3D até R$ 3.000\n"
+    "• RTX 5070 Ti na Kabum\n"
+    "• mouse gamer"
 )
 
 
@@ -501,7 +508,8 @@ async def _process_authenticated_message(
             if reservation.warn_rate_limit and settings.telegram_bot_token is not None:
                 await _send_reply_safely(  # Fase D -- nenhuma transação aberta.
                     message.chat_id,
-                    "Muitas mensagens em pouco tempo. Aguarde um minuto e tente novamente.",
+                    "⏳ Muitas mensagens em pouco tempo.\n\n"
+                    "Aguarde um minuto e tente novamente.",
                     settings=settings,
                 )
             return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -677,7 +685,7 @@ async def _authentication_link_reply(
     public_base_url: str,
 ) -> str:
     if not user.username:
-        return "Complete primeiro seu nome de usuário com /cadastro."
+        return "Antes de entrar, complete seu cadastro com /cadastro."
     if command == _LOGIN_COMMAND:
         action = CredentialAction.LOGIN
     elif command == _RECOVERY_COMMAND:
@@ -701,9 +709,12 @@ async def _authentication_link_reply(
             public_base_url=public_base_url,
         )
     except AuthenticationRateLimited:
-        return "Muitas solicitações. Tente novamente mais tarde."
+        return "⏳ Muitas solicitações em pouco tempo.\n\nAguarde um pouco e tente novamente."
     except AuthenticationError:
-        return "Não foi possível gerar o link. Verifique seu cadastro."
+        return (
+            "Não consegui gerar seu link agora.\n\n"
+            "Confira se seu cadastro está completo e tente novamente."
+        )
     labels = {
         CredentialAction.LOGIN: ("🔑", "Entrar"),
         CredentialAction.SET_PASSWORD: ("🔐", "Criar senha"),
@@ -711,8 +722,8 @@ async def _authentication_link_reply(
     }
     icon, label = labels[action]
     return (
-        f"{icon} {label}\n{issued.url}\n\n"
-        "O link é pessoal, de uso único e expira em 10 minutos."
+        f"{icon} {label}\n\n{issued.url}\n\n"
+        "Esse link é pessoal, de uso único e expira em 10 minutos."
     )
 
 
@@ -759,6 +770,8 @@ async def _resolve_pending_intent(
     payload = user.pending_intent
     if not confirmed:
         user.pending_intent = None
+        if payload["kind"] == "create_mission":
+            return "Combinado. Não vou criar essa missão."
         return "Combinado, cancelei."
 
     try:
@@ -806,12 +819,15 @@ async def _apply_create_mission_description(
         intent = await adapters[profile].interpret(message, profile=profile)
     except TelegramContractError, AIProviderError:
         logger.warning("telegram_webhook_intent_failed")
-        return "Não consegui interpretar a missão agora. Use /criar_missao para tentar novamente."
+        return (
+            "Não consegui entender a missão dessa vez.\n\n"
+            "Use /criar_missao e tente novamente com uma descrição um pouco mais clara."
+        )
 
     if intent.kind is not IntentKind.CREATE_MISSION:
         return (
-            "Não entendi uma missão de compra nessa descrição. "
-            "Use /criar_missao para tentar novamente."
+            "Não consegui entender a missão dessa vez.\n\n"
+            "Use /criar_missao e tente novamente com uma descrição um pouco mais clara."
         )
     try:
         return await _dispatch_intent(intent, session=session, user=user)
@@ -880,7 +896,8 @@ def _stage_create_mission(intent: Intent, *, user: User) -> str:
     search_query = intent.parameters.search_query
     if not search_query:
         raise MissionIntentError(
-            "Não entendi o que você quer buscar. Pode detalhar o produto?"
+            "Não consegui entender a missão dessa vez.\n\n"
+            "Use /criar_missao e tente novamente com uma descrição um pouco mais clara."
         )
     if not intent.parameters.sources:
         payload = stage_await_create_mission_sources(
@@ -982,7 +999,7 @@ async def _start_cancel_mission_flow(*, session: AsyncSession, user: User) -> st
     user.pending_intent = payload
     return describe_mission_choice_prompt(
         [mission.title for mission in candidates],
-        header="Escolha a missão que deseja cancelar:",
+        header="Encontrei mais de uma missão para cancelar:",
     )
 
 
@@ -1074,9 +1091,9 @@ def _stage_edit_mission_choice(
     missions: list[Mission], *, user: User, kind: str
 ) -> str:
     header = (
-        "Você tem mais de uma missão pausada. Qual você quer editar?"
+        "Você tem mais de uma missão pausada.\n\nQual você quer editar?"
         if kind == "await_edit_paused_choice"
-        else "Você tem mais de uma missão ativa. Qual você quer pausar para editar?"
+        else "Você tem mais de uma missão ativa.\n\nQual você quer pausar para editar?"
     )
     user.pending_intent = {
         "kind": kind,
@@ -1144,7 +1161,7 @@ async def _apply_edit_menu_choice(
     if choice is None:
         return describe_edit_menu_retry()
     mission_id = payload["mission_id"]
-    if choice == 0:  # "1 - Lojas"
+    if choice == 0:  # "1 — Lojas"
         current_sources = await _query_mission_source_codes(session, UUID(mission_id))
         user.pending_intent = {
             "kind": "await_edit_lojas_choice",
@@ -1154,7 +1171,7 @@ async def _apply_edit_menu_choice(
             "current_sources": list(current_sources),
         }
         return describe_edit_lojas_menu()
-    # choice == 1: "2 - Preço-alvo"
+    # choice == 1: "2 — Preço-alvo"
     criteria = await session.scalar(
         select(MissionCriteria).where(MissionCriteria.mission_id == UUID(mission_id))
     )
@@ -1411,7 +1428,7 @@ async def _apply_single_mission_choice(
     mission_id = UUID(entry["mission_id"])
     mission = await session.get(Mission, mission_id)
     if mission is None or mission.user_id != user.id:
-        return f'❌ {number}. "{title}" — não encontrada.'
+        return f'❌ {number} — "{title}" — não encontrada.'
     try:
         transition = await transition_mission_async(
             session,
@@ -1422,14 +1439,14 @@ async def _apply_single_mission_choice(
             actor_id=user.id,
         )
     except MissionNotFoundError:
-        return f'❌ {number}. "{title}" — não encontrada.'
+        return f'❌ {number} — "{title}" — não encontrada.'
     except MissionVersionConflictError, InvalidMissionTransitionError:
         status = format_mission_status(mission.status)
-        return f'⚠️ {number}. "{title}" — já estava {status}.'
+        return f'⚠️ {number} — "{title}" — já estava {status}.'
     # TASK-085: ✅ marca sucesso da OPERAÇÃO (nunca o ícone por status da
     # missão, ex.: ❌ para CANCELLED) -- formato do pedido do usuário.
     status = format_mission_status(transition.to_status)
-    return f'✅ {number}. "{title}" — {status}.'
+    return f'✅ {number} — "{title}" — {status}.'
 
 
 async def _execute_edit_mission(
@@ -1475,11 +1492,18 @@ async def _execute_edit_mission(
                 f"{format_money(Decimal(payload['target_amount']), payload['target_currency'])}"
             )
         else:
-            lines.append("🎯 Alvo: removido — agora só acompanhando preços.")
+            lines.append(
+                "🎯 Alvo removido — agora vou acompanhar os preços sem um valor específico."
+            )
     if payload["changes_sources"]:
         lines.append(f"🏪 Lojas: {format_store_list(effective_codes)}")
     lines.extend(
-        ["", "A missão continua pausada — use /retomar quando quiser voltar a coletar."]
+        [
+            "",
+            "A missão continua pausada.",
+            "",
+            "Use /retomar quando quiser voltar a monitorar.",
+        ]
     )
     return "\n".join(lines)
 

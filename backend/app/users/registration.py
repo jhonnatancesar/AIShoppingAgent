@@ -64,43 +64,37 @@ _NUMBERED_CATEGORIES = {
 _ALL_CATEGORIES = frozenset({"16", "todo", "todos", "toda", "todas"})
 
 _PROMPTS: Final[dict[str, str]] = {
-    "username": "Vamos cadastrar você! Qual nome de usuário você quer usar?",
-    "email": ('Certo! Agora seu e-mail (ou responda "pular" para deixar em branco).'),
+    "username": "Vamos cadastrar você!\n\nQual nome de usuário você quer usar?",
+    "email": (
+        "Certo!\n\nAgora me informe seu e-mail.\n\n"
+        'Se preferir deixar em branco, responda "pular".'
+    ),
     "favorite_stores": (
-        "Quais lojas você prefere?\n\n"
-        "1 - Kabum\n"
-        "2 - Pichau\n"
-        "3 - Terabyte\n"
-        "4 - Amazon\n"
-        "5 - Todas\n\n"
-        "Digite os números separados por vírgula (ex.: 1,2), use 5 para "
-        'todas ou responda "pular".'
+        "🏪 Quais lojas você prefere?\n\n"
+        "1 — Kabum\n2 — Pichau\n3 — Terabyte\n4 — Amazon\n5 — Todas\n\n"
+        "Digite os números separados por vírgula.\nExemplo: 1,2\n\n"
+        "Para escolher todas, envie 5.\n"
+        'Se não quiser definir agora, responda "pular".'
     ),
     "preferred_categories": (
-        "Por último: quais categorias você mais compra?\n\n"
-        "1 - Hardware / Componentes de PC\n"
-        "2 - Periféricos\n"
-        "3 - Computadores / PC Gamer montado\n"
-        "4 - Notebooks\n"
-        "5 - Monitores\n"
-        "6 - Celulares e Smartphones\n"
-        "7 - TV, Áudio e Vídeo\n"
-        "8 - Video Games e Consoles\n"
-        "9 - Cadeiras e Móveis Gamer/Escritório\n"
-        "10 - Casa Inteligente e Automação\n"
-        "11 - Eletrodomésticos e Eletroportáteis\n"
-        "12 - Câmeras e Drones\n"
-        "13 - Redes e Conectividade\n"
-        "14 - Segurança (câmeras, alarmes)\n"
-        "15 - Geek e Colecionáveis\n"
-        "16 - Todas\n\n"
-        "Digite os números separados por vírgula (ex.: 1,4,8), use 16 para "
-        'todas ou responda "pular".'
+        "🛒 Quais categorias você mais compra?\n\n"
+        "1 — Hardware / Componentes de PC\n2 — Periféricos\n"
+        "3 — Computadores / PC Gamer montado\n4 — Notebooks\n5 — Monitores\n"
+        "6 — Celulares e Smartphones\n7 — TV, Áudio e Vídeo\n"
+        "8 — Video Games e Consoles\n9 — Cadeiras e Móveis Gamer/Escritório\n"
+        "10 — Casa Inteligente e Automação\n"
+        "11 — Eletrodomésticos e Eletroportáteis\n12 — Câmeras e Drones\n"
+        "13 — Redes e Conectividade\n14 — Segurança (câmeras, alarmes)\n"
+        "15 — Geek e Colecionáveis\n16 — Todas\n\n"
+        "Digite os números separados por vírgula.\nExemplo: 1,4,8\n\n"
+        "Para escolher todas, envie 16.\n"
+        'Se não quiser definir agora, responda "pular".'
     ),
 }
 
 _COMPLETION_MESSAGE = (
-    "✅ Cadastro confirmado!\n\nAgora crie sua senha pelo link abaixo."
+    "✅ Cadastro confirmado!\n\nAgora vamos criar sua senha.\n\n"
+    "Use o link seguro que vou enviar abaixo."
 )
 
 
@@ -151,11 +145,11 @@ def _validate_username(raw: str) -> str:
     username = raw.strip()
     if not username or len(username) > 32:
         raise RegistrationError(
-            "Nome de usuário inválido: precisa ter entre 1 e 32 caracteres."
+            "Esse nome de usuário precisa ter entre 1 e 32 caracteres."
         )
     if username.startswith("/") or " " in username:
         raise RegistrationError(
-            'Nome de usuário não pode começar com "/" nem conter espaços.'
+            'O nome de usuário não pode começar com "/" nem conter espaços.'
         )
     return username
 
@@ -173,14 +167,16 @@ async def _ensure_username_available(
     )
     if taken is not None:
         raise RegistrationError(
-            f'O nome de usuário "{username}" já está em uso. Escolha outro.'
+            f'O nome de usuário "{username}" já está em uso.\n\nEscolha outro.'
         )
 
 
 def _validate_email(raw: str) -> str:
     email = raw.strip()
     if len(email) > 254 or not _EMAIL_PATTERN.match(email):
-        raise RegistrationError('E-mail inválido. Tente de novo ou responda "pular".')
+        raise RegistrationError(
+            'Esse e-mail não parece válido.\n\nTente novamente ou responda "pular".'
+        )
     return email
 
 
@@ -197,8 +193,8 @@ def _parse_stores(raw: str) -> list[str]:
     ]
     if not stores:
         raise RegistrationError(
-            "Não reconheci nenhuma loja. Use 1, 2, 3 ou 4 separados por "
-            'vírgula; use 5 para todas ou responda "pular".'
+            "Não entendi as lojas escolhidas.\n\nUse os números de 1 a 4 "
+            'separados por vírgula, 5 para todas ou responda "pular".'
         )
     return sorted(set(stores))
 
@@ -214,7 +210,7 @@ def _parse_categories(raw: str) -> list[str]:
     ]
     if not categories:
         raise RegistrationError(
-            "Não reconheci nenhuma categoria. Use os números de 1 a 15 "
+            "Não entendi as categorias escolhidas.\n\nUse os números de 1 a 15 "
             'separados por vírgula, 16 para todas ou responda "pular".'
         )
     return sorted(set(categories))

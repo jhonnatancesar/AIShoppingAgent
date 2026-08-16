@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-08-16 — TASK-087
+
+- Catálogo revisado de textos classificado como **Nova TASK do MVP** e
+  aplicado isoladamente ao Telegram, autenticação web, cadastro, notificações,
+  preferências e privacidade.
+- Listas e confirmações foram padronizadas para leitura móvel, preservando
+  comandos, parsers, estados, TTLs e todas as regras funcionais.
+- Aprovados 294 testes focados e 1.186 testes não-integração (1 ignorado,
+  cobertura 90,68%), sem chamadas externas, banco, rebuild ou deploy.
+
 ## 2026-08-16 — TASK-076
 
 - `collection_source_failed` ganhou classe, detalhe seguro, status, etapa e

@@ -1,5 +1,16 @@
 # Decision Log
 
+## DEC-064 — Revisão transversal de UX/copy como TASK própria
+
+- **Data:** 2026-08-16
+- **Classificação:** Nova TASK do MVP.
+- **Decisão:** registrar a revisão aprovada dos textos visíveis como TASK-087,
+  separada das TASKs funcionais, antes de alterar código.
+- **Guardrail:** somente copy, layout textual e testes correspondentes; nenhum
+  comando, parser, estado, TTL, autorização, regra funcional ou integração muda.
+- **Resultado:** TASK-087 concluída com o catálogo aplicado, sem mudança de
+  comportamento; suíte focada e não-integração aprovadas.
+
 ## DEC-063 — Diagnóstico local e seguro das falhas de coleta
 
 - **Data:** 2026-08-16

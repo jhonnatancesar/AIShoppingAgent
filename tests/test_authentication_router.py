@@ -99,8 +99,8 @@ def test_http_action_passes_only_secrets_to_server_resolution(
     ("action", "message"),
     [
         (CredentialAction.SET_PASSWORD, "Senha criada"),
-        (CredentialAction.CHANGE_PASSWORD, "sessões anteriores revogadas"),
-        (CredentialAction.RECOVER_PASSWORD, "sessões anteriores revogadas"),
+        (CredentialAction.CHANGE_PASSWORD, "sessões anteriores foram encerradas"),
+        (CredentialAction.RECOVER_PASSWORD, "sessões anteriores foram encerradas"),
     ],
 )
 def test_http_success_messages_follow_server_action(

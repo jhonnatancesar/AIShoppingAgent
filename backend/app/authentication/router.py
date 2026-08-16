@@ -72,19 +72,21 @@ def complete_credential_action(
             status_code=status.HTTP_400_BAD_REQUEST,
             content={
                 "ok": False,
-                "message": "Não foi possível concluir. Solicite um novo link.",
+                "message": "Não foi possível concluir.\n\nSolicite um novo link pelo Telegram.",
             },
         )
     messages = {
-        CredentialAction.LOGIN: "Login concluído. Você pode voltar ao Telegram.",
+        CredentialAction.LOGIN: "✅ Login concluído.\n\nVocê já pode voltar ao Telegram.",
         CredentialAction.SET_PASSWORD: (
-            "Senha criada. Volte ao Telegram e use /entrar."
+            "✅ Senha criada.\n\nVolte ao Telegram e use /entrar."
         ),
         CredentialAction.CHANGE_PASSWORD: (
-            "Senha alterada e sessões anteriores revogadas. Use /entrar novamente."
+            "✅ Senha alterada.\n\nAs sessões anteriores foram encerradas.\n"
+            "Volte ao Telegram e use /entrar novamente."
         ),
         CredentialAction.RECOVER_PASSWORD: (
-            "Senha redefinida e sessões anteriores revogadas. Use /entrar novamente."
+            "✅ Senha redefinida.\n\nAs sessões anteriores foram encerradas.\n"
+            "Volte ao Telegram e use /entrar novamente."
         ),
     }
     return JSONResponse(
@@ -119,14 +121,14 @@ _AUTH_PAGE = """<!doctype html>
 <body>
 <main>
   <h1>Acesso seguro</h1>
-  <p>O link é descartável e expira em 10 minutos.</p>
+  <p>Este link é pessoal, descartável e expira em 10 minutos.</p>
   <form id="credential-form">
     <label for="password">Senha</label>
     <input id="password" type="password" minlength="8" maxlength="128"
       autocomplete="current-password" required>
     <small>Use de 8 a 128 caracteres, com maiúscula, minúscula, número e símbolo.</small>
     <section id="confirmation-block">
-      <label for="confirmation">Confirme a nova senha</label>
+      <label for="confirmation">Confirmar senha</label>
       <input id="confirmation" type="password" minlength="8" maxlength="128"
         autocomplete="new-password">
     </section>
@@ -154,7 +156,7 @@ _AUTH_PAGE = """<!doctype html>
   }
   if (!token) {
     form.classList.add('hidden');
-    message.textContent = 'Link inválido. Solicite um novo link no Telegram.';
+    message.textContent = 'Este link é inválido ou já expirou.';
   }
   form.addEventListener('submit', async (event) => {
     event.preventDefault();

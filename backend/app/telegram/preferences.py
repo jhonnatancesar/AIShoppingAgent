@@ -8,10 +8,12 @@ from app.users.models import User
 PREFERENCES_COMMAND: Final = "/preferencias"
 
 _USAGE: Final = (
-    "Use um destes comandos:\n\n"
+    "Comandos disponíveis:\n\n"
     "• /preferencias — consultar\n"
-    "• /preferencias quedas ativar|desativar\n"
-    "• /preferencias alvo ativar|desativar"
+    "• /preferencias quedas ativar\n"
+    "• /preferencias quedas desativar\n"
+    "• /preferencias alvo ativar\n"
+    "• /preferencias alvo desativar"
 )
 
 
@@ -23,11 +25,11 @@ def handle_preferences_command(user: User, command: str) -> str:
     if len(parts) == 1:
         return _render_preferences(user)
     if len(parts) != 3:
-        return f"Não entendi.\n\n{_USAGE}"
+        return "Não entendi esse comando.\n\nUse /preferencias para ver as opções disponíveis."
 
     preference, action = parts[1:]
     if action not in {"ativar", "desativar"}:
-        return f"A ação deve ser ativar ou desativar.\n\n{_USAGE}"
+        return 'A ação deve ser "ativar" ou "desativar".'
     enabled = action == "ativar"
     if preference == "quedas":
         user.notify_price_decreases = enabled
@@ -36,7 +38,7 @@ def handle_preferences_command(user: User, command: str) -> str:
         user.notify_target_reached = enabled
         label = "Preço-alvo atingido"
     else:
-        return f"A preferência deve ser quedas ou alvo.\n\n{_USAGE}"
+        return 'A preferência deve ser "quedas" ou "alvo".'
 
     icon = "✅" if enabled else "🔕"
     state = "ativadas" if enabled else "desativadas"

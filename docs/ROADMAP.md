@@ -25,6 +25,7 @@
 | Relevância e apresentação de alertas | TASK-063 | Corrige rastreabilidade do alerta ao anúncio real e filtro de correspondência produto-missão, antes da release ser definitiva (`DEC-048`) |
 | Disponibilidade e fallback dos provedores de IA | TASK-064 | Revisa a cascata ADMIN/DEV do `AIProviderManager` (modelos, ordem, taxonomia de erro) achada degradada durante a validação da TASK-063, antes da release ser definitiva (`DEC-049`) |
 | Drift de constraints no Alembic | TASK-086 | Concluída; metadata corrigida e runner aprovado em PostgreSQL 18.4 descartável |
+| Padronização de textos visíveis | TASK-087 | Concluída; catálogo aplicado sem mudança funcional e suíte não-integração aprovada |
 | Expansão de fontes (futuro) | Tarefas a definir | Mercado Livre, Shopee, AliExpress e outras fontes futuras |
 
 As TASKs 000 a 053 e as TASKs 055 a 062 estão

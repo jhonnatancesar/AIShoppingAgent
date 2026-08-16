@@ -38,8 +38,10 @@ _COMMAND_VERBS: dict[MissionCommand, str] = {
 }
 
 _CONFIRMATION_SUFFIX = (
-    'Responda "1" para confirmar ou "2" para cancelar (também aceito "sim"/"não").'
+    '1 — Confirmar\n2 — Cancelar\n\nVocê também pode responder "sim" ou "não".'
 )
+
+_YES_NO_SUFFIX = '1 — Sim\n2 — Não\n\nVocê também pode responder "sim" ou "não".'
 
 _CONFIRM_TOKENS = frozenset({"sim", "s", "1"})
 _CANCEL_TOKENS = frozenset({"não", "nao", "n", "2"})
@@ -56,7 +58,7 @@ async def resolve_answer(answer: str) -> bool:
         return True
     if normalized in _CANCEL_TOKENS:
         return False
-    raise ConfirmationError(f"Não entendi. {_CONFIRMATION_SUFFIX}")
+    raise ConfirmationError(f"Não entendi.\n\n{_CONFIRMATION_SUFFIX}")
 
 
 def stage_create_mission(
@@ -127,18 +129,20 @@ TASK. Cada fluxo numerado define o próprio mapa."""
 _CREATE_MISSION_SOURCE_ALL_TOKENS = frozenset({"5", "todo", "todos", "toda", "todas"})
 
 _CREATE_MISSION_SOURCES_PROMPT = (
-    "🏪 Em quais lojas você quer que eu busque?\n\n"
-    "1 - Pichau\n"
-    "2 - Terabyte\n"
-    "3 - Amazon\n"
-    "4 - Kabum\n"
-    "5 - Todas\n\n"
-    "Digite os números separados por vírgula (ex.: 1,3) ou use 5 para todas."
+    "🏪 Em quais lojas você quer que eu procure?\n\n"
+    "1 — Pichau\n"
+    "2 — Terabyte\n"
+    "3 — Amazon\n"
+    "4 — Kabum\n"
+    "5 — Todas\n\n"
+    "Digite os números separados por vírgula.\n"
+    "Exemplo: 1,3\n\n"
+    "Para escolher todas, envie 5."
 )
 
 _CREATE_MISSION_SOURCES_RETRY = (
-    "Não reconheci essa opção. Use os números de 1 a 4 separados por "
-    "vírgula, ou 5 para todas."
+    "Não entendi essa opção.\n\n"
+    "Use os números de 1 a 4 separados por vírgula ou 5 para todas."
 )
 
 
@@ -220,9 +224,18 @@ def resolve_create_mission_sources(raw: str) -> tuple[str, ...] | None:
 
 
 def describe_mission_command(payload: dict[str, Any]) -> str:
-    verb = _COMMAND_VERBS[MissionCommand(payload["command"])]
+    command = MissionCommand(payload["command"])
     title = payload["mission_title"]
-    return f'Confirmar: {verb} a missão "{title}"?\n\n{_CONFIRMATION_SUFFIX}'
+    prompts = {
+        MissionCommand.ACTIVATE: ("▶️", "ativar"),
+        MissionCommand.PAUSE: ("⏸️", "pausar"),
+        MissionCommand.RESUME: ("▶️", "retomar"),
+        MissionCommand.COMPLETE: ("✅", "concluir"),
+        MissionCommand.CANCEL: ("⚠️", "mesmo cancelar"),
+        MissionCommand.EXPIRE: ("⌛", "expirar"),
+    }
+    icon, action = prompts[command]
+    return f'{icon} Quer {action} a missão "{title}"?\n\n{_YES_NO_SUFFIX}'
 
 
 def stage_edit_mission(
@@ -263,7 +276,7 @@ def stage_edit_mission(
 
 def describe_edit_mission(payload: dict[str, Any]) -> str:
     title = payload["mission_title"]
-    lines = ["✏️ Confirmar edição da missão?", "", f'Missão: "{title}"']
+    lines = ["✏️ Confirmar alterações?", "", f'Missão: "{title}"']
     if payload["changes_target"]:
         before = _format_target(
             payload["previous_target_amount"], payload["previous_target_currency"]
@@ -281,8 +294,7 @@ def describe_edit_mission(payload: dict[str, Any]) -> str:
     lines.extend(
         [
             "",
-            "A missão continua pausada depois da edição — use /retomar quando "
-            "quiser voltar a coletar.",
+            "A missão continuará pausada depois da edição.",
             "",
             _CONFIRMATION_SUFFIX,
         ]
@@ -313,9 +325,11 @@ def stage_pause_for_edit(
 def describe_pause_for_edit(payload: dict[str, Any]) -> str:
     title = payload["mission_title"]
     return (
-        f'⏸️ A missão "{title}" está ativa -- preciso pausá-la antes de '
-        "editar. Quer que eu pause agora?\n\n"
-        f"{_CONFIRMATION_SUFFIX}"
+        f'⏸️ A missão "{title}" está ativa.\n\n'
+        "Preciso pausá-la antes de editar.\n\n"
+        "1 — Pausar e continuar\n"
+        "2 — Cancelar\n\n"
+        'Você também pode responder "sim" ou "não".'
     )
 
 
@@ -324,7 +338,7 @@ def describe_pause_for_edit(payload: dict[str, Any]) -> str:
 # mesmo payload `stage_edit_mission`/`describe_edit_mission` (acima), que
 # já é a confirmação final sim/não reaproveitada da TASK-069.
 
-_MISSION_CHOICE_RETRY = "Não entendi. Digite só o número da missão."
+_MISSION_CHOICE_RETRY = "Não entendi.\n\nDigite apenas o número da missão."
 
 
 def parse_single_numbered_choice(raw: str, *, count: int) -> int | None:
@@ -341,7 +355,7 @@ def parse_single_numbered_choice(raw: str, *, count: int) -> int | None:
 
 def describe_mission_choice_prompt(titles: Sequence[str], *, header: str) -> str:
     lines = [header, ""]
-    lines.extend(f"{index + 1} - {title}" for index, title in enumerate(titles))
+    lines.extend(f"{index + 1} — {title}" for index, title in enumerate(titles))
     lines.extend(["", "Digite o número."])
     return "\n".join(lines)
 
@@ -358,8 +372,8 @@ def describe_mission_choice_retry() -> str:
 # `docs/tasks/TASK-085.md`, "Ponto de decisão em aberto", opção B).
 
 _MISSION_COMMAND_CHOICE_RETRY = (
-    "Não entendi. Digite o número de uma ou mais missões da lista, "
-    'separados por vírgula (ex.: "1" ou "1,3").'
+    "Não entendi.\n\nDigite o número de uma ou mais missões da lista, "
+    "separados por vírgula.\n\nExemplo: 1 ou 1,3"
 )
 
 
@@ -413,11 +427,17 @@ def describe_mission_command_choice_prompt(
     verb = _COMMAND_VERBS[command]
     lines = [f"Encontrei mais de uma missão para {verb}:", ""]
     lines.extend(
-        f"{index + 1}. {mission.title} — {format_mission_status(mission.status)}"
+        f"{index + 1} — {mission.title} — {format_mission_status(mission.status)}"
         for index, mission in enumerate(missions)
     )
     lines.extend(
-        ["", 'Digite o número (ex.: "1") ou vários separados por vírgula (ex.: "1,3").']
+        [
+            "",
+            "Digite o número da missão.\n"
+            "Para selecionar mais de uma, separe os números por vírgula.",
+            "",
+            "Exemplo: 1,3",
+        ]
     )
     return "\n".join(lines)
 
@@ -427,7 +447,7 @@ def describe_mission_command_choice_retry() -> str:
 
 
 _NO_EDITABLE_MISSION_REPLY = (
-    "Você não tem nenhuma missão pausada ou ativa para editar agora."
+    "Você não tem nenhuma missão pausada ou ativa disponível para edição agora."
 )
 
 
@@ -436,13 +456,13 @@ def describe_no_editable_mission() -> str:
 
 
 _EDIT_MENU_PROMPT_TEMPLATE = (
-    '✏️ O que deseja editar na missão "{title}"?\n\n'
-    "1 - Lojas\n"
-    "2 - Preço-alvo\n\n"
+    '✏️ O que você quer editar na missão "{title}"?\n\n'
+    "1 — Lojas\n"
+    "2 — Preço-alvo\n\n"
     "Digite o número."
 )
 
-_EDIT_MENU_RETRY = 'Não entendi. Digite "1" para lojas ou "2" para preço-alvo.'
+_EDIT_MENU_RETRY = "Não entendi.\n\n1 — Lojas\n2 — Preço-alvo\n\nDigite 1 ou 2."
 
 
 def describe_edit_menu(mission_title: str) -> str:
@@ -454,14 +474,14 @@ def describe_edit_menu_retry() -> str:
 
 
 _EDIT_LOJAS_MENU_PROMPT = (
-    "🏪 O que deseja fazer?\n\n"
-    "1 - Adicionar lojas\n"
-    "2 - Remover lojas\n\n"
+    "🏪 O que você quer fazer?\n\n"
+    "1 — Adicionar lojas\n"
+    "2 — Remover lojas\n\n"
     "Digite o número."
 )
 
 _EDIT_LOJAS_MENU_RETRY = (
-    'Não entendi. Digite "1" para adicionar ou "2" para remover lojas.'
+    "Não entendi.\n\n1 — Adicionar lojas\n2 — Remover lojas\n\nDigite 1 ou 2."
 )
 
 
@@ -501,7 +521,7 @@ def describe_store_selection_prompt(
 ) -> str:
     lines = [header, ""]
     lines.extend(
-        f"{number} - {code.capitalize()}" for number, code in option_map.items()
+        f"{number} — {code.capitalize()}" for number, code in option_map.items()
     )
     lines.extend(["", "Digite os números separados por vírgula."])
     return "\n".join(lines)
@@ -510,18 +530,19 @@ def describe_store_selection_prompt(
 _EDIT_ADD_SOURCES_HEADER = "🏪 Lojas ainda não vinculadas à missão:"
 _EDIT_REMOVE_SOURCES_HEADER = "🏪 Lojas atualmente vinculadas à missão:"
 _EDIT_SOURCE_SELECTION_RETRY = (
-    "Não reconheci essa opção. Use os números mostrados, separados por vírgula."
+    "Não entendi essa opção.\n\nUse apenas os números mostrados, separados por vírgula."
 )
 _EDIT_ADD_SOURCES_NONE_MISSING = (
-    "A missão já tem todas as lojas disponíveis vinculadas."
+    "Essa missão já está vinculada a todas as lojas disponíveis."
 )
 _EDIT_REMOVE_SOURCES_TOO_FEW = (
-    "A missão só tem uma loja vinculada -- não é possível remover, a "
-    "missão precisa de pelo menos uma."
+    "Essa missão só tem uma loja vinculada.\n\n"
+    "Não dá para remover a última loja, porque a missão precisa ter pelo menos uma."
 )
 _EDIT_REMOVE_SOURCES_WOULD_EMPTY = (
-    "Não é possível remover todas as lojas selecionadas -- a missão "
-    "precisa de pelo menos uma. Escolha menos opções."
+    "Não dá para remover todas as lojas.\n\n"
+    "A missão precisa manter pelo menos uma loja vinculada.\n"
+    "Escolha menos opções."
 )
 
 
@@ -564,11 +585,14 @@ def resolve_edit_source_selection(
 
 
 _EDIT_TARGET_AMOUNT_PROMPT = (
-    "🎯 Digite o novo valor do alvo em reais (ex.: 300 ou 300.50), ou 0 "
-    "para remover o alvo."
+    "🎯 Digite o novo preço-alvo em reais.\n\n"
+    "Exemplos:\n300\n300,50\n\n"
+    "Para remover o preço-alvo, envie 0."
 )
 _EDIT_TARGET_AMOUNT_RETRY = (
-    "Não entendi o valor. Digite um número (ex.: 300), ou 0 para remover o alvo."
+    "Não entendi esse valor.\n\n"
+    "Digite um número, como 300 ou 300,50.\n\n"
+    "Para remover o preço-alvo, envie 0."
 )
 
 

@@ -228,15 +228,15 @@ def test_stage_await_create_mission_sources_without_target() -> None:
 def test_describe_create_mission_sources_prompt_lists_task_070_order() -> None:
     prompt = describe_create_mission_sources_prompt()
 
-    assert "1 - Pichau" in prompt
-    assert "2 - Terabyte" in prompt
-    assert "3 - Amazon" in prompt
-    assert "4 - Kabum" in prompt
-    assert "5 - Todas" in prompt
+    assert "1 — Pichau" in prompt
+    assert "2 — Terabyte" in prompt
+    assert "3 — Amazon" in prompt
+    assert "4 — Kabum" in prompt
+    assert "5 — Todas" in prompt
 
 
 def test_describe_create_mission_sources_retry_asks_again() -> None:
-    assert "Não reconheci" in describe_create_mission_sources_retry()
+    assert "Não entendi essa opção" in describe_create_mission_sources_retry()
 
 
 def test_stage_and_describe_mission_command() -> None:
@@ -324,8 +324,8 @@ def test_stage_and_describe_mission_command_choice() -> None:
     prompt = describe_mission_command_choice_prompt(
         missions, command=MissionCommand.CANCEL
     )
-    assert "1. Ryzen 7 9800X3D" in prompt and "ativa" in prompt.lower()
-    assert "2. Mouse Logitech" in prompt and "pausada" in prompt.lower()
+    assert "1 — Ryzen 7 9800X3D — ativa" in prompt
+    assert "2 — Mouse Logitech — pausada" in prompt
     assert "cancelar" in prompt
     assert describe_mission_command_choice_retry()  # não vazio
 
@@ -364,7 +364,7 @@ def test_stage_and_describe_edit_mission_target_change_only() -> None:
     assert "teclado mecanico" in description
     assert "R$ 500,00" in description
     assert "R$ 300,00" in description
-    assert "continua pausada" in description
+    assert "continuará pausada" in description
     assert "sim" in description.lower()
 
 
@@ -486,8 +486,8 @@ def test_describe_mission_choice_prompt_lists_titles_numbered() -> None:
     )
 
     assert "Qual missão?" in prompt
-    assert "1 - teclado mecanico" in prompt
-    assert "2 - monitor curvo" in prompt
+    assert "1 — teclado mecanico" in prompt
+    assert "2 — monitor curvo" in prompt
 
 
 def test_describe_mission_choice_retry_asks_again() -> None:
@@ -503,8 +503,8 @@ def test_describe_no_editable_mission_mentions_paused_and_active() -> None:
 def test_describe_edit_menu_lists_lojas_and_preco() -> None:
     menu = describe_edit_menu("teclado mecanico")
     assert "teclado mecanico" in menu
-    assert "1 - Lojas" in menu
-    assert "2 - Preço-alvo" in menu
+    assert "1 — Lojas" in menu
+    assert "2 — Preço-alvo" in menu
 
 
 def test_describe_edit_menu_retry() -> None:
@@ -513,8 +513,8 @@ def test_describe_edit_menu_retry() -> None:
 
 def test_describe_edit_lojas_menu_lists_add_and_remove() -> None:
     menu = describe_edit_lojas_menu()
-    assert "1 - Adicionar lojas" in menu
-    assert "2 - Remover lojas" in menu
+    assert "1 — Adicionar lojas" in menu
+    assert "2 — Remover lojas" in menu
 
 
 def test_describe_edit_lojas_menu_retry() -> None:
@@ -544,18 +544,18 @@ def test_current_store_options_includes_only_linked_in_canonical_order() -> None
 def test_describe_edit_add_sources_prompt_lists_option_map() -> None:
     prompt = describe_edit_add_sources_prompt({"1": "terabyte", "2": "kabum"})
     assert "ainda não vinculadas" in prompt
-    assert "1 - Terabyte" in prompt
-    assert "2 - Kabum" in prompt
+    assert "1 — Terabyte" in prompt
+    assert "2 — Kabum" in prompt
 
 
 def test_describe_edit_remove_sources_prompt_lists_option_map() -> None:
     prompt = describe_edit_remove_sources_prompt({"1": "pichau"})
     assert "atualmente vinculadas" in prompt
-    assert "1 - Pichau" in prompt
+    assert "1 — Pichau" in prompt
 
 
 def test_describe_edit_source_selection_retry() -> None:
-    assert "Não reconheci" in describe_edit_source_selection_retry()
+    assert "Não entendi essa opção" in describe_edit_source_selection_retry()
 
 
 def test_describe_edit_add_sources_none_missing() -> None:
@@ -585,7 +585,7 @@ def test_describe_edit_target_amount_prompt_mentions_zero_removes_target() -> No
     prompt = describe_edit_target_amount_prompt()
     assert "reais" in prompt
     assert "0" in prompt
-    assert "remover o alvo" in prompt
+    assert "remover o preço-alvo" in prompt
 
 
 def test_describe_edit_target_amount_retry() -> None:

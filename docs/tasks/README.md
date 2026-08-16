@@ -2,10 +2,13 @@
 
 Cada arquivo descreve uma unidade de trabalho. Antes de executar uma tarefa, leia os documentos obrigatórios definidos em `AGENTS.md`.
 
-**TASK-076 e TASK-086 concluídas:** o drift das três constraints foi corrigido na metadata
+**TASK-076, TASK-086 e TASK-087 concluídas:** o drift das três constraints foi corrigido na metadata
 sem editar migrations históricas; `alembic check` e o runner oficial foram
-aprovados em PostgreSQL 18.4 descartável. Permanecem pendentes TASK-076,
-TASK-077 e TASK-084.
+aprovados em PostgreSQL 18.4 descartável. A revisão transversal de copy foi
+aplicada sem mudança funcional. Permanecem pendentes TASK-077 e TASK-084.
+
+**Próximas TASKs pendentes:** TASK-077 e TASK-084. Nenhuma foi iniciada pela
+conclusão da TASK-087.
 
 As TASKs 000 a 054, as TASKs 055 a 062, a TASK-063 e a TASK-064 estão
 concluídas — MVP da V1 completo, checklist de release 65/65. A

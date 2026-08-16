@@ -72,7 +72,14 @@ def test_invalid_command_only_returns_usage_without_mutating(command: str) -> No
 
     reply = handle_preferences_command(user, command)
 
-    assert "Use um destes comandos" in reply
+    assert any(
+        message in reply
+        for message in (
+            "Use /preferencias para ver as opções disponíveis",
+            'A ação deve ser "ativar" ou "desativar"',
+            'A preferência deve ser "quedas" ou "alvo"',
+        )
+    )
     assert user.notify_price_decreases is True
     assert user.notify_target_reached is True
 

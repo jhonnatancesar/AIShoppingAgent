@@ -578,7 +578,7 @@ def _render_authentication_message(
             raise TelegramNotificationError("notification_payload_invalid") from None
         return {
             CredentialAction.SET_PASSWORD: (
-                "✅ Senha criada com sucesso!\n\nAgora use /entrar para fazer login."
+                "✅ Senha criada com sucesso!\n\nAgora use /entrar para acessar sua conta."
             ),
             CredentialAction.LOGIN: (
                 "✅ Login realizado com sucesso!\n\n"
@@ -586,11 +586,13 @@ def _render_authentication_message(
             ),
             CredentialAction.CHANGE_PASSWORD: (
                 "✅ Senha alterada com sucesso!\n\n"
-                "As sessões anteriores foram encerradas — use /entrar novamente."
+                "As sessões anteriores foram encerradas.\n\n"
+                "Use /entrar para acessar novamente."
             ),
             CredentialAction.RECOVER_PASSWORD: (
                 "✅ Senha recuperada com sucesso!\n\n"
-                "As sessões anteriores foram encerradas — use /entrar novamente."
+                "As sessões anteriores foram encerradas.\n\n"
+                "Use /entrar para acessar novamente."
             ),
         }[action]
     expires_at = _required_datetime(payload, "expires_at")
@@ -598,11 +600,12 @@ def _render_authentication_message(
         local_expiry = expires_at.astimezone(_BRAZIL_TIMEZONE)
         return (
             "⏳ Sua sessão expira em breve\n\n"
-            f"{local_expiry:%d/%m/%Y às %H:%M} (horário de Brasília). "
-            "Depois disso, use /entrar para autenticar novamente."
+            "Ela expira em:\n"
+            f"{local_expiry:%d/%m/%Y às %H:%M} — horário de Brasília\n\n"
+            "Depois disso, use /entrar para acessar novamente."
         )
     if event_type is EventType.AUTHENTICATION_SESSION_EXPIRED_V1:
-        return "🔒 Sua sessão expirou.\n\nUse /entrar para autenticar novamente."
+        return "🔒 Sua sessão expirou.\n\nUse /entrar para acessar novamente."
     raise TelegramNotificationError("notification_payload_invalid")
 
 
@@ -638,8 +641,8 @@ def _render_alert(
                 "📉 QUEDA DE PREÇO\n\n"
                 f"{display_name}\n\n"
                 f"🏪 {store.name}\n"
-                f"💰 {format_money(current_total, currency)} "
-                f"(antes: {format_money(previous_total, currency)})\n"
+                f"💰 {format_money(current_total, currency)} — "
+                f"antes: {format_money(previous_total, currency)}\n"
                 f"🔎 Missão: {mission_title}\n\n"
                 "🔗 Ver anúncio\n"
                 f"{offer.url}"
@@ -676,9 +679,7 @@ async def _load_offer_context_async(
     return offer, product, store
 
 
-_PRELIST_SHIPPING_DISCLAIMER = (
-    "⚠️ Valores sem frete. O frete será calculado/consultado na loja."
-)
+_PRELIST_SHIPPING_DISCLAIMER = "⚠️ Valor sem frete. O frete será consultado na loja."
 
 
 async def _render_prelist_block_async(
@@ -690,7 +691,7 @@ async def _render_prelist_block_async(
         f"🏪 {store.name}\n"
         f"{display_name}\n"
         f"💰 {format_money(amount, currency)}\n"
-        "🔗 Ver anúncio\n"
+        "\n🔗 Ver anúncio\n"
         f"{offer.url}"
     )
 
@@ -729,12 +730,12 @@ async def _render_prelist_ready_async(
     return (
         "🧾 MELHORES OFERTAS ENCONTRADAS ATÉ AGORA\n\n"
         f"Missão: {mission_title}\n\n"
-        "Das lojas que você selecionou, essas são as melhores ofertas "
+        "Das lojas que você escolheu, estas são as melhores ofertas "
         "encontradas até agora:\n\n"
         + "\n\n".join(blocks)
         + f"\n\n{_PRELIST_SHIPPING_DISCLAIMER}"
-        "\n\nAinda estamos buscando nas outras lojas -- você será avisado "
-        "se encontrarmos algo melhor."
+        "\n\nAinda estou buscando nas outras lojas.\n"
+        "Se aparecer algo melhor, eu te aviso."
     )
 
 
@@ -761,14 +762,14 @@ async def _render_prelist_errata_async(
     if had_previous:
         header = "✏️ CORREÇÃO DA PRÉ-LISTA\n\n"
         note = (
-            "Uma das lojas que ainda estava buscando encontrou um preço "
-            "melhor do que o mostrado antes:"
+            "Uma das lojas que ainda estava sendo consultada encontrou uma oferta "
+            "melhor do que a mostrada antes:"
         )
     else:
         header = "🧾 PRIMEIRA OFERTA RELEVANTE ENCONTRADA\n\n"
         note = (
-            "Ainda não tínhamos encontrado nenhuma oferta relevante para "
-            "essa missão -- aqui está a primeira:"
+            "Ainda não tínhamos encontrado uma oferta relevante para essa missão.\n\n"
+            "Agora encontramos esta:"
         )
     return (
         f"{header}"
@@ -776,7 +777,7 @@ async def _render_prelist_errata_async(
         f"{note}\n\n"
         f"🏪 {store.name}\n"
         f"{display_name}\n"
-        f"💰 {format_money(current_amount, currency)}\n"
+        f"💰 {format_money(current_amount, currency)}\n\n"
         "🔗 Ver anúncio\n"
         f"{offer.url}\n\n"
         f"{_PRELIST_SHIPPING_DISCLAIMER}"
