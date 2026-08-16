@@ -1,5 +1,11 @@
 # Handoff para continuidade no servidor — 2026-08-15
 
+> **SUPERADO pelo estado de 2026-08-16.** Este documento preserva o snapshot
+> histórico da chegada ao servidor. O estado autoritativo atual está em
+> `AGENTS.md`, `CLAUDE.md` e `docs/PROJECT_CONTEXT.md`: HEAD `0e90cf0` igual a
+> `origin/main`, TASK-086/076/087 concluídas e deploy local validado. O drift
+> Alembic descrito abaixo foi resolvido pela TASK-086.
+
 ## Ambiente autoritativo
 
 - repositório: `C:\app\AIShoppingAgent`;

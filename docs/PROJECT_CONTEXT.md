@@ -1,5 +1,18 @@
 # Project Context
 
+**Atualização operacional 2026-08-16 (estado autoritativo):** o Windows Server
+executa o HEAD `0e90cf0805a24cfd873d4d0257dacd8ae03c7920`, já presente em
+`origin/main`. Foram implantados os pacotes de IA/Firecrawl, TASK-086,
+TASK-076 e TASK-087. Os 7 serviços estão saudáveis, Alembic está em
+`20260811_0001`, Tailscale Funnel e webhook Telegram estão válidos. O WSL2
+está limitado a 4 GB de RAM, 2 GB de swap e reclaim gradual. Após a manutenção,
+4 schedules de missões `active` ficaram habilitados e todos os schedules de
+missões `cancelled`, `completed` ou `expired` ficaram desabilitados. Nenhum
+estado lógico de missão ou `MissionTransition` foi alterado. Este bloco
+substitui referências históricas abaixo que ainda descrevam TASK-086 como não
+iniciada ou TASK-076 como aguardando retomada. TASK-077 e TASK-084 permanecem
+pendentes e não iniciadas.
+
 **Atualização 2026-08-16 (TASK-087):** a revisão completa de UX/copy dos textos
 visíveis está concluída. Telegram, autenticação web, cadastro, preferências,
 notificações e privacidade seguem o catálogo aprovado, com listas em

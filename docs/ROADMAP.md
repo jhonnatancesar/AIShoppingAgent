@@ -26,6 +26,7 @@
 | Disponibilidade e fallback dos provedores de IA | TASK-064 | Revisa a cascata ADMIN/DEV do `AIProviderManager` (modelos, ordem, taxonomia de erro) achada degradada durante a validação da TASK-063, antes da release ser definitiva (`DEC-049`) |
 | Drift de constraints no Alembic | TASK-086 | Concluída; metadata corrigida e runner aprovado em PostgreSQL 18.4 descartável |
 | Padronização de textos visíveis | TASK-087 | Concluída; catálogo aplicado sem mudança funcional e suíte não-integração aprovada |
+| Estado operacional no Windows Server | manutenção 2026-08-16 | HEAD `0e90cf0` implantado; 7 serviços saudáveis; WSL2 limitado a 4 GB; somente schedules de missões ativas habilitados |
 | Expansão de fontes (futuro) | Tarefas a definir | Mercado Livre, Shopee, AliExpress e outras fontes futuras |
 
 As TASKs 000 a 053 e as TASKs 055 a 062 estão
@@ -184,8 +185,8 @@ vs `AISHOPPING_EXTERNAL_HTTP_TIMEOUT_SECONDS=10`), documentada em
 oficial, migration real, chamadas reais ao perfil `ADMIN` e missão
 real em produção (`5800X3D`, 4 lojas `succeeded`, pré-lista correta
 Amazon+Kabum por serem as mais baratas)) → `v1.0.6` (release corretiva,
-**em andamento — TASK-076 e TASK-079 concluídas e validadas; demais itens
-planejados** — dois itens originais: TASK-076
+**em andamento — TASK-076, TASK-079, TASK-086 e TASK-087 concluídas e
+validadas; permanecem pendentes TASK-077 e TASK-084** — dois itens originais: TASK-076
 (`docs/tasks/TASK-076.md`, observabilidade — enriquecer os logs de
 falha dos providers com tipo/status/traceback da exceção original, hoje
 descartados no ponto em que `_process` já os tem em escopo; achada

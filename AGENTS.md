@@ -368,3 +368,16 @@ mostram as opções em linhas próprias; comandos, parsers, estados, TTLs e regr
 funcionais permanecem inalterados. Foram aprovados 294 testes focados e 1.186
 testes não-integração (1 ignorado, cobertura 90,68%). Permanecem pendentes
 TASK-077 e TASK-084; nenhuma foi iniciada.
+
+**Atualização 2026-08-16 (4) — estado operacional autoritativo:** a `main` no
+Windows Server está em `0e90cf0805a24cfd873d4d0257dacd8ae03c7920`, igual a
+`origin/main`; os commits da TASK-086 (`f5c69e5`), TASK-076 (`c4b1e5e`),
+IA/Firecrawl (`0513d0a`) e TASK-087 (`0e90cf0`) já existem no remoto e foram
+implantados localmente. O stack de 7 serviços foi reconstruído e validado no
+head Alembic `20260811_0001`, com `/health`, `/ready`, Funnel e webhook
+saudáveis. O WSL2 está limitado por `%UserProfile%\.wslconfig` a 4 GB de RAM,
+2 GB de swap e `autoMemoryReclaim=gradual`. Estado final das agendas: somente
+as 4 missões `active` estão habilitadas; agendas de missões `cancelled`,
+`completed` ou `expired` permanecem desabilitadas. Nenhum status de missão ou
+`MissionTransition` foi alterado pela manutenção. Permanecem pendentes somente
+TASK-077 e TASK-084; nenhuma foi iniciada.

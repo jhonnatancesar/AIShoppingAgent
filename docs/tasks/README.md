@@ -10,6 +10,10 @@ aplicada sem mudança funcional. Permanecem pendentes TASK-077 e TASK-084.
 **Próximas TASKs pendentes:** TASK-077 e TASK-084. Nenhuma foi iniciada pela
 conclusão da TASK-087.
 
+**Deploy 2026-08-16:** TASK-076, TASK-086, o pacote de IA/Firecrawl e
+TASK-087 estão presentes em `origin/main` e implantados no Windows Server no
+HEAD `0e90cf0`. TASK-077 e TASK-084 continuam não iniciadas.
+
 As TASKs 000 a 054, as TASKs 055 a 062, a TASK-063 e a TASK-064 estão
 concluídas — MVP da V1 completo, checklist de release 65/65. A
 TASK-038 recomenda

@@ -1,5 +1,11 @@
 # Backlog de Evoluções Futuras
 
+> Estado em 2026-08-16: esta manutenção não adicionou nem removeu ideias do
+> backlog. TASK-076, TASK-086 e TASK-087 estão concluídas e implantadas;
+> TASK-077 e TASK-084 permanecem pendentes e não iniciadas. O limite WSL2 e a
+> política de não habilitar schedules de missões terminais são estado
+> operacional, não novos itens de backlog.
+
 Este documento é o repositório de ideias que surgirem durante o desenvolvimento e não pertencem à versão atual. Registrar uma ideia aqui não a aprova, não cria uma TASK e não altera o escopo da V1.
 
 Para cada item novo, registrar uma descrição curta, a motivação e eventuais dependências. A priorização e a transformação em tarefa dependem de decisão explícita posterior.

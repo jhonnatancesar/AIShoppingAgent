@@ -23,23 +23,24 @@ A V1 permitirá pesquisar Pichau, Terabyte, Amazon e Kabum, conforme seleção d
 - Não implementar nada além da TASK solicitada.
 - Antes de iniciar uma TASK, identificar todos os recursos necessários ao desenvolvimento e à validação real. Solicitar antecipadamente ao usuário qualquer chave, conta, permissão ou configuração ausente, orientando seu armazenamento seguro fora do Git e do chat.
 - Não conectar módulos diretamente a Gemini, OpenAI ou Claude: o AI Provider Manager será a única porta de acesso.
-- O perfil USER usará Gemini; ADMIN e DEV usarão a melhor IA disponível com fallback. PLUS é futuro e não será implementado no MVP inicial.
+- USER e DEV usam exclusivamente a cascata gratuita Gemini → Groq
+  `openai/gpt-oss-120b` → OpenRouter `openrouter/free`. Grounding DEV usa a
+  Firecrawl API v2 direta antes da mesma cascata; Firecrawl é pesquisa, não
+  LLM. ADMIN compartilha a política gratuita vigente. PLUS é futuro.
 - Cada coleta de preço deverá ser persistida quando o mecanismo for implementado.
 
 ## Fonte de verdade
 
 `docs/PROJECT_CONTEXT.md` registra o estado vivo; `docs/ROADMAP.md` registra a ordem de trabalho; `docs/tasks/` contém o escopo unitário.
 
-## Continuidade no servidor — 2026-08-15
+## Continuidade no servidor — estado atual em 2026-08-16
 
-O ambiente autoritativo passou a ser `C:\app\AIShoppingAgent`, no Windows
-Server. O pacote de consolidação dos fluxos determinísticos do Telegram e de
-recuperação de senha foi commitado localmente em
-`fd68939bcaac3d5926af6bc43eee7c05913f727c`, sem push, rebuild ou deploy.
-
-O próximo problema registrado, ainda não corrigido, é o drift do
-`alembic check` nas constraints `mission_command_values`,
-`store_source_type_values` e `user_role_values`. Antes de qualquer ação, ler
-`docs/HANDOFF_SERVER_2026-08-15.md` e `docs/ALEMBIC_CHECK_ISSUE.md`. Toda
-reprodução deve usar PostgreSQL 18.4 descartável; o banco ativo e os
-containers em execução não podem ser alterados sem autorização explícita.
+O ambiente autoritativo é `C:\app\AIShoppingAgent`, no Windows Server. A
+`main` está em `0e90cf0805a24cfd873d4d0257dacd8ae03c7920`, igual a
+`origin/main`, e esse HEAD foi implantado no stack local de 7 serviços. O drift
+do `alembic check` foi resolvido pela TASK-086 sem migration; o head permanece
+`20260811_0001`. TASK-076 e TASK-087 também estão concluídas. O WSL2 opera com
+limite de 4 GB, swap de 2 GB e reclaim gradual. Somente schedules de missões
+`active` podem ficar habilitados; `cancelled`, `completed` e `expired` ficam
+desabilitados. Próximas TASKs pendentes: TASK-077 e TASK-084, ambas não
+iniciadas.

@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-08-16 — Manutenção, limite WSL2 e deploy do HEAD aprovado
+
+- Aplicado `%UserProfile%\.wslconfig` com 4 GB de RAM, 2 GB de swap e
+  `autoMemoryReclaim=gradual`; Docker confirmou o limite efetivo.
+- Reconstruído e implantado o HEAD `0e90cf0`, já sincronizado com
+  `origin/main`, sem push durante a manutenção. Os 7 serviços, PostgreSQL,
+  Alembic `20260811_0001`, `/health`, `/ready`, Tailscale Funnel, webhook e
+  observabilidade foram validados.
+- As agendas foram suspensas durante a janela. Estado final: 4 schedules de
+  missões `active` habilitados; schedules de missões `cancelled`, `completed`
+  ou `expired` desabilitados. Nenhuma missão ou `MissionTransition` foi
+  alterada pela manutenção.
+- TASK-077 e TASK-084 permanecem não iniciadas.
+
 ## 2026-08-16 — TASK-087
 
 - Catálogo revisado de textos classificado como **Nova TASK do MVP** e
