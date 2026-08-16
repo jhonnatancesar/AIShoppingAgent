@@ -1210,8 +1210,8 @@ async def test_list_missions_command_is_numbered_and_deterministic(
     fake_user.username = "cliente"
     missions = [
         _fake_mission(title="Processador Ryzen", status=MissionStatus.ACTIVE),
-        _fake_mission(title="Memória DDR5", status=MissionStatus.CANCELLED),
         _fake_mission(title="Monitor 4K", status=MissionStatus.PAUSED),
+        _fake_mission(title="Memória DDR5", status=MissionStatus.CANCELLED),
     ]
     monkeypatch.setattr(
         "app.telegram.router.has_active_session_async", AsyncMock(return_value=True)
@@ -1234,9 +1234,9 @@ async def test_list_missions_command_is_numbered_and_deterministic(
 
     assert reply == (
         "📋 Suas missões:\n\n"
-        "1 — Processador Ryzen — ativa\n"
-        "2 — Memória DDR5 — cancelada\n"
-        "3 — Monitor 4K — pausada"
+        "1 — Processador Ryzen — 🟢 ativa\n"
+        "2 — Monitor 4K — ⏸️ pausada\n"
+        "3 — Memória DDR5 — ❌ cancelada"
     )
     assert adapter.calls == []
     list_mock.assert_awaited_once_with(session, user_id=fake_user.id, limit=16)

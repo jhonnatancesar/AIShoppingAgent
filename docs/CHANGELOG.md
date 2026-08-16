@@ -6,6 +6,8 @@
   compatibilidade textual para `missoes`/`missões`, sem chamar IA.
 - A listagem usa numeração e rótulos localizados, limitada às missões recentes
   `active`, `paused` e `cancelled` do proprietário autenticado.
+- A ordem visual prioriza ativas, depois pausadas e por último canceladas;
+  cada status reutiliza os ícones oficiais `🟢`, `⏸️` e `❌`.
 - O menu oficial do Telegram inclui o novo comando e é reaplicado por
   `setMyCommands` no deploy.
 - Aprovados 152 testes focados, 1.192 testes não-integração (1 ignorado,

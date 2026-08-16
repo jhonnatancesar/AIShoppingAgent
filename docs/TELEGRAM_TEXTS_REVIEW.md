@@ -354,7 +354,9 @@ Você ainda não tem nenhuma missão registrada.
 ```text
 📋 Suas missões:
 
-{ícone} {título} — {status}
+1 — {título} — 🟢 ativa
+2 — {título} — ⏸️ pausada
+3 — {título} — ❌ cancelada
 ```
 
 ```text

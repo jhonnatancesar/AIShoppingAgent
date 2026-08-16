@@ -21,6 +21,8 @@ uma única vez depois do deploy.
 - listagem restrita ao proprietário autenticado;
 - somente missões ativas, pausadas e canceladas, mais recentes primeiro;
 - título, ícone e status localizado pelo formatter existente;
+- ordenação fixa por estado: ativas, pausadas e canceladas; dentro de cada
+  grupo, missões mais recentes primeiro;
 - limite operacional explícito para respeitar o tamanho de mensagem do Telegram;
 - inclusão no `/ajuda`, em `register_telegram_commands.py` e documentação;
 - testes sem chamadas reais a provedores de IA.
@@ -47,8 +49,9 @@ uma única vez depois do deploy.
 
 - `/listar_missoes`, `/listar-missoes`, `missoes` e `missões` usam o mesmo
   caminho determinístico, autenticado e sem IA.
-- A resposta é numerada no padrão `1 — Produto — ativa` e mostra até as 15
-  missões recentes elegíveis, avisando quando houver mais.
+- A resposta é numerada no padrão `1 — Produto — 🟢 ativa` e mostra até as 15
+  missões elegíveis, agrupando ativas, pausadas e canceladas nessa ordem e
+  avisando quando houver mais.
 - Consulta filtra no PostgreSQL por proprietário e por `active`, `paused` e
   `cancelled`; `completed`, `expired` e missões alheias ficam fora.
 - Menu oficial inclui `/listar_missoes`; sua publicação por `setMyCommands`

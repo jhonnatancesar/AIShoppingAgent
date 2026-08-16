@@ -966,7 +966,8 @@ async def _list_missions_reply(*, session: AsyncSession, user: User) -> str:
     visible = missions[:_LIST_MISSIONS_DISPLAY_LIMIT]
     lines = ["📋 Suas missões:", ""]
     lines.extend(
-        f"{index} — {mission.title} — {format_mission_status(mission.status)}"
+        f"{index} — {mission.title} — {MISSION_STATUS_ICONS[mission.status]} "
+        f"{format_mission_status(mission.status)}"
         for index, mission in enumerate(visible, start=1)
     )
     if len(missions) > _LIST_MISSIONS_DISPLAY_LIMIT:

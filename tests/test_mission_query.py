@@ -50,6 +50,10 @@ def test_list_visible_missions_for_user_filters_owner_and_allowed_statuses() -> 
     compiled = str(statement.compile(compile_kwargs={"literal_binds": True}))
     assert user_id.hex in compiled
     assert "missions.status IN ('active', 'paused', 'cancelled')" in compiled
+    active_position = compiled.index("missions.status = 'active'")
+    paused_position = compiled.index("missions.status = 'paused'")
+    cancelled_position = compiled.index("missions.status = 'cancelled'")
+    assert active_position < paused_position < cancelled_position
     assert "LIMIT 16" in compiled
 
 

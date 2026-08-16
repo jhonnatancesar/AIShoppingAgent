@@ -372,7 +372,8 @@ TASK-077 e TASK-084; nenhuma foi iniciada.
 **Atualização 2026-08-16 (5):** a TASK-088 está concluída. O comando
 `/listar_missoes`, seu alias com hífen e as entradas `missoes`/`missões`
 listam, sem IA, até 15 missões recentes do proprietário nos estados ativa,
-pausada e cancelada, em formato numerado. Concluídas/expiradas e missões de
+pausada e cancelada, em formato numerado, agrupando esses estados nessa ordem
+e exibindo `🟢`/`⏸️`/`❌`. Concluídas/expiradas e missões de
 outro usuário não aparecem. O menu nativo do Telegram inclui o novo comando.
 Permanecem pendentes TASK-077 e TASK-084; nenhuma foi iniciada.
 

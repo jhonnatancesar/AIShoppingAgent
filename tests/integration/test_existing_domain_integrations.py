@@ -91,7 +91,11 @@ def test_visible_mission_list_filters_owner_and_status_in_postgresql(
         _query(),
         loop_factory=lambda: asyncio.SelectorEventLoop(selectors.SelectSelector()),
     )
-    assert {mission.title for mission in missions} == {"Ativa", "Pausada", "Cancelada"}
+    assert [(mission.title, mission.status) for mission in missions] == [
+        ("Ativa", MissionStatus.ACTIVE),
+        ("Pausada", MissionStatus.PAUSED),
+        ("Cancelada", MissionStatus.CANCELLED),
+    ]
 
 
 def test_recommendation_comparison_and_confirmation(integration_database) -> None:

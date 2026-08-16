@@ -132,7 +132,8 @@ pelo roteador quando digitados como texto, mas não são enviados a
 
 `/listar_missoes`, `/listar-missoes`, `missoes` e `missões` compartilham uma
 consulta determinística, sem IA, numerada e restrita ao proprietário. São
-exibidos somente os estados ativa, pausada e cancelada.
+exibidos somente os estados ativa, pausada e cancelada, nessa ordem, com os
+status visuais `🟢 ativa`, `⏸️ pausada` e `❌ cancelada`.
 
 ## Limite entre `204` e `500`
 

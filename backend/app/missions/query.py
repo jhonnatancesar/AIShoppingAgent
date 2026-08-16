@@ -5,7 +5,7 @@ chamador é `app.telegram.router`, então não há versão síncrona a manter.""
 
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import case, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.missions.models import Mission, MissionCriteria, MissionStatus
@@ -57,7 +57,15 @@ async def list_visible_missions_for_user(
             Mission.user_id == user_id,
             Mission.status.in_(_VISIBLE_LIST_STATUSES),
         )
-        .order_by(Mission.created_at.desc())
+        .order_by(
+            case(
+                (Mission.status == MissionStatus.ACTIVE, 0),
+                (Mission.status == MissionStatus.PAUSED, 1),
+                (Mission.status == MissionStatus.CANCELLED, 2),
+                else_=3,
+            ),
+            Mission.created_at.desc(),
+        )
         .limit(limit)
     )
     return list(await session.scalars(statement))

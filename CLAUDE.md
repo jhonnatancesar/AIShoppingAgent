@@ -45,4 +45,5 @@ limite de 4 GB, swap de 2 GB e reclaim gradual. Somente schedules de missões
 desabilitados. A TASK-088 adiciona listagem determinística e numerada por
 `/listar_missoes`, `/listar-missoes`, `missoes` ou `missões`, sem IA, apenas
 para ativa/pausada/cancelada do proprietário. Próximas TASKs pendentes:
-TASK-077 e TASK-084, ambas não iniciadas.
+TASK-077 e TASK-084, ambas não iniciadas. A listagem agrupa ativas, pausadas e
+canceladas nessa ordem e mostra `🟢`, `⏸️` e `❌` nos respectivos status.

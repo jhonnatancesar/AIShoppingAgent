@@ -12,6 +12,10 @@
   lista missões, porém não substitui um comando explícito, previsível e barato.
 - **Guardrails:** nenhuma transição, agenda, coleta, migration ou mudança de IA;
   `completed` e `expired` não entram na nova listagem.
+- **Refinamento aprovado:** **Implementar agora** na própria TASK-088. A
+  listagem agrupa `active` antes de `paused` e `cancelled`, mantendo as mais
+  recentes primeiro em cada grupo, e apresenta os ícones oficiais
+  `🟢 ativa`, `⏸️ pausada` e `❌ cancelada` junto ao status.
 
 
 ## DEC-064 — Revisão transversal de UX/copy como TASK própria
