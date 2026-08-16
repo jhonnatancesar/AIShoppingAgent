@@ -183,8 +183,8 @@ vs `AISHOPPING_EXTERNAL_HTTP_TIMEOUT_SECONDS=10`), documentada em
 oficial, migration real, chamadas reais ao perfil `ADMIN` e missão
 real em produção (`5800X3D`, 4 lojas `succeeded`, pré-lista correta
 Amazon+Kabum por serem as mais baratas)) → `v1.0.6` (release corretiva,
-**em andamento — TASK-079 concluída e validada; demais itens planejados,
-não implementados** — dois itens originais: TASK-076
+**em andamento — TASK-076 e TASK-079 concluídas e validadas; demais itens
+planejados** — dois itens originais: TASK-076
 (`docs/tasks/TASK-076.md`, observabilidade — enriquecer os logs de
 falha dos providers com tipo/status/traceback da exceção original, hoje
 descartados no ponto em que `_process` já os tem em escopo; achada

@@ -2,7 +2,7 @@
 
 Cada arquivo descreve uma unidade de trabalho. Antes de executar uma tarefa, leia os documentos obrigatórios definidos em `AGENTS.md`.
 
-**TASK-086 concluída:** o drift das três constraints foi corrigido na metadata
+**TASK-076 e TASK-086 concluídas:** o drift das três constraints foi corrigido na metadata
 sem editar migrations históricas; `alembic check` e o runner oficial foram
 aprovados em PostgreSQL 18.4 descartável. Permanecem pendentes TASK-076,
 TASK-077 e TASK-084.

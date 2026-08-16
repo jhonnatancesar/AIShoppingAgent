@@ -24,7 +24,12 @@ from app.collection.contracts import (
     RawCollectedOffer,
     ResolvedProductIdentity,
 )
-from app.collection.errors import ProviderBlockedError
+from app.collection.errors import (
+    CollectionNormalizationError,
+    ProviderBlockedError,
+    ProviderCircuitOpenError,
+    ProviderNavigationError,
+)
 from app.collection.models import CollectionRunStatus
 from app.collection.normalization import Availability, PriceNormalizer
 from app.collection.orchestration import (
@@ -971,6 +976,88 @@ def test_orchestrator_isolates_provider_failure(monkeypatch) -> None:
 
     assert asyncio.run(orchestrator._process(claim)) is False
     assert record.call_args.args[2] == "provider_blocked"
+
+
+@pytest.mark.parametrize(
+    ("error", "expected_stage", "expected_status"),
+    [
+        (ProviderNavigationError("pichau", 504), "navigation", 504),
+        (ProviderBlockedError("pichau", 429), "extraction", 429),
+        (ProviderCircuitOpenError("pichau"), "provider_availability", None),
+        (CollectionNormalizationError("currency is missing"), "normalization", None),
+    ],
+)
+def test_provider_failure_log_preserves_sanitized_diagnostics(
+    monkeypatch,
+    caplog: pytest.LogCaptureFixture,
+    error: Exception,
+    expected_stage: str,
+    expected_status: int | None,
+) -> None:
+    class FailingProvider:
+        source_code = "pichau"
+
+        async def collect(self, request):
+            raise error
+
+    record_failure = AsyncMock(return_value=True)
+    monkeypatch.setattr("app.collection.orchestration._record_failure", record_failure)
+    orchestrator = CollectionOrchestrator(
+        _session_factory(_mock_async_session()),
+        CollectionAdapter((FailingProvider(),)),
+        ai_manager=_StubAIManager(),
+    )
+    claim = ClaimedCollection(uuid4(), uuid4(), uuid4(), "pichau", "GPU", NOW)
+
+    with caplog.at_level("WARNING", logger="app.collection.orchestration"):
+        assert asyncio.run(orchestrator._process(claim)) is False
+
+    log_record = next(
+        item for item in caplog.records if item.message == "collection_source_failed"
+    )
+    assert log_record.source_code == "pichau"
+    assert log_record.failure_code
+    assert log_record.error_class == type(error).__name__
+    assert log_record.error_detail == str(error)
+    assert log_record.failure_stage == expected_stage
+    assert type(error).__name__ in log_record.failure_traceback
+    if expected_status is None:
+        assert not hasattr(log_record, "provider_status")
+    else:
+        assert log_record.provider_status == expected_status
+
+
+def test_unexpected_provider_failure_log_omits_raw_error_text(
+    monkeypatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    secret_canary = "https://example.invalid/?token=must-not-leak"
+
+    class FailingProvider:
+        source_code = "pichau"
+
+        async def collect(self, request):
+            raise RuntimeError(secret_canary)
+
+    monkeypatch.setattr(
+        "app.collection.orchestration._record_failure", AsyncMock(return_value=True)
+    )
+    orchestrator = CollectionOrchestrator(
+        _session_factory(_mock_async_session()),
+        CollectionAdapter((FailingProvider(),)),
+        ai_manager=_StubAIManager(),
+    )
+    claim = ClaimedCollection(uuid4(), uuid4(), uuid4(), "pichau", "GPU", NOW)
+
+    with caplog.at_level("WARNING", logger="app.collection.orchestration"):
+        assert asyncio.run(orchestrator._process(claim)) is False
+
+    log_record = next(
+        item for item in caplog.records if item.message == "collection_source_failed"
+    )
+    assert log_record.error_class == "RuntimeError"
+    assert log_record.failure_stage == "collection"
+    assert not hasattr(log_record, "error_detail")
+    assert secret_canary not in log_record.failure_traceback
 
 
 def test_orchestrator_claim_deadline_exceeded_records_failure_and_returns_false(

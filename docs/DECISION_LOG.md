@@ -1,5 +1,14 @@
 # Decision Log
 
+## DEC-063 — Diagnóstico local e seguro das falhas de coleta
+
+- **Data:** 2026-08-16
+- **Decisão:** enriquecer exclusivamente `collection_source_failed`, com
+  traceback padrão limitado e mensagem somente para exceções de domínio
+  consideradas seguras.
+- **Motivo:** preservar diagnóstico sem ampliar o comportamento do formatter
+  global nem expor texto bruto de bibliotecas externas.
+
 ## DEC-062 — Checks de Enum explícitos na metadata
 
 - **Data:** 2026-08-16

@@ -10,6 +10,7 @@ transações jamais mantém um `await` externo (IA, HTTP, Playwright) aberto.
 
 import asyncio
 import logging
+import traceback
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
@@ -108,6 +109,7 @@ _MISSION_OFFER_RELEVANCE_PK = (
 # (que continua tratando 401/403/429 como bloqueio da chamada em si).
 _CONFIRMED_BLOCK_STATUSES = frozenset({403, 429})
 _SOURCE_BACKOFF_CAP_MINUTES = 360
+_FAILURE_TRACEBACK_MAX_CHARS = 4000
 _OFFER_IDENTITY_INDEXES = frozenset(
     {
         "uq_offers_retailer_external_id",
@@ -530,6 +532,7 @@ class CollectionOrchestrator:
                 extra={
                     "source_code": _safe_source(claim.source_code),
                     "failure_code": failure_code,
+                    **_failure_log_context(error),
                 },
             )
             return False
@@ -1378,6 +1381,57 @@ def _failure_code(error: Exception) -> str:
     if isinstance(error, (ProviderNavigationError, TimeoutError, asyncio.TimeoutError)):
         return "provider_unavailable"
     return "collection_failed"
+
+
+def _failure_log_context(error: Exception) -> dict[str, Any]:
+    """Produz diagnóstico local e limitado sem expor exceções externas brutas.
+
+    A etapa é derivada da taxonomia já existente. Mensagem e traceback completos
+    ficam restritos às exceções de domínio cujos construtores usam apenas valores
+    fechados/estruturais; exceções inesperadas preservam a pilha, mas não o texto,
+    que pode conter URL, query ou credencial de uma biblioteca externa.
+    """
+    if isinstance(error, ProviderNavigationError):
+        stage = "navigation"
+    elif isinstance(error, ProviderBlockedError):
+        stage = "extraction"
+    elif isinstance(error, (CollectionNormalizationError, CollectionContractError)):
+        stage = "normalization"
+    elif isinstance(error, IntegrityError):
+        stage = "persistence"
+    elif isinstance(error, ProviderCircuitOpenError):
+        stage = "provider_availability"
+    else:
+        stage = "collection"
+
+    context: dict[str, Any] = {
+        "error_class": type(error).__name__,
+        "failure_stage": stage,
+    }
+    status = getattr(error, "status", None)
+    if isinstance(status, int):
+        context["provider_status"] = status
+
+    safe_domain_error = isinstance(
+        error,
+        (
+            ProviderNavigationError,
+            ProviderBlockedError,
+            ProviderCircuitOpenError,
+            CollectionNormalizationError,
+            CollectionContractError,
+        ),
+    )
+    if safe_domain_error:
+        context["error_detail"] = _sanitize_json(str(error))
+        formatted = "".join(
+            traceback.format_exception(type(error), error, error.__traceback__)
+        )
+    else:
+        formatted = "".join(traceback.format_tb(error.__traceback__))
+        formatted += f"{type(error).__name__}\n"
+    context["failure_traceback"] = formatted[:_FAILURE_TRACEBACK_MAX_CHARS]
+    return context
 
 
 def _constraint_name(error: IntegrityError) -> str | None:

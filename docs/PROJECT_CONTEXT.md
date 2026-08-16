@@ -1,5 +1,11 @@
 # Project Context
 
+**Atualização 2026-08-16 (TASK-076):** falhas dos Store Providers agora deixam
+diagnóstico estruturado suficiente em `collection_source_failed` (classe,
+detalhe seguro, status, etapa e traceback limitado), somente no ponto local da
+orquestração. O formatter global, retry, providers e fluxos funcionais não
+mudaram. A TASK-076 está concluída e validada; permanecem TASK-077 e TASK-084.
+
 **Atualização 2026-08-16 (TASK-086):** o drift do `alembic check` está
 resolvido. O Alembic 1.19.1 ignorava na metadata os checks `_type_bound`
 gerados por `Enum`; as três constraints agora são explícitas nos models, sem

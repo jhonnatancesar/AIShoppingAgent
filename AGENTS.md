@@ -354,3 +354,9 @@ agora são explícitas na metadata, sem migration e sem alteração semântica. 
 runner oficial aprovou `upgrade`, `downgrade -1`, novo upgrade, `alembic check`
 e 29 integrações em PostgreSQL 18.4 descartável. Banco e containers ativos não
 foram tocados. A TASK-076, pausada para remover esse bloqueio, deve ser retomada.
+
+**Atualização 2026-08-16 (2):** a TASK-076 foi retomada e concluída.
+`collection_source_failed` registra classe, detalhe seguro, status, etapa e
+traceback local limitado; o `JsonFormatter` compartilhado permanece inalterado.
+Testes focados e o runner oficial PostgreSQL 18.4 foram aprovados. Permanecem
+pendentes TASK-077 e TASK-084.

@@ -1,8 +1,21 @@
 # TASK-076 — Enriquecer logs de falha dos providers de coleta
 
-Status: **Planejada e aprovada** (2026-08-12) — decisão arquitetural
-tomada pelo usuário (ver "Decisão aprovada" abaixo). Ainda **não
-implementada**; aguarda início da implementação.
+Status: **Concluída e validada em 2026-08-16.**
+
+## Implementação concluída
+
+`collection_source_failed` agora registra localmente `error_class`,
+`error_detail` seguro, `provider_status` quando disponível,
+`failure_stage` e `failure_traceback` limitado. A etapa deriva da taxonomia já
+existente; exceções desconhecidas preservam classe/pilha, mas omitem a mensagem
+bruta para não vazar URL, query ou credencial. O `JsonFormatter` permaneceu
+inalterado, assim como retry, classificação de falha, providers, persistência,
+IA e Telegram.
+
+Validação: 112 testes focados, 29 integrações PostgreSQL 18.4 pelo runner
+oficial, Ruff, Gitleaks, `git diff --check` e Compose aprovados. A suíte rápida
+completa aprovou 1.186 testes, 1 ignorado e 90,67% de cobertura antes da remoção
+do bloqueio Alembic; a integração foi repetida e aprovada após a TASK-086.
 
 Dependência: nenhuma. Relacionada à correção de readiness da Pichau
 (`docs/tasks/TASK-075.md`, seção "Correção pós-implementação"), que expôs

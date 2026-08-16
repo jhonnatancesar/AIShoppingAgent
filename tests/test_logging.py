@@ -60,6 +60,34 @@ def test_json_formatter_includes_context_without_private_fields() -> None:
     assert "request_id" not in payload
 
 
+def test_json_formatter_preserves_collection_failure_diagnostic_fields() -> None:
+    """Os nomes locais da TASK-076 não colidem com a redação de segurança."""
+    record = logging.LogRecord(
+        name="app.collection.orchestration",
+        level=logging.WARNING,
+        pathname=__file__,
+        lineno=1,
+        msg="collection_source_failed",
+        args=(),
+        exc_info=None,
+    )
+    record.error_class = "ProviderNavigationError"
+    record.error_detail = "pichau navigation failed with status 504"
+    record.provider_status = 504
+    record.failure_stage = "navigation"
+    record.failure_traceback = "Traceback (most recent call last): ..."
+    record.provider_url = "https://sensitive.invalid"
+
+    payload = json.loads(JsonFormatter().format(record))
+
+    assert payload["error_class"] == "ProviderNavigationError"
+    assert payload["error_detail"] == "pichau navigation failed with status 504"
+    assert payload["provider_status"] == 504
+    assert payload["failure_stage"] == "navigation"
+    assert payload["failure_traceback"].startswith("Traceback")
+    assert "provider_url" not in payload
+
+
 def test_json_formatter_removes_personal_fields_and_raw_exception() -> None:
     """PII em extras ou mensagem de exceção nunca deve sair no JSON."""
     canary = "privacy-canary@example.invalid"

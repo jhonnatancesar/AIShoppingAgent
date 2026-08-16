@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-08-16 — TASK-076
+
+- `collection_source_failed` ganhou classe, detalhe seguro, status, etapa e
+  traceback local limitado, sem alterar o `JsonFormatter` compartilhado.
+- Exceções externas inesperadas não expõem sua mensagem bruta; os novos campos
+  foram testados contra o redator de segurança.
+- Aprovados 112 testes focados e 29 integrações PostgreSQL 18.4 pelo runner
+  oficial, sem chamadas externas nem alteração do banco ativo.
+
 ## 2026-08-16 — TASK-086
 
 - Corrigido o falso drift das três constraints: checks antes gerados como
