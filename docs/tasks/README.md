@@ -2,10 +2,10 @@
 
 Cada arquivo descreve uma unidade de trabalho. Antes de executar uma tarefa, leia os documentos obrigatórios definidos em `AGENTS.md`.
 
-**Próxima TASK registrada:** TASK-086 — Corrigir drift de constraints no
-`alembic check`. Status: **não iniciada**; exige autorização explícita para
-execução. TASKs 000 a 085 já possuem número reservado no repositório e não
-foram reutilizadas.
+**TASK-086 concluída:** o drift das três constraints foi corrigido na metadata
+sem editar migrations históricas; `alembic check` e o runner oficial foram
+aprovados em PostgreSQL 18.4 descartável. Permanecem pendentes TASK-076,
+TASK-077 e TASK-084.
 
 As TASKs 000 a 054, as TASKs 055 a 062, a TASK-063 e a TASK-064 estão
 concluídas — MVP da V1 completo, checklist de release 65/65. A

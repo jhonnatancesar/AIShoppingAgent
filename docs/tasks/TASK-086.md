@@ -1,6 +1,22 @@
 # TASK-086 — Corrigir drift de constraints no `alembic check`
 
-Status: **Registrada; não iniciada.**
+Status: **Concluída e validada em 2026-08-16.**
+
+## Resolução
+
+A causa raiz era a interação entre SQLAlchemy e o comparador de
+`CheckConstraint` do Alembic 1.19.1. As três constraints eram geradas por
+`Enum(native_enum=False, create_constraint=True)` como `_type_bound=True`.
+O Alembic filtra checks type-bound da metadata, mas reflete os mesmos checks do
+PostgreSQL como constraints nomeadas normais, produzindo falso
+`remove_constraint`.
+
+Os models agora declaram as três `CheckConstraint` explicitamente e usam
+`create_constraint=False` nos `Enum`. Nomes, expressões e semântica permanecem
+iguais; nenhuma migration histórica foi editada e nenhuma migration nova foi
+necessária. PostgreSQL 18.4 descartável aprovou head `20260811_0001`,
+`alembic check`, valores válidos/inválidos e 29 testes do runner oficial. A
+suíte não-integração aprovou 1.180 testes, 1 ignorado e 90,65% de cobertura.
 
 ## Contexto conhecido
 

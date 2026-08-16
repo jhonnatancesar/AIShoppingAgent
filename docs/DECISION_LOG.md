@@ -1,5 +1,16 @@
 # Decision Log
 
+## DEC-062 — Checks de Enum explícitos na metadata
+
+- **Data:** 2026-08-16
+- **Decisão:** representar `mission_command_values`,
+  `store_source_type_values` e `user_role_values` como `CheckConstraint`
+  explícitas e desativar a geração automática pelos respectivos `Enum`.
+- **Motivo:** Alembic 1.19.1 ignora checks `_type_bound` na metadata, mas
+  compara os mesmos checks refletidos do PostgreSQL, produzindo falso drift.
+- **Compatibilidade:** nomes e expressões permanecem idênticos; nenhuma
+  migration nem alteração no banco existente é necessária.
+
 Este arquivo registra decisões arquiteturais e funcionais tomadas durante o desenvolvimento. Ele preserva o motivo de cada escolha e direciona a atualização documental necessária, sem substituir os ADRs para decisões arquiteturais formais.
 
 ## Processo obrigatório para novas funcionalidades

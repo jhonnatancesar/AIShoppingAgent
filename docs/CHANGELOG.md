@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-08-16 — TASK-086
+
+- Corrigido o falso drift das três constraints: checks antes gerados como
+  `_type_bound` por `Enum` agora são explícitos na metadata.
+- Nenhuma migration histórica ou banco ativo foi alterado; PostgreSQL 18.4
+  descartável aprovou `alembic check` e 29 testes de integração.
+- Validadores antigos foram alinhados às APIs `AsyncSession` já vigentes para
+  que o runner oficial voltasse a executar integralmente.
+
 ## 2026-08-15 (3) — Roteamento gratuito USER/DEV e TASK-086 registrada
 
 - USER passa a usar somente a cadeia gratuita Gemini → Groq

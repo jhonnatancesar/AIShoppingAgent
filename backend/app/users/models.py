@@ -36,6 +36,10 @@ class User(Base):
     __tablename__ = "users"
     __table_args__ = (
         CheckConstraint(
+            "role IN ('USER', 'ADMIN', 'DEV')",
+            name="user_role_values",
+        ),
+        CheckConstraint(
             "btrim(display_name) <> ''",
             name="ck_users_display_name_not_blank",
         ),
@@ -65,7 +69,7 @@ class User(Base):
             UserRole,
             name="user_role_values",
             native_enum=False,
-            create_constraint=True,
+            create_constraint=False,
             validate_strings=True,
             length=16,
         ),

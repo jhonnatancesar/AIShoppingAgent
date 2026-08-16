@@ -1,5 +1,12 @@
 # Project Context
 
+**Atualização 2026-08-16 (TASK-086):** o drift do `alembic check` está
+resolvido. O Alembic 1.19.1 ignorava na metadata os checks `_type_bound`
+gerados por `Enum`; as três constraints agora são explícitas nos models, sem
+migration e sem mudança semântica. PostgreSQL 18.4 descartável aprovou head
+`20260811_0001`, check limpo e 29 integrações. Banco e containers ativos
+permaneceram intocados. A TASK-076 será retomada do stash local.
+
 **Atualização 2026-08-15 (roteamento de IA):** `DEC-061` mantém USER e DEV
 exclusivamente gratuitos: requisições normais usam Gemini → Groq
 `openai/gpt-oss-120b` → OpenRouter `openrouter/free`. Grounding é opt-in e

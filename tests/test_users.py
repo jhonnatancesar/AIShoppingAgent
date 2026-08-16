@@ -107,6 +107,13 @@ def test_user_table_rejects_blank_display_name_by_constraint() -> None:
     assert "ck_users_username_not_blank" in check_names
     assert "ck_users_email_not_blank" in check_names
     assert "ck_users_telegram_private_chat" in check_names
+    role_check = next(
+        constraint
+        for constraint in User.__table__.constraints
+        if constraint.name == "user_role_values"
+    )
+    assert role_check._type_bound is False
+    assert User.__table__.c.role.type.create_constraint is False
     private_chat_check = next(
         constraint
         for constraint in User.__table__.constraints

@@ -347,3 +347,10 @@ usa a mesma cascata gratuita de LLM; ADMIN compartilha a cascata
 gratuita histórica, sem terceira política de IA. Sem rebuild, deploy ou push.
 A TASK-086, "Corrigir drift de constraints no `alembic check`", foi registrada
 e **não iniciada**.
+
+**Atualização 2026-08-16:** a TASK-086 está concluída. A causa era o filtro do
+Alembic 1.19.1 para checks `_type_bound` gerados por `Enum`; as três constraints
+agora são explícitas na metadata, sem migration e sem alteração semântica. O
+runner oficial aprovou `upgrade`, `downgrade -1`, novo upgrade, `alembic check`
+e 29 integrações em PostgreSQL 18.4 descartável. Banco e containers ativos não
+foram tocados. A TASK-076, pausada para remover esse bloqueio, deve ser retomada.

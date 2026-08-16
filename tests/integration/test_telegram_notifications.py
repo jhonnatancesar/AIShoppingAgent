@@ -8,7 +8,6 @@ import sys
 import threading
 import time
 from datetime import UTC, datetime
-from uuid import uuid4
 
 # psycopg em modo assíncrono não suporta o ProactorEventLoop, padrão do
 # asyncio no Windows -- exige SelectorEventLoop. Escopado só a este arquivo

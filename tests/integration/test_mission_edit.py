@@ -1,5 +1,6 @@
 """Fluxo real de edição de critérios de missão já criada (TASK-069)."""
 
+import asyncio
 from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import uuid4
@@ -21,6 +22,14 @@ from app.users.models import User, UserRole
 from sqlalchemy import select
 
 pytestmark = pytest.mark.integration
+
+
+def _edit(integration_database, **kwargs):
+    async def run():
+        async with integration_database.async_sessions.begin() as session:
+            return await edit_mission_criteria(session, **kwargs)
+
+    return asyncio.run(run())
 
 
 def _seed_paused_mission(sessions, *, sources: tuple[str, ...] = ("kabum", "pichau")):
@@ -60,17 +69,16 @@ def test_edit_updates_target_and_sources_together_and_preserves_history(
 ) -> None:
     mission_id, version = _seed_paused_mission(integration_database.sessions)
 
-    with integration_database.sessions.begin() as session:
-        mission, effective_codes = edit_mission_criteria(
-            session,
-            mission_id=mission_id,
-            expected_state_version=version,
-            target_update=(Decimal("300.00"), "BRL"),
-            source_codes=("pichau", "terabyte"),
-            edited_at=datetime.now(UTC),
-        )
-        assert mission.status is MissionStatus.PAUSED  # nunca muda status
-        assert mission.state_version == version  # edição não é transição
+    mission, effective_codes = _edit(
+        integration_database,
+        mission_id=mission_id,
+        expected_state_version=version,
+        target_update=(Decimal("300.00"), "BRL"),
+        source_codes=("pichau", "terabyte"),
+        edited_at=datetime.now(UTC),
+    )
+    assert mission.status is MissionStatus.PAUSED  # nunca muda status
+    assert mission.state_version == version  # edição não é transição
 
     assert set(effective_codes) == {"pichau", "terabyte"}
     with integration_database.sessions.begin() as session:
@@ -97,14 +105,13 @@ def test_edit_updates_target_and_sources_together_and_preserves_history(
 def test_edit_clears_target_price(integration_database) -> None:
     mission_id, version = _seed_paused_mission(integration_database.sessions)
 
-    with integration_database.sessions.begin() as session:
-        edit_mission_criteria(
-            session,
-            mission_id=mission_id,
-            expected_state_version=version,
-            target_update=(None, None),
-            source_codes=None,
-        )
+    _edit(
+        integration_database,
+        mission_id=mission_id,
+        expected_state_version=version,
+        target_update=(None, None),
+        source_codes=None,
+    )
 
     with integration_database.sessions.begin() as session:
         criteria = session.scalar(
@@ -120,29 +127,27 @@ def test_edit_rejects_active_mission_and_stale_version(integration_database) -> 
         mission = session.get(Mission, mission_id)
         mission.status = MissionStatus.ACTIVE
 
-    with integration_database.sessions.begin() as session:
-        with pytest.raises(MissionEditConditionError, match="pausada"):
-            edit_mission_criteria(
-                session,
-                mission_id=mission_id,
-                expected_state_version=version,
-                target_update=None,
-                source_codes=("kabum",),
-            )
+    with pytest.raises(MissionEditConditionError, match="pausada"):
+        _edit(
+            integration_database,
+            mission_id=mission_id,
+            expected_state_version=version,
+            target_update=None,
+            source_codes=("kabum",),
+        )
 
     with integration_database.sessions.begin() as session:
         mission = session.get(Mission, mission_id)
         mission.status = MissionStatus.PAUSED
 
-    with integration_database.sessions.begin() as session:
-        with pytest.raises(MissionVersionConflictError):
-            edit_mission_criteria(
-                session,
-                mission_id=mission_id,
-                expected_state_version=version + 1,
-                target_update=None,
-                source_codes=("kabum",),
-            )
+    with pytest.raises(MissionVersionConflictError):
+        _edit(
+            integration_database,
+            mission_id=mission_id,
+            expected_state_version=version + 1,
+            target_update=None,
+            source_codes=("kabum",),
+        )
 
 
 def test_edit_rejects_zeroing_out_every_selected_store(integration_database) -> None:
@@ -150,15 +155,14 @@ def test_edit_rejects_zeroing_out_every_selected_store(integration_database) -> 
         integration_database.sessions, sources=("kabum",)
     )
 
-    with integration_database.sessions.begin() as session:
-        with pytest.raises(MissionEditConditionError, match="ao menos uma loja"):
-            edit_mission_criteria(
-                session,
-                mission_id=mission_id,
-                expected_state_version=version,
-                target_update=None,
-                source_codes=(),
-            )
+    with pytest.raises(MissionEditConditionError, match="ao menos uma loja"):
+        _edit(
+            integration_database,
+            mission_id=mission_id,
+            expected_state_version=version,
+            target_update=None,
+            source_codes=(),
+        )
 
 
 def test_removing_a_store_never_touches_its_price_history(integration_database) -> None:
@@ -182,15 +186,14 @@ def test_removing_a_store_never_touches_its_price_history(integration_database) 
         session.add(run)
         run_id = run.id
 
-    with integration_database.sessions.begin() as session:
-        # remove kabum da missão, mantém só pichau.
-        edit_mission_criteria(
-            session,
-            mission_id=mission_id,
-            expected_state_version=version,
-            target_update=None,
-            source_codes=("pichau",),
-        )
+    # remove kabum da missão, mantém só pichau.
+    _edit(
+        integration_database,
+        mission_id=mission_id,
+        expected_state_version=version,
+        target_update=None,
+        source_codes=("pichau",),
+    )
 
     with integration_database.sessions.begin() as session:
         remaining_source = session.scalar(

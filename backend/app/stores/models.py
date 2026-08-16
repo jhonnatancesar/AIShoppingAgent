@@ -36,6 +36,10 @@ class Store(Base):
     __tablename__ = "stores"
     __table_args__ = (
         CheckConstraint(
+            "source_type IN ('retailer', 'marketplace')",
+            name="store_source_type_values",
+        ),
+        CheckConstraint(
             "code ~ '^[a-z][a-z0-9]*(_[a-z0-9]+)*$'",
             name="ck_stores_code_snake_case",
         ),
@@ -61,7 +65,7 @@ class Store(Base):
             values_callable=lambda values: [value.value for value in values],
             validate_strings=True,
             native_enum=False,
-            create_constraint=True,
+            create_constraint=False,
             length=16,
         ),
         nullable=False,

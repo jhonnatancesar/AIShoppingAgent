@@ -1,4 +1,7 @@
-# Erro conhecido: drift no `alembic check`
+# Erro resolvido: drift no `alembic check`
+
+> Resolvido pela TASK-086 em 2026-08-16. Causa e validação completas em
+> `docs/tasks/TASK-086.md`.
 
 ## Resumo
 

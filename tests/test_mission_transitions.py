@@ -284,7 +284,14 @@ def test_transition_table_matches_history_contract() -> None:
     }
     assert isinstance(table.c.command.type, Enum)
     assert table.c.command.type.native_enum is False
+    assert table.c.command.type.create_constraint is False
     assert table.c.command.type.length == 32
+    command_check = next(
+        constraint
+        for constraint in table.constraints
+        if constraint.name == "mission_command_values"
+    )
+    assert command_check._type_bound is False
     foreign_keys = {
         tuple(constraint.columns)[0].name: tuple(constraint.elements)[0]
         for constraint in table.constraints

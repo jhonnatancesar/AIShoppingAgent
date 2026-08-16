@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from threading import Barrier
@@ -10,7 +11,12 @@ from uuid import UUID, uuid4
 
 from app.audit.models import AuditEntry
 from app.core.config import Settings
-from app.database.session import create_database_engine, create_session_factory
+from app.database.session import (
+    create_async_session_factory,
+    create_collection_async_database_engine,
+    create_database_engine,
+    create_session_factory,
+)
 from app.events import (
     ConsumptionOutcome,
     Event,
@@ -28,6 +34,8 @@ from sqlalchemy.exc import DBAPIError, IntegrityError
 def main() -> None:
     engine = create_database_engine(Settings())
     sessions = create_session_factory(engine)
+    async_engine = create_collection_async_database_engine(Settings())
+    async_sessions = create_async_session_factory(async_engine)
     user_id = uuid4()
     run_suffix = uuid4().hex[:8]
     retry_consumer = f"task049_retry_{run_suffix}"
@@ -45,12 +53,9 @@ def main() -> None:
             )
         )
 
-    barrier = Barrier(2)
-
-    def process_same_update() -> bool:
-        with sessions.begin() as session:
-            barrier.wait(timeout=10)
-            reservation = reserve_telegram_update(
+    async def process_same_update() -> bool:
+        async with async_sessions.begin() as session:
+            reservation = await reserve_telegram_update(
                 session,
                 update_id=update_id,
                 user_id=user_id,
@@ -70,8 +75,10 @@ def main() -> None:
             )
             return True
 
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        effects = list(executor.map(lambda _: process_same_update(), range(2)))
+    async def process_concurrently() -> list[bool]:
+        return list(await asyncio.gather(process_same_update(), process_same_update()))
+
+    effects = asyncio.run(process_concurrently())
     assert sorted(effects) == [False, True]
 
     with sessions.begin() as session:
@@ -88,23 +95,19 @@ def main() -> None:
         )
         assert receipt_count == effect_count == 1
 
-        limited_update_id = update_id + 1
-        limited = reserve_telegram_update(
-            session,
-            update_id=limited_update_id,
-            user_id=user_id,
-            accepted_per_minute=1,
-        )
-        assert limited.disposition is TelegramUpdateDisposition.RATE_LIMITED
-    with sessions.begin() as session:
-        replay = reserve_telegram_update(
-            session,
-            update_id=limited_update_id,
-            user_id=user_id,
-            accepted_per_minute=1,
-        )
-        assert replay.replay
-        assert replay.disposition is TelegramUpdateDisposition.RATE_LIMITED
+    limited_update_id = update_id + 1
+
+    async def reserve(update: int, limit: int):
+        async with async_sessions.begin() as session:
+            return await reserve_telegram_update(
+                session, update_id=update, user_id=user_id, accepted_per_minute=limit
+            )
+
+    limited = asyncio.run(reserve(limited_update_id, 1))
+    assert limited.disposition is TelegramUpdateDisposition.RATE_LIMITED
+    replay = asyncio.run(reserve(limited_update_id, 1))
+    assert replay.replay
+    assert replay.disposition is TelegramUpdateDisposition.RATE_LIMITED
 
     now = datetime.now(UTC)
     mission_id = uuid4()
@@ -267,6 +270,7 @@ def main() -> None:
         raise AssertionError("telegram_update_receipts accepted UPDATE")
 
     engine.dispose()
+    asyncio.run(async_engine.dispose())
     print(
         "TASK-049 PostgreSQL validation passed: replay, rate limit, retry, "
         "dead letter, terminal concurrency and append-only receipts."

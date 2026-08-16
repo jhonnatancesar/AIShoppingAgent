@@ -68,6 +68,13 @@ sintéticos. Nenhuma credencial ou dado pessoal real participa da suíte.
 
 ## Erro conhecido do `alembic check`
 
+**Resolvido em 2026-08-16 pela TASK-086.** O Alembic 1.19.1 filtrava da
+metadata as constraints `_type_bound` geradas por `Enum`, embora refletisse os
+mesmos checks nomeados do PostgreSQL. As constraints passaram a ser explícitas
+nos models, preservando nomes e expressões. O runner oficial agora aprova sem
+bypass `upgrade head`, `downgrade -1`, novo upgrade, `alembic check` e toda a
+suíte de integração.
+
 Em 2026-08-15, durante esta correção pontual, o runner padrão voltou a falhar
 antes do Pytest em `alembic_upgrade_and_check`. O PostgreSQL 18.4 descartável
 chegou ao head `20260811_0001`, mas `alembic check` reportou operações de

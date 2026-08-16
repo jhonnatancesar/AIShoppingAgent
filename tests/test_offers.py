@@ -58,6 +58,13 @@ def test_store_table_enforces_normalized_required_text() -> None:
         "ck_stores_base_url_not_blank",
         "store_source_type_values",
     }
+    source_type_check = next(
+        constraint
+        for constraint in Store.__table__.constraints
+        if constraint.name == "store_source_type_values"
+    )
+    assert source_type_check._type_bound is False
+    assert Store.__table__.c.source_type.type.create_constraint is False
     code_constraint = next(
         constraint
         for constraint in Store.__table__.constraints

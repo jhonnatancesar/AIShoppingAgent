@@ -242,6 +242,10 @@ class MissionTransition(Base):
     __tablename__ = "mission_transitions"
     __table_args__ = (
         CheckConstraint(
+            "command IN ('activate', 'pause', 'resume', 'complete', 'cancel', 'expire')",
+            name="mission_command_values",
+        ),
+        CheckConstraint(
             "from_status <> to_status",
             name="ck_mission_transitions_status_changed",
         ),
@@ -296,7 +300,7 @@ class MissionTransition(Base):
             values_callable=lambda commands: [command.value for command in commands],
             validate_strings=True,
             native_enum=False,
-            create_constraint=True,
+            create_constraint=False,
             length=32,
         ),
         nullable=False,
