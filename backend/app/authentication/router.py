@@ -124,7 +124,7 @@ _AUTH_PAGE = """<!doctype html>
     <label for="password">Senha</label>
     <input id="password" type="password" minlength="8" maxlength="128"
       autocomplete="current-password" required>
-    <small>Mínimo de 8 caracteres. Prefira uma frase longa e única.</small>
+    <small>Use de 8 a 128 caracteres, com maiúscula, minúscula, número e símbolo.</small>
     <section id="confirmation-block">
       <label for="confirmation">Confirme a nova senha</label>
       <input id="confirmation" type="password" minlength="8" maxlength="128"

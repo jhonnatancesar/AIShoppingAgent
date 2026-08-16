@@ -144,6 +144,15 @@ def transition_mission(
     mission.status = next_status
     mission.state_version += 1
     mission.updated_at = accepted_at
+    if command is MissionCommand.CANCEL:
+        schedule = session.scalar(
+            select(MissionSchedule)
+            .where(MissionSchedule.mission_id == mission.id)
+            .with_for_update()
+        )
+        if schedule is not None:
+            schedule.is_enabled = False
+            schedule.updated_at = accepted_at
     transition = MissionTransition(
         mission_id=mission.id,
         from_status=previous_status,
@@ -227,6 +236,15 @@ async def transition_mission_async(
     mission.status = next_status
     mission.state_version += 1
     mission.updated_at = accepted_at
+    if command is MissionCommand.CANCEL:
+        schedule = await session.scalar(
+            select(MissionSchedule)
+            .where(MissionSchedule.mission_id == mission.id)
+            .with_for_update()
+        )
+        if schedule is not None:
+            schedule.is_enabled = False
+            schedule.updated_at = accepted_at
     transition = MissionTransition(
         mission_id=mission.id,
         from_status=previous_status,

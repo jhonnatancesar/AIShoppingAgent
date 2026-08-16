@@ -85,9 +85,9 @@ fora do Docker pode usar `backend/.env`; Compose/produção usam secret file.
 O webhook do Telegram (TASK-034) não usa SDK — chama a Bot API diretamente com
 `urllib` da biblioteca padrão. Exige `AISHOPPING_TELEGRAM_BOT_TOKEN` (criado via
 `@BotFather` no Telegram, usado por `backend/scripts/register_telegram_webhook.py`
-e por `backend/scripts/register_telegram_commands.py`, que registra os
-  nove comandos no menu, incluindo `/senha`, `/entrar`, `/sair` e `/recuperar`
-  (TASK-061)) e
+e por `backend/scripts/register_telegram_commands.py`, que registra os 10
+comandos do menu, incluindo `/recuperar`, `/entrar` e `/sair`
+(TASK-061/TASK-078)) e
 `AISHOPPING_TELEGRAM_WEBHOOK_SECRET` (valor aleatório local, gerado com
 `secrets.token_urlsafe`, usado para autenticar as requisições recebidas). A
 TASK-046 compara esse segredo em tempo constante antes de confiar na identidade

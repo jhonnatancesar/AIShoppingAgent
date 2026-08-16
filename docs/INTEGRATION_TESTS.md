@@ -65,3 +65,24 @@ ou teste obrigatório não executado são falhas. O diagnóstico contém etapa,
 teste do Pytest, logs limitados e revision alcançada quando disponível,
 redigindo senha e guard
 sintéticos. Nenhuma credencial ou dado pessoal real participa da suíte.
+
+## Erro conhecido do `alembic check`
+
+Em 2026-08-15, durante esta correção pontual, o runner padrão voltou a falhar
+antes do Pytest em `alembic_upgrade_and_check`. O PostgreSQL 18.4 descartável
+chegou ao head `20260811_0001`, mas `alembic check` reportou operações de
+remoção para três constraints de enum já existentes:
+
+- `mission_command_values` em `mission_transitions`;
+- `store_source_type_values` em `stores`;
+- `user_role_values` em `users`.
+
+É o mesmo drift preexistente registrado nas TASKs 079/080; os arquivos desta
+correção não alteram models nem migrations. Para não mascarar nem ampliar o
+escopo, o erro não foi corrigido. A validação necessária repetiu o runner
+descartável pulando **somente** o subpasso `alembic check`: preservou imagem
+fixada, loopback, `upgrade head`, `downgrade -1`, novo upgrade, verificação do
+head, guard, bancos clonados por teste e cleanup. Os dois alvos desta correção
+(senha/token e cancelamento com desativação da agenda) passaram. Container e
+volume descartáveis foram removidos; o banco e os containers do stack ativo
+não foram alterados.

@@ -7,7 +7,12 @@ Status: Concluída
 Acrescentar um fator de conhecimento ao Telegram privado já autenticado,
 mantendo credenciais reutilizáveis no futuro sem aceitar senha no chat.
 
-## Escopo implementado
+## Escopo implementado originalmente
+
+Nota de estado atual: a TASK-078 consolidou criação e recuperação de senha no
+comando público `/recuperar`. A menção histórica a `/senha` abaixo não descreve
+mais um comando disponível no bot. A política atual, ajustada posteriormente,
+é de 8 a 128 caracteres com maiúscula, minúscula, número e símbolo.
 
 - `/senha`, `/entrar`, `/sair` e `/recuperar`;
 - senha digitada exclusivamente no formulário HTTPS, nunca no Telegram;
@@ -15,7 +20,8 @@ mantendo credenciais reutilizáveis no futuro sem aceitar senha no chat.
   TTL absoluto de 10 minutos;
 - identidade e ação derivadas exclusivamente do token persistido;
 - Argon2id com salt individual, `m=19456`, `t=2`, `p=1`, rehash oportunista,
-  15 a 128 caracteres, Unicode NFC, espaços e blocklist;
+  15 a 128 caracteres, Unicode NFC, espaços e blocklist (política original da
+  TASK; substituída pela política atual indicada acima);
 - sessão persistente vinculada a `user_id + telegram_user_id`, TTL absoluto de
   12 horas, sem renovação, refresh token ou JWT;
 - logout imediato; troca e recuperação revogam todas as sessões;
@@ -24,8 +30,9 @@ mantendo credenciais reutilizáveis no futuro sem aceitar senha no chat.
 - links comuns: 5 emissões por 15 minutos; recuperação: 3 por hora e
   intervalo mínimo de 5 minutos;
 - recuperação somente pela identidade privada do Telegram já vinculada;
-- comandos funcionais exigem sessão; `/start`, `/ajuda`, `/cadastro`, `/senha`,
-  `/entrar` e `/recuperar` permanecem acessíveis após TASK-046/047.
+- comandos funcionais exigem sessão; no estado atual, `/start`, `/ajuda`,
+  `/cadastro`, `/entrar` e `/recuperar` permanecem acessíveis após
+  TASK-046/047.
 
 ## Persistência
 

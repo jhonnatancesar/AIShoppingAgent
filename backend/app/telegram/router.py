@@ -15,7 +15,7 @@ e limitado por `telegram_message_deadline_seconds`.
 
 import asyncio
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from functools import lru_cache
 from typing import Annotated, Any
@@ -153,12 +153,8 @@ logger = logging.getLogger("app.telegram")
 router = APIRouter(tags=["telegram"])
 
 _UNKNOWN_REPLY = (
-    "Não entendi seu pedido. Não converso sobre outros assuntos — só ajudo "
-    "com suas missões de compra. Você pode:\n\n"
-    '• Criar uma missão (ex.: "quero uma RTX 4060 até R$ 2500 na Kabum")\n'
-    "• Consultar suas missões\n"
-    "• Dar um comando (pausar, retomar, concluir ou cancelar uma missão)\n"
-    "• Editar lojas e/ou preço-alvo de uma missão pausada (/editar-missao)"
+    "Para criar uma nova missão, use /criar_missao. "
+    "Para ver as opções disponíveis, use /ajuda."
 )
 
 _CADASTRO_COMMAND = "/cadastro"
@@ -188,7 +184,23 @@ _MISSION_HELP_COMMAND = "/missao"
 _LOGIN_COMMAND = "/entrar"
 _LOGOUT_COMMAND = "/sair"
 _RECOVERY_COMMAND = "/recuperar"
-_EDIT_MISSION_COMMAND = "/editar-missao"
+_CREATE_MISSION_COMMAND = "/criar_missao"
+_CREATE_MISSION_COMMAND_ALIAS = "/criar-missao"
+_CANCEL_MISSION_COMMAND = "/cancelar_missao"
+_CANCEL_MISSION_COMMAND_ALIAS = "/cancelar-missao"
+_EDIT_MISSION_COMMAND = "/editar_missao"
+_EDIT_MISSION_COMMAND_ALIAS = "/editar-missao"
+_MISSION_DESCRIPTION_TTL = timedelta(minutes=10)
+_AWAIT_CREATE_MISSION_DESCRIPTION = "await_create_mission_description"
+_CANCEL_MISSION_CHOICE = "cancel_mission_choice"
+_CREATE_MISSION_PROMPT = (
+    "Beleza. Me diga o que você quer procurar. "
+    "Você tem 10 minutos para enviar a descrição."
+)
+_CREATE_MISSION_FLOW_EXPIRED = (
+    "O tempo para descrever a missão expirou. Use /criar_missao para começar de novo."
+)
+_CANCEL_MISSION_CHOICE_RETRY = "Opção inválida. Escolha uma opção da lista."
 _EDIT_MISSION_FREE_TEXT_REDIRECT = (
     "✏️ Editar lojas ou preço-alvo agora é sempre pelo menu guiado -- "
     f"envie {_EDIT_MISSION_COMMAND}."
@@ -241,8 +253,10 @@ cadastro."""
 _HELP_REPLY = (
     "📖 Aqui está o que posso fazer por você:\n\n"
     "🛒 COMPRAS\n"
-    "/missao — criar ou entender como pedir uma missão de compra\n"
-    "/editar-missao — mudar lojas ou preço-alvo de uma missão pausada\n\n"
+    "/criar_missao — criar uma nova missão\n"
+    "/cancelar_missao — cancelar uma missão existente\n"
+    "/missao — entender o fluxo de missões\n"
+    "/editar_missao — mudar lojas ou preço-alvo de uma missão pausada\n\n"
     "👤 CONTA\n"
     "/cadastro — completar seu perfil\n"
     "/entrar — autenticar\n"
@@ -254,12 +268,10 @@ _HELP_REPLY = (
 )
 
 _MISSION_HELP_REPLY = (
-    "🛒 É só me dizer o que você quer comprar -- eu crio e acompanho a "
-    "missão pra você.\n\n"
+    "🛒 Para criar uma missão, use /criar_missao. Depois eu peço a descrição "
+    "do produto que você quer acompanhar.\n\n"
     'Exemplos: "Ryzen 7 9800X3D até R$ 3000", "RTX 5070 Ti na Kabum", '
-    '"mouse gamer".\n\n'
-    "Quero uma missão de verdade? É só escrever o produto na próxima "
-    "mensagem."
+    '"mouse gamer".'
 )
 
 
@@ -291,6 +303,7 @@ nenhum deles executa nada sozinho, só avança até o payload
 `"kind": "edit_mission"` (ou `"pause_for_edit"`) já existente."""
 
 _PENDING_INTENT_PERMISSIONS: dict[str, Permission] = {
+    _AWAIT_CREATE_MISSION_DESCRIPTION: Permission.MISSION_CREATE,
     "create_mission": Permission.MISSION_CREATE,
     # TASK-070: mesma permissão de criar -- ainda não existe missão, só
     # falta escolher as lojas antes de seguir para a confirmação normal.
@@ -635,7 +648,17 @@ async def _handle_message(
     if lowered == PREFERENCES_COMMAND or lowered.startswith(f"{PREFERENCES_COMMAND} "):
         authorize(session, user, Permission.NOTIFICATION_PREFERENCES_MANAGE)
         return handle_preferences_command(user, lowered)
-    if lowered == _EDIT_MISSION_COMMAND:
+    if lowered in {_CREATE_MISSION_COMMAND, _CREATE_MISSION_COMMAND_ALIAS}:
+        authorize(session, user, Permission.MISSION_CREATE)
+        user.pending_intent = {
+            "kind": _AWAIT_CREATE_MISSION_DESCRIPTION,
+            "expires_at": (datetime.now(UTC) + _MISSION_DESCRIPTION_TTL).isoformat(),
+        }
+        return _CREATE_MISSION_PROMPT
+    if lowered in {_CANCEL_MISSION_COMMAND, _CANCEL_MISSION_COMMAND_ALIAS}:
+        authorize(session, user, Permission.MISSION_TRANSITION)
+        return await _start_cancel_mission_flow(session=session, user=user)
+    if lowered in {_EDIT_MISSION_COMMAND, _EDIT_MISSION_COMMAND_ALIAS}:
         authorize(session, user, Permission.MISSION_EDIT)
         return await _start_edit_mission_flow(session=session, user=user)
     if user.pending_intent is not None:
@@ -643,27 +666,7 @@ async def _handle_message(
             message, adapters=adapters, session=session, user=user
         )
 
-    authorize(session, user, Permission.AI_INTERPRET)
-    profile = ai_profile_for_user(session, user)
-    # Fase A/pré-IA encerrada aqui -- extensão da TASK-079: nenhuma
-    # transação pode ficar aberta durante o await de IA logo abaixo
-    # (Fase B). A sessão reabre uma nova transação automaticamente no
-    # próximo uso (`_dispatch_intent`, Fase C).
-    await session.commit()
-    try:
-        intent = await adapters[profile].interpret(message, profile=profile)
-    except TelegramContractError, AIProviderError:
-        logger.warning("telegram_webhook_intent_failed")
-        return None
-
-    try:
-        return await _dispatch_intent(intent, session=session, user=user)
-    except _KNOWN_DISPATCH_ERRORS as error:
-        logger.warning(
-            "telegram_webhook_mission_failed",
-            extra={"mission_error": type(error).__name__},
-        )
-        return str(error)
+    return _UNKNOWN_REPLY
 
 
 async def _authentication_link_reply(
@@ -677,7 +680,7 @@ async def _authentication_link_reply(
         return "Complete primeiro seu nome de usuário com /cadastro."
     if command == _LOGIN_COMMAND:
         action = CredentialAction.LOGIN
-    else:
+    elif command == _RECOVERY_COMMAND:
         # TASK-078: `/senha` deixou de existir -- `/recuperar` cobre os
         # dois casos (primeira senha e recuperação real), nunca escolhe
         # CHANGE_PASSWORD, que só permanece no enum por compatibilidade.
@@ -688,6 +691,8 @@ async def _authentication_link_reply(
             if await session.get(UserCredential, user.id) is not None
             else CredentialAction.SET_PASSWORD
         )
+    else:
+        raise ValueError("comando de autenticação não suportado")
     try:
         issued = await issue_action_link_async(
             session,
@@ -702,7 +707,6 @@ async def _authentication_link_reply(
     labels = {
         CredentialAction.LOGIN: ("🔑", "Entrar"),
         CredentialAction.SET_PASSWORD: ("🔐", "Criar senha"),
-        CredentialAction.CHANGE_PASSWORD: ("🔐", "Alterar senha"),
         CredentialAction.RECOVER_PASSWORD: ("🔐", "Recuperar senha"),
     }
     icon, label = labels[action]
@@ -722,6 +726,10 @@ async def _resolve_pending_intent(
     kind = user.pending_intent.get("kind")
     permission = _PENDING_INTENT_PERMISSIONS.get(kind, Permission.MISSION_TRANSITION)
     authorize(session, user, permission)
+    if kind == _AWAIT_CREATE_MISSION_DESCRIPTION:
+        return await _apply_create_mission_description(
+            message, adapters=adapters, session=session, user=user
+        )
     if kind == "await_create_mission_sources":
         return _apply_create_mission_sources_answer(message.text, user=user)
     if kind in ("await_edit_paused_choice", "await_edit_active_choice"):
@@ -740,16 +748,11 @@ async def _resolve_pending_intent(
         return await _apply_mission_command_choice(
             message.text, session=session, user=user
         )
+    if kind == _CANCEL_MISSION_CHOICE:
+        return _apply_cancel_mission_choice(message.text, user=user)
 
-    profile = ai_profile_for_user(session, user)
-    # Extensão da TASK-079: mesma regra do fim de `_handle_message` -- fecha
-    # a transação antes do await de IA (Fase B); `_execute_pending_intent`
-    # reabre uma nova (Fase C) na volta.
-    await session.commit()
     try:
-        confirmed = await resolve_answer(
-            message.text, manager=adapters[profile].manager, profile=profile
-        )
+        confirmed = await resolve_answer(message.text)
     except ConfirmationError as error:
         return str(error)
 
@@ -774,6 +777,50 @@ async def _resolve_pending_intent(
         raise
     user.pending_intent = None
     return reply
+
+
+async def _apply_create_mission_description(
+    message: TelegramMessage,
+    *,
+    adapters: dict[UserRole, TelegramIntentAdapter],
+    session: AsyncSession,
+    user: User,
+) -> str:
+    """Consome uma única descrição após o comando explícito e só então usa IA."""
+    payload = user.pending_intent
+    try:
+        expires_at = datetime.fromisoformat(payload["expires_at"])
+    except KeyError, TypeError, ValueError:
+        user.pending_intent = None
+        return _CREATE_MISSION_FLOW_EXPIRED
+    if expires_at.tzinfo is None or datetime.now(UTC) >= expires_at:
+        user.pending_intent = None
+        return _CREATE_MISSION_FLOW_EXPIRED
+
+    # O estado é single-shot: até uma falha externa devolve o usuário a IDLE.
+    user.pending_intent = None
+    authorize(session, user, Permission.AI_INTERPRET)
+    profile = ai_profile_for_user(session, user)
+    await session.commit()
+    try:
+        intent = await adapters[profile].interpret(message, profile=profile)
+    except TelegramContractError, AIProviderError:
+        logger.warning("telegram_webhook_intent_failed")
+        return "Não consegui interpretar a missão agora. Use /criar_missao para tentar novamente."
+
+    if intent.kind is not IntentKind.CREATE_MISSION:
+        return (
+            "Não entendi uma missão de compra nessa descrição. "
+            "Use /criar_missao para tentar novamente."
+        )
+    try:
+        return await _dispatch_intent(intent, session=session, user=user)
+    except _KNOWN_DISPATCH_ERRORS as error:
+        logger.warning(
+            "telegram_webhook_mission_failed",
+            extra={"mission_error": type(error).__name__},
+        )
+        return str(error)
 
 
 def _apply_create_mission_sources_answer(text: str, *, user: User) -> str:
@@ -904,6 +951,58 @@ async def _stage_mission_command(
     payload = stage_mission_command_choice(missions=candidates, command=intent.command)
     user.pending_intent = payload
     return describe_mission_command_choice_prompt(candidates, command=intent.command)
+
+
+async def _start_cancel_mission_flow(*, session: AsyncSession, user: User) -> str:
+    """Inicia cancelamento sem interpretar intenção por IA."""
+    candidates = await list_mission_command_candidates(
+        session,
+        user_id=user.id,
+        reference=None,
+    )
+    if not candidates:
+        user.pending_intent = None
+        return "Você não tem nenhuma missão cancelável."
+    if len(candidates) == 1:
+        mission = candidates[0]
+        payload = stage_mission_command(
+            mission_id=mission.id,
+            mission_title=mission.title,
+            command=MissionCommand.CANCEL,
+            expected_state_version=mission.state_version,
+        )
+        user.pending_intent = payload
+        return describe_mission_command(payload)
+
+    payload = stage_mission_command_choice(
+        missions=candidates,
+        command=MissionCommand.CANCEL,
+    )
+    payload["kind"] = _CANCEL_MISSION_CHOICE
+    user.pending_intent = payload
+    return describe_mission_choice_prompt(
+        [mission.title for mission in candidates],
+        header="Escolha a missão que deseja cancelar:",
+    )
+
+
+def _apply_cancel_mission_choice(text: str, *, user: User) -> str:
+    """Seleciona uma missão e avança à confirmação local, sem executar ainda."""
+    payload = user.pending_intent
+    entries = payload["missions"]
+    index = parse_single_numbered_choice(text, count=len(entries))
+    if index is None:
+        return _CANCEL_MISSION_CHOICE_RETRY
+    entry = entries[index]
+    confirmation = {
+        "kind": "mission_command",
+        "mission_id": entry["mission_id"],
+        "mission_title": entry["mission_title"],
+        "command": MissionCommand.CANCEL.value,
+        "expected_state_version": entry["expected_state_version"],
+    }
+    user.pending_intent = confirmation
+    return describe_mission_command(confirmation)
 
 
 async def _query_missions_by_status(

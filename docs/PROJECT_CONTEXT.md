@@ -161,8 +161,9 @@ startup. PostgreSQL 18, API Docker e Telegram reais confirmaram o fluxo.
 
 A TASK-061 (`DEC-035`) está **concluída**: Argon2id protege credenciais;
 tokens descartáveis de 10 minutos ligam servidor, usuário, Telegram e ação;
-sessões persistentes duram 12 horas sem renovação. `/senha`, `/entrar`,
-`/sair` e `/recuperar` usam formulário HTTPS e nunca recebem senha no chat.
+sessões persistentes duram 12 horas sem renovação. `/recuperar` cria a primeira
+senha ou redefine a existente; `/entrar` e `/sair` controlam a sessão. A senha
+passa somente pelo formulário HTTPS, nunca pelo chat.
 Troca/recuperação revogam sessões, e limites persistentes protegem login,
 token e recuperação. PostgreSQL 18, concorrência, API/worker Docker, navegador,
 HTTPS público e Bot API reais foram validados; canários permaneceram ausentes
@@ -307,14 +308,13 @@ documento: a `v1.0.0` foi auditada como desatualizada (não continha
 TASK-063/TASK-064), levando à tag corretiva `v1.0.1`, hoje já implantada em
 produção real.
 
-A TASK-058 (`DEC-015`) está **concluída**: `create_mission` e
+A TASK-058 (`DEC-015`) originalmente entregou: `create_mission` e
 `mission_command` não executam mais direto — ficam encenados em
 `User.pending_intent` e só executam após confirmação explícita, descrita em
-português para o usuário. A classificação de confirmar/cancelar passa por
-um classificador de IA dedicado (`interpret_confirmation_reply`, prompt e
-propósito próprios, fora do vocabulário fechado do `IntentInterpreter`),
-reconhecendo respostas informais e erros de português, não só palavra
-exata. Validado de ponta a ponta contra o Telegram real: criar missão sem
+português para o usuário. Naquela entrega, confirmar/cancelar passava por
+`interpret_confirmation_reply`. A correção pontual de 2026-08-15 substituiu
+isso por vocabulário local fechado (`sim`/`s`/`1`; `não`/`nao`/`n`/`2`), sem
+provider. A validação histórica da TASK-058 cobriu: criar missão sem
 citar loja, cancelar com frase informal, e confirmar comando de missão
 funcionaram corretamente. Duas correções reais surgiram dessa validação:
 (1) a chave Gemini deixou de ser compartilhada entre perfis —
@@ -398,8 +398,10 @@ reais observadas em produção.
   `TelegramIntentAdapter`) que traduz uma mensagem bruta do Telegram em um
   `Intent`, reaproveitando exclusivamente o `IntentInterpreter`.
 - Webhook real `POST /telegram/webhook`, autenticado por segredo compartilhado,
-  que recebe atualizações do Telegram, traduz mensagens de texto em `Intent`,
-  script manual de registro contra a Bot API real.
+  que recebe atualizações do Telegram. Somente a descrição enviada após
+  `/criar_missao` é traduzida em `Intent`; navegação, seleção, confirmação e
+  cancelamento são determinísticos. Há script manual de registro contra a Bot
+  API real.
 - Autenticação mínima do canal Telegram (TASK-046): transporte autenticado por
   segredo em tempo constante, operações restritas ao chat privado direto e
   bloqueio de conta inativa antes de qualquer efeito.
@@ -408,8 +410,9 @@ reais observadas em produção.
   nunca a conversa — de forma determinística e idempotente, protegida contra
   corrida de criação concorrente por `SAVEPOINT`; o resolvedor não autentica
   sozinho nem implementa login por senha.
-- Despacho de comandos de missão pelo webhook: consulta responde direto;
-  criar e comandar missão ficam encenados em `User.pending_intent` e só
+- Despacho de comandos de missão pelo webhook: `/criar_missao` abre estado por
+  usuário com TTL de 10 minutos e só a descrição seguinte usa IA; criar e
+  comandar missão ficam encenados em `User.pending_intent` e só
   executam após confirmação explícita (TASK-058), com resposta síncrona ao
   Telegram (`send_message`); toda `CREATE_MISSION` válida sai `active`.
   Desde a TASK-070, quando o `Intent` não especifica nenhuma loja, o
@@ -420,12 +423,13 @@ reais observadas em produção.
   normal; erro conhecido de domínio responde `204` com explicação, falha
   inesperada sobe como `500`, nunca mascarada. Primeira dependência FastAPI
   de sessão de banco por requisição (`get_session`).
-- Confirmação da intenção interpretada antes de executar (TASK-058):
-  classificador de IA dedicado (`interpret_confirmation_reply`,
-  `backend/app/telegram/confirmation.py`), fora do vocabulário fechado do
-  `IntentInterpreter`, reconhece confirmação/cancelamento em linguagem
-  informal via o `AIProviderManager` do próprio perfil do usuário.
-  Validado de ponta a ponta contra o Telegram real.
+- Confirmação antes de executar: `backend/app/telegram/confirmation.py`
+  resolve localmente `sim`/`s`/`1` e `não`/`nao`/`n`/`2`; resposta ambígua
+  mantém a ação pendente e pede novamente, sem IA.
+- `/cancelar_missao` (alias digitado `/cancelar-missao`) lista apenas missões
+  canceláveis do proprietário, seleciona numericamente, confirma e executa
+  `MissionTransition(command=cancel)` sem IA, desativando o agendamento na
+  mesma transação.
 - Seed das quatro lojas selecionáveis da V1 (Pichau, Terabyte, Amazon,
   Kabum) em `stores`, necessário para `MissionSource`.
 - Seleção do perfil de IA do webhook a partir do `User.role` resolvido
@@ -771,9 +775,9 @@ Adicionar`/`2 Remover` (mostra só as que faltam ou só as vinculadas,
 nunca permite zerar todas); preço-alvo pede o valor direto (`0` remove o
 alvo). Todos os caminhos convergem para o mesmo payload
 `stage_edit_mission`/`describe_edit_mission` (TASK-069, sem alteração) —
-a confirmação final sim/não continua usando o classificador de IA já
-existente (`interpret_confirmation_reply`), que não é o
-`IntentInterpreter` e não foi alvo da preocupação do usuário. **O
+a confirmação final sim/não usava então `interpret_confirmation_reply`;
+a correção pontual de 2026-08-15 tornou essa confirmação determinística e
+local. **O
 caminho antigo (editar por texto livre) foi desativado por decisão
 explícita do usuário** — `IntentKind.EDIT_MISSION` continua existindo no
 vocabulário, mas o webhook só responde orientando a usar
@@ -828,7 +832,7 @@ sessão ativa), não um bug. Registrada e concluída a **TASK-073**
 (`docs/tasks/TASK-073.md`), item único da `v1.0.3`: `/cadastro` agora
 também bloqueia quando o cadastro já está concluído
 (`registration_step is None` e `username` preenchido), mesmo sem
-sessão ativa, direcionando para `/entrar`/`/senha`/`/recuperar`;
+sessão ativa, direcionando para `/entrar`/`/recuperar`;
 cadastro em andamento não foi afetado. Validada com pipeline oficial.
 Tag `v1.0.3` (`6fa5e13`) criada, publicada e implantada em produção
 na mesma sessão: backup lógico prévio, checkout da tag, build, sem

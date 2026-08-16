@@ -1,6 +1,6 @@
 import json
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -20,12 +20,17 @@ from app.telegram.limits import TelegramUpdateReservation
 from app.telegram.models import TelegramUpdateDisposition
 from app.telegram.router import (
     TelegramUpdate,
+    _dispatch_intent,
+    _handle_message,
+    _resolve_pending_intent,
     _TelegramChat,
     _TelegramIncomingMessage,
     _TelegramSender,
     receive_telegram_webhook,
 )
 from app.users.models import UserRole
+
+from backend.scripts.register_telegram_commands import _COMMANDS
 
 
 def _async_session() -> MagicMock:
@@ -85,7 +90,7 @@ class _FakeAdapter:
 def _patch_resolve_answer(
     monkeypatch: pytest.MonkeyPatch, outcome: bool | Exception
 ) -> None:
-    async def _fake_resolve_answer(text: str, *, manager: object, profile: UserRole):
+    async def _fake_resolve_answer(text: str, **kwargs: object):
         if isinstance(outcome, Exception):
             raise outcome
         return outcome
@@ -116,6 +121,13 @@ def _fake_user(
     )
 
 
+def _awaiting_mission_description() -> dict[str, str]:
+    return {
+        "kind": "await_create_mission_description",
+        "expires_at": (datetime.now(UTC) + timedelta(minutes=10)).isoformat(),
+    }
+
+
 def _adapters(adapter: _FakeAdapter, *, role: UserRole = UserRole.USER) -> dict:
     return {role: adapter}
 
@@ -142,6 +154,22 @@ def _update(**overrides: object) -> TelegramUpdate:
     }
     defaults.update(overrides)
     return TelegramUpdate(**defaults)  # type: ignore[arg-type]
+
+
+def _message(text: str, *, user_id: int = 222) -> TelegramMessage:
+    return TelegramMessage(
+        chat_id=user_id,
+        chat_type=TelegramChatType.PRIVATE,
+        user_id=user_id,
+        text=text,
+        received_at=datetime.now(UTC),
+    )
+
+
+def _registered_user(**overrides: object) -> SimpleNamespace:
+    user = _fake_user(**overrides)
+    user.username = "cliente"
+    return user
 
 
 def _intent(**overrides: object) -> Intent:
@@ -192,7 +220,10 @@ def _patch_send_message(monkeypatch: pytest.MonkeyPatch) -> list[tuple[int, str]
 async def test_valid_secret_and_text_message_returns_204_and_calls_adapter(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _patch_user(monkeypatch, _fake_user())
+    _patch_user(
+        monkeypatch,
+        _fake_user(pending_intent=_awaiting_mission_description()),
+    )
     adapter = _FakeAdapter(_intent(kind=IntentKind.UNKNOWN))
 
     response = await receive_telegram_webhook(
@@ -248,7 +279,13 @@ async def test_privacy_command_is_static_and_does_not_require_ai_or_session(
 async def test_admin_user_uses_admin_dev_adapter(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _patch_user(monkeypatch, _fake_user(role=UserRole.ADMIN))
+    _patch_user(
+        monkeypatch,
+        _fake_user(
+            role=UserRole.ADMIN,
+            pending_intent=_awaiting_mission_description(),
+        ),
+    )
     _patch_send_message(monkeypatch)
     adapter = _FakeAdapter(_intent(kind=IntentKind.UNKNOWN))
 
@@ -316,7 +353,10 @@ async def test_replayed_update_is_a_no_op_without_calling_adapter_or_replying(
     """Extensão da TASK-079: replay é detectado dentro da Fase A (banco),
     depois de já ter comitado -- a requisição termina aí, sem IA nem
     resposta ao Telegram."""
-    _patch_user(monkeypatch, _fake_user())
+    _patch_user(
+        monkeypatch,
+        _fake_user(pending_intent=_awaiting_mission_description()),
+    )
 
     async def _fake_reserve_replay(
         *args: object, **kwargs: object
@@ -388,7 +428,10 @@ async def test_authorization_denied_replay_skips_denial_log(
 async def test_rate_limited_update_warns_once_and_skips_processing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _patch_user(monkeypatch, _fake_user())
+    _patch_user(
+        monkeypatch,
+        _fake_user(pending_intent=_awaiting_mission_description()),
+    )
 
     async def _fake_reserve_rate_limited(
         *args: object, **kwargs: object
@@ -459,7 +502,10 @@ async def test_deadline_exceeded_cancels_processing_and_returns_204(
     """Extensão da TASK-079: `telegram_message_deadline_seconds` limita o
     processamento inteiro -- uma IA que nunca responde não trava a
     requisição para sempre nem o loop de eventos."""
-    _patch_user(monkeypatch, _fake_user())
+    _patch_user(
+        monkeypatch,
+        _fake_user(pending_intent=_awaiting_mission_description()),
+    )
     send_calls = _patch_send_message(monkeypatch)
 
     class _HangingAdapter:
@@ -614,7 +660,10 @@ async def test_message_without_text_is_a_no_op_204() -> None:
 async def test_ai_provider_failure_still_returns_204(
     monkeypatch: pytest.MonkeyPatch, error: Exception
 ) -> None:
-    _patch_user(monkeypatch, _fake_user())
+    _patch_user(
+        monkeypatch,
+        _fake_user(pending_intent=_awaiting_mission_description()),
+    )
     adapter = _FakeAdapter(error)
 
     response = await receive_telegram_webhook(
@@ -645,7 +694,7 @@ def test_telegram_webhook_route_is_exposed_in_openapi() -> None:
 async def test_create_mission_intent_stages_confirmation_without_creating(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    fake_user = _fake_user()
+    fake_user = _fake_user(pending_intent=_awaiting_mission_description())
     create_calls: list[dict[str, object]] = []
 
     resolve_calls = _patch_user(monkeypatch, fake_user)
@@ -849,7 +898,7 @@ async def test_cancelled_pending_create_mission_does_not_execute(
 async def test_create_mission_without_sources_stages_source_selection_and_preserves_criteria(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    fake_user = _fake_user()
+    fake_user = _fake_user(pending_intent=_awaiting_mission_description())
     create_calls: list[dict[str, object]] = []
 
     _patch_user(monkeypatch, fake_user)
@@ -990,7 +1039,7 @@ async def test_full_flow_from_empty_sources_to_created_mission_only_after_valid_
     """TASK-070: encena -> pede lojas -> só cria a missão depois de uma
     seleção válida e da confirmação normal. Nunca cria uma segunda missão
     nem passa pelo `IntentInterpreter` de novo nos passos intermediários."""
-    fake_user = _fake_user()
+    fake_user = _fake_user(pending_intent=_awaiting_mission_description())
     fake_mission = SimpleNamespace(title="notebook gamer")
     create_calls: list[dict[str, object]] = []
 
@@ -1108,7 +1157,10 @@ async def test_unrecognized_answer_to_pending_intent_keeps_it_staged(
 async def test_create_mission_intent_without_search_query_is_a_known_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _patch_user(monkeypatch, _fake_user())
+    _patch_user(
+        monkeypatch,
+        _fake_user(pending_intent=_awaiting_mission_description()),
+    )
     send_calls = _patch_send_message(monkeypatch)
 
     intent = _intent(kind=IntentKind.CREATE_MISSION)  # sem parameters.search_query
@@ -1132,29 +1184,18 @@ async def test_query_mission_intent_lists_missions_found(
 ) -> None:
     fake_mission = SimpleNamespace(title="notebook gamer", status=MissionStatus.ACTIVE)
 
-    _patch_user(monkeypatch, _fake_user())
+    fake_user = _fake_user()
     monkeypatch.setattr(
         "app.telegram.router.list_missions_for_user",
         AsyncMock(return_value=[fake_mission]),
     )
-    send_calls = _patch_send_message(monkeypatch)
-
     intent = _intent(kind=IntentKind.QUERY_MISSION)
-    adapter = _FakeAdapter(intent)
+    reply = await _dispatch_intent(intent, session=_async_session(), user=fake_user)
 
-    response = await receive_telegram_webhook(
-        update=_update(),
-        x_telegram_bot_api_secret_token="correct-secret",
-        adapters=_adapters(adapter),  # type: ignore[arg-type]
-        settings=_settings(),
-        session=_async_session(),
-    )
-
-    assert response.status_code == 204
-    assert "notebook gamer" in send_calls[0][1]
+    assert "notebook gamer" in reply
     # TASK-063: rótulo em português, nunca o valor bruto do enum ("active")
-    assert "ativa" in send_calls[0][1]
-    assert "active" not in send_calls[0][1]
+    assert "ativa" in reply
+    assert "active" not in reply
 
 
 @pytest.mark.anyio
@@ -1166,7 +1207,6 @@ async def test_mission_command_intent_stages_confirmation_without_transitioning(
     fake_user = _fake_user()
     fake_mission = SimpleNamespace(id=uuid4(), title="notebook gamer", state_version=1)
 
-    _patch_user(monkeypatch, fake_user)
     monkeypatch.setattr(
         "app.telegram.router.list_mission_command_candidates",
         AsyncMock(return_value=[fake_mission]),
@@ -1178,23 +1218,11 @@ async def test_mission_command_intent_stages_confirmation_without_transitioning(
     monkeypatch.setattr(
         "app.telegram.router.transition_mission_async", _fail_transition
     )
-    send_calls = _patch_send_message(monkeypatch)
-
     intent = _intent(
         kind=IntentKind.MISSION_COMMAND,
         command=MissionCommand.PAUSE,
     )
-    adapter = _FakeAdapter(intent)
-
-    response = await receive_telegram_webhook(
-        update=_update(),
-        x_telegram_bot_api_secret_token="correct-secret",
-        adapters=_adapters(adapter),  # type: ignore[arg-type]
-        settings=_settings(),
-        session=_async_session(),
-    )
-
-    assert response.status_code == 204
+    reply = await _dispatch_intent(intent, session=_async_session(), user=fake_user)
     assert fake_user.pending_intent == {
         "kind": "mission_command",
         "mission_id": str(fake_mission.id),
@@ -1202,8 +1230,8 @@ async def test_mission_command_intent_stages_confirmation_without_transitioning(
         "command": "pause",
         "expected_state_version": 1,
     }
-    assert "pausar" in send_calls[0][1]
-    assert "notebook gamer" in send_calls[0][1]
+    assert "pausar" in reply
+    assert "notebook gamer" in reply
 
 
 @pytest.mark.anyio
@@ -1281,20 +1309,8 @@ async def test_mission_command_multiple_candidates_stages_numbered_choice(
         "app.telegram.router.list_mission_command_candidates",
         AsyncMock(return_value=candidates),
     )
-    send_calls = _patch_send_message(monkeypatch)
     intent = _intent(kind=IntentKind.MISSION_COMMAND, command=MissionCommand.CANCEL)
-    adapter = _FakeAdapter(intent)
-
-    response = await receive_telegram_webhook(
-        update=_update(),
-        x_telegram_bot_api_secret_token="correct-secret",
-        adapters=_adapters(adapter),  # type: ignore[arg-type]
-        settings=_settings(),
-        session=_async_session(),
-    )
-
-    assert response.status_code == 204
-    body = send_calls[0][1]
+    body = await _dispatch_intent(intent, session=_async_session(), user=fake_user)
     assert "1." in body and "Ryzen 7 9800X3D" in body and "ativa" in body.lower()
     assert "3." in body and "Mouse Logitech" in body and "pausada" in body.lower()
     assert fake_user.pending_intent["kind"] == "mission_command_choice"
@@ -1586,7 +1602,8 @@ async def test_edit_mission_intent_via_free_text_redirects_to_editar_missao_comm
 
     assert response.status_code == 204
     assert fake_user.pending_intent is None
-    assert "/editar-missao" in send_calls[0][1]
+    assert adapter.calls == []
+    assert "/criar_missao" in send_calls[0][1]
 
 
 @pytest.mark.anyio
@@ -1638,7 +1655,7 @@ async def test_confirmed_pause_for_edit_pauses_and_points_to_edit_command(
     assert fake_user.pending_intent is None
     assert transition_calls[0]["command"].value == "pause"
     assert "notebook gamer" in send_calls[0][1]
-    assert "/editar-missao" in send_calls[0][1]
+    assert "/editar_missao" in send_calls[0][1]
 
 
 @pytest.mark.anyio
@@ -2614,7 +2631,7 @@ async def test_forged_pending_mission_keeps_state_and_is_denied(
 
 
 @pytest.mark.anyio
-async def test_unknown_intent_replies_asking_to_rephrase(
+async def test_loose_message_is_deterministic_and_never_calls_ai(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _patch_user(monkeypatch, _fake_user())
@@ -2632,7 +2649,8 @@ async def test_unknown_intent_replies_asking_to_rephrase(
     )
 
     assert response.status_code == 204
-    assert "Não entendi" in send_calls[0][1]
+    assert adapter.calls == []
+    assert "/criar_missao" in send_calls[0][1]
 
 
 @pytest.mark.anyio
@@ -2644,28 +2662,14 @@ async def test_mission_reference_error_at_staging_is_replied_without_pending_int
     fake_user = _fake_user()
     error = MissionReferenceError("Não encontrei nenhuma missão correspondente.")
 
-    _patch_user(monkeypatch, fake_user)
-
     async def _raise(*args: object, **kwargs: object) -> object:
         raise error
 
     monkeypatch.setattr("app.telegram.router.list_mission_command_candidates", _raise)
-    send_calls = _patch_send_message(monkeypatch)
-
     intent = _intent(kind=IntentKind.MISSION_COMMAND, command=MissionCommand.PAUSE)
-    adapter = _FakeAdapter(intent)
-
-    response = await receive_telegram_webhook(
-        update=_update(),
-        x_telegram_bot_api_secret_token="correct-secret",
-        adapters=_adapters(adapter),  # type: ignore[arg-type]
-        settings=_settings(),
-        session=_async_session(),
-    )
-
-    assert response.status_code == 204
+    with pytest.raises(MissionReferenceError, match="Não encontrei"):
+        await _dispatch_intent(intent, session=_async_session(), user=fake_user)
     assert fake_user.pending_intent is None
-    assert send_calls[0][1] == str(error)
 
 
 @pytest.mark.anyio
@@ -3226,7 +3230,45 @@ async def test_ajuda_command_shows_grouped_help(
     assert "COMPRAS" in body
     assert "CONTA" in body
     assert "CONFIGURAÇÕES" in body
+    assert "/criar_missao" in body
+    assert "/cancelar_missao" in body
     assert "/senha" not in body
+
+
+@pytest.mark.anyio
+async def test_senha_is_not_a_public_command_or_authentication_handler(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_user = _fake_user()
+    fake_user.username = "cliente"
+    _patch_user(monkeypatch, fake_user)
+    send_calls = _patch_send_message(monkeypatch)
+    monkeypatch.setattr(
+        "app.telegram.router.has_active_session_async", AsyncMock(return_value=False)
+    )
+    issue = AsyncMock()
+    monkeypatch.setattr("app.telegram.router.issue_action_link_async", issue)
+    adapter = _FakeAdapter(_intent(kind=IntentKind.UNKNOWN))
+
+    await receive_telegram_webhook(
+        update=_update(
+            message=_TelegramIncomingMessage(
+                text="/senha",
+                date=1754586000,
+                chat=_TelegramChat(id=222, type=TelegramChatType.PRIVATE),
+                from_=_TelegramSender(id=222, first_name="Fulano"),
+            )
+        ),
+        x_telegram_bot_api_secret_token="correct-secret",
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        settings=_settings(auth_public_base_url="https://auth.example.test"),
+        session=_async_session(),
+    )
+
+    assert all(command["command"] != "senha" for command in _COMMANDS)
+    issue.assert_not_awaited()
+    assert adapter.calls == []
+    assert "/recuperar" in send_calls[0][1]
 
 
 @pytest.mark.anyio
@@ -3688,3 +3730,323 @@ async def test_logout_revokes_active_session(
 
     assert logout_calls == [fake_user]
     assert "Sessão encerrada" in sends[0][1]
+
+
+# Correção pontual de entrada: IA somente após /criar_missao.
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("command", ["/criar_missao", "/criar-missao"])
+async def test_create_mission_command_starts_user_scoped_waiting_state(
+    monkeypatch: pytest.MonkeyPatch, command: str
+) -> None:
+    user = _registered_user()
+    adapter = _FakeAdapter(AssertionError("AI must not run on command"))
+    monkeypatch.setattr(
+        "app.telegram.router.has_active_session_async", AsyncMock(return_value=True)
+    )
+    reply = await _handle_message(
+        _message(command),
+        user=user,
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        session=_async_session(),
+        auth_public_base_url="https://example.test",
+        created_now=False,
+    )
+
+    assert adapter.calls == []
+    assert "me diga o que você quer procurar" in reply.lower()
+    assert user.pending_intent["kind"] == "await_create_mission_description"
+    assert datetime.fromisoformat(user.pending_intent["expires_at"]) > datetime.now(UTC)
+
+
+@pytest.mark.anyio
+async def test_next_message_after_create_command_calls_ai_once_and_consumes_waiting_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user = _registered_user(pending_intent=_awaiting_mission_description())
+    intent = _intent(
+        kind=IntentKind.CREATE_MISSION,
+        parameters=IntentParameters(
+            search_query="Ryzen 7 9800X3D",
+            sources=("kabum",),
+        ),
+    )
+    adapter = _FakeAdapter(intent)
+    monkeypatch.setattr(
+        "app.telegram.router.has_active_session_async", AsyncMock(return_value=True)
+    )
+    reply = await _handle_message(
+        _message("Quero um Ryzen 7 9800X3D"),
+        user=user,
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        session=_async_session(),
+        auth_public_base_url="https://example.test",
+        created_now=False,
+    )
+
+    assert len(adapter.calls) == 1
+    assert adapter.calls[0][0].text == "Quero um Ryzen 7 9800X3D"
+    assert user.pending_intent["kind"] == "create_mission"
+    assert "confirmar nova missão" in reply.lower()
+
+
+@pytest.mark.anyio
+async def test_create_waiting_state_of_user_a_does_not_affect_user_b(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user_a = _registered_user(pending_intent=_awaiting_mission_description())
+    user_b = _registered_user()
+    user_b.id = uuid4()
+    user_b.telegram_user_id = 333
+    adapter = _FakeAdapter(AssertionError("AI must not run for user B"))
+    monkeypatch.setattr(
+        "app.telegram.router.has_active_session_async", AsyncMock(return_value=True)
+    )
+    reply = await _handle_message(
+        _message("quero uma RTX 5070", user_id=333),
+        user=user_b,
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        session=_async_session(),
+        auth_public_base_url="https://example.test",
+        created_now=False,
+    )
+
+    assert adapter.calls == []
+    assert "/criar_missao" in reply
+    assert user_a.pending_intent["kind"] == "await_create_mission_description"
+    assert user_b.pending_intent is None
+
+
+@pytest.mark.anyio
+async def test_expired_create_waiting_state_is_cleared_without_ai(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user = _registered_user(
+        pending_intent={
+            "kind": "await_create_mission_description",
+            "expires_at": (datetime.now(UTC) - timedelta(seconds=1)).isoformat(),
+        }
+    )
+    adapter = _FakeAdapter(AssertionError("AI must not run after expiry"))
+    monkeypatch.setattr(
+        "app.telegram.router.has_active_session_async", AsyncMock(return_value=True)
+    )
+    reply = await _handle_message(
+        _message("quero uma placa de vídeo"),
+        user=user,
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        session=_async_session(),
+        auth_public_base_url="https://example.test",
+        created_now=False,
+    )
+
+    assert adapter.calls == []
+    assert user.pending_intent is None
+    assert "expirou" in reply.lower()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("command", ["/cancelar_missao", "/cancelar-missao"])
+async def test_cancel_mission_command_with_one_candidate_stages_without_ai(
+    monkeypatch: pytest.MonkeyPatch, command: str
+) -> None:
+    user = _registered_user()
+    mission = _fake_mission(title="RTX 5070", status=MissionStatus.ACTIVE)
+    adapter = _FakeAdapter(AIProviderUnavailable())
+    monkeypatch.setattr(
+        "app.telegram.router.has_active_session_async", AsyncMock(return_value=True)
+    )
+    monkeypatch.setattr(
+        "app.telegram.router.list_mission_command_candidates",
+        AsyncMock(return_value=[mission]),
+    )
+    reply = await _handle_message(
+        _message(command),
+        user=user,
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        session=_async_session(),
+        auth_public_base_url="https://example.test",
+        created_now=False,
+    )
+
+    assert adapter.calls == []
+    assert user.pending_intent["command"] == "cancel"
+    assert user.pending_intent["mission_id"] == str(mission.id)
+    assert "cancelar" in reply.lower()
+
+
+@pytest.mark.anyio
+async def test_cancel_mission_numeric_choice_advances_to_local_confirmation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    missions = [
+        _fake_mission(title="Ryzen", status=MissionStatus.ACTIVE),
+        _fake_mission(title="RTX", status=MissionStatus.PAUSED),
+    ]
+    user = _registered_user()
+    adapter = _FakeAdapter(AssertionError("AI must never run in cancellation"))
+    monkeypatch.setattr(
+        "app.telegram.router.has_active_session_async", AsyncMock(return_value=True)
+    )
+    monkeypatch.setattr(
+        "app.telegram.router.list_mission_command_candidates",
+        AsyncMock(return_value=missions),
+    )
+    session = _async_session()
+    first = await _handle_message(
+        _message("/cancelar_missao"),
+        user=user,
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        session=session,
+        auth_public_base_url="https://example.test",
+        created_now=False,
+    )
+    second = await _handle_message(
+        _message("2"),
+        user=user,
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        session=session,
+        auth_public_base_url="https://example.test",
+        created_now=False,
+    )
+
+    assert adapter.calls == []
+    assert "1 - Ryzen" in first and "2 - RTX" in first
+    assert user.pending_intent["kind"] == "mission_command"
+    assert user.pending_intent["mission_id"] == str(missions[1].id)
+    assert "confirmar" in second.lower()
+
+
+@pytest.mark.anyio
+async def test_invalid_cancel_mission_choice_is_deterministic_and_keeps_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user = _registered_user(
+        pending_intent={
+            "kind": "cancel_mission_choice",
+            "command": "cancel",
+            "missions": [
+                {
+                    "mission_id": str(uuid4()),
+                    "mission_title": "Ryzen",
+                    "expected_state_version": 1,
+                },
+                {
+                    "mission_id": str(uuid4()),
+                    "mission_title": "RTX",
+                    "expected_state_version": 1,
+                },
+            ],
+        }
+    )
+    original = dict(user.pending_intent)
+    adapter = _FakeAdapter(AssertionError("AI must not run for invalid choice"))
+    monkeypatch.setattr(
+        "app.telegram.router.has_active_session_async", AsyncMock(return_value=True)
+    )
+    reply = await _handle_message(
+        _message("7"),
+        user=user,
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        session=_async_session(),
+        auth_public_base_url="https://example.test",
+        created_now=False,
+    )
+
+    assert adapter.calls == []
+    assert user.pending_intent == original
+    assert reply == "Opção inválida. Escolha uma opção da lista."
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("answer", ["sim", "s", "1"])
+async def test_confirmation_yes_vocabulary_executes_without_ai(
+    monkeypatch: pytest.MonkeyPatch, answer: str
+) -> None:
+    user = _registered_user(
+        pending_intent={
+            "kind": "mission_command",
+            "mission_id": str(uuid4()),
+            "mission_title": "RTX",
+            "command": "cancel",
+            "expected_state_version": 1,
+        }
+    )
+    execute = AsyncMock(return_value="cancelada")
+    monkeypatch.setattr("app.telegram.router._execute_pending_intent", execute)
+    adapter = _FakeAdapter(AIProviderUnavailable())
+    reply = await _resolve_pending_intent(
+        _message(answer),
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        session=_async_session(),
+        user=user,
+    )
+
+    assert reply == "cancelada"
+    assert execute.await_count == 1
+    assert adapter.calls == []
+    assert user.pending_intent is None
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("answer", ["não", "nao", "n", "2"])
+async def test_confirmation_no_vocabulary_declines_without_ai(
+    monkeypatch: pytest.MonkeyPatch, answer: str
+) -> None:
+    user = _registered_user(
+        pending_intent={
+            "kind": "mission_command",
+            "mission_id": str(uuid4()),
+            "mission_title": "RTX",
+            "command": "cancel",
+            "expected_state_version": 1,
+        }
+    )
+    execute = AsyncMock()
+    monkeypatch.setattr("app.telegram.router._execute_pending_intent", execute)
+    adapter = _FakeAdapter(AIProviderUnavailable())
+    reply = await _resolve_pending_intent(
+        _message(answer),
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        session=_async_session(),
+        user=user,
+    )
+
+    assert "cancelei" in reply.lower()
+    execute.assert_not_awaited()
+    assert adapter.calls == []
+    assert user.pending_intent is None
+
+
+@pytest.mark.anyio
+async def test_ambiguous_confirmation_retries_without_ai_and_keeps_state() -> None:
+    pending = {
+        "kind": "mission_command",
+        "mission_id": str(uuid4()),
+        "mission_title": "RTX",
+        "command": "cancel",
+        "expected_state_version": 1,
+    }
+    user = _registered_user(pending_intent=dict(pending))
+    adapter = _FakeAdapter(AIProviderUnavailable())
+    reply = await _resolve_pending_intent(
+        _message("talvez"),
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        session=_async_session(),
+        user=user,
+    )
+
+    assert "responda" in reply.lower()
+    assert adapter.calls == []
+    assert user.pending_intent == pending
+
+
+def test_registered_telegram_commands_use_only_bot_api_compatible_names() -> None:
+    names = {command["command"] for command in _COMMANDS}
+
+    assert {"criar_missao", "cancelar_missao", "editar_missao"} <= names
+    assert all(
+        name.replace("_", "").isalnum() and name == name.lower() for name in names
+    )
+    assert all("-" not in name for name in names)

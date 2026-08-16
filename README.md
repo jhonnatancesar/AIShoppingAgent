@@ -70,10 +70,18 @@ Operações de usuário pelo bot são aceitas somente no chat privado direto da
 própria pessoa e para uma conta interna ativa. Depois da autenticação, a
 política `USER ⊂ ADMIN ⊂ DEV` autoriza a operação sem remover o isolamento por
 proprietário. Papel inválido ou recurso alheio falha fechado e termina sem
-resposta funcional. Grupos, supergrupos e canais são ignorados. A TASK-061
-acrescenta `/senha`, `/entrar`, `/sair` e `/recuperar`: senhas só entram no
-formulário HTTPS e comandos funcionais exigem sessão absoluta de 12 horas.
+resposta funcional. Grupos, supergrupos e canais são ignorados. A autenticação
+pública usa `/recuperar`, `/entrar` e `/sair`: `/recuperar` cria a primeira
+senha ou redefine a existente, sempre pelo formulário HTTPS; comandos
+funcionais exigem sessão absoluta de 12 horas.
 Consulte `docs/AUTHORIZATION.md` e `docs/AUTHENTICATION.md`.
+
+Para criar uma missão, use `/criar_missao`; somente a descrição seguinte é
+interpretada por IA. Mensagens soltas, escolhas numéricas e confirmações não
+chamam IA. O cancelamento começa por `/cancelar_missao` e usa exclusivamente o
+fluxo determinístico com ownership e transição de estado. Os aliases digitados
+com hífen (`/criar-missao`, `/cancelar-missao` e `/editar-missao`) continuam
+aceitos, mas o menu formal usa underscore por exigência da Bot API.
 
 Com a API em execução, verifique sua vivacidade em `http://localhost:8000/health`. A resposta esperada é:
 

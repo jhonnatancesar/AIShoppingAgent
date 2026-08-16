@@ -1,5 +1,36 @@
 # Changelog
 
+## 2026-08-15 — Consolidação pontual do fluxo público de senha em `/recuperar`
+
+- Confirmado por auditoria que `/recuperar` escolhe `SET_PASSWORD` sem
+  `UserCredential` e `RECOVER_PASSWORD` quando a credencial já existe; o
+  helper passou a rejeitar explicitamente qualquer comando de autenticação
+  diferente de `/entrar` e `/recuperar`.
+- Mantidos token de uso único armazenado por hash, TTL de 10 minutos, vínculo
+  com usuário/Telegram/ação, rate limit e formulário HTTPS. Acrescentados
+  testes explícitos de vínculo de identidade e ausência de senha em resposta e
+  logs.
+- Política confirmada em 8–128 caracteres, Argon2id, com ao menos uma
+  maiúscula, uma minúscula, um número e um símbolo. Formulário, testes e
+  documentação operacional foram sincronizados.
+- Entrada de missão deixou de usar o `IntentInterpreter` como roteador
+  universal: `/criar_missao` abre um estado por usuário (TTL 10 minutos) e só
+  a próxima descrição chama IA; mensagem solta recebe orientação fixa.
+- `/cancelar_missao`, seleção numérica e confirmações `sim`/`s`/`1` e
+  `não`/`nao`/`n`/`2` são determinísticos. Cancelar preserva ownership,
+  `MissionTransition`, versão de estado e desativa o agendamento na mesma
+  transação. Resposta inválida permanece pendente sem IA.
+- O menu formal registra nomes com underscore, como exige a Bot API; aliases
+  digitados com hífen permanecem aceitos. A lista passa a ter 12 comandos.
+- Registro de validação: o runner padrão chegou ao PostgreSQL 18.4/head
+  `20260811_0001`, mas parou no drift preexistente do `alembic check` para
+  `mission_command_values`, `store_source_type_values` e `user_role_values`.
+  Sem corrigir migrations fora do escopo, a execução controlada pulou somente
+  esse subpasso e aprovou 2/2 integrações reais; recursos descartáveis foram
+  removidos e o stack ativo permaneceu intacto. Detalhes em
+  `docs/INTEGRATION_TESTS.md`.
+- Nenhuma TASK nova, migration, push, build ou deploy.
+
 ## 2026-08-12 (2) — TASK-079 registrada e priorizada: travamento do `collection_worker` com Chromium/Playwright (15 zumbis)
 
 - Durante a validação real da missão "cadeira gamer" (16:48 local), duas

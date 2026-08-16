@@ -1,12 +1,9 @@
 """Testes do fluxo de confirmação da intenção interpretada (TASK-058)."""
 
-import json
-from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import uuid4
 
 import pytest
-from app.ai_provider import AIProviderUnavailable, AIRequest, AIResponse
 from app.missions.models import MissionCommand, MissionStatus
 from app.telegram.confirmation import (
     ConfirmationError,
@@ -49,109 +46,27 @@ from app.telegram.confirmation import (
     stage_mission_command_choice,
     stage_pause_for_edit,
 )
-from app.users.models import UserRole
-
-
-class _FakeManager:
-    """Substitui o AIProviderManager sem tocar em nenhum provedor real."""
-
-    def __init__(
-        self, content: str | None = None, error: Exception | None = None
-    ) -> None:
-        self.content = content
-        self.error = error
-        self.captured_request: AIRequest | None = None
-
-    async def generate(self, request: AIRequest) -> AIResponse:
-        self.captured_request = request
-        if self.error is not None:
-            raise self.error
-        return AIResponse(
-            request_id=request.request_id,
-            provider="fake_provider",
-            model="fake-model",
-            content=self.content,
-            finished_at=datetime.now(UTC),
-        )
-
-
-def _response(answer: str) -> str:
-    return json.dumps({"answer": answer})
 
 
 @pytest.mark.anyio
-async def test_resolve_answer_builds_request_restricted_to_profile_and_purpose() -> (
-    None
-):
-    manager = _FakeManager(_response("confirm"))
-
-    await resolve_answer("sim", manager=manager, profile=UserRole.ADMIN)
-
-    request = manager.captured_request
-    assert request is not None
-    assert request.profile is UserRole.ADMIN
-    assert request.purpose == "interpret_confirmation_reply"
-    assert request.messages[-1].content == "sim"
+@pytest.mark.parametrize("answer", ["sim", "SIM", "s", "1", "  sim  "])
+async def test_resolve_answer_accepts_closed_confirm_vocabulary(answer: str) -> None:
+    assert await resolve_answer(answer) is True
 
 
 @pytest.mark.anyio
-async def test_resolve_answer_returns_true_on_confirm_classification() -> None:
-    manager = _FakeManager(_response("confirm"))
-
-    assert (
-        await resolve_answer("pod ser, bora", manager=manager, profile=UserRole.USER)
-        is True
-    )
+@pytest.mark.parametrize("answer", ["não", "nao", "N", "2", "  não  "])
+async def test_resolve_answer_accepts_closed_cancel_vocabulary(answer: str) -> None:
+    assert await resolve_answer(answer) is False
 
 
 @pytest.mark.anyio
-async def test_resolve_answer_returns_false_on_cancel_classification() -> None:
-    manager = _FakeManager(_response("cancel"))
-
-    assert (
-        await resolve_answer("deixa pra la", manager=manager, profile=UserRole.USER)
-        is False
-    )
-
-
-@pytest.mark.anyio
-async def test_resolve_answer_raises_on_unclear_classification() -> None:
-    manager = _FakeManager(_response("unclear"))
-
-    with pytest.raises(ConfirmationError):
-        await resolve_answer("oi", manager=manager, profile=UserRole.USER)
-
-
-@pytest.mark.anyio
-async def test_resolve_answer_raises_on_malformed_json() -> None:
-    manager = _FakeManager("isto não é json")
-
-    with pytest.raises(ConfirmationError):
-        await resolve_answer("sim", manager=manager, profile=UserRole.USER)
-
-
-@pytest.mark.anyio
-async def test_resolve_answer_raises_on_unexpected_response_shape() -> None:
-    manager = _FakeManager(json.dumps({"answer": "confirm", "extra": True}))
-
-    with pytest.raises(ConfirmationError):
-        await resolve_answer("sim", manager=manager, profile=UserRole.USER)
-
-
-@pytest.mark.anyio
-async def test_resolve_answer_raises_on_invalid_answer_value() -> None:
-    manager = _FakeManager(json.dumps({"answer": "maybe"}))
-
-    with pytest.raises(ConfirmationError):
-        await resolve_answer("sim", manager=manager, profile=UserRole.USER)
-
-
-@pytest.mark.anyio
-async def test_resolve_answer_raises_confirmation_error_on_provider_failure() -> None:
-    manager = _FakeManager(error=AIProviderUnavailable())
-
-    with pytest.raises(ConfirmationError):
-        await resolve_answer("sim", manager=manager, profile=UserRole.USER)
+@pytest.mark.parametrize("answer", ["oi", "pode ser", "1 - sim", "3", ""])
+async def test_resolve_answer_rejects_every_ambiguous_answer_locally(
+    answer: str,
+) -> None:
+    with pytest.raises(ConfirmationError, match="Não entendi"):
+        await resolve_answer(answer)
 
 
 def test_stage_and_describe_create_mission_with_target_and_sources() -> None:

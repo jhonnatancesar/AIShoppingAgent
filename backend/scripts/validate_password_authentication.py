@@ -25,9 +25,9 @@ from app.database.session import create_database_engine, create_session_factory
 from app.users.models import User, UserRole
 from sqlalchemy import select
 
-PASSWORD_A = "frase secreta real segura 061 A"
-PASSWORD_B = "frase secreta real segura 061 B"
-PASSWORD_C = "frase secreta real segura 061 C"
+PASSWORD_A = "Frase secreta real segura 061 A!"
+PASSWORD_B = "Frase secreta real segura 061 B!"
+PASSWORD_C = "Frase secreta real segura 061 C!"
 
 
 def _raw_token(url: str) -> str:

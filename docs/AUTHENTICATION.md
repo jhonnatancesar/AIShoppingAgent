@@ -9,11 +9,14 @@ os comandos funcionais. Ownership continua obrigatório para todos os papéis.
 
 - ao concluir `/cadastro`, o bot emite automaticamente o link para criar a
   primeira senha;
-- `/senha`: reemite o link inicial ou altera uma senha existente;
+- `/recuperar`: cria a primeira senha (`SET_PASSWORD`) quando ainda não existe
+  `UserCredential`; quando a credencial já existe, redefine a senha
+  (`RECOVER_PASSWORD`) e revoga todas as sessões;
 - `/entrar`: emite link de login e cria sessão de 12 horas após verificação;
 - `/sair`: revoga imediatamente todas as sessões ativas daquele usuário;
-- `/recuperar`: redefine a senha usando exclusivamente o Telegram privado já
-  vinculado e revoga todas as sessões.
+
+Não existe comando público separado para senha. Criação e recuperação começam
+sempre por `/recuperar`, exclusivamente no Telegram privado já vinculado.
 
 O link aponta para `/auth#<modo>:<token>`. Fragmentos não são enviados na
 requisição GET; o JavaScript remove o fragmento do histórico e envia ao POST
@@ -25,15 +28,10 @@ somente token e campos de senha. O payload rejeita campos extras. `user_id`,
 
 Argon2id usa `m=19456`, `t=2`, `p=1`, hash de 32 bytes e salt de 16 bytes.
 Senhas possuem 8 a 128 caracteres, são normalizadas em NFC, aceitam Unicode,
-espaços, colagem e gerenciadores, não usam regras de composição e são
-comparadas com uma blocklist local de valores comuns/contextuais. Um login
-bem-sucedido refaz o hash quando os parâmetros mudam.
-
-O mínimo de oito é uma decisão de usabilidade da V1 combinada com Telegram
-privado, Argon2id, limites persistentes e cooldown. O projeto não declara essa
-combinação como MFA formal nem conformidade NIST; MFA independente permanece
-futuro. Não se exige maiúscula, número ou símbolo porque regras de composição
-produzem variações previsíveis; a interface recomenda uma frase longa e única.
+espaços, colagem e gerenciadores e exigem pelo menos uma letra maiúscula, uma
+letra minúscula, um número e um símbolo. Uma blocklist local rejeita valores
+comuns/contextuais. Um login bem-sucedido refaz o hash quando os parâmetros
+mudam.
 
 Sessões têm TTL absoluto de 12 horas. Consulta não altera `expires_at`.
 `revoked_at` nunca é limpo. Um novo login substitui qualquer sessão anterior

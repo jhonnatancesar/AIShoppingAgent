@@ -4,6 +4,10 @@ Status: **Concluída em 2026-08-11**, desenho aprovado explicitamente pelo
 usuário, implementada e validada com pipeline oficial. Item único da
 release `v1.0.3`.
 
+Nota de supersessão: as referências a `/senha` neste registro descrevem o
+fluxo histórico da `v1.0.3`. Desde a TASK-078, o comando público vigente para
+primeira senha e recuperação é exclusivamente `/recuperar`.
+
 Dependência: TASK-072 (`docs/tasks/TASK-072.md`), cuja checagem
 (`has_active_session`) esta TASK complementa sem substituir.
 

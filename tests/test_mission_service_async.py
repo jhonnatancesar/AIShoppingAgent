@@ -76,6 +76,36 @@ def test_transition_mission_async_updates_state_version_and_appends_history() ->
     session.flush.assert_called_once_with()
 
 
+def test_transition_mission_async_cancel_disables_existing_schedule() -> None:
+    mission = _mission(MissionStatus.ACTIVE)
+    schedule = MissionSchedule(
+        mission_id=mission.id,
+        interval_minutes=60,
+        next_run_at=NOW,
+        is_enabled=True,
+        created_at=NOW - timedelta(days=1),
+        updated_at=NOW - timedelta(days=1),
+    )
+    session = _session(mission, schedule)
+
+    asyncio.run(
+        transition_mission_async(
+            session,
+            mission_id=mission.id,
+            command=MissionCommand.CANCEL,
+            expected_state_version=0,
+            actor_type="telegram",
+            actor_id=mission.user_id,
+            transitioned_at=NOW,
+        )
+    )
+
+    assert mission.status is MissionStatus.CANCELLED
+    assert mission.state_version == 1
+    assert schedule.is_enabled is False
+    assert schedule.updated_at == NOW
+
+
 def test_transition_mission_async_rejects_missing_mission() -> None:
     with pytest.raises(MissionNotFoundError):
         asyncio.run(

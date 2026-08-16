@@ -70,6 +70,16 @@ def validate_password(password: str, *, username: str | None = None) -> str:
         }
     if blocked or comparable in {"aishoppingagent", "aishoppingagent123"}:
         raise PasswordPolicyError("Essa senha é muito comum ou previsível.")
+    if not any(character.isupper() for character in normalized):
+        raise PasswordPolicyError("A senha precisa ter pelo menos uma letra maiúscula.")
+    if not any(character.islower() for character in normalized):
+        raise PasswordPolicyError("A senha precisa ter pelo menos uma letra minúscula.")
+    if not any(character.isdigit() for character in normalized):
+        raise PasswordPolicyError("A senha precisa ter pelo menos um número.")
+    if not any(
+        not character.isalnum() and not character.isspace() for character in normalized
+    ):
+        raise PasswordPolicyError("A senha precisa ter pelo menos um símbolo.")
     return normalized
 
 

@@ -104,8 +104,9 @@ projetado.
 - o onboarding passou a listar lojas por números e aceitar `5` para todas;
 - concluir `/cadastro` passou a emitir o link inicial de senha e orientar
   `/entrar` depois da criação;
-- o mínimo de senha passou a oito caracteres, sem regra de composição, com as
-  proteções existentes preservadas;
+- o mínimo de senha passou a oito caracteres, sem regra de composição naquela
+  validação (a política atual passou posteriormente a exigir maiúscula,
+  minúscula, número e símbolo), com as proteções existentes preservadas;
 - rejeição `ok=false` ao registrar/restaurar webhook passou a encerrar a
   ferramenta com falha real;
 - frete dependente de login/endereço e promoção condicional não pode ser

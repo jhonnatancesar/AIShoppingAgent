@@ -6,9 +6,11 @@ from app.telegram.bot_api import call_bot_api
 _COMMANDS = [
     {"command": "start", "description": "Iniciar o bot"},
     {"command": "ajuda", "description": "Ver ajuda"},
-    {"command": "missao", "description": "Criar ou entender uma missão de compra"},
+    {"command": "criar_missao", "description": "Criar uma nova missão"},
+    {"command": "cancelar_missao", "description": "Cancelar uma missão existente"},
+    {"command": "missao", "description": "Entender o fluxo de missões"},
     {
-        "command": "editar-missao",
+        "command": "editar_missao",
         "description": "Editar lojas ou preço-alvo de uma missão",
     },
     {"command": "cadastro", "description": "Cadastrar dados básicos do seu perfil"},

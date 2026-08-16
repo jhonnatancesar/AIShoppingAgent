@@ -10,6 +10,7 @@ from app.database.model_registry import REGISTERED_MODELS
 from app.missions.models import (
     Mission,
     MissionCommand,
+    MissionSchedule,
     MissionStatus,
     MissionTransition,
 )
@@ -87,6 +88,34 @@ def test_transition_updates_state_version_and_appends_history() -> None:
     assert transition.command is MissionCommand.ACTIVATE
     session.add.assert_called_once_with(transition)
     session.flush.assert_called_once_with()
+
+
+def test_cancel_transition_disables_existing_schedule_atomically() -> None:
+    mission = _mission(MissionStatus.ACTIVE)
+    schedule = MissionSchedule(
+        mission_id=mission.id,
+        interval_minutes=60,
+        next_run_at=NOW,
+        is_enabled=True,
+        created_at=NOW - timedelta(days=1),
+        updated_at=NOW - timedelta(days=1),
+    )
+    session = _session(mission, schedule)
+
+    transition_mission(
+        session,
+        mission_id=mission.id,
+        command=MissionCommand.CANCEL,
+        expected_state_version=0,
+        actor_type="telegram",
+        actor_id=mission.user_id,
+        transitioned_at=NOW,
+    )
+
+    assert mission.status is MissionStatus.CANCELLED
+    assert mission.state_version == 1
+    assert schedule.is_enabled is False
+    assert schedule.updated_at == NOW
 
 
 @pytest.mark.parametrize(

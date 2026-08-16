@@ -1,5 +1,6 @@
 """Contrato HTTP do formulário seguro da TASK-061."""
 
+import logging
 from unittest.mock import MagicMock
 
 import pytest
@@ -39,7 +40,7 @@ def test_form_keeps_token_in_fragment_and_sends_no_identity_fields() -> None:
     assert "telegram_user_id" not in body
     assert '"role":' not in body
     assert 'minlength="8"' in body
-    assert "frase longa" in body
+    assert "maiúscula, minúscula, número e símbolo" in body
 
 
 def test_payload_rejects_browser_supplied_identity_or_action() -> None:
@@ -146,3 +147,27 @@ def test_http_returns_actionable_password_policy_error(
 
     assert response.status_code == 400
     assert "muito comum" in response.body.decode()
+
+
+def test_http_never_echoes_or_logs_plaintext_password(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    plaintext_canary = "SegredoCanario9!"
+    monkeypatch.setattr(
+        "app.authentication.router.complete_action",
+        lambda *args, **kwargs: CredentialAction.SET_PASSWORD,
+    )
+
+    with caplog.at_level(logging.DEBUG):
+        response = complete_credential_action(
+            _payload(
+                password=plaintext_canary,
+                password_confirmation=plaintext_canary,
+            ),
+            MagicMock(),
+        )
+
+    assert response.status_code == 200
+    assert plaintext_canary not in response.body.decode()
+    assert plaintext_canary not in caplog.text

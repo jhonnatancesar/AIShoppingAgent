@@ -528,9 +528,9 @@ Passo a passo:
 2. **Faça o cadastro normalmente pelo Telegram**, com a conta que você quer
    promover: `/start`, depois `/cadastro`, seguindo os passos pedidos pelo
    bot (usuário, e-mail, lojas favoritas, categorias). Ao final, o bot envia
-   o link HTTPS para criar a senha (`/senha` também funciona diretamente no
-   chat); complete a criação de senha e faça `/entrar` para confirmar que o
-   login funciona como `USER` comum.
+   o link HTTPS para criar a senha; o mesmo link pode ser solicitado com
+   `/recuperar`. Complete a criação de senha e faça `/entrar` para confirmar
+   que o login funciona como `USER` comum.
 3. **Localize o usuário recém-criado no PostgreSQL.** O jeito mais confiável
    é pelo `telegram_user_id` (o identificador numérico da sua conta do
    Telegram) ou, na ausência dele, pelo `display_name`/`username` escolhidos
@@ -615,10 +615,11 @@ docker compose run --rm api python -m scripts.register_telegram_commands
 
 `--action info` não exibe o token nem o segredo do webhook — só confirma a
 URL registrada e o status da entrega. Comandos registrados atualmente pelo
-projeto (`backend/scripts/register_telegram_commands.py`, 10 comandos):
-`/start`, `/ajuda`, `/cadastro`, `/senha`, `/entrar`, `/sair`, `/recuperar`,
-`/preferencias`, `/privacidade`, `/upgrade` (este último só responde "em
-breve" — nenhuma lógica de mudança de plano está implementada).
+projeto (`backend/scripts/register_telegram_commands.py`, 12 comandos):
+`/start`, `/ajuda`, `/criar_missao`, `/cancelar_missao`, `/missao`,
+`/editar_missao`, `/cadastro`, `/entrar`, `/recuperar`, `/sair`,
+`/preferencias` e `/privacidade`. O campo formal da Bot API usa underscore;
+o webhook também aceita os três aliases digitados com hífen.
 
 Para desenvolvimento/validação temporária (nunca como URL definitiva de
 produção), o projeto usa `cloudflared`; remova o webhook temporário ao
@@ -635,8 +636,8 @@ Com o webhook público registrado:
 
 1. `/start` — confirme resposta de boas-vindas;
 2. `/cadastro` — complete o fluxo (usuário, e-mail, lojas, categorias);
-3. `/senha` (ou o link enviado ao final do cadastro) — crie a senha pelo
-   formulário HTTPS, nunca pelo chat;
+3. `/recuperar` (ou o link enviado ao final do cadastro) — crie ou redefina a
+   senha pelo formulário HTTPS, nunca pelo chat;
 4. `/entrar` — confirme login bem-sucedido (sessão absoluta de 12 horas);
 5. **Missão pequena**: não existe comando dedicado — depois de autenticado,
    escreva uma frase livre descrevendo o que procura (ex.: "quero um mouse
@@ -731,7 +732,7 @@ Checklist de smoke test — **sem gerar carga alta** (uma missão pequena, uma
 - [ ] Fallback Groq funcionando quando aplicável (não force isso artificialmente; se aparecer `ai_outcome=quota_exceeded`/`unavailable` seguido de `succeeded` via Groq nos logs, o fallback está funcionando — `docs/AI_PROVIDER_MANAGER.md`);
 - [ ] Telegram respondendo a `/start`;
 - [ ] Cadastro funcionando (`/cadastro` completo);
-- [ ] Login funcionando (`/senha` + `/entrar`);
+- [ ] Login funcionando (`/recuperar` + `/entrar`);
 - [ ] Missão pequena criada (uma frase livre, uma única fonte, com confirmação);
 - [ ] Uma coleta real pequena executada (`docker compose logs collection_worker` mostra o `CollectionRun` da missão concluindo);
 - [ ] Persistência da coleta confirmada (uma `PriceObservation`/`Offer` nova aparece no banco para essa missão);
@@ -1041,7 +1042,7 @@ computador de desenvolvimento.**
 - [ ] Comandos registrados (`register_telegram_commands`);
 - [ ] `/start` responde;
 - [ ] `/cadastro` completo;
-- [ ] `/senha` + `/entrar` funcionando;
+- [ ] `/recuperar` + `/entrar` funcionando;
 - [ ] Promoção do primeiro DEV feita e confirmada (seção 9), se aplicável.
 
 ### Smoke test

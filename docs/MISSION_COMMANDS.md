@@ -1,19 +1,19 @@
 # Comandos de missão via Telegram
 
-A TASK-035 fecha o loop iniciado pelas TASKs 032 a 034 e 056: o webhook
-(`POST /telegram/webhook`) resolve a identidade do usuário
-(`get_or_create_telegram_user`, TASK-056) e executa a ação de missão
-correspondente ao `Intent` já traduzido, respondendo ao Telegram. Sem teclado
-interativo — a seleção de fontes vem do que o `IntentInterpreter` (TASK-032)
-já extraiu do texto livre — e sem as notificações proativas orientadas a
-evento, implementadas separadamente na TASK-036.
+O webhook (`POST /telegram/webhook`) resolve a identidade do usuário e usa IA
+somente quando existe uma tarefa semântica explícita. Mensagens soltas não são
+mais tratadas como intenção universal: a criação começa por `/criar_missao`
+(`/criar-missao` também é aceito quando digitado) e apenas a mensagem seguinte
+é entregue ao `IntentInterpreter`. O estado `await_create_mission_description`
+é persistido em `User.pending_intent`, pertence ao usuário e expira em 10
+minutos.
 
 Desde a TASK-058, `create_mission` e `mission_command` não executam mais
 direto: ficam **encenados** e só executam após confirmação explícita do
 usuário — ver "Confirmação antes de executar" abaixo. Editar lojas e/ou
 preço-alvo de uma missão (TASK-069) segue o mesmo padrão de confirmação
 final, mas desde a TASK-071 só é alcançável pelo menu guiado do
-`/editar-missao` — nunca mais por texto livre interpretado pela IA (ver
+`/editar_missao` (alias digitável `/editar-missao`) — nunca mais por texto livre interpretado pela IA (ver
 o item `edit_mission` abaixo).
 
 ## Despacho por `IntentKind`
@@ -39,6 +39,12 @@ o item `edit_mission` abaixo).
   antes de chegar lá. Uma `CREATE_MISSION` confirmada sempre ativa
   imediatamente — não existe caminho para ficar em `draft` por falta de
   fonte.
+- **Entrada pública de criação**: `/criar_missao` entra no estado
+  `await_create_mission_description`. Só a próxima descrição válida desse
+  mesmo usuário chama IA; o estado é consumido antes da chamada e não fica
+  preso em caso de falha do provider. Um resultado que não seja
+  `CREATE_MISSION` é recusado, sem executar outra intenção. Mensagem livre em
+  `IDLE` recebe orientação fixa para usar `/criar_missao`, sem IA.
 - **`query_mission`**: somente leitura, continua respondendo direto, sem
   confirmação. Com `mission_reference`, usa `find_missions_by_reference`
   (busca case-insensitive por substring em `MissionCriteria.search_query`);
@@ -53,6 +59,13 @@ o item `edit_mission` abaixo).
   não um detalhe de implementação. Ao ser confirmado, `transition_mission`
   (TASK-021) executa o comando usando a versão de estado capturada no
   momento em que a confirmação foi encenada.
+- **Cancelamento público**: `/cancelar_missao` (alias digitável
+  `/cancelar-missao`) consulta somente missões não terminais do próprio
+  usuário. Zero candidatas gera resposta fixa; uma candidata segue para
+  confirmação; várias geram lista numerada e uma escolha única, seguida de
+  confirmação. Comando, seleção, confirmação e execução não usam IA. A
+  transição continua usando `command=cancel`, versão otimista, ownership e
+  desativa `MissionSchedule.is_enabled` na mesma transação.
 - **`edit_mission`**: **desativado como intenção livre desde a TASK-071**
   — o `IntentInterpreter` ainda classifica mensagens como `edit_mission`,
   mas o webhook não executa mais nada a partir disso; responde só
@@ -63,7 +76,7 @@ o item `edit_mission` abaixo).
   confirmação **remover** essa loja sem o usuário perceber facilmente.
   Editar lojas e/ou preço-alvo (nunca `search_query`/`title`) de uma
   missão já criada agora só acontece pelo **menu guiado e determinístico**
-  do `/editar-missao` (TASK-071, `backend/app/telegram/router.py`):
+  do `/editar_missao` (TASK-071, `backend/app/telegram/router.py`):
   1. Resolve qual missão sem IA: exatamente 1 `PAUSED` seleciona
      automaticamente; mais de 1 `PAUSED` lista os títulos numerados para
      escolher; sem nenhuma `PAUSED`, reaproveita o pedido de pausa já
@@ -83,11 +96,10 @@ o item `edit_mission` abaixo).
   5. Todos os caminhos convergem para o mesmo payload
      `stage_edit_mission`/`describe_edit_mission` (TASK-069, sem
      alteração) — a confirmação final sim/não continua usando
-     `resolve_answer` (a mesma classificação de IA usada por toda
-     confirmação do sistema; não é o `IntentInterpreter`). Missões
+     `resolve_answer` (classificação local de vocabulário fechado). Missões
      `DRAFT` ou em status terminal nunca aparecem como candidatas.
-- **`unknown`**: resposta fixa pedindo para o usuário reformular, deixando
-  explícito que o bot não conversa sobre outros assuntos.
+- **`unknown`/mensagem solta**: resposta fixa orientando a usar
+  `/criar_missao` ou `/ajuda`; nunca chama IA.
 
 ## Confirmação antes de executar (TASK-058, estendida nas TASK-069/071)
 
@@ -104,13 +116,19 @@ confirmação pendente) — isso vale tanto para o par confirmar/cancelar
 final quanto para os passos intermediários do menu guiado, que também são
 resolvidos antes da IA.
 
-A classificação da resposta (`confirmar`/`cancelar`/`não entendi`) passa
-pelo `AIProviderManager` do próprio perfil do usuário, com um propósito e
-um prompt dedicados (`interpret_confirmation_reply`) — não pela palavra
-exata nem pelo vocabulário fechado do `IntentInterpreter` — para reconhecer
-respostas informais, gírias e erros de português. Confirmado, a ação
-gravada é executada; cancelado, é descartada; não reconhecido, a
-confirmação continua pendente e o usuário é convidado a responder de novo.
+A classificação é totalmente local: `sim`, `s` e `1` confirmam; `não`,
+`nao`, `n` e `2` recusam. Qualquer outra resposta mantém a confirmação
+pendente e pede novamente o vocabulário válido. O fluxo não chama
+`AIProviderManager`, portanto indisponibilidade de Gemini/Groq/OpenRouter não
+impede uma confirmação nem um cancelamento.
+
+## Nomes formais na Bot API
+
+A Bot API aceita apenas letras minúsculas, dígitos e underscore no campo
+`BotCommand.command`. Por isso o menu registra `/criar_missao`,
+`/cancelar_missao` e `/editar_missao`. Os equivalentes com hífen são aceitos
+pelo roteador quando digitados como texto, mas não são enviados a
+`setMyCommands`.
 
 ## Limite entre `204` e `500`
 

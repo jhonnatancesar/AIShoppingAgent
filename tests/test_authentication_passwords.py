@@ -33,7 +33,7 @@ def test_argon2id_parameters_are_explicit_and_salted() -> None:
 
 
 def test_password_unicode_is_nfc_and_spaces_are_preserved() -> None:
-    decomposed = "  frase muito segura cafe\u0301  "
+    decomposed = "  Frase muito segura cafe\u0301 1!  "
     normalized = validate_password(decomposed)
 
     assert normalized == unicodedata.normalize("NFC", decomposed)
@@ -48,6 +48,10 @@ def test_password_unicode_is_nfc_and_spaces_are_preserved() -> None:
         ("x" * (MAX_PASSWORD_LENGTH + 1), "no máximo 128"),
         ("passwordpassword", "comum ou previsível"),
         ("aishoppingagent", "comum ou previsível"),
+        ("frase segura 1!", "letra maiúscula"),
+        ("FRASE SEGURA 1!", "letra minúscula"),
+        ("Frase segura!", "pelo menos um número"),
+        ("Frase segura 1", "pelo menos um símbolo"),
     ],
 )
 def test_password_policy_rejects_invalid_values(password: str, message: str) -> None:
@@ -60,8 +64,8 @@ def test_password_policy_blocks_username_derivative() -> None:
         validate_password("cliente01cliente01", username="cliente01")
 
 
-def test_password_policy_accepts_eight_characters_without_composition_rules() -> None:
-    assert validate_password("fraseboa") == "fraseboa"
+def test_password_policy_accepts_eight_characters_with_required_composition() -> None:
+    assert validate_password("Frase01!") == "Frase01!"
 
 
 def test_hash_is_marked_for_rehash_when_parameters_change() -> None:

@@ -82,11 +82,10 @@ inalterados por padrão.
 - Providers, coleta, TASK-084, fotos, link curto, TASK-076, TASK-077,
   banco/schema, migrations, ranking, identidade de produto — nenhum
   tocado.
-- Documentação solta em `docs/` (`AUTHENTICATION.md`, `CHANGELOG.md`,
-  `DECISION_LOG.md`, `TELEGRAM.md`, etc.) ainda cita `/senha` em texto
-  narrativo — não corrigido nesta rodada por economia de tokens; fica
-  registrado aqui como pendência de limpeza futura, sem impacto em
-  comportamento.
+- A documentação operacional ativa que ainda apresentava `/senha` como comando
+  foi sincronizada no ajuste pontual posterior de consolidação de
+  `/recuperar`. Registros históricos continuam mencionando o nome antigo apenas
+  para explicar sua remoção e a evolução do fluxo.
 
 ## Critérios de aceite
 

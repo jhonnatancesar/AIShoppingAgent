@@ -184,6 +184,32 @@ def test_login_consumes_token_and_creates_absolute_session() -> None:
     assert credential.login_window_started_at is None
 
 
+@pytest.mark.parametrize("mismatch", ["user_id", "telegram_user_id"])
+def test_action_token_rejects_identity_mismatch(mismatch: str) -> None:
+    user = _user()
+    token = _token(CredentialAction.SET_PASSWORD)
+    token.user_id = user.id
+    if mismatch == "user_id":
+        user.id = uuid4()
+    else:
+        token.telegram_user_id = user.telegram_user_id + 1
+    session = MagicMock()
+    session.get.return_value = user
+    session.execute.return_value = _result(optional=token)
+
+    with pytest.raises(AuthenticationError, match="Não foi possível concluir"):
+        complete_action(
+            session,
+            raw_token="token-seguro",
+            password="Frase segura 03!",
+            password_confirmation="Frase segura 03!",
+            now=NOW,
+        )
+
+    assert token.failed_attempts == 1
+    assert token.consumed_at is None
+
+
 def test_fifth_bad_login_locks_temporarily_and_does_not_consume_token() -> None:
     user = _user()
     token = _token(CredentialAction.LOGIN)
@@ -242,8 +268,8 @@ def test_password_change_revokes_sessions_atomically(action: CredentialAction) -
     complete_action(
         session,
         raw_token="token-seguro",
-        password="nova frase secreta segura 06",
-        password_confirmation="nova frase secreta segura 06",
+        password="Nova frase secreta segura 06!",
+        password_confirmation="Nova frase secreta segura 06!",
         now=NOW,
     )
 

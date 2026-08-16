@@ -648,6 +648,12 @@ Após a classificação, registrar a decisão neste arquivo e atualizar a docume
 - **Próxima ação:** concluir as correções dentro da TASK-053 e repetir os dois
   modos E2E antes de fechar a tarefa.
 
+**Atualização pontual (2026-08-15):** o mínimo permanece em oito caracteres,
+mas a política final aprovada passou a exigir ao menos uma letra maiúscula, uma
+letra minúscula, um número e um símbolo. Esta atualização substitui somente a
+parte acima que dispensava composição; Argon2id, blocklist, limite máximo de
+128 caracteres e demais proteções permanecem.
+
 ### DEC-043 — Confirmar operações de autenticação no chat
 
 - **Data:** 2026-08-09
@@ -1199,6 +1205,14 @@ Após a classificação, registrar a decisão neste arquivo e atualizar a docume
   implementá-la agora.
 - **Próxima ação:** criada `docs/tasks/TASK-058.md`, registrada no roadmap;
   aguarda solicitação explícita para ser executada.
+
+**Adendo de 2026-08-15 (correção pontual, sem nova TASK):** a entrada do
+Telegram deixou de usar IA como roteador universal. Criação por linguagem
+natural só ocorre depois de `/criar_missao`; cancelamento usa
+`/cancelar_missao`; escolhas numéricas e confirmações usam vocabulário local
+fechado. O antigo propósito `interpret_confirmation_reply` não é mais chamado.
+O menu formal usa underscore porque `BotCommand.command` não aceita hífen;
+aliases com hífen continuam aceitos como texto digitado.
 
 ### DEC-014 — Criar a TASK-057 para melhorar a robustez da interpretação de intenção
 

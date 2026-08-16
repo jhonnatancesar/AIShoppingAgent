@@ -77,7 +77,7 @@ autenticadas usam `discarded`.
 
 ## Comandos dedicados
 
-Onze comandos são registrados no menu. Os comandos de autenticação, perfil,
+Doze comandos são registrados no menu. Os comandos de autenticação, perfil,
 privacidade e edição de missão são reconhecidos diretamente pelo webhook,
 antes de qualquer interpretação por IA — não passam pelo vocabulário
 fechado do `IntentInterpreter`:
@@ -89,9 +89,9 @@ fechado do `IntentInterpreter`:
   TASK-072, é **bloqueado** com sessão ativa (mensagem fixa, sem tocar no
   perfil salvo), e o passo de nome de usuário verifica disponibilidade no
   banco antes de aceitar. Detalhes em `docs/USERS.md`.
-- `/upgrade`: existe e aparece no menu do bot, mas responde apenas que a
-  função está "em breve" — nenhuma lógica real de mudança de plano ou
-  perfil está implementada.
+- `/upgrade`: permanece reconhecido quando digitado, mas não integra o menu
+  formal atual; responde apenas que a função está "em breve" — nenhuma lógica
+  real de mudança de plano ou perfil está implementada.
 - `/preferencias` (TASK-037): consulta as notificações e aceita
   `quedas ativar|desativar` ou `alvo ativar|desativar`. Não altera cadastro,
   e-mail, autenticação ou fontes e não usa botões.
@@ -99,21 +99,35 @@ fechado do `IntentInterpreter`:
   terceiros, retenção e desidentificação; funciona sem IA e sem sessão por
   senha e não envia dados pessoais a provider externo. Detalhes em
   `docs/PRIVACY.md`.
-- `/senha`, `/entrar`, `/sair` e `/recuperar` (TASK-061): emitem link HTTPS,
-  estabelecem/revogam sessão ou recuperam a senha sem receber segredo no chat.
-  Detalhes em `docs/AUTHENTICATION.md`.
-- `/editar-missao` (TASK-069, redesenhado como menu guiado na TASK-071):
+- `/recuperar`, `/entrar` e `/sair` (TASK-061/TASK-078): `/recuperar` emite o
+  link HTTPS para criar a primeira senha ou redefinir a existente; os demais
+  estabelecem/revogam sessão. O chat nunca recebe a senha. Detalhes em
+  `docs/AUTHENTICATION.md`.
+- `/criar_missao`: inicia um estado por usuário com TTL de 10 minutos; somente
+  a próxima descrição chama o `IntentInterpreter`. Mensagens soltas fora desse
+  estado recebem orientação fixa e não consomem IA. O texto digitado
+  `/criar-missao` é aceito como alias.
+- `/cancelar_missao`: fluxo integralmente determinístico. Lista apenas missões
+  canceláveis do proprietário, resolve escolha numérica, pede confirmação e
+  executa `MissionTransition(command=cancel)` sem IA. O texto digitado
+  `/cancelar-missao` é aceito como alias.
+- `/editar_missao` (TASK-069, redesenhado como menu guiado na TASK-071):
   abre um menu guiado e 100% determinístico para editar lojas e/ou
   preço-alvo de uma missão — resolve qual missão, o que editar e (para
   lojas) quais lojas adicionar/remover, tudo por escolha numerada, sem
   nenhuma chamada ao `IntentInterpreter`. Editar por texto livre foi
   **desativado**: o `IntentKind.EDIT_MISSION` continua existindo, mas o
-  webhook só responde orientando a usar `/editar-missao`. Detalhes em
+  webhook só responde orientando a usar o comando dedicado. O texto digitado
+  `/editar-missao` continua aceito como alias. Detalhes em
   `docs/MISSION_COMMANDS.md`.
 - `/start` e `/ajuda`: orientação de onboarding e autenticação.
 
+Confirmações de missão são locais: `sim`/`s`/`1` confirmam e
+`não`/`nao`/`n`/`2` recusam. Resposta inválida pede novamente e nunca é
+enviada a Gemini, Groq ou OpenRouter.
+
 Sem sessão por senha, permanecem disponíveis `/start`, `/ajuda`, `/cadastro`,
-`/senha`, `/entrar`, `/recuperar` e `/privacidade`, sempre depois das TASKs
+`/entrar`, `/recuperar` e `/privacidade`, sempre depois das TASKs
 046/047. Missões,
 preferências, IA, recomendações, comparações, confirmações, trilha,
 `/upgrade` e demais efeitos funcionais exigem sessão válida.
