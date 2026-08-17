@@ -33,17 +33,24 @@ A V1 permitirá pesquisar Pichau, Terabyte, Amazon e Kabum, conforme seleção d
 
 `docs/PROJECT_CONTEXT.md` registra o estado vivo; `docs/ROADMAP.md` registra a ordem de trabalho; `docs/tasks/` contém o escopo unitário.
 
-## Continuidade no servidor — estado atual em 2026-08-16
+## Continuidade no servidor — estado atual em 2026-08-17
 
-O ambiente autoritativo é `C:\app\AIShoppingAgent`, no Windows Server. A
-`main` está em `0e90cf0805a24cfd873d4d0257dacd8ae03c7920`, igual a
-`origin/main`, e esse HEAD foi implantado no stack local de 7 serviços. O drift
-do `alembic check` foi resolvido pela TASK-086 sem migration; o head permanece
-`20260811_0001`. TASK-076 e TASK-087 também estão concluídas. O WSL2 opera com
-limite de 4 GB, swap de 2 GB e reclaim gradual. Somente schedules de missões
-`active` podem ficar habilitados; `cancelled`, `completed` e `expired` ficam
-desabilitados. A TASK-088 adiciona listagem determinística e numerada por
-`/listar_missoes`, `/listar-missoes`, `missoes` ou `missões`, sem IA, apenas
-para ativa/pausada/cancelada do proprietário. Próximas TASKs pendentes:
-TASK-077 e TASK-084, ambas não iniciadas. A listagem agrupa ativas, pausadas e
-canceladas nessa ordem e mostra `🟢`, `⏸️` e `❌` nos respectivos status.
+O ambiente autoritativo é `C:\App\AIShoppingAgent`, no Windows Server. A
+`main` está em `270683547bd2199a5e92049fa7c4e21a5b65a2f5` (tag `v1.0.7`),
+igual a `origin/main`, e esse HEAD foi implantado no stack local de 7
+serviços (`api`, `collection_worker`, `telegram_notifier` reconstruídos e
+recriados juntos a partir da mesma imagem `aishoppingagent-app:local`,
+eliminando o drift anterior entre eles). O head do Alembic é
+`20260817_0001` (migration de `offer_installment_options`, aplicada com
+`alembic upgrade head` a partir de `20260811_0001`, passando por
+`20260816_0001`/`20260816_0002`). Backup operacional validado antes da
+migration (`backups/postgres-20260817T231541Z-pre-v1.0.7.dump`,
+restauração testada em banco de validação separado). TASK-077, TASK-084,
+TASK-088 e TASK-089 (com `DEC-069`) estão concluídas e publicadas nesta
+release; nenhuma TASK está pendente no momento. Apresentação Telegram já
+mostra `💰 À vista`/`💳 Parcelado` dinamicamente; interpretação de pedido
+de compra parcelada pelo usuário ("quero em 6x") foi explicitamente
+adiada para uma V2, sem código residual desta rodada. O WSL2 opera com
+limite de 4 GB, swap de 2 GB e reclaim gradual. Somente schedules de
+missões `active` podem ficar habilitados; `cancelled`, `completed` e
+`expired` ficam desabilitados.
