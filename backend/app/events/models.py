@@ -11,6 +11,7 @@ from sqlalchemy import (
     Enum,
     ForeignKey,
     Index,
+    Integer,
     String,
     func,
     text,
@@ -150,4 +151,37 @@ class EventConsumptionAttempt(Base):
     )
     next_retry_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
+    )
+
+
+class EventDeliveryCheckpoint(Base):
+    """Parte de mensagem confirmada dentro de um evento/consumidor."""
+
+    __tablename__ = "event_delivery_checkpoints"
+    __table_args__ = (
+        CheckConstraint(
+            "btrim(consumer_name) <> ''",
+            name="ck_event_delivery_checkpoints_consumer_not_blank",
+        ),
+        CheckConstraint(
+            "message_part >= 0",
+            name="ck_event_delivery_checkpoints_part_non_negative",
+        ),
+        Index("ix_event_delivery_checkpoints_event", "consumer_name", "event_id"),
+    )
+
+    consumer_name: Mapped[str] = mapped_column(String(64), primary_key=True)
+    event_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("events.id", ondelete="RESTRICT"),
+        primary_key=True,
+    )
+    offer_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("offers.id", ondelete="RESTRICT"),
+        primary_key=True,
+    )
+    message_part: Mapped[int] = mapped_column(Integer, primary_key=True)
+    delivered_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
     )

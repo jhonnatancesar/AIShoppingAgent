@@ -9,8 +9,10 @@ import pytest
 from app.telegram.bot_api import (
     TelegramBotAPIError,
     TelegramDeliveryAmbiguous,
+    TelegramMediaRejected,
     call_bot_api,
     send_message,
+    send_photo,
 )
 from pydantic import SecretStr
 
@@ -129,3 +131,26 @@ async def test_ambiguous_send_timeout_is_not_retried_blindly() -> None:
         await send_message(123, "oi", bot_token=SecretStr("secret-token"))
 
     assert calls == 1
+
+
+@pytest.mark.anyio
+async def test_send_photo_classifies_media_rejection_without_leaking_url() -> None:
+    def _reject_media(request: object, timeout: int = 10) -> _FakeResponse:
+        return _FakeResponse(
+            {
+                "ok": False,
+                "error_code": 400,
+                "description": "Bad Request: failed to get HTTP URL content",
+            }
+        )
+
+    with (
+        patch("app.telegram.bot_api.urlopen", _reject_media),
+        pytest.raises(TelegramMediaRejected),
+    ):
+        await send_photo(
+            123,
+            "https://images.example.test/item.jpg",
+            "Oferta",
+            bot_token=SecretStr("secret-token"),
+        )

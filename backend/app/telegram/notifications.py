@@ -9,6 +9,8 @@ from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from pydantic import SecretStr
+from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.authentication.models import CredentialAction, UserAuthSession
@@ -19,16 +21,20 @@ from app.events.consumption import (
     count_failed_attempts_async,
     record_consumption_attempt_async,
 )
+from app.events.models import EventDeliveryCheckpoint
 from app.missions.models import Mission
 from app.observability.metrics import observe_resilience_event
 from app.offers.models import Offer
+from app.offers.short_links import build_offer_short_url, get_or_create_offer_short_link
 from app.products.models import Product
 from app.stores.models import Store
 from app.telegram.bot_api import (
     TelegramBotAPIError,
     TelegramDeliveryAmbiguous,
     TelegramDeliveryError,
+    TelegramMediaRejected,
     send_message,
+    send_photo,
 )
 from app.telegram.contracts import TelegramChatType, TelegramMessage
 from app.telegram.formatting import format_money
@@ -92,14 +98,20 @@ def remember_private_notification_chat(user: User, message: TelegramMessage) -> 
 
 
 @dataclass(frozen=True, slots=True)
+class _PreparedMessagePart:
+    offer_id: UUID | None
+    message_part: int
+    text: str
+    image_url: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class _PreparedNotification:
-    """Uma notificação já pronta para envio, sem nada vinculado à sessão da
-    Fase A -- só tipos primitivos, para nunca disparar lazy-load na Fase B
-    (TASK-080)."""
+    """Uma notificação pronta, sem objetos vinculados à sessão da Fase A."""
 
     event_id: UUID
     chat_id: int
-    text: str
+    parts: tuple[_PreparedMessagePart, ...]
 
 
 async def process_telegram_notifications(
@@ -114,6 +126,7 @@ async def process_telegram_notifications(
     retry_after_cap_seconds: float = 30.0,
     circuit_failure_threshold: int = 5,
     circuit_open_seconds: float = 30.0,
+    public_base_url: str = "http://localhost:8000",
     _consumer_name: str = TELEGRAM_NOTIFICATION_CONSUMER,
     _event_types: tuple[str, ...] = _NOTIFICATION_EVENT_TYPES,
 ) -> TelegramNotificationBatch:
@@ -158,6 +171,7 @@ async def process_telegram_notifications(
         max_attempts=max_attempts,
         retry_base_seconds=retry_base_seconds,
         retry_cap_seconds=retry_cap_seconds,
+        public_base_url=public_base_url,
     )
     for prepared in to_send:
         outcome = await _send_and_record(
@@ -227,6 +241,7 @@ async def _claim_and_prepare(
     max_attempts: int,
     retry_base_seconds: float,
     retry_cap_seconds: float,
+    public_base_url: str,
 ) -> tuple[int, list[_PreparedNotification], int, int, int, int]:
     """Fase A (TASK-080): reivindica e prepara, tudo numa única transação
     curta -- nenhum `await` externo acontece aqui. Devolve
@@ -247,7 +262,9 @@ async def _claim_and_prepare(
         )
         for event in events:
             try:
-                chat_id, text = await _prepare_notification_async(session, event)
+                chat_id, parts = await _prepare_notification_async(
+                    session, event, public_base_url=public_base_url
+                )
             except TelegramNotificationSkipped:
                 await _decide_and_record_outcome(
                     session,
@@ -282,7 +299,7 @@ async def _claim_and_prepare(
                     failed += 1
                 continue
             to_send.append(
-                _PreparedNotification(event_id=event.id, chat_id=chat_id, text=text)
+                _PreparedNotification(event_id=event.id, chat_id=chat_id, parts=parts)
             )
     return len(events), to_send, 0, failed, skipped, dead_lettered
 
@@ -307,15 +324,42 @@ async def _send_and_record(
     permanent = False
     retry_after: float | None = None
     try:
-        await send_message(
-            prepared.chat_id,
-            prepared.text,
-            bot_token=bot_token,
-            timeout_seconds=timeout_seconds,
-            retry_after_cap_seconds=retry_after_cap_seconds,
-            circuit_failure_threshold=circuit_failure_threshold,
-            circuit_open_seconds=circuit_open_seconds,
-        )
+        for part in prepared.parts:
+            if part.offer_id is not None and await _checkpoint_exists(
+                session_factory,
+                consumer_name=consumer_name,
+                event_id=prepared.event_id,
+                part=part,
+            ):
+                continue
+            await _send_part(
+                prepared.chat_id,
+                part,
+                bot_token=bot_token,
+                timeout_seconds=timeout_seconds,
+                retry_after_cap_seconds=retry_after_cap_seconds,
+                circuit_failure_threshold=circuit_failure_threshold,
+                circuit_open_seconds=circuit_open_seconds,
+            )
+            if part.offer_id is not None:
+                async with session_factory() as session, session.begin():
+                    await session.execute(
+                        postgresql_insert(EventDeliveryCheckpoint)
+                        .values(
+                            consumer_name=consumer_name,
+                            event_id=prepared.event_id,
+                            offer_id=part.offer_id,
+                            message_part=part.message_part,
+                        )
+                        .on_conflict_do_nothing(
+                            index_elements=(
+                                "consumer_name",
+                                "event_id",
+                                "offer_id",
+                                "message_part",
+                            )
+                        )
+                    )
     except TelegramDeliveryAmbiguous as error:
         failure_code = error.code
         permanent = True
@@ -352,6 +396,55 @@ async def _send_and_record(
             retry_cap_seconds=retry_cap_seconds,
         )
     return outcome
+
+
+async def _checkpoint_exists(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    consumer_name: str,
+    event_id: UUID,
+    part: _PreparedMessagePart,
+) -> bool:
+    if part.offer_id is None:
+        return False
+    async with session_factory() as session:
+        checkpoint = await session.scalar(
+            select(EventDeliveryCheckpoint)
+            .where(
+                EventDeliveryCheckpoint.consumer_name == consumer_name,
+                EventDeliveryCheckpoint.event_id == event_id,
+                EventDeliveryCheckpoint.offer_id == part.offer_id,
+                EventDeliveryCheckpoint.message_part == part.message_part,
+            )
+            .limit(1)
+        )
+        return isinstance(checkpoint, EventDeliveryCheckpoint)
+
+
+async def _send_part(
+    chat_id: int,
+    part: _PreparedMessagePart,
+    *,
+    bot_token: SecretStr,
+    timeout_seconds: float,
+    retry_after_cap_seconds: float,
+    circuit_failure_threshold: int,
+    circuit_open_seconds: float,
+) -> None:
+    kwargs = {
+        "bot_token": bot_token,
+        "timeout_seconds": timeout_seconds,
+        "retry_after_cap_seconds": retry_after_cap_seconds,
+        "circuit_failure_threshold": circuit_failure_threshold,
+        "circuit_open_seconds": circuit_open_seconds,
+    }
+    if part.image_url is not None and len(part.text) <= 1024:
+        try:
+            await send_photo(chat_id, part.image_url, part.text, **kwargs)
+            return
+        except TelegramMediaRejected:
+            pass
+    await send_message(chat_id, part.text, **kwargs)
 
 
 async def _decide_and_record_outcome(
@@ -417,8 +510,8 @@ async def _decide_and_record_outcome(
 
 
 async def _prepare_notification_async(
-    session: AsyncSession, event: Event
-) -> tuple[int, str]:
+    session: AsyncSession, event: Event, *, public_base_url: str
+) -> tuple[int, tuple[_PreparedMessagePart, ...]]:
     try:
         event_type = EventType(event.event_type)
     except ValueError:
@@ -428,14 +521,17 @@ async def _prepare_notification_async(
         EventType.AUTHENTICATION_SESSION_EXPIRING_V1,
         EventType.AUTHENTICATION_SESSION_EXPIRED_V1,
     }:
-        return await _prepare_authentication_notification_async(
+        chat_id, text = await _prepare_authentication_notification_async(
             session, event, event_type
         )
+        return chat_id, (_PreparedMessagePart(None, 0, text),)
     if event_type in {
         EventType.MISSION_PRELIST_READY_V1,
         EventType.MISSION_PRELIST_ERRATA_V1,
     }:
-        return await _prepare_prelist_notification_async(session, event, event_type)
+        return await _prepare_prelist_notification_async(
+            session, event, event_type, public_base_url=public_base_url
+        )
     if event.mission_id is None:
         raise TelegramNotificationError("notification_mission_missing")
     mission = await session.get(Mission, event.mission_id)
@@ -455,9 +551,20 @@ async def _prepare_notification_async(
             "notification_recipient_inactive", permanent=False
         )
     offer, product, store = await _resolve_offer_context_async(session, event)
+    link = await get_or_create_offer_short_link(session, offer.id)
+    short_url = build_offer_short_url(public_base_url, link.token)
     return (
         user.telegram_chat_id,
-        _render_alert(event, mission.title, offer, product, store),
+        (
+            _PreparedMessagePart(
+                offer.id,
+                0,
+                _render_alert(
+                    event, mission.title, offer, product, store, short_url=short_url
+                ),
+                offer.image_url,
+            ),
+        ),
     )
 
 
@@ -485,8 +592,12 @@ async def _resolve_offer_context_async(
 
 
 async def _prepare_prelist_notification_async(
-    session: AsyncSession, event: Event, event_type: EventType
-) -> tuple[int, str]:
+    session: AsyncSession,
+    event: Event,
+    event_type: EventType,
+    *,
+    public_base_url: str,
+) -> tuple[int, tuple[_PreparedMessagePart, ...]]:
     """TASK-068: nunca sujeita a `notification_is_enabled` -- a pré-lista
     dispara no máximo uma vez (mais a correção, também no máximo uma vez),
     fora das preferências de queda/alvo da TASK-037."""
@@ -507,10 +618,14 @@ async def _prepare_prelist_notification_async(
             "notification_recipient_inactive", permanent=False
         )
     if event_type is EventType.MISSION_PRELIST_READY_V1:
-        text = await _render_prelist_ready_async(session, event, mission.title)
+        parts = await _render_prelist_ready_async(
+            session, event, mission.title, public_base_url=public_base_url
+        )
     else:
-        text = await _render_prelist_errata_async(session, event, mission.title)
-    return user.telegram_chat_id, text
+        parts = await _render_prelist_errata_async(
+            session, event, mission.title, public_base_url=public_base_url
+        )
+    return user.telegram_chat_id, parts
 
 
 async def _prepare_authentication_notification_async(
@@ -615,6 +730,8 @@ def _render_alert(
     offer: Offer,
     product: Product,
     store: Store,
+    *,
+    short_url: str,
 ) -> str:
     """Monta a mensagem do alerta com dados reais da oferta.
 
@@ -645,7 +762,7 @@ def _render_alert(
                 f"antes: {format_money(previous_total, currency)}\n"
                 f"🔎 Missão: {mission_title}\n\n"
                 "🔗 Ver anúncio\n"
-                f"{offer.url}"
+                f"{short_url}"
             )
         if event_type is EventType.PRICE_TARGET_REACHED_V1:
             target_total = _money(payload, "target_total")
@@ -659,7 +776,7 @@ def _render_alert(
                 f"🎯 Alvo: {format_money(target_total, currency)}\n"
                 f"🔎 Missão: {mission_title}\n\n"
                 "🔗 Ver anúncio\n"
-                f"{offer.url}"
+                f"{short_url}"
             )
     except InvalidOperation, TypeError, ValueError:
         raise TelegramNotificationError("notification_payload_invalid") from None
@@ -683,23 +800,44 @@ _PRELIST_SHIPPING_DISCLAIMER = "⚠️ Valor sem frete. O frete será consultado
 
 
 async def _render_prelist_block_async(
-    session: AsyncSession, offer_id: UUID, amount: Decimal, currency: str
-) -> str:
+    session: AsyncSession,
+    offer_id: UUID,
+    amount: Decimal,
+    currency: str,
+    *,
+    position: int,
+    mission_title: str,
+    public_base_url: str,
+    prefix: str = "",
+    suffix: str = "",
+) -> _PreparedMessagePart:
     offer, product, store = await _load_offer_context_async(session, offer_id)
+    link = await get_or_create_offer_short_link(session, offer.id)
+    short_url = build_offer_short_url(public_base_url, link.token)
     display_name = product.display_name or product.name
-    return (
+    number = {1: "1️⃣", 2: "2️⃣"}.get(position, f"{position}.")
+    text = (
+        prefix
+        + f"{number} {display_name}\n"
         f"🏪 {store.name}\n"
-        f"{display_name}\n"
         f"💰 {format_money(amount, currency)}\n"
-        "\n🔗 Ver anúncio\n"
-        f"{offer.url}"
+        f"🔎 Missão: {mission_title}\n"
+        f"{_PRELIST_SHIPPING_DISCLAIMER}\n"
+        "🔗 Ver anúncio\n"
+        f"{short_url}"
+        + suffix
     )
+    return _PreparedMessagePart(offer.id, position - 1, text, offer.image_url)
 
 
 async def _render_prelist_ready_async(
-    session: AsyncSession, event: Event, mission_title: str
-) -> str:
-    """TASK-068: até 2 ofertas já encontradas, sem julgamento -- string fixa.
+    session: AsyncSession,
+    event: Event,
+    mission_title: str,
+    *,
+    public_base_url: str,
+) -> tuple[_PreparedMessagePart, ...]:
+    """TASK-084: uma parte independente por oferta, na ordem já ranqueada.
 
     Ranqueadas por `amount` (preço do produto), sem frete -- ver
     `_PRELIST_SHIPPING_DISCLAIMER`.
@@ -711,37 +849,49 @@ async def _render_prelist_ready_async(
         first_offer_id = _required_uuid(payload, "first_offer_id")
         first_amount = _money(payload, "first_amount")
         first_currency = _currency(payload, "first_currency")
-        blocks = [
+        parts = [
             await _render_prelist_block_async(
-                session, first_offer_id, first_amount, first_currency
+                session,
+                first_offer_id,
+                first_amount,
+                first_currency,
+                position=1,
+                mission_title=mission_title,
+                public_base_url=public_base_url,
+                prefix="🧾 MELHORES OFERTAS ENCONTRADAS ATÉ AGORA\n\n",
+                suffix=(
+                    "\n\nAinda estou buscando nas outras lojas.\n"
+                    "Se aparecer algo melhor, eu te aviso."
+                ),
             )
         ]
         if payload.get("second_offer_id") is not None:
             second_offer_id = _required_uuid(payload, "second_offer_id")
             second_amount = _money(payload, "second_amount")
             second_currency = _currency(payload, "second_currency")
-            blocks.append(
+            parts.append(
                 await _render_prelist_block_async(
-                    session, second_offer_id, second_amount, second_currency
+                    session,
+                    second_offer_id,
+                    second_amount,
+                    second_currency,
+                    position=2,
+                    mission_title=mission_title,
+                    public_base_url=public_base_url,
                 )
             )
     except InvalidOperation, TypeError, ValueError:
         raise TelegramNotificationError("notification_payload_invalid") from None
-    return (
-        "🧾 MELHORES OFERTAS ENCONTRADAS ATÉ AGORA\n\n"
-        f"Missão: {mission_title}\n\n"
-        "Das lojas que você escolheu, estas são as melhores ofertas "
-        "encontradas até agora:\n\n"
-        + "\n\n".join(blocks)
-        + f"\n\n{_PRELIST_SHIPPING_DISCLAIMER}"
-        "\n\nAinda estou buscando nas outras lojas.\n"
-        "Se aparecer algo melhor, eu te aviso."
-    )
+    return tuple(parts)
 
 
 async def _render_prelist_errata_async(
-    session: AsyncSession, event: Event, mission_title: str
-) -> str:
+    session: AsyncSession,
+    event: Event,
+    mission_title: str,
+    *,
+    public_base_url: str,
+) -> tuple[_PreparedMessagePart, ...]:
     """TASK-068: única correção da pré-lista -- string fixa, sem julgamento.
 
     Comparação por `amount` (preço do produto), sem frete -- ver
@@ -758,6 +908,8 @@ async def _render_prelist_errata_async(
     except InvalidOperation, TypeError, ValueError:
         raise TelegramNotificationError("notification_payload_invalid") from None
     offer, product, store = await _load_offer_context_async(session, offer_id)
+    link = await get_or_create_offer_short_link(session, offer.id)
+    short_url = build_offer_short_url(public_base_url, link.token)
     display_name = product.display_name or product.name
     if had_previous:
         header = "✏️ CORREÇÃO DA PRÉ-LISTA\n\n"
@@ -771,17 +923,18 @@ async def _render_prelist_errata_async(
             "Ainda não tínhamos encontrado uma oferta relevante para essa missão.\n\n"
             "Agora encontramos esta:"
         )
-    return (
+    text = (
         f"{header}"
         f"Missão: {mission_title}\n\n"
         f"{note}\n\n"
+        f"1️⃣ {display_name}\n"
         f"🏪 {store.name}\n"
-        f"{display_name}\n"
         f"💰 {format_money(current_amount, currency)}\n\n"
         "🔗 Ver anúncio\n"
-        f"{offer.url}\n\n"
+        f"{short_url}\n\n"
         f"{_PRELIST_SHIPPING_DISCLAIMER}"
     )
+    return (_PreparedMessagePart(offer.id, 0, text, offer.image_url),)
 
 
 def _required_text(payload: dict[str, object], field: str) -> str:

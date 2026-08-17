@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-08-16 — TASK-084
+
+- Ofertas passam a persistir imagem HTTP/HTTPS sem apagar a última imagem válida
+  quando uma coleta posterior não trouxer mídia.
+- Alertas e pré-listas do Telegram enviam cada oferta separadamente, tentam
+  `sendPhoto` e fazem fallback textual apenas para rejeição específica da mídia.
+- Adicionado `/r/{token}` próprio, opaco e persistente por Offer, com destino
+  recuperado do banco e validação fail-closed do host da loja.
+- Checkpoints por consumidor, evento, oferta e parte permitem retomar sucesso
+  parcial sem impedir que a mesma oferta reapareça em evento posterior.
+- Seletores foram definidos após investigação real isolada de Pichau,
+  Terabyte, Amazon e Kabum. Aprovados 182 testes focados, 1.200 testes
+  não-integração (1 ignorado, 90,46%) e 32 integrações PostgreSQL 18.4.
+
 ## 2026-08-16 — TASK-088
 
 - Adicionado `/listar_missoes` determinístico, com alias `/listar-missoes` e

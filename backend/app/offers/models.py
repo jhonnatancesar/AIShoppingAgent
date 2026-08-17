@@ -11,6 +11,7 @@ from sqlalchemy import (
     Index,
     String,
     Text,
+    UniqueConstraint,
     func,
 )
 from sqlalchemy.dialects.postgresql import UUID as PostgreSQLUUID
@@ -30,6 +31,11 @@ class Offer(Base):
             name="ck_offers_external_id_not_blank",
         ),
         CheckConstraint("btrim(url) <> ''", name="ck_offers_url_not_blank"),
+        CheckConstraint(
+            "image_url IS NULL OR image_url ~* "
+            "'^https?://[^/@?#[:space:]]+([/?#]|$)'",
+            name="ck_offers_image_url_http",
+        ),
         Index("ix_offers_product_id", "product_id"),
         Index("ix_offers_store_id", "store_id"),
         Index("ix_offers_seller_id", "seller_id"),
@@ -91,6 +97,7 @@ class Offer(Base):
     )
     external_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     url: Mapped[str] = mapped_column(Text, nullable=False)
+    image_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -102,5 +109,30 @@ class Offer(Base):
         nullable=False,
         default=utc_now,
         onupdate=utc_now,
+        server_default=func.now(),
+    )
+
+
+class OfferShortLink(Base):
+    """Token público opaco que resolve sempre a URL corrente da Offer."""
+
+    __tablename__ = "offer_short_links"
+    __table_args__ = (
+        CheckConstraint(
+            "btrim(token) <> ''", name="ck_offer_short_links_token_not_blank"
+        ),
+        UniqueConstraint("offer_id", name="uq_offer_short_links_offer_id"),
+    )
+
+    token: Mapped[str] = mapped_column(String(64), primary_key=True)
+    offer_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("offers.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
         server_default=func.now(),
     )

@@ -377,6 +377,19 @@ e exibindo `🟢`/`⏸️`/`❌`. Concluídas/expiradas e missões de
 outro usuário não aparecem. O menu nativo do Telegram inclui o novo comando.
 Permanecem pendentes TASK-077 e TASK-084; nenhuma foi iniciada.
 
+**Atualização 2026-08-16 (6):** a TASK-084 foi iniciada. O desenho aprovado
+persiste imagem em `Offer`, usa `/r/{token}` próprio e checkpoint por
+consumidor/evento/oferta/parte. A investigação real isolada confirmou imagens
+nos cards de Pichau, Terabyte, Amazon e Kabum; a implementação está em curso.
+TASK-077 permanece não iniciada.
+
+**Atualização 2026-08-16 (7):** a TASK-084 está concluída. Imagens válidas são
+persistidas por Offer sem apagamento por ausência posterior; `/r/{token}`
+resolve destino exclusivamente pelo banco e valida o host da loja; o Telegram
+envia uma oferta por parte com fallback textual de mídia; checkpoints incluem
+consumidor, evento, oferta e parte. O runner oficial aprovou 32 integrações em
+PostgreSQL 18.4 no head `20260816_0001`. Permanece pendente somente TASK-077.
+
 **Atualização 2026-08-16 (4) — estado operacional autoritativo:** a `main` no
 Windows Server está em `0e90cf0805a24cfd873d4d0257dacd8ae03c7920`, igual a
 `origin/main`; os commits da TASK-086 (`f5c69e5`), TASK-076 (`c4b1e5e`),

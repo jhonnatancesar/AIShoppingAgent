@@ -33,6 +33,7 @@ from app.core.resilience import (
     RetryPolicy,
     retry_operation,
 )
+from app.core.urls import normalize_http_url
 from app.observability.metrics import observe_resilience_event
 
 Clock = Callable[[], datetime]
@@ -340,6 +341,7 @@ class PlaywrightStoreProvider:
                     raw_shipping=_optional(row.get("shipping")),
                     raw_availability=_optional(row.get("availability")),
                     raw_fulfillment=_optional(row.get("fulfillment")),
+                    image_url=normalize_http_url(row.get("image")),
                     evidence={"card_text": str(row.get("evidence") or "")[:1000]},
                 )
             )

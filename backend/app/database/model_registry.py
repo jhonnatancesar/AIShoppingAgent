@@ -11,7 +11,7 @@ from app.collection.models import (
     MissionOfferRelevance,
     PriceObservation,
 )
-from app.events.models import Event, EventConsumptionAttempt
+from app.events.models import Event, EventConsumptionAttempt, EventDeliveryCheckpoint
 from app.missions.models import (
     Mission,
     MissionCriteria,
@@ -19,7 +19,7 @@ from app.missions.models import (
     MissionSource,
     MissionTransition,
 )
-from app.offers.models import Offer
+from app.offers.models import Offer, OfferShortLink
 from app.products.models import Product
 from app.purchase.models import PurchaseConfirmation, PurchaseTrailEntry
 from app.stores.models import Seller, Store
@@ -35,6 +35,7 @@ REGISTERED_MODELS = (
     Store,
     Seller,
     Offer,
+    OfferShortLink,
     AuditEntry,
     Mission,
     MissionCriteria,
@@ -43,6 +44,7 @@ REGISTERED_MODELS = (
     MissionSchedule,
     Event,
     EventConsumptionAttempt,
+    EventDeliveryCheckpoint,
     PurchaseConfirmation,
     PurchaseTrailEntry,
     UserCredential,

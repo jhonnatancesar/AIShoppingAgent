@@ -7,6 +7,7 @@ from typing import Protocol, runtime_checkable
 from uuid import UUID
 
 from app.collection.errors import CollectionContractError
+from app.core.urls import normalize_http_url
 
 
 def _require_text(value: str, field_name: str) -> None:
@@ -50,6 +51,7 @@ class RawCollectedOffer:
     raw_shipping: str | None = None
     raw_availability: str | None = None
     raw_fulfillment: str | None = None
+    image_url: str | None = None
     evidence: Mapping[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -57,6 +59,8 @@ class RawCollectedOffer:
         _require_text(self.url, "url")
         _require_text(self.title, "title")
         _require_aware(self.collected_at, "collected_at")
+        if self.image_url is not None and normalize_http_url(self.image_url) is None:
+            raise CollectionContractError("image_url must be an absolute HTTP/HTTPS URL")
 
 
 @dataclass(frozen=True, slots=True)

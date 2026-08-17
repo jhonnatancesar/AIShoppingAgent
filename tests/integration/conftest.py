@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import sys
 from dataclasses import dataclass
 from uuid import uuid4
 
@@ -20,6 +21,10 @@ from psycopg import sql
 from sqlalchemy import Engine, text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import Session, sessionmaker
+
+if sys.platform == "win32":
+    # Psycopg assíncrono não suporta o ProactorEventLoop padrão do Windows.
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 if os.getenv("AISHOPPING_INTEGRATION_RUN_ID"):
     Settings.model_config["env_file"] = None

@@ -1038,6 +1038,8 @@ async def _resolve_offer(session: AsyncSession, store_id: UUID, item: Any) -> Of
         item.raw_offer.url,
     )
     if offer is not None:
+        if item.raw_offer.image_url is not None:
+            offer.image_url = item.raw_offer.image_url
         return offer
     product = Product(id=uuid4(), name=item.raw_offer.title[:300])
     offer = Offer(
@@ -1046,6 +1048,7 @@ async def _resolve_offer(session: AsyncSession, store_id: UUID, item: Any) -> Of
         seller_id=seller_id,
         external_id=item.raw_offer.external_id,
         url=item.raw_offer.url,
+        image_url=item.raw_offer.image_url,
     )
     try:
         async with session.begin_nested():
@@ -1065,6 +1068,8 @@ async def _resolve_offer(session: AsyncSession, store_id: UUID, item: Any) -> Of
         )
         if winner is None:
             raise
+        if item.raw_offer.image_url is not None:
+            winner.image_url = item.raw_offer.image_url
         return winner
     return offer
 

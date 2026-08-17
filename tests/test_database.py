@@ -150,6 +150,7 @@ def test_metadata_contains_only_implemented_tables() -> None:
         "price_observations",
         "events",
         "event_consumption_attempts",
+        "event_delivery_checkpoints",
         "purchase_confirmations",
         "purchase_trail_entries",
         "user_credentials",
@@ -157,4 +158,5 @@ def test_metadata_contains_only_implemented_tables() -> None:
         "credential_action_tokens",
         "telegram_update_receipts",
         "mission_offer_relevance",
+        "offer_short_links",
     }

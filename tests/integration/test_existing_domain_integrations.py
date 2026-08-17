@@ -3,9 +3,13 @@
 import asyncio
 import selectors
 from datetime import UTC, datetime, timedelta
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
+from app.collection.contracts import RawCollectedOffer
+from app.collection.normalization import PriceNormalizer
+from app.collection.orchestration import _resolve_offer
+from app.events.models import Event, EventDeliveryCheckpoint
 from app.missions.models import (
     Mission,
     MissionCommand,
@@ -14,7 +18,11 @@ from app.missions.models import (
 )
 from app.missions.query import list_visible_missions_for_user
 from app.missions.service import transition_mission
+from app.offers.models import Offer, OfferShortLink
+from app.products.models import Product
+from app.stores.models import Store
 from app.users.models import User, UserRole
+from sqlalchemy.exc import IntegrityError
 
 from backend.scripts.validate_authorization import validate as validate_authorization
 from backend.scripts.validate_limits_resilience import main as validate_resilience
@@ -28,6 +36,127 @@ from backend.scripts.validate_recommendation_flow import (
 )
 
 pytestmark = pytest.mark.integration
+
+
+def test_task084_schema_keeps_links_unique_and_checkpoints_event_scoped(
+    integration_database,
+) -> None:
+    """A mesma Offer pode ser entregue em eventos distintos, mas não duplicada no mesmo."""
+    with integration_database.sessions.begin() as session:
+        product = Product(name="Produto TASK-084")
+        store = Store(
+            code=f"task084_{uuid4().hex[:8]}",
+            name="Loja TASK-084",
+            base_url="https://shop.example.test",
+        )
+        session.add_all([product, store])
+        session.flush()
+        offer = Offer(
+            product_id=product.id,
+            store_id=store.id,
+            url="https://shop.example.test/item",
+            image_url="https://cdn.example.test/item.jpg",
+        )
+        session.add(offer)
+        session.flush()
+        first_event = Event(
+            event_type="mission.prelist_ready.v1",
+            aggregate_type="offer",
+            aggregate_id=offer.id,
+            payload={},
+            occurred_at=datetime.now(UTC),
+        )
+        second_event = Event(
+            event_type="price.decreased.v1",
+            aggregate_type="offer",
+            aggregate_id=offer.id,
+            payload={},
+            occurred_at=datetime.now(UTC),
+        )
+        session.add_all([first_event, second_event])
+        session.flush()
+        session.add_all(
+            [
+                OfferShortLink(token="task084-opaque-token", offer_id=offer.id),
+                EventDeliveryCheckpoint(
+                    consumer_name="telegram_prelist_v1",
+                    event_id=first_event.id,
+                    offer_id=offer.id,
+                    message_part=0,
+                ),
+                EventDeliveryCheckpoint(
+                    consumer_name="telegram_price_alerts_v1",
+                    event_id=second_event.id,
+                    offer_id=offer.id,
+                    message_part=0,
+                ),
+            ]
+        )
+        offer_id = offer.id
+        first_event_id = first_event.id
+
+    with integration_database.sessions.begin() as session:
+        with pytest.raises(IntegrityError), session.begin_nested():
+            session.add(OfferShortLink(token="another-token", offer_id=offer_id))
+            session.flush()
+        with pytest.raises(IntegrityError), session.begin_nested():
+            session.add(
+                EventDeliveryCheckpoint(
+                    consumer_name="telegram_prelist_v1",
+                    event_id=first_event_id,
+                    offer_id=offer_id,
+                    message_part=0,
+                )
+            )
+            session.flush()
+
+
+def test_task084_offer_image_is_updated_only_by_valid_non_null_collection(
+    integration_database,
+) -> None:
+    with integration_database.sessions.begin() as session:
+        store = Store(
+            code=f"task084_image_{uuid4().hex[:8]}",
+            name="Loja imagem TASK-084",
+            base_url="https://images.example.test",
+        )
+        session.add(store)
+        session.flush()
+        store_id = store.id
+
+    normalizer = PriceNormalizer()
+
+    async def _persist(image_url: str | None) -> tuple[UUID, str | None]:
+        raw = RawCollectedOffer(
+            source_code="task084",
+            url="https://images.example.test/item",
+            title="Produto com imagem",
+            collected_at=datetime.now(UTC),
+            external_id="task084-item",
+            raw_price="R$ 100,00",
+            image_url=image_url,
+        )
+        item = normalizer.normalize_offer(raw)
+        async with integration_database.async_sessions() as session, session.begin():
+            offer = await _resolve_offer(session, store_id, item)
+            await session.flush()
+            return offer.id, offer.image_url
+
+    def loop_factory() -> asyncio.SelectorEventLoop:
+        return asyncio.SelectorEventLoop(selectors.SelectSelector())
+
+    offer_id, image = asyncio.run(
+        _persist("https://cdn.example.test/first.jpg"), loop_factory=loop_factory
+    )
+    assert image == "https://cdn.example.test/first.jpg"
+    same_id, retained = asyncio.run(_persist(None), loop_factory=loop_factory)
+    assert same_id == offer_id
+    assert retained == "https://cdn.example.test/first.jpg"
+    same_id, updated = asyncio.run(
+        _persist("https://cdn.example.test/second.jpg"), loop_factory=loop_factory
+    )
+    assert same_id == offer_id
+    assert updated == "https://cdn.example.test/second.jpg"
 
 
 def test_visible_mission_list_filters_owner_and_status_in_postgresql(

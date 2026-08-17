@@ -169,6 +169,7 @@ async def _process_batch(
         retry_after_cap_seconds=settings.retry_after_cap_seconds,
         circuit_failure_threshold=settings.circuit_failure_threshold,
         circuit_open_seconds=settings.circuit_open_seconds,
+        public_base_url=settings.auth_public_base_url,
     )
 
 

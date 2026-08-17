@@ -1,5 +1,20 @@
 # Decision Log
 
+## DEC-066 — Mídia por oferta, redirect próprio e checkpoint por parte
+
+- **Data:** 2026-08-16
+- **Classificação:** Implementar agora, pela TASK-084 já planejada.
+- **Decisão:** imagem nullable pertence a `Offer`; short link público e sem
+  expiração mapeia token opaco único para `offer_id`; redirect valida esquema
+  e compatibilidade com o host da loja; entrega Telegram mantém checkpoint por
+  consumidor/evento/oferta/parte e retoma apenas partes ainda não confirmadas.
+- **Evidência:** inspeção real isolada comprovou imagens nos cards das quatro
+  lojas, com seletores e CDNs específicos registrados em `TASK-084.md`.
+- **Guardrails:** nenhuma URL arbitrária no redirect; ausência de imagem não
+  elimina oferta; falha de mídia cai para texto; ambiguidade não vira sucesso;
+  nenhuma mudança em ranking, preço, frete ou classificação.
+
+
 ## DEC-065 — Listagem determinística de missões e menu Telegram sincronizado
 
 - **Data:** 2026-08-16

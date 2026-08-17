@@ -84,6 +84,7 @@ def test_offer_table_matches_data_contract() -> None:
         table.c.seller_id,
         table.c.external_id,
         table.c.url,
+        table.c.image_url,
         table.c.created_at,
         table.c.updated_at,
     ]
@@ -93,6 +94,7 @@ def test_offer_table_matches_data_contract() -> None:
     assert table.c.external_id.nullable is True
     assert table.c.external_id.type.length == 255
     assert table.c.url.nullable is False
+    assert table.c.image_url.nullable is True
     assert "price" not in table.columns
     assert "availability" not in table.columns
 
@@ -160,6 +162,7 @@ def test_offer_table_rejects_blank_identifiers_and_url() -> None:
 
     assert check_names == {
         "ck_offers_external_id_not_blank",
+        "ck_offers_image_url_http",
         "ck_offers_url_not_blank",
     }
 

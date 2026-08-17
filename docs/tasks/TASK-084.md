@@ -1,9 +1,8 @@
 # TASK-084 — Foto do produto, link curto e uma oferta por mensagem no Telegram
 
-Status: **Auditada nesta rodada (2026-08-13, Etapa 5 do planejamento
-pós-v1.0.6)** — fluxo atual mapeado ponta a ponta com evidência de
-código; nenhuma implementação, nenhuma tecnologia de link curto
-escolhida.
+Status: **Concluída (2026-08-16)** — desenho aprovado, investigação real dos
+cards das quatro lojas concluída antes de congelar os seletores e pipeline
+oficial aprovado em PostgreSQL 18.4 descartável.
 
 Dependência: nenhuma bloqueante das TASKs anteriores desta rodada.
 Não reabre TASK-068 (pré-lista) nem TASK-075 (regra de preço) — só muda
@@ -79,6 +78,27 @@ resultado, `_EDIT_MISSION_FREE_TEXT_REDIRECT` em `telegram/router.py`,
 é uma constante de texto de mensagem, sem relação com URL).
 
 ## 5.A — Foto do produto
+
+### Investigação real dos cards — 2026-08-16
+
+Executada isoladamente, sem banco, IA ou containers de produção, com Chromium
+em quatro containers descartáveis separados, consulta `RTX 4060` e inspeção
+dos três primeiros cards. Resultado registrado antes da implementação:
+
+- **Pichau:** HTTP 200, 36 cards; `a[data-cy="list-product"]` contém
+  `img.mui-rfxowm-media`, com `src`/`currentSrc` HTTPS em
+  `media.pichau.com.br`.
+- **Terabyte:** HTTP 200, 300 links encontrados; o ancestral
+  `.product-item` contém `img.image-thumbnail`, com `src`/`currentSrc` HTTPS
+  em `img.terabyteshop.com.br`.
+- **Amazon:** HTTP 200, 60 cards; o card de busca contém `img.s-image`, com
+  `src`/`currentSrc` HTTPS em `m.media-amazon.com` e `srcset` responsivo.
+- **Kabum:** HTTP 200, 34 links; o próprio link do produto contém `img` com
+  `src`/`currentSrc` HTTPS em `images.kabum.com.br/produtos/fotos/`.
+
+Seletores congelados com base nessa evidência, específicos por loja e sem
+supor DOM compartilhado. A URL escolhida deve ser HTTP/HTTPS válida; ausência
+ou valor inválido vira `None` e nunca descarta a oferta.
 
 **Plano**: estender `RawCollectedOffer` com um campo opcional
 `image_url: str | None` (mesmo padrão dos demais campos `raw_*`
@@ -219,6 +239,24 @@ IA, sem Telegram) — de baixo risco para a classe de bug da TASK-079,
 mas registrado aqui para manter a auditoria daquela etapa atualizada
 quando esta TASK for implementada.
 
+### Decisões aprovadas para implementação — 2026-08-16
+
+- `Offer.image_url` nullable; só é substituída por nova URL HTTP/HTTPS válida,
+  e uma coleta sem imagem nunca apaga valor válido anterior.
+- `/r/{token}` público, sem expiração, com token aleatório opaco e um registro
+  por `Offer`; a tabela guarda `offer_id`, não duplica a URL.
+- O redirect consulta `Offer.url`, aceita apenas HTTP/HTTPS e exige host igual
+  ao host da `Store.base_url` ou seu subdomínio. Nenhum destino é aceito por
+  query, path adicional ou body.
+- Checkpoint identifica `consumer_name + event_id + offer_id + message_part`;
+  eventos posteriores podem reenviar a mesma oferta. Só sucesso confirmado é
+  persistido; entrega ambígua mantém a semântica ao-menos-uma-vez existente.
+- Sucesso parcial é retomável: retry pula partes já confirmadas e continua na
+  primeira pendente, sem transformar checkpoint de outro evento em dedupe.
+- `sendPhoto` usa fallback imediato para `sendMessage` apenas quando a falha é
+  específica da mídia; texto entregue torna a parte bem-sucedida.
+- Sem métricas de clique, autenticação, expiração ou encurtador externo.
+
 ## 5.E — Template proposto (baseado nos ícones já usados no projeto)
 
 Reaproveitando o padrão visual já existente em `notifications.py`
@@ -272,3 +310,24 @@ Esperado, se a opção própria de link curto for escolhida: nova tabela
 for persistida em `Offer`: coluna nova nullable, migration adicional
 metadata-only (mesmo padrão de baixo risco já usado na TASK-075 para
 `mission_criteria.model`).
+
+## Implementação e validação final
+
+- `Offer.image_url` é nullable e só recebe HTTP/HTTPS absoluto válido; uma
+  coleta posterior sem imagem preserva o valor anterior.
+- A migration `20260816_0001` cria a coluna, `offer_short_links` (token opaco
+  único e uma linha por Offer) e `event_delivery_checkpoints`, cuja chave inclui
+  consumidor, evento, oferta e parte.
+- `/r/{token}` consulta a Offer e a Store no banco, rejeita query params,
+  destino inválido e host alheio à loja; nenhuma URL é recebida do cliente.
+- Alertas e pré-listas usam uma parte por oferta. `sendPhoto` cai imediatamente
+  para `sendMessage` somente em rejeição específica da mídia; sucesso textual
+  confirma a parte. Retry pula exclusivamente checkpoints confirmados do mesmo
+  evento.
+- Evidência real dos cards: Pichau `a[data-cy=list-product]
+  img.mui-rfxowm-media`; Terabyte `.product-item img.image-thumbnail`; Amazon
+  `img.s-image`; Kabum imagens sob `images.kabum.com.br/produtos/fotos/`.
+- Validação: 182 testes focados; 1.200 testes não-integração aprovados e 1
+  ignorado (90,46%); 32 integrações aprovadas no runner oficial com upgrade,
+  downgrade/upgrade e `alembic check` em PostgreSQL 18.4; Ruff e
+  `git diff --check` aprovados. Nenhuma chamada real de IA foi feita.

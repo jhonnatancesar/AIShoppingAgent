@@ -41,6 +41,7 @@ def _fake_session_factory() -> tuple[MagicMock, MagicMock]:
     # falhas anteriores por padrão (primeira tentativa), sobrescrito por
     # teste quando o cenário exigir um valor diferente.
     session.scalar = AsyncMock(return_value=0)
+    session.execute = AsyncMock()
     # `record_consumption_attempt_async` chama `session.flush()` -- `.add`
     # continua síncrono (mesmo em `AsyncSession` real).
     session.flush = AsyncMock()
@@ -686,8 +687,10 @@ async def test_prelist_ready_sends_two_blocks_cheapest_first(
     )
 
     assert result.succeeded == 1
-    assert sent[0].count("🏪") == 2
-    assert sent[0].index("R$ 1.900,00") < sent[0].index("R$ 2.100,00")
+    assert len(sent) == 2
+    assert sent[0].count("🏪") == sent[1].count("🏪") == 1
+    assert "R$ 1.900,00" in sent[0]
+    assert "R$ 2.100,00" in sent[1]
 
 
 @pytest.mark.anyio

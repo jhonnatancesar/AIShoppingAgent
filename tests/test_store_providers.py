@@ -24,29 +24,37 @@ NOW = datetime(2026, 8, 2, 12, tzinfo=UTC)
 CASES = (
     (
         PichauProvider,
-        '<a data-cy="list-product" href="https://www.pichau.com.br/gpu-x"><h2>GPU Pichau</h2><div class="price_vista">R$ 1.999,90</div></a>',
+        '<a data-cy="list-product" href="https://www.pichau.com.br/gpu-x"><img class="mui-rfxowm-media" src="https://media.pichau.com.br/gpu.jpg"><h2>GPU Pichau</h2><div class="price_vista">R$ 1.999,90</div></a>',
         "gpu-x",
+        "https://media.pichau.com.br/gpu.jpg",
     ),
     (
         TerabyteProvider,
-        '<div class="product-item"><a class="product-item__name" href="https://www.terabyteshop.com.br/produto/123/gpu">GPU Tera</a><div class="product-item__new-price"><span>R$ 2.099,90</span></div></div>',
+        '<div class="product-item"><img class="image-thumbnail" src="https://img.terabyteshop.com.br/gpu.jpg"><a class="product-item__name" href="https://www.terabyteshop.com.br/produto/123/gpu">GPU Tera</a><div class="product-item__new-price"><span>R$ 2.099,90</span></div></div>',
         "123",
+        "https://img.terabyteshop.com.br/gpu.jpg",
     ),
     (
         AmazonProvider,
-        '<div data-component-type="s-search-result" data-asin="B0123"><h2><a href="https://www.amazon.com.br/dp/B0123">GPU Amazon</a></h2><span class="a-price"><span class="a-offscreen">R$ 2.199,90</span></span><span>Prime e Entrega GRÁTIS</span><button>Adicionar ao carrinho</button></div>',
+        '<div data-component-type="s-search-result" data-asin="B0123"><img class="s-image" src="https://m.media-amazon.com/gpu.jpg"><h2><a href="https://www.amazon.com.br/dp/B0123">GPU Amazon</a></h2><span class="a-price"><span class="a-offscreen">R$ 2.199,90</span></span><span>Prime e Entrega GRÁTIS</span><button>Adicionar ao carrinho</button></div>',
         "B0123",
+        "https://m.media-amazon.com/gpu.jpg",
     ),
     (
         KabumProvider,
-        '<main><a href="https://www.kabum.com.br/produto/456/gpu"><span class="line-clamp-2">GPU Kabum</span><span class="text-base font-semibold">R$</span><span class="text-base font-semibold">2.299,90</span><span>Vendido por Kabum</span></a></main>',
+        '<main><a href="https://www.kabum.com.br/produto/456/gpu"><img src="https://images.kabum.com.br/produtos/fotos/456/gpu.jpg"><span class="line-clamp-2">GPU Kabum</span><span class="text-base font-semibold">R$</span><span class="text-base font-semibold">2.299,90</span><span>Vendido por Kabum</span></a></main>',
         "456",
+        "https://images.kabum.com.br/produtos/fotos/456/gpu.jpg",
     ),
 )
 
 
-@pytest.mark.parametrize(("provider_type", "html", "external_id"), CASES)
-def test_extracts_sanitized_store_card(provider_type, html, external_id) -> None:
+@pytest.mark.parametrize(
+    ("provider_type", "html", "external_id", "image_url"), CASES
+)
+def test_extracts_sanitized_store_card(
+    provider_type, html, external_id, image_url
+) -> None:
     async def scenario():
         async with BrowserSession() as session:
             page = await session.new_page()
@@ -59,6 +67,7 @@ def test_extracts_sanitized_store_card(provider_type, html, external_id) -> None
     assert offers[0].external_id == external_id
     assert offers[0].raw_price.startswith("R$")
     assert offers[0].raw_currency == "BRL"
+    assert offers[0].image_url == image_url
     assert offers[0].evidence["card_text"]
 
 

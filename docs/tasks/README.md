@@ -6,13 +6,13 @@ canceladas; o menu nativo passa a publicar o novo comando.
 
 Cada arquivo descreve uma unidade de trabalho. Antes de executar uma tarefa, leia os documentos obrigatórios definidos em `AGENTS.md`.
 
-**TASK-076, TASK-086 e TASK-087 concluídas:** o drift das três constraints foi corrigido na metadata
+**TASK-076, TASK-084, TASK-086, TASK-087 e TASK-088 concluídas:** o drift das três constraints foi corrigido na metadata
 sem editar migrations históricas; `alembic check` e o runner oficial foram
 aprovados em PostgreSQL 18.4 descartável. A revisão transversal de copy foi
-aplicada sem mudança funcional. Permanecem pendentes TASK-077 e TASK-084.
+aplicada sem mudança funcional. A TASK-084 adicionou mídia, link curto próprio
+e checkpoints de entrega por evento. Permanece pendente somente a TASK-077.
 
-**Próximas TASKs pendentes:** TASK-077 e TASK-084. Nenhuma foi iniciada pela
-conclusão da TASK-088.
+**Nenhuma TASK em execução.** TASK-077 permanece pendente e não iniciada.
 
 **Deploy 2026-08-16:** TASK-076, TASK-086, o pacote de IA/Firecrawl e
 TASK-087 estão presentes em `origin/main` e implantados no Windows Server no

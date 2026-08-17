@@ -10,6 +10,7 @@ from .core.request_logging import log_request
 from .health.router import router as health_router
 from .observability.metrics import metrics_router
 from .observability.tracing import configure_tracing
+from .offers.router import router as offers_router
 from .telegram.router import router as telegram_router
 
 settings = get_settings()
@@ -30,4 +31,5 @@ app.middleware("http")(log_request)
 app.include_router(health_router)
 app.include_router(metrics_router)
 app.include_router(authentication_router)
+app.include_router(offers_router)
 app.include_router(telegram_router)

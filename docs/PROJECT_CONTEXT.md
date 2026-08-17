@@ -1052,6 +1052,15 @@ do repositório da aplicação — só `docs/PROJECT_CONTEXT.md` e
 passa a documentar o timer e o blacklist como parte da configuração
 esperada do servidor.
 
+**Atualização 2026-08-16 — TASK-084:** concluída a entrega visual individual
+de ofertas no Telegram. `Offer.image_url` preserva a última mídia válida; links
+`/r/{token}` são opacos, persistentes e resolvem `Offer.url` com validação do
+host da Store; checkpoints são isolados por consumidor/evento/oferta/parte e
+somente gravados após sucesso confirmado. Rejeição específica de mídia faz
+fallback imediato para texto. Os seletores foram congelados após investigação
+real isolada das quatro lojas. Validado com 1.200 testes não-integração e 32
+integrações PostgreSQL 18.4; TASK-077 permanece a única TASK pendente.
+
 **Atualização 2026-08-12 (10):** durante a validação real da missão
 "cadeira gamer", duas coletas (kabum, amazon) ficaram presas em
 `running` para sempre — investigação confirmou que **o

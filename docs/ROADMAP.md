@@ -27,6 +27,7 @@
 | Drift de constraints no Alembic | TASK-086 | Concluída; metadata corrigida e runner aprovado em PostgreSQL 18.4 descartável |
 | Padronização de textos visíveis | TASK-087 | Concluída; catálogo aplicado sem mudança funcional e suíte não-integração aprovada |
 | Listagem de missões e menu Telegram | TASK-088 | Concluída; comando determinístico numerado para ativas, pausadas e canceladas; menu oficial sincronizado no deploy |
+| Mídia e entrega individual de ofertas | TASK-084 | Concluída; imagem persistente, link curto próprio e checkpoint por evento (`DEC-066`) |
 | Estado operacional no Windows Server | manutenção 2026-08-16 | HEAD `0e90cf0` implantado; 7 serviços saudáveis; WSL2 limitado a 4 GB; somente schedules de missões ativas habilitados |
 | Expansão de fontes (futuro) | Tarefas a definir | Mercado Livre, Shopee, AliExpress e outras fontes futuras |
 
@@ -263,12 +264,9 @@ adicional", é o item 1 desta lista, já coberto acima):
    opções levantadas (confiança auto-relatada, grounding do Gemini,
    validação determinística por padrão de nomenclatura, combinação),
    nenhuma escolhida; caso de regressão obrigatório documentado.
-6. **TASK-084** (`docs/tasks/TASK-084.md`) — foto do produto (nenhum
-   provider extrai imagem hoje), uma oferta por mensagem Telegram (hoje
-   `_render_prelist_ready` concatena até 2 ofertas numa mensagem só) e
-   link curto próprio para substituir URLs completas das lojas (nenhum
-   mecanismo de encurtamento existe hoje) — com o requisito de segurança
-   explícito de nunca permitir open redirect.
+6. **TASK-084 concluída** (`docs/tasks/TASK-084.md`) — imagem persistente por
+   Offer, uma oferta por mensagem, fallback textual de mídia, link curto próprio
+   fail-closed e checkpoint por evento/oferta/parte.
 7. **TASK-085** (`docs/tasks/TASK-085.md`) — seleção numérica única e
    múltipla para cancelar/pausar missões ambíguas; nenhuma TASK anterior
    encontrada sobre o assunto (verificado nesta rodada); reaproveita
