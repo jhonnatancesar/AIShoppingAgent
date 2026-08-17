@@ -266,7 +266,7 @@ Reaproveitando o padrão visual já existente em `notifications.py`
 1️⃣ {display_name}
 🏪 {store.name}
 💰 {amount formatado, format_money existente}
-🚚 {regra de frete já existente, inalterada}
+⚠️ Frete não incluído. Consulte o valor na loja.
 🔗 {link curto da oferta}
 ```
 

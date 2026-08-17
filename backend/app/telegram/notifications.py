@@ -755,11 +755,11 @@ def _render_alert(
         if event_type is EventType.PRICE_DECREASED_V1:
             previous_total = _money(payload, "previous_total")
             return (
-                "📉 QUEDA DE PREÇO\n\n"
+                "📉 O PREÇO CAIU\n\n"
                 f"{display_name}\n\n"
                 f"🏪 {store.name}\n"
-                f"💰 {format_money(current_total, currency)} — "
-                f"antes: {format_money(previous_total, currency)}\n"
+                f"💰 {format_money(current_total, currency)}\n"
+                f"↘️ Preço anterior: {format_money(previous_total, currency)}\n"
                 f"🔎 Missão: {mission_title}\n\n"
                 "🔗 Ver anúncio\n"
                 f"{short_url}"
@@ -769,11 +769,11 @@ def _render_alert(
             if payload.get("mission_id") != str(event.mission_id):
                 raise TelegramNotificationError("notification_payload_invalid")
             return (
-                "🔥 PREÇO ENCONTRADO\n\n"
+                "🔥 PREÇO-ALVO ENCONTRADO\n\n"
                 f"{display_name}\n\n"
                 f"🏪 {store.name}\n"
                 f"💰 {format_money(current_total, currency)}\n"
-                f"🎯 Alvo: {format_money(target_total, currency)}\n"
+                f"🎯 Preço-alvo: {format_money(target_total, currency)}\n"
                 f"🔎 Missão: {mission_title}\n\n"
                 "🔗 Ver anúncio\n"
                 f"{short_url}"
@@ -796,7 +796,7 @@ async def _load_offer_context_async(
     return offer, product, store
 
 
-_PRELIST_SHIPPING_DISCLAIMER = "⚠️ Valor sem frete. O frete será consultado na loja."
+_PRELIST_SHIPPING_DISCLAIMER = "⚠️ Frete não incluído. Consulte o valor na loja."
 
 
 async def _render_prelist_block_async(
@@ -860,8 +860,8 @@ async def _render_prelist_ready_async(
                 public_base_url=public_base_url,
                 prefix="🧾 MELHORES OFERTAS ENCONTRADAS ATÉ AGORA\n\n",
                 suffix=(
-                    "\n\nAinda estou buscando nas outras lojas.\n"
-                    "Se aparecer algo melhor, eu te aviso."
+                    "\n\nA busca continua nas outras lojas. Se eu encontrar uma "
+                    "oferta melhor, aviso você."
                 ),
             )
         ]
@@ -912,27 +912,27 @@ async def _render_prelist_errata_async(
     short_url = build_offer_short_url(public_base_url, link.token)
     display_name = product.display_name or product.name
     if had_previous:
-        header = "✏️ CORREÇÃO DA PRÉ-LISTA\n\n"
+        header = "🔄 ATUALIZAÇÃO DA PRÉ-LISTA\n\n"
         note = (
             "Uma das lojas que ainda estava sendo consultada encontrou uma oferta "
-            "melhor do que a mostrada antes:"
+            "melhor:"
         )
     else:
         header = "🧾 PRIMEIRA OFERTA RELEVANTE ENCONTRADA\n\n"
         note = (
-            "Ainda não tínhamos encontrado uma oferta relevante para essa missão.\n\n"
-            "Agora encontramos esta:"
+            "Até agora, nenhuma oferta relevante havia sido encontrada para esta "
+            "missão. Agora apareceu esta:"
         )
     text = (
         f"{header}"
-        f"Missão: {mission_title}\n\n"
+        f"🔎 Missão: {mission_title}\n\n"
         f"{note}\n\n"
         f"1️⃣ {display_name}\n"
         f"🏪 {store.name}\n"
-        f"💰 {format_money(current_amount, currency)}\n\n"
+        f"💰 {format_money(current_amount, currency)}\n"
+        f"{_PRELIST_SHIPPING_DISCLAIMER}\n\n"
         "🔗 Ver anúncio\n"
-        f"{short_url}\n\n"
-        f"{_PRELIST_SHIPPING_DISCLAIMER}"
+        f"{short_url}"
     )
     return (_PreparedMessagePart(offer.id, 0, text, offer.image_url),)
 

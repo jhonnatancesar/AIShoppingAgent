@@ -181,7 +181,7 @@ def test_private_chat_rejects_mismatched_identity() -> None:
     ("event_type", "expected_fragment"),
     [
         ("price.decreased.v1", "R$ 4.499,90"),
-        ("price.target_reached.v1", "PREÇO ENCONTRADO"),
+        ("price.target_reached.v1", "PREÇO-ALVO ENCONTRADO"),
     ],
 )
 async def test_process_sends_alert_and_records_success(
@@ -645,7 +645,7 @@ async def test_prelist_ready_sends_one_block_when_only_one_store_answered(
     assert "R$ 1.900,00" in sent[0]
     assert store.name in sent[0]
     assert sent[0].count("🏪") == 1  # só uma loja respondeu ainda
-    assert "sem frete" in sent[0].lower()
+    assert "Frete não incluído. Consulte o valor na loja." in sent[0]
     attempt = session.add.call_args.args[0]
     assert attempt.consumer_name == TELEGRAM_PRELIST_CONSUMER
 
@@ -749,9 +749,9 @@ async def test_prelist_errata_message_frames_correction_vs_first_find(
     )
 
     assert result.succeeded == 1
-    assert "CORREÇÃO" in sent[0]
+    assert "ATUALIZAÇÃO DA PRÉ-LISTA" in sent[0]
     assert "R$ 1.500,00" in sent[0]
-    assert "sem frete" in sent[0].lower()
+    assert "Frete não incluído. Consulte o valor na loja." in sent[0]
 
 
 @pytest.mark.anyio
@@ -782,7 +782,7 @@ async def test_prelist_errata_frames_first_find_without_previous_baseline(
     assert result.succeeded == 1
     assert "PRIMEIRA OFERTA" in sent[0]
     assert "CORREÇÃO" not in sent[0]
-    assert "sem frete" in sent[0].lower()
+    assert "Frete não incluído. Consulte o valor na loja." in sent[0]
 
 
 @pytest.mark.anyio
