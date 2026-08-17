@@ -10,13 +10,20 @@ Cada arquivo descreve uma unidade de trabalho. Antes de executar uma tarefa, lei
 sem editar migrations históricas; `alembic check` e o runner oficial foram
 aprovados em PostgreSQL 18.4 descartável. A revisão transversal de copy foi
 aplicada sem mudança funcional. A TASK-084 adicionou mídia, link curto próprio
-e checkpoints de entrega por evento. Permanece pendente somente a TASK-077.
+e checkpoints de entrega por evento. A TASK-077 também está concluída; a
+TASK-089 permanece planejada e não iniciada.
 
-**Nenhuma TASK em execução.** TASK-077 permanece pendente e não iniciada.
+**TASK-077 concluída:** após o gate dos cards, o usuário aprovou a
+consulta individual limitada aos candidatos finais. Amazon própria/parceira e
+KaBuM! própria foram comprovadas em páginas reais; a implementação preserva
+limite, sequência, ausência de retry e corte em bloqueio. Persistência e
+mensagens foram validadas no head `20260816_0002`. TASK-089 permanece
+planejada e não iniciada. Não executar as duas em paralelo.
 
-**Deploy 2026-08-16:** TASK-076, TASK-086, o pacote de IA/Firecrawl e
-TASK-087 estão presentes em `origin/main` e implantados no Windows Server no
-HEAD `0e90cf0`. TASK-077 e TASK-084 continuam não iniciadas.
+**Snapshot do deploy de 2026-08-16:** TASK-076, TASK-086, o pacote de
+IA/Firecrawl e TASK-087 estavam presentes em `origin/main` e implantados no
+Windows Server no HEAD `0e90cf0`. O estado corrente das TASKs é o registrado
+acima; este parágrafo permanece apenas como histórico daquele deploy.
 
 As TASKs 000 a 054, as TASKs 055 a 062, a TASK-063 e a TASK-064 estão
 concluídas — MVP da V1 completo, checklist de release 65/65. A

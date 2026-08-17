@@ -7,6 +7,7 @@ from app.collection.contracts import (
     CollectionProvider,
     CollectionRequest,
     CollectionResult,
+    RawCollectedOffer,
 )
 from app.collection.errors import (
     CollectionContractError,
@@ -56,6 +57,25 @@ class CollectionAdapter:
                 "provider result started before the collection request"
             )
         return result
+
+    async def enrich_marketplace_parties(
+        self, source_code: str, offers: tuple[RawCollectedOffer, ...]
+    ) -> tuple[RawCollectedOffer, ...]:
+        """Enriquece apenas quando o provider oferece a extensão opcional."""
+        provider = self._providers.get(source_code)
+        if provider is None:
+            raise UnsupportedSourceError(
+                f"no provider registered for source: {source_code}"
+            )
+        enrich = getattr(provider, "enrich_marketplace_parties", None)
+        if enrich is None:
+            return offers
+        enriched = await enrich(offers)
+        if len(enriched) != len(offers):
+            raise CollectionContractError(
+                "marketplace enrichment must preserve offer count and order"
+            )
+        return enriched
 
     async def collect_selected(
         self, requests: Iterable[CollectionRequest]

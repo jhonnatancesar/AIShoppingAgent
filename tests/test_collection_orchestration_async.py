@@ -21,6 +21,7 @@ from app.ai_provider import AIResponse
 from app.collection.adapter import CollectionAdapter
 from app.collection.contracts import (
     CollectionResult,
+    MarketplacePartyKind,
     RawCollectedOffer,
     ResolvedProductIdentity,
 )
@@ -30,7 +31,7 @@ from app.collection.errors import (
     ProviderCircuitOpenError,
     ProviderNavigationError,
 )
-from app.collection.models import CollectionRunStatus
+from app.collection.models import CollectionRunStatus, PriceObservation
 from app.collection.normalization import Availability, PriceNormalizer
 from app.collection.orchestration import (
     ClaimedCollection,
@@ -98,6 +99,8 @@ def _raw(
     raw_price: str = "R$ 100,00",
     url: str = "https://example.invalid/offer",
     seller_external_id: str | None = None,
+    seller_kind: MarketplacePartyKind | None = None,
+    fulfillment_kind: MarketplacePartyKind | None = None,
 ):
     return RawCollectedOffer(
         source_code=source,
@@ -111,6 +114,8 @@ def _raw(
         raw_availability="Em estoque",
         evidence={"card": "safe"},
         seller_external_id=seller_external_id,
+        seller_kind=seller_kind,
+        fulfillment_kind=fulfillment_kind,
     )
 
 
@@ -359,7 +364,17 @@ def test_persist_phase_a_marks_offers_needing_ai(monkeypatch) -> None:
         "app.collection.orchestration._resolve_offer", AsyncMock(return_value=offer)
     )
     claim = ClaimedCollection(run_id, mission_id, store_id, "pichau", "GPU", NOW)
-    result = CollectionResult("pichau", NOW, NOW + timedelta(seconds=2), (_raw(),))
+    result = CollectionResult(
+        "pichau",
+        NOW,
+        NOW + timedelta(seconds=2),
+        (
+            _raw(
+                seller_kind=MarketplacePartyKind.PLATFORM,
+                fulfillment_kind=MarketplacePartyKind.MARKETPLACE_PARTNER,
+            ),
+        ),
+    )
     normalized = PriceNormalizer().normalize_result(result)
 
     outcome = asyncio.run(
@@ -372,6 +387,13 @@ def test_persist_phase_a_marks_offers_needing_ai(monkeypatch) -> None:
     assert pending.needs_relevance is True
     assert pending.needs_display_name is True
     assert pending.previous_observation_id is None
+    observation = next(
+        call.args[0]
+        for call in session.add.call_args_list
+        if isinstance(call.args[0], PriceObservation)
+    )
+    assert observation.seller_kind is MarketplacePartyKind.PLATFORM
+    assert observation.fulfillment_kind is MarketplacePartyKind.MARKETPLACE_PARTNER
 
 
 def test_persist_phase_a_raises_when_mission_data_missing() -> None:

@@ -5,7 +5,11 @@ from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from enum import StrEnum
 
-from app.collection.contracts import CollectionResult, RawCollectedOffer
+from app.collection.contracts import (
+    CollectionResult,
+    MarketplacePartyKind,
+    RawCollectedOffer,
+)
 from app.collection.errors import CollectionNormalizationError
 
 _CURRENCY_SYMBOLS = {"R$": "BRL", "$": "USD", "€": "EUR", "£": "GBP"}
@@ -44,6 +48,14 @@ class NormalizedCollectedOffer:
     @property
     def fulfillment(self) -> str | None:
         return self.raw_offer.raw_fulfillment
+
+    @property
+    def seller_kind(self) -> MarketplacePartyKind | None:
+        return self.raw_offer.seller_kind
+
+    @property
+    def fulfillment_kind(self) -> MarketplacePartyKind | None:
+        return self.raw_offer.fulfillment_kind
 
 
 @dataclass(frozen=True, slots=True)

@@ -1,5 +1,60 @@
 # Decision Log
 
+## DEC-068 — Separar preço à vista e parcelado da classificação de vendedor
+
+- **Data:** 2026-08-16
+- **Classificação:** Nova TASK do MVP, formalizada como TASK-089.
+- **Ideia:** coletar e apresentar, quando publicamente disponíveis no card ou
+  página já usada pelo provider, preço à vista e preço parcelado, incluindo
+  quantidade e valor das parcelas quando houver evidência explícita.
+- **Justificativa:** o modelo atual possui um único `PriceObservation.amount`;
+  a mudança atravessa os quatro providers, contrato bruto, normalização,
+  persistência histórica, migrations, comparação/alertas e Telegram. Acoplá-la
+  à TASK-077 impediria que a classificação de vendedor fosse entregue e
+  validada isoladamente.
+- **Guardrails:** não inferir parcelamento; não substituir silenciosamente a
+  semântica vigente de `amount`; preservar histórico; distinguir ausência de
+  informação de preço não aplicável; investigar evidência real por loja antes
+  de congelar seletores.
+- **Decisão arquitetural:** `PriceObservation.amount` permanece o preço à vista
+  e a única base de preço-alvo, queda e ranking. Total parcelado, quantidade de
+  parcelas e valor da parcela serão campos nullable separados na observação
+  histórica; nenhum deles será calculado a partir dos demais. Não haverá
+  backfill inferido para dados existentes.
+- **Apresentação aprovada:** quando todos os dados forem explícitos,
+  `💰 À vista: ...` e `💳 Parcelado: Nx de ... — total ...`; ausência ou
+  evidência parcial nunca produz cálculo ou valor fictício.
+- **Separação:** TASK-077 trata vendedor/entrega em Amazon e Kabum; TASK-089
+  trata modalidades de preço nas quatro fontes. São independentes, mas devem
+  ser executadas sequencialmente por compartilharem providers, persistência e
+  Telegram.
+- **Próxima ação:** manter TASK-089 planejada e não iniciada até pedido
+  explícito do usuário.
+
+## DEC-067 — Generalizar a evidência de vendedor/entrega para Kabum
+
+- **Data:** 2026-08-16
+- **Classificação:** Implementar agora, como refinamento da TASK-077.
+- **Decisão:** além de distinguir Amazon própria de parceiro, a TASK-077 deve
+  comprovar, persistir e disponibilizar na apresentação a condição
+  vendido/entregue pela própria Kabum. O filtro `kabum_product=true` já limita
+  a busca, mas não substitui evidência real dos cards nem persistência
+  histórica da classificação.
+- **Guardrails:** investigar Amazon e Kabum ao vivo antes do código; não assumir
+  que as duas lojas expõem os mesmos campos; não tratar ausência como vendedor
+  oficial; não alterar ranking; não ativar `Seller`/`Offer.seller_id`; revisar o
+  enum proposto para não codificar `AMAZON` como conceito genérico.
+- **Resultado do gate:** 48 cards Amazon e 24 cards Kabum foram inspecionados
+  em buscas reais isoladas. Nenhum expôs vendedor ou responsável pela entrega;
+  o seletor Amazon existente retornou `null` em todos.
+- **Decisão posterior aprovada:** consultar somente páginas individuais dos
+  candidatos finais, sequencialmente, sem retry e com limite três. Evidência
+  real confirmou o bloco combinado `Enviado / Vendido` da Amazon com
+  `Amazon.com.br` ou parceiro, e `Vendido e entregue por: KaBuM!` na KaBuM!.
+  Persistir `seller_kind` e `fulfillment_kind` com enum genérico
+  `platform`/`marketplace_partner`/`unknown`; `NULL` continua significando não
+  avaliado. 401/403/429 interrompe o lote para não insistir contra anti-bot.
+
 ## DEC-066 — Mídia por oferta, redirect próprio e checkpoint por parte
 
 - **Data:** 2026-08-16

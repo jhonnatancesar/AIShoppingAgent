@@ -505,8 +505,38 @@ class CollectionOrchestrator:
                         requested_at=claim.requested_at,
                     )
                 )
-            normalized = self._normalizer.normalize_result(result)
-            phase_a = await _persist_phase_a(self._session_factory, claim, normalized)
+                normalized = self._normalizer.normalize_result(result)
+                selected = _select_final_candidates(
+                    search_query=claim.search_query,
+                    model=claim.model,
+                    source_code=claim.source_code,
+                    offers=normalized.offers,
+                )
+                selected_raw = tuple(item.raw_offer for item in selected)
+                try:
+                    enriched_raw = await self._adapter.enrich_marketplace_parties(
+                        claim.source_code, selected_raw
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    logger.warning(
+                        "marketplace_party_enrichment_failed",
+                        extra={"source_code": _safe_source(claim.source_code)},
+                        exc_info=True,
+                    )
+                    enriched_raw = selected_raw
+            enriched = tuple(
+                replace(item, raw_offer=raw_offer)
+                for item, raw_offer in zip(selected, enriched_raw, strict=True)
+            )
+            normalized = NormalizedCollectionResult(
+                raw_result=replace(result, offers=enriched_raw),
+                offers=enriched,
+            )
+            phase_a = await _persist_phase_a(
+                self._session_factory, claim, normalized, preselected=True
+            )
             if phase_a is None:
                 return False
             ai_outcomes = await _run_phase_b(
@@ -609,6 +639,25 @@ def _filter_deterministic_candidates(
     return tuple(survivors)
 
 
+def _select_final_candidates(
+    *, search_query: str, model: str | None, source_code: str, offers: tuple
+) -> tuple:
+    """Seleciona candidatos finais antes de qualquer navegação de detalhe."""
+    survivors = tuple(
+        item
+        for item in offers
+        if (model is None or _title_matches_model(model, item.raw_offer.title))
+        and not _title_looks_like_bundle(search_query, item.raw_offer.title)
+    )
+    if model is None:
+        survivors = _limit_generic_candidates(
+            survivors, limit=_GENERIC_SEARCH_CANDIDATE_LIMIT
+        )
+    if source_code == "amazon" and model is not None:
+        return _select_amazon_lowest_price(survivors)
+    return survivors
+
+
 _GENERIC_SEARCH_CANDIDATE_LIMIT = 3
 """TASK-082: nenhum número foi fixado durante a auditoria original --
 derivado por analogia do único precedente já existente no pipeline de
@@ -708,6 +757,8 @@ async def _persist_phase_a(
     session_factory: async_sessionmaker[AsyncSession],
     claim: ClaimedCollection,
     normalized: NormalizedCollectionResult,
+    *,
+    preselected: bool = False,
 ) -> _PhaseAOutcome | None:
     """Fase A (TASK-079): transação curta e só trabalho local -- nenhum
     `await` externo (IA/HTTP/Playwright) acontece com esta transação
@@ -737,19 +788,15 @@ async def _persist_phase_a(
         # identidade forte (gate obrigatório) -- sem modelo, cada
         # sobrevivente segue independente, nunca "o mais barato" é
         # escolhido sem identidade confirmada.
-        survivors = _filter_deterministic_candidates(criteria, normalized.offers)
-        # TASK-082: busca genérica (sem model) não tem o filtro de modelo
-        # da TASK-075 reduzindo nada -- limita aqui, por loja, antes de
-        # persistir/classificar. Busca específica (model preenchido)
-        # nunca passa por este passo, comportamento idêntico ao anterior.
-        if criteria.model is None:
-            survivors = _limit_generic_candidates(
-                survivors, limit=_GENERIC_SEARCH_CANDIDATE_LIMIT
-            )
         final_offers = (
-            _select_amazon_lowest_price(survivors)
-            if claim.source_code == "amazon" and criteria.model is not None
-            else survivors
+            normalized.offers
+            if preselected
+            else _select_final_candidates(
+                search_query=criteria.search_query,
+                model=criteria.model,
+                source_code=claim.source_code,
+                offers=normalized.offers,
+            )
         )
 
         pending: list[_PendingOffer] = []
@@ -790,6 +837,8 @@ async def _persist_phase_a(
                 shipping_amount=item.shipping_amount,
                 total_amount=item.total_amount,
                 fulfillment=item.fulfillment,
+                seller_kind=item.seller_kind,
+                fulfillment_kind=item.fulfillment_kind,
                 availability=item.availability,
                 observed_at=item.raw_offer.collected_at,
                 raw_evidence=_raw_evidence(item.raw_offer),

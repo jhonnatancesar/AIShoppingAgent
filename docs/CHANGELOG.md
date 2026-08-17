@@ -1,5 +1,31 @@
 # Changelog
 
+## 2026-08-16 — TASK-077
+
+- Amazon e KaBuM! passam a classificar historicamente vendedor e entrega como
+  `platform`, `marketplace_partner` ou `unknown` em `PriceObservation`; dados
+  anteriores, Pichau e Terabyte permanecem `NULL`.
+- A investigação real comprovou que cards de busca não bastam. Somente os
+  candidatos finais têm página individual consultada, sequencialmente, sem
+  retry, no máximo três; 401/403/429 encerra o enriquecimento do lote.
+- Alertas de queda/alvo, pré-lista e atualização mostram o responsável quando
+  avaliado, sempre usando a observação referenciada pelo evento.
+- A identidade da oferta, `Seller`, menor preço Amazon, ranking, relevância,
+  preço e histórico permanecem inalterados. TASK-089 não foi iniciada.
+- Validação: 1.213 testes não-integração aprovados, 1 ignorado, cobertura
+  90,26%; 33 integrações aprovadas no PostgreSQL 18.4 descartável, incluindo
+  upgrade, downgrade, novo upgrade, `alembic check` e constraints no head
+  `20260816_0002`.
+
+## 2026-08-16 — Planejamento da TASK-089
+
+- Registrada a TASK-089 para preservar e apresentar separadamente preço à
+  vista, total parcelado, quantidade e valor da parcela nos quatro providers.
+- `PriceObservation.amount` permanece o preço à vista e a única base de
+  preço-alvo, queda e ranking; parcelamento nunca será calculado ou inferido.
+- TASK-077 permaneceu separada para vendedor/entrega em Amazon e Kabum e foi
+  executada depois deste registro; a TASK-089 continua não iniciada.
+
 ## 2026-08-16 — TASK-084
 
 - Ofertas passam a persistir imagem HTTP/HTTPS sem apagar a última imagem válida

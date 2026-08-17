@@ -314,6 +314,8 @@ Evidência imutável de preço e disponibilidade obtida em uma coleta.
 | `shipping_amount` | `numeric(19,4)` | Frete opcional, não negativo e na mesma moeda. |
 | `total_amount` | `numeric(19,4)` | Total obrigatório do item e do frete conhecido. |
 | `fulfillment` | `varchar(120)` | Responsável pelo envio, opcional. |
+| `seller_kind` | `varchar(32)` | Classificação histórica nullable: `platform`, `marketplace_partner` ou `unknown`. `NULL` significa não avaliado. |
+| `fulfillment_kind` | `varchar(32)` | Classificação histórica nullable do responsável pela entrega, com os mesmos valores. |
 | `availability` | `offer_availability` | Obrigatório; `available`, `unavailable` ou `unknown`. |
 | `observed_at` | `timestamptz` | Obrigatório; instante informado pela coleta. |
 | `recorded_at` | `timestamptz` | Obrigatório; instante de persistência. |

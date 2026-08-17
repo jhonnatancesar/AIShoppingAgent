@@ -10,8 +10,12 @@ def test_price_observation_is_append_only_schema() -> None:
     assert table.c.collection_run_id.nullable is False
     assert table.c.amount.type.precision == 19 and table.c.amount.type.scale == 4
     assert table.c.shipping_amount.nullable is True
+    assert table.c.seller_kind.nullable is True
+    assert table.c.fulfillment_kind.nullable is True
     assert {c.name for c in table.constraints} >= {
         "ck_price_observations_total_exact",
         "ck_price_observations_currency_iso4217",
         "ck_price_observations_amounts_non_negative",
+        "ck_price_observations_seller_kind_values",
+        "ck_price_observations_fulfillment_kind_values",
     }

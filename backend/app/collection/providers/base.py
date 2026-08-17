@@ -17,6 +17,7 @@ from app.collection.browser import BrowserSession, BrowserSettings
 from app.collection.contracts import (
     CollectionRequest,
     CollectionResult,
+    MarketplacePartyKind,
     RawCollectedOffer,
 )
 from app.collection.errors import (
@@ -63,6 +64,7 @@ class PlaywrightStoreProvider:
         circuit_open_seconds: float = 30.0,
         circuit_namespace: str = "search",
         availability_fallback_max_candidates: int = 3,
+        marketplace_party_max_candidates: int = 3,
     ) -> None:
         if max_offers <= 0:
             raise ValueError("max_offers must be positive")
@@ -70,6 +72,8 @@ class PlaywrightStoreProvider:
             raise ValueError(
                 "availability_fallback_max_candidates must not be negative"
             )
+        if marketplace_party_max_candidates < 0:
+            raise ValueError("marketplace_party_max_candidates must not be negative")
         if not circuit_namespace.strip():
             raise ValueError("circuit_namespace must not be blank")
         self.settings = settings or BrowserSettings()
@@ -79,6 +83,7 @@ class PlaywrightStoreProvider:
         self._availability_fallback_max_candidates = (
             availability_fallback_max_candidates
         )
+        self._marketplace_party_max_candidates = marketplace_party_max_candidates
         # TASK-083: `circuit_namespace` default ("search") preserva
         # exatamente a chave já usada pela coleta normal -- só um consumidor
         # que precisa de isolamento (ex.: resolução de identidade, que usa
@@ -108,6 +113,77 @@ class PlaywrightStoreProvider:
         individual (ex.: Amazon, ainda não revisitada) mantêm o padrão.
         """
         return None
+
+    async def resolve_marketplace_parties(
+        self, page: Page
+    ) -> tuple[MarketplacePartyKind, MarketplacePartyKind]:
+        """Classifica vendedor e entrega numa página individual válida."""
+        return (MarketplacePartyKind.UNKNOWN, MarketplacePartyKind.UNKNOWN)
+
+    async def enrich_marketplace_parties(
+        self, offers: tuple[RawCollectedOffer, ...]
+    ) -> tuple[RawCollectedOffer, ...]:
+        """Visita poucos candidatos finais, em sequência e sem retry.
+
+        NULL significa que não houve avaliação. UNKNOWN significa que a página
+        respondeu, mas não ofereceu evidência inequívoca. Um bloqueio encerra o
+        lote para não insistir contra proteção anti-bot.
+        """
+        if self._marketplace_party_max_candidates == 0:
+            return offers
+        if (
+            type(self).resolve_marketplace_parties
+            is PlaywrightStoreProvider.resolve_marketplace_parties
+        ):
+            return offers
+        candidates = self._rank_offers(offers)[: self._marketplace_party_max_candidates]
+        if not candidates:
+            return offers
+        resolved: dict[str, tuple[MarketplacePartyKind, MarketplacePartyKind]] = {}
+        async with BrowserSession(self.settings) as session:
+            page = await session.new_page()
+            for offer in candidates:
+                try:
+                    response = await page.goto(offer.url, wait_until="domcontentloaded")
+                except Exception:
+                    continue
+                if response is None:
+                    continue
+                if response.status in _BLOCKED_STATUSES:
+                    break
+                if response.status == 408 or response.status >= 500:
+                    continue
+                try:
+                    resolved[offer.url] = await self.resolve_marketplace_parties(page)
+                except Exception:
+                    resolved[offer.url] = (
+                        MarketplacePartyKind.UNKNOWN,
+                        MarketplacePartyKind.UNKNOWN,
+                    )
+        return tuple(
+            replace(
+                offer,
+                seller_kind=resolved[offer.url][0],
+                fulfillment_kind=resolved[offer.url][1],
+            )
+            if offer.url in resolved
+            else offer
+            for offer in offers
+        )
+
+    def _rank_offers(
+        self, offers: tuple[RawCollectedOffer, ...]
+    ) -> list[RawCollectedOffer]:
+        normalizer = PriceNormalizer()
+        scored: list[tuple[Decimal, str, RawCollectedOffer]] = []
+        for offer in offers:
+            try:
+                amount = normalizer.normalize_offer(offer).amount
+            except CollectionNormalizationError:
+                continue
+            scored.append((amount, offer.external_id or offer.url, offer))
+        scored.sort(key=lambda item: (item[0], item[1]))
+        return [offer for _, _, offer in scored]
 
     def empty_result_locator(self, page: Page) -> Locator | None:
         """Locator do estado legítimo de "busca sem resultados", se houver.

@@ -6,7 +6,7 @@ from urllib.parse import quote, quote_plus
 
 from playwright.async_api import Locator, Page
 
-from app.collection.contracts import RawCollectedOffer
+from app.collection.contracts import MarketplacePartyKind, RawCollectedOffer
 from app.collection.providers.base import PlaywrightStoreProvider
 
 _NEGATIVE_STOCK_TEXT = re.compile(r"esgotad[oa]|indispon[ií]vel|sem\s+estoque", re.I)
@@ -91,6 +91,23 @@ class AmazonProvider(PlaywrightStoreProvider):
         )
         return self.offers_from_rows(rows, collected_at)
 
+    async def resolve_marketplace_parties(
+        self, page: Page
+    ) -> tuple[MarketplacePartyKind, MarketplacePartyKind]:
+        value = page.locator(
+            '.offer-display-feature-text[offer-display-feature-name="desktop-merchant-info"] '
+            ".offer-display-feature-text-message"
+        )
+        text = (await value.first.inner_text()).strip() if await value.count() else ""
+        if not text:
+            return (MarketplacePartyKind.UNKNOWN, MarketplacePartyKind.UNKNOWN)
+        kind = (
+            MarketplacePartyKind.PLATFORM
+            if text.casefold() in {"amazon", "amazon.com.br"}
+            else MarketplacePartyKind.MARKETPLACE_PARTNER
+        )
+        return (kind, kind)
+
 
 class KabumProvider(PlaywrightStoreProvider):
     source_code, result_selector = "kabum", 'main a[href*="/produto/"]'
@@ -133,3 +150,18 @@ class KabumProvider(PlaywrightStoreProvider):
         ):
             return "Disponível"
         return None
+
+    async def resolve_marketplace_parties(
+        self, page: Page
+    ) -> tuple[MarketplacePartyKind, MarketplacePartyKind]:
+        text = await page.locator("body").inner_text()
+        match = re.search(r"Vendido\s+e\s+entregue\s+por:\s*([^\r\n]+)", text, re.I)
+        if match is None or not match.group(1).strip():
+            return (MarketplacePartyKind.UNKNOWN, MarketplacePartyKind.UNKNOWN)
+        seller = match.group(1).strip().rstrip(".")
+        kind = (
+            MarketplacePartyKind.PLATFORM
+            if seller.casefold() in {"kabum", "kabum!"}
+            else MarketplacePartyKind.MARKETPLACE_PARTNER
+        )
+        return (kind, kind)

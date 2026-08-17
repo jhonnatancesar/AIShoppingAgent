@@ -880,9 +880,11 @@ class _SlowAIManager:
     def __init__(self, delay_seconds: float = 0.25) -> None:
         self._delay_seconds = delay_seconds
         self.calls = 0
+        self.started = threading.Event()
 
     async def generate(self, request):
         self.calls += 1
+        self.started.set()
         await asyncio.sleep(self._delay_seconds)
         content = (
             '{"relevance": "match"}'
@@ -1255,10 +1257,10 @@ def test_api_stays_responsive_during_concurrent_collection_claim(
 
     async def _run():
         batch_task = asyncio.ensure_future(orchestrator.run_batch(now=now))
-        # deixa a coleta comecar (Fase A/B em andamento) antes de disparar
-        # a operacao da API, para maximizar a chance de colisao real com
-        # a secao critica (Fase C) enquanto a IA lenta ainda esta rodando.
-        await asyncio.sleep(0.05)
+        # Sincroniza pela evidência real de que a claim chegou à IA lenta.
+        # Um sleep fixo permitia a API pausar a missão antes do claim em
+        # hosts mais lentos, medindo a corrida de setup em vez do lock.
+        assert await asyncio.to_thread(ai_manager.started.wait, 5)
         api_thread = threading.Thread(target=api_operation, daemon=True)
         api_thread.start()
         result = await batch_task

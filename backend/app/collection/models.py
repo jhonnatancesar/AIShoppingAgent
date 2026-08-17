@@ -21,6 +21,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PostgreSQLUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
+from app.collection.contracts import MarketplacePartyKind
 from app.collection.normalization import Availability
 from app.collection.relevance import OfferRelevance
 from app.database.base import Base
@@ -114,6 +115,16 @@ class PriceObservation(Base):
         CheckConstraint(
             "currency ~ '^[A-Z]{3}$'", name="ck_price_observations_currency_iso4217"
         ),
+        CheckConstraint(
+            "seller_kind IS NULL OR seller_kind IN "
+            "('platform', 'marketplace_partner', 'unknown')",
+            name="ck_price_observations_seller_kind_values",
+        ),
+        CheckConstraint(
+            "fulfillment_kind IS NULL OR fulfillment_kind IN "
+            "('platform', 'marketplace_partner', 'unknown')",
+            name="ck_price_observations_fulfillment_kind_values",
+        ),
         Index(
             "ix_price_observations_offer_observed",
             "offer_id",
@@ -148,6 +159,28 @@ class PriceObservation(Base):
     )
     total_amount: Mapped[Decimal] = mapped_column(Numeric(19, 4), nullable=False)
     fulfillment: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    seller_kind: Mapped[MarketplacePartyKind | None] = mapped_column(
+        Enum(
+            MarketplacePartyKind,
+            name="marketplace_party_kind",
+            values_callable=lambda values: [value.value for value in values],
+            native_enum=False,
+            create_constraint=False,
+            length=32,
+        ),
+        nullable=True,
+    )
+    fulfillment_kind: Mapped[MarketplacePartyKind | None] = mapped_column(
+        Enum(
+            MarketplacePartyKind,
+            name="marketplace_party_kind",
+            values_callable=lambda values: [value.value for value in values],
+            native_enum=False,
+            create_constraint=False,
+            length=32,
+        ),
+        nullable=True,
+    )
     availability: Mapped[Availability] = mapped_column(
         Enum(
             Availability,

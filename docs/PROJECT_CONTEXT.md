@@ -1,5 +1,14 @@
 # Project Context
 
+**Atualização 2026-08-16 (TASK-077):** Amazon e KaBuM! agora classificam
+vendedor e entrega historicamente em cada nova `PriceObservation`. Somente
+candidatos finais têm página individual consultada, sequencialmente, sem retry,
+limite três e corte em 401/403/429. `NULL` significa não avaliado e `unknown`
+significa avaliação inconclusiva. Alertas e pré-listas exibem a classificação
+da observação do evento; identidade, ranking e preço não mudaram. PostgreSQL
+18.4 aprovou 33 integrações e `alembic check` no head `20260816_0002`; 1.213
+testes não-integração passaram (1 ignorado, 90,26%). TASK-089 não foi iniciada.
+
 **Atualização 2026-08-16 (TASK-088):** `/listar_missoes`, o alias com hífen e
 as entradas textuais `missoes`/`missões` restauram a consulta explícita sem
 reintroduzir o roteador universal por IA. A resposta autenticada lista até 15
@@ -18,8 +27,8 @@ está limitado a 4 GB de RAM, 2 GB de swap e reclaim gradual. Após a manutenç�
 missões `cancelled`, `completed` ou `expired` ficaram desabilitados. Nenhum
 estado lógico de missão ou `MissionTransition` foi alterado. Este bloco
 substitui referências históricas abaixo que ainda descrevam TASK-086 como não
-iniciada ou TASK-076 como aguardando retomada. TASK-077 e TASK-084 permanecem
-pendentes e não iniciadas.
+iniciada ou TASK-076 como aguardando retomada. Os estados posteriores das
+TASKs são os blocos mais recentes acima.
 
 **Atualização 2026-08-16 (TASK-087):** a revisão completa de UX/copy dos textos
 visíveis está concluída. Telegram, autenticação web, cadastro, preferências,
@@ -1061,6 +1070,14 @@ fallback imediato para texto. Os seletores foram congelados após investigação
 real isolada das quatro lojas. Validado com 1.200 testes não-integração e 32
 integrações PostgreSQL 18.4; TASK-077 permanece a única TASK pendente.
 
+**Atualização 2026-08-16 — planejamento:** a TASK-089 foi formalmente
+registrada e permanece não iniciada. Ela separa preço à vista de total
+parcelado, quantidade e valor da parcela nos quatro providers, sem inferência;
+`PriceObservation.amount` continua sendo preço à vista e única base de alvo,
+queda e ranking. TASK-077 permanece independente para vendedor/entrega em
+Amazon e Kabum. Ordem recomendada: TASK-077 e depois TASK-089, nunca em
+paralelo. Nenhum código, migration ou banco foi alterado por este registro.
+
 **Atualização 2026-08-12 (10):** durante a validação real da missão
 "cadeira gamer", duas coletas (kabum, amazon) ficaram presas em
 `running` para sempre — investigação confirmou que **o
@@ -1097,3 +1114,15 @@ anterior. A validação encontrou novamente o drift preexistente do
 `docs/ALEMBIC_CHECK_ISSUE.md`; o estado de retomada está em
 `docs/HANDOFF_SERVER_2026-08-15.md`. Nenhuma correção do Alembic e nenhuma
 nova TASK foram iniciadas.
+
+**Atualização 2026-08-16 — TASK-077 concluída:** após os cards de busca de
+Amazon e KaBuM! não fornecerem evidência confiável, o usuário aprovou consultar
+somente páginas individuais dos candidatos finais, com baixo volume. Amazon
+própria/parceira e KaBuM! própria foram comprovadas ao vivo. Novas observações
+persistem `seller_kind` e `fulfillment_kind` como `platform`,
+`marketplace_partner` ou `unknown`; `NULL` distingue histórico/fonte não
+avaliada. O enriquecimento é sequencial, sem retry, limitado a três e para em
+401/403/429. Alertas e pré-listas usam a observação do evento. A migration
+`20260816_0002` foi validada com downgrade/upgrade, `alembic check` e 33
+integrações no PostgreSQL 18.4 descartável. A suíte não-integração aprovou
+1.213 testes (1 ignorado, 90,26%). TASK-089 permanece não iniciada.

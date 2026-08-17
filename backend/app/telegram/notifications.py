@@ -14,6 +14,8 @@ from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.authentication.models import CredentialAction, UserAuthSession
+from app.collection.contracts import MarketplacePartyKind
+from app.collection.models import PriceObservation
 from app.database.time import utc_now
 from app.events import ConsumptionOutcome, Event, EventType
 from app.events.consumption import (
@@ -550,7 +552,9 @@ async def _prepare_notification_async(
         raise TelegramNotificationError(
             "notification_recipient_inactive", permanent=False
         )
-    offer, product, store = await _resolve_offer_context_async(session, event)
+    offer, product, store, observation = await _resolve_offer_context_async(
+        session, event
+    )
     link = await get_or_create_offer_short_link(session, offer.id)
     short_url = build_offer_short_url(public_base_url, link.token)
     return (
@@ -560,7 +564,13 @@ async def _prepare_notification_async(
                 offer.id,
                 0,
                 _render_alert(
-                    event, mission.title, offer, product, store, short_url=short_url
+                    event,
+                    mission.title,
+                    offer,
+                    product,
+                    store,
+                    observation,
+                    short_url=short_url,
                 ),
                 offer.image_url,
             ),
@@ -570,7 +580,7 @@ async def _prepare_notification_async(
 
 async def _resolve_offer_context_async(
     session: AsyncSession, event: Event
-) -> tuple[Offer, Product, Store]:
+) -> tuple[Offer, Product, Store, PriceObservation]:
     """Busca a oferta real do alerta a partir do `offer_id` do evento.
 
     TASK-063: o alerta precisa representar o anúncio real (título, loja,
@@ -581,14 +591,21 @@ async def _resolve_offer_context_async(
     if not isinstance(payload, dict):
         raise TelegramNotificationError("notification_payload_invalid")
     offer_id = _required_uuid(payload, "offer_id")
+    observation_id = _required_uuid(payload, "observation_id")
     offer = await session.get(Offer, offer_id)
     if offer is None:
         raise TelegramNotificationError("notification_payload_invalid")
     product = await session.get(Product, offer.product_id)
     store = await session.get(Store, offer.store_id)
-    if product is None or store is None:
+    observation = await session.get(PriceObservation, observation_id)
+    if (
+        product is None
+        or store is None
+        or observation is None
+        or observation.offer_id != offer.id
+    ):
         raise TelegramNotificationError("notification_payload_invalid")
-    return offer, product, store
+    return offer, product, store, observation
 
 
 async def _prepare_prelist_notification_async(
@@ -730,6 +747,7 @@ def _render_alert(
     offer: Offer,
     product: Product,
     store: Store,
+    observation: PriceObservation,
     *,
     short_url: str,
 ) -> str:
@@ -748,6 +766,7 @@ def _render_alert(
     if not isinstance(payload, dict):
         raise TelegramNotificationError("notification_payload_invalid")
     display_name = product.display_name or product.name
+    marketplace_line = _marketplace_party_line(store, observation)
     try:
         event_type = EventType(event.event_type)
         currency = _currency(payload)
@@ -758,6 +777,7 @@ def _render_alert(
                 "📉 O PREÇO CAIU\n\n"
                 f"{display_name}\n\n"
                 f"🏪 {store.name}\n"
+                f"{marketplace_line}"
                 f"💰 {format_money(current_total, currency)}\n"
                 f"↘️ Preço anterior: {format_money(previous_total, currency)}\n"
                 f"🔎 Missão: {mission_title}\n\n"
@@ -772,6 +792,7 @@ def _render_alert(
                 "🔥 PREÇO-ALVO ENCONTRADO\n\n"
                 f"{display_name}\n\n"
                 f"🏪 {store.name}\n"
+                f"{marketplace_line}"
                 f"💰 {format_money(current_total, currency)}\n"
                 f"🎯 Preço-alvo: {format_money(target_total, currency)}\n"
                 f"🔎 Missão: {mission_title}\n\n"
@@ -784,16 +805,46 @@ def _render_alert(
 
 
 async def _load_offer_context_async(
-    session: AsyncSession, offer_id: UUID
-) -> tuple[Offer, Product, Store]:
+    session: AsyncSession, offer_id: UUID, observation_id: UUID
+) -> tuple[Offer, Product, Store, PriceObservation]:
     offer = await session.get(Offer, offer_id)
     if offer is None:
         raise TelegramNotificationError("notification_payload_invalid")
     product = await session.get(Product, offer.product_id)
     store = await session.get(Store, offer.store_id)
-    if product is None or store is None:
+    observation = await session.get(PriceObservation, observation_id)
+    if (
+        product is None
+        or store is None
+        or observation is None
+        or observation.offer_id != offer.id
+    ):
         raise TelegramNotificationError("notification_payload_invalid")
-    return offer, product, store
+    return offer, product, store, observation
+
+
+def _marketplace_party_line(store: Store, observation: PriceObservation) -> str:
+    seller = observation.seller_kind
+    fulfillment = observation.fulfillment_kind
+    if seller is None and fulfillment is None:
+        return ""
+    if seller is fulfillment is MarketplacePartyKind.PLATFORM:
+        official = {
+            "amazon": "Amazon.com.br",
+            "kabum": "KaBuM!",
+        }.get(store.code, store.name)
+        return f"📦 Vendido e entregue por: {official}\n"
+    if seller is fulfillment is MarketplacePartyKind.MARKETPLACE_PARTNER:
+        return f"📦 Vendido e entregue por: Loja parceira {store.name}\n"
+    if seller is fulfillment is MarketplacePartyKind.UNKNOWN:
+        return "📦 Vendedor e entrega não identificados\n"
+    labels = {
+        MarketplacePartyKind.PLATFORM: store.name,
+        MarketplacePartyKind.MARKETPLACE_PARTNER: f"Loja parceira {store.name}",
+        MarketplacePartyKind.UNKNOWN: "Não identificado",
+        None: "Não avaliado",
+    }
+    return f"📦 Vendido por: {labels[seller]}\n🚚 Entregue por: {labels[fulfillment]}\n"
 
 
 _PRELIST_SHIPPING_DISCLAIMER = "⚠️ Frete não incluído. Consulte o valor na loja."
@@ -802,6 +853,7 @@ _PRELIST_SHIPPING_DISCLAIMER = "⚠️ Frete não incluído. Consulte o valor na
 async def _render_prelist_block_async(
     session: AsyncSession,
     offer_id: UUID,
+    observation_id: UUID,
     amount: Decimal,
     currency: str,
     *,
@@ -811,21 +863,22 @@ async def _render_prelist_block_async(
     prefix: str = "",
     suffix: str = "",
 ) -> _PreparedMessagePart:
-    offer, product, store = await _load_offer_context_async(session, offer_id)
+    offer, product, store, observation = await _load_offer_context_async(
+        session, offer_id, observation_id
+    )
     link = await get_or_create_offer_short_link(session, offer.id)
     short_url = build_offer_short_url(public_base_url, link.token)
     display_name = product.display_name or product.name
     number = {1: "1️⃣", 2: "2️⃣"}.get(position, f"{position}.")
     text = (
-        prefix
-        + f"{number} {display_name}\n"
+        prefix + f"{number} {display_name}\n"
         f"🏪 {store.name}\n"
+        f"{_marketplace_party_line(store, observation)}"
         f"💰 {format_money(amount, currency)}\n"
         f"🔎 Missão: {mission_title}\n"
         f"{_PRELIST_SHIPPING_DISCLAIMER}\n"
         "🔗 Ver anúncio\n"
-        f"{short_url}"
-        + suffix
+        f"{short_url}" + suffix
     )
     return _PreparedMessagePart(offer.id, position - 1, text, offer.image_url)
 
@@ -847,12 +900,14 @@ async def _render_prelist_ready_async(
         raise TelegramNotificationError("notification_payload_invalid")
     try:
         first_offer_id = _required_uuid(payload, "first_offer_id")
+        first_observation_id = _required_uuid(payload, "first_observation_id")
         first_amount = _money(payload, "first_amount")
         first_currency = _currency(payload, "first_currency")
         parts = [
             await _render_prelist_block_async(
                 session,
                 first_offer_id,
+                first_observation_id,
                 first_amount,
                 first_currency,
                 position=1,
@@ -867,12 +922,14 @@ async def _render_prelist_ready_async(
         ]
         if payload.get("second_offer_id") is not None:
             second_offer_id = _required_uuid(payload, "second_offer_id")
+            second_observation_id = _required_uuid(payload, "second_observation_id")
             second_amount = _money(payload, "second_amount")
             second_currency = _currency(payload, "second_currency")
             parts.append(
                 await _render_prelist_block_async(
                     session,
                     second_offer_id,
+                    second_observation_id,
                     second_amount,
                     second_currency,
                     position=2,
@@ -902,12 +959,15 @@ async def _render_prelist_errata_async(
         raise TelegramNotificationError("notification_payload_invalid")
     try:
         offer_id = _required_uuid(payload, "offer_id")
+        observation_id = _required_uuid(payload, "observation_id")
         current_amount = _money(payload, "current_amount")
         currency = _currency(payload)
         had_previous = payload.get("previous_lowest_amount") is not None
     except InvalidOperation, TypeError, ValueError:
         raise TelegramNotificationError("notification_payload_invalid") from None
-    offer, product, store = await _load_offer_context_async(session, offer_id)
+    offer, product, store, observation = await _load_offer_context_async(
+        session, offer_id, observation_id
+    )
     link = await get_or_create_offer_short_link(session, offer.id)
     short_url = build_offer_short_url(public_base_url, link.token)
     display_name = product.display_name or product.name
@@ -929,6 +989,7 @@ async def _render_prelist_errata_async(
         f"{note}\n\n"
         f"1️⃣ {display_name}\n"
         f"🏪 {store.name}\n"
+        f"{_marketplace_party_line(store, observation)}"
         f"💰 {format_money(current_amount, currency)}\n"
         f"{_PRELIST_SHIPPING_DISCLAIMER}\n\n"
         "🔗 Ver anúncio\n"

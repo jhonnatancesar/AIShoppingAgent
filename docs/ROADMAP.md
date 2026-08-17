@@ -28,6 +28,8 @@
 | Padronização de textos visíveis | TASK-087 | Concluída; catálogo aplicado sem mudança funcional e suíte não-integração aprovada |
 | Listagem de missões e menu Telegram | TASK-088 | Concluída; comando determinístico numerado para ativas, pausadas e canceladas; menu oficial sincronizado no deploy |
 | Mídia e entrega individual de ofertas | TASK-084 | Concluída; imagem persistente, link curto próprio e checkpoint por evento (`DEC-066`) |
+| Classificação de vendedor/entrega | TASK-077 | Concluída; classificação histórica Amazon/KaBuM! com detalhe limitado e fail-soft (`DEC-067`) |
+| Preço à vista e parcelado | TASK-089 | Planejada e não iniciada; contrato histórico e evidência real por provider antes da implementação (`DEC-068`) |
 | Estado operacional no Windows Server | manutenção 2026-08-16 | HEAD `0e90cf0` implantado; 7 serviços saudáveis; WSL2 limitado a 4 GB; somente schedules de missões ativas habilitados |
 | Expansão de fontes (futuro) | Tarefas a definir | Mercado Livre, Shopee, AliExpress e outras fontes futuras |
 

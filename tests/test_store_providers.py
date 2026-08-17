@@ -8,6 +8,7 @@ from app.collection import (
     BrowserSession,
     CollectionRequest,
     KabumProvider,
+    MarketplacePartyKind,
     PichauProvider,
     ProviderBlockedError,
     ProviderNavigationError,
@@ -49,9 +50,7 @@ CASES = (
 )
 
 
-@pytest.mark.parametrize(
-    ("provider_type", "html", "external_id", "image_url"), CASES
-)
+@pytest.mark.parametrize(("provider_type", "html", "external_id", "image_url"), CASES)
 def test_extracts_sanitized_store_card(
     provider_type, html, external_id, image_url
 ) -> None:
@@ -674,6 +673,53 @@ def test_kabum_resolve_product_availability_branches() -> None:
     assert asyncio.run(evidence("<body>Sem nenhuma evidência clara</body>")) is None
 
 
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    (
+        ("Amazon.com.br", MarketplacePartyKind.PLATFORM),
+        ("GX Group ⭐⭐⭐⭐⭐", MarketplacePartyKind.MARKETPLACE_PARTNER),
+        (None, MarketplacePartyKind.UNKNOWN),
+    ),
+)
+def test_amazon_classifies_combined_merchant_detail(value, expected) -> None:
+    block = (
+        '<div class="offer-display-feature-text" '
+        'offer-display-feature-name="desktop-merchant-info">'
+        f'<span class="offer-display-feature-text-message">{value}</span></div>'
+        if value is not None
+        else "<body>Sem informação comercial</body>"
+    )
+
+    async def scenario():
+        async with BrowserSession() as session:
+            page = await session.new_page()
+            await page.set_content(block)
+            return await AmazonProvider().resolve_marketplace_parties(page)
+
+    assert asyncio.run(scenario()) == (expected, expected)
+
+
+@pytest.mark.parametrize(
+    ("body", "expected"),
+    (
+        ("Vendido e entregue por: KaBuM!", MarketplacePartyKind.PLATFORM),
+        (
+            "Vendido e entregue por: Loja Parceira",
+            MarketplacePartyKind.MARKETPLACE_PARTNER,
+        ),
+        ("Sem informação comercial", MarketplacePartyKind.UNKNOWN),
+    ),
+)
+def test_kabum_classifies_combined_merchant_detail(body, expected) -> None:
+    async def scenario():
+        async with BrowserSession() as session:
+            page = await session.new_page()
+            await page.set_content(f"<body>{body}</body>")
+            return await KabumProvider().resolve_marketplace_parties(page)
+
+    assert asyncio.run(scenario()) == (expected, expected)
+
+
 def test_builds_encoded_source_urls() -> None:
     assert "RTX+5070" in AmazonProvider().build_url("RTX 5070")
     assert "RTX+5070" in PichauProvider().build_url("RTX 5070")
@@ -689,6 +735,108 @@ def test_rejects_non_positive_limit() -> None:
 def test_rejects_negative_availability_fallback_max_candidates() -> None:
     with pytest.raises(ValueError):
         KabumProvider(availability_fallback_max_candidates=-1)
+
+
+def test_rejects_negative_marketplace_party_max_candidates() -> None:
+    with pytest.raises(ValueError):
+        KabumProvider(marketplace_party_max_candidates=-1)
+
+
+def test_marketplace_enrichment_is_bounded_sorted_and_sequential(monkeypatch) -> None:
+    visited: list[str] = []
+
+    class Response:
+        status = 200
+
+    class Page:
+        async def goto(self, url, **kwargs):
+            visited.append(url)
+            return Response()
+
+    class Session:
+        def __init__(self, settings):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def new_page(self):
+            return Page()
+
+    class Provider(AmazonProvider):
+        async def resolve_marketplace_parties(self, page):
+            return (MarketplacePartyKind.PLATFORM, MarketplacePartyKind.PLATFORM)
+
+    monkeypatch.setattr("app.collection.providers.base.BrowserSession", Session)
+    offers = tuple(
+        RawCollectedOffer(
+            source_code="amazon",
+            url=f"https://example.invalid/{price}",
+            title=f"Produto {price}",
+            collected_at=NOW,
+            raw_price=f"R$ {price},00",
+            raw_currency="BRL",
+        )
+        for price in (40, 10, 30, 20)
+    )
+
+    enriched = asyncio.run(Provider().enrich_marketplace_parties(offers))
+
+    assert visited == [
+        "https://example.invalid/10",
+        "https://example.invalid/20",
+        "https://example.invalid/30",
+    ]
+    assert (
+        sum(item.seller_kind is MarketplacePartyKind.PLATFORM for item in enriched) == 3
+    )
+    assert enriched[0].seller_kind is None  # quarto preço não foi avaliado
+
+
+def test_marketplace_enrichment_stops_after_block(monkeypatch) -> None:
+    visited: list[str] = []
+
+    class Response:
+        status = 403
+
+    class Page:
+        async def goto(self, url, **kwargs):
+            visited.append(url)
+            return Response()
+
+    class Session:
+        def __init__(self, settings):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def new_page(self):
+            return Page()
+
+    monkeypatch.setattr("app.collection.providers.base.BrowserSession", Session)
+    offers = tuple(
+        RawCollectedOffer(
+            source_code="amazon",
+            url=f"https://example.invalid/{index}",
+            title=f"Produto {index}",
+            collected_at=NOW,
+            raw_price=f"R$ {index},00",
+            raw_currency="BRL",
+        )
+        for index in (1, 2, 3)
+    )
+
+    enriched = asyncio.run(AmazonProvider().enrich_marketplace_parties(offers))
+
+    assert visited == ["https://example.invalid/1"]
+    assert all(item.seller_kind is None for item in enriched)
 
 
 def test_rank_unknown_candidates_skips_invalid_amount() -> None:

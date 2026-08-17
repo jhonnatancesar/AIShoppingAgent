@@ -25,6 +25,14 @@ Provider nem podem ser persistidas como seleção na V1.
 Frete e fulfillment variam no tempo e serão registrados com cada observação de
 preço, não na identidade estável da oferta.
 
+A TASK-077 classifica historicamente vendedor e entrega em Amazon e KaBuM! como
+`platform`, `marketplace_partner` ou `unknown`, a partir da página individual
+de poucos candidatos finais. Cards de busca reais não forneceram evidência
+confiável. `NULL` significa não avaliado; ausência/ambiguidade numa página
+válida significa `unknown`. A classificação não popula `Seller`, não altera
+identidade, preço, relevância ou ranking e nunca assume loja oficial por
+omissão.
+
 Os quatro providers foram implementados na TASK-055. Pichau e Terabyte podem
 exigir Chromium headed (com Xvfb no Ubuntu Server) por bloquearem execução
 headless. O projeto não tenta ocultar automação nem contornar CAPTCHA/proteções.

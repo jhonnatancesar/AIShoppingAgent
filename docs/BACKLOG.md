@@ -1,10 +1,9 @@
 # Backlog de Evoluções Futuras
 
-> Estado em 2026-08-16: esta manutenção não adicionou nem removeu ideias do
-> backlog. TASK-076, TASK-086 e TASK-087 estão concluídas e implantadas;
-> TASK-077 e TASK-084 permanecem pendentes e não iniciadas. O limite WSL2 e a
-> política de não habilitar schedules de missões terminais são estado
-> operacional, não novos itens de backlog.
+> Estado em 2026-08-16: TASK-077 e TASK-084 estão concluídas; TASK-089 está
+> planejada e não iniciada. O limite WSL2 e a política de não habilitar
+> schedules de missões terminais são estado operacional, não novos itens de
+> backlog.
 
 Este documento é o repositório de ideias que surgirem durante o desenvolvimento e não pertencem à versão atual. Registrar uma ideia aqui não a aprova, não cria uma TASK e não altera o escopo da V1.
 
@@ -52,6 +51,11 @@ Para cada item novo, registrar uma descrição curta, a motivação e eventuais 
 
 ## Dados e análise
 
+- **TASK-089 planejada — preço à vista e parcelado (`DEC-068`)**:
+  investigar os quatro providers e modelar separadamente preço à vista, preço
+  parcelado, quantidade e valor das parcelas quando explicitamente disponíveis;
+  preservar a semântica atual e todo o histórico. Formalmente registrada, mas
+  não iniciada e sem autorização de implementação.
 - Analytics avançado de preços e comportamento de compra.
 - Relatórios exportáveis e agendados.
 - Comparador de preços avançado, com critérios configuráveis e visualizações históricas.

@@ -2,10 +2,12 @@
 
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from app.authentication.models import CredentialAction, UserAuthSession
+from app.collection.contracts import MarketplacePartyKind
+from app.collection.models import PriceObservation
 from app.events import ConsumptionOutcome, Event
 from app.missions.models import Mission, MissionStatus
 from app.offers.models import Offer
@@ -18,6 +20,7 @@ from app.telegram.notifications import (
     TELEGRAM_NOTIFICATION_CONSUMER,
     TELEGRAM_PRELIST_CONSUMER,
     TelegramNotificationError,
+    _marketplace_party_line,
     process_telegram_authentication_notifications,
     process_telegram_notifications,
     process_telegram_prelist_notifications,
@@ -132,6 +135,27 @@ def _offer_context() -> tuple[Offer, Product, Store]:
     return offer, product, store
 
 
+def _observation_for(
+    event: Event,
+    offer: Offer,
+    *,
+    field: str = "observation_id",
+    kind: MarketplacePartyKind | None = None,
+) -> PriceObservation:
+    return PriceObservation(
+        id=uuid4() if field not in event.payload else UUID(str(event.payload[field])),
+        offer_id=offer.id,
+        collection_run_id=uuid4(),
+        amount="1.00",
+        currency="BRL",
+        total_amount="1.00",
+        availability="available",
+        observed_at=NOW,
+        seller_kind=kind,
+        fulfillment_kind=kind,
+    )
+
+
 def test_remember_private_chat_only_for_the_same_person() -> None:
     user = _user(chat_id=None)
     private_message = TelegramMessage(
@@ -144,6 +168,34 @@ def test_remember_private_chat_only_for_the_same_person() -> None:
 
     assert remember_private_notification_chat(user, private_message) is True
     assert user.telegram_chat_id == 123
+
+
+@pytest.mark.parametrize(
+    ("kind", "expected"),
+    (
+        (MarketplacePartyKind.PLATFORM, "📦 Vendido e entregue por: KaBuM!"),
+        (
+            MarketplacePartyKind.MARKETPLACE_PARTNER,
+            "📦 Vendido e entregue por: Loja parceira Kabum",
+        ),
+        (MarketplacePartyKind.UNKNOWN, "📦 Vendedor e entrega não identificados"),
+        (None, ""),
+    ),
+)
+def test_marketplace_party_line_uses_historical_classification(kind, expected) -> None:
+    offer, _product, store = _offer_context()
+    event = Event(
+        payload={},
+        id=uuid4(),
+        event_type="x",
+        aggregate_type="x",
+        aggregate_id=uuid4(),
+        occurred_at=NOW,
+        recorded_at=NOW,
+    )
+    observation = _observation_for(event, offer, kind=kind)
+
+    assert _marketplace_party_line(store, observation).strip() == expected
 
 
 def test_group_chat_is_never_saved_as_notification_target() -> None:
@@ -194,7 +246,8 @@ async def test_process_sends_alert_and_records_success(
     event = _event(mission, event_type=event_type)
     offer, product, store = _offer_context()
     session_factory, session = _fake_session_factory()
-    session.get.side_effect = [mission, user, offer, product, store, event]
+    observation = _observation_for(event, offer, kind=MarketplacePartyKind.PLATFORM)
+    session.get.side_effect = [mission, user, offer, product, store, observation, event]
     monkeypatch.setattr(
         "app.telegram.notifications.claim_unconsumed_events_async",
         AsyncMock(return_value=[event]),
@@ -307,7 +360,8 @@ async def test_process_records_api_rejection_without_leaking_details(
     event = _event(mission)
     offer, product, store = _offer_context()
     session_factory, session = _fake_session_factory()
-    session.get.side_effect = [mission, user, offer, product, store, event]
+    observation = _observation_for(event, offer)
+    session.get.side_effect = [mission, user, offer, product, store, observation, event]
     monkeypatch.setattr(
         "app.telegram.notifications.claim_unconsumed_events_async",
         AsyncMock(return_value=[event]),
@@ -624,7 +678,8 @@ async def test_prelist_ready_sends_one_block_when_only_one_store_answered(
     offer, product, store = _offer_context()
     event = _ready_event(mission, offer)
     session_factory, session = _fake_session_factory()
-    session.get.side_effect = [mission, user, offer, product, store, event]
+    observation = _observation_for(event, offer, field="first_observation_id")
+    session.get.side_effect = [mission, user, offer, product, store, observation, event]
     monkeypatch.setattr(
         "app.telegram.notifications.claim_unconsumed_events_async",
         AsyncMock(return_value=[event]),
@@ -659,6 +714,10 @@ async def test_prelist_ready_sends_two_blocks_cheapest_first(
     offer, product, store = _offer_context()
     second_offer, second_product, second_store = _second_offer_context()
     event = _ready_event(mission, offer, second_offer=second_offer)
+    first_observation = _observation_for(event, offer, field="first_observation_id")
+    second_observation = _observation_for(
+        event, second_offer, field="second_observation_id"
+    )
     session_factory, session = _fake_session_factory()
     session.get.side_effect = [
         mission,
@@ -666,9 +725,11 @@ async def test_prelist_ready_sends_two_blocks_cheapest_first(
         offer,
         product,
         store,
+        first_observation,
         second_offer,
         second_product,
         second_store,
+        second_observation,
         event,
     ]
     monkeypatch.setattr(
@@ -704,7 +765,8 @@ async def test_prelist_ready_ignores_price_preferences(
     offer, product, store = _offer_context()
     event = _ready_event(mission, offer)
     session_factory, session = _fake_session_factory()
-    session.get.side_effect = [mission, user, offer, product, store, event]
+    observation = _observation_for(event, offer, field="first_observation_id")
+    session.get.side_effect = [mission, user, offer, product, store, observation, event]
     monkeypatch.setattr(
         "app.telegram.notifications.claim_unconsumed_events_async",
         AsyncMock(return_value=[event]),
@@ -732,7 +794,16 @@ async def test_prelist_errata_message_frames_correction_vs_first_find(
     offer, product, store = _offer_context()
     correction_event = _errata_event(mission, offer, previous_lowest_amount="1900.00")
     session_factory, session = _fake_session_factory()
-    session.get.side_effect = [mission, user, offer, product, store, correction_event]
+    observation = _observation_for(correction_event, offer)
+    session.get.side_effect = [
+        mission,
+        user,
+        offer,
+        product,
+        store,
+        observation,
+        correction_event,
+    ]
     monkeypatch.setattr(
         "app.telegram.notifications.claim_unconsumed_events_async",
         AsyncMock(return_value=[correction_event]),
@@ -763,7 +834,16 @@ async def test_prelist_errata_frames_first_find_without_previous_baseline(
     offer, product, store = _offer_context()
     first_find_event = _errata_event(mission, offer, previous_lowest_amount=None)
     session_factory, session = _fake_session_factory()
-    session.get.side_effect = [mission, user, offer, product, store, first_find_event]
+    observation = _observation_for(first_find_event, offer)
+    session.get.side_effect = [
+        mission,
+        user,
+        offer,
+        product,
+        store,
+        observation,
+        first_find_event,
+    ]
     monkeypatch.setattr(
         "app.telegram.notifications.claim_unconsumed_events_async",
         AsyncMock(return_value=[first_find_event]),

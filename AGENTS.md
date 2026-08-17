@@ -390,7 +390,23 @@ envia uma oferta por parte com fallback textual de mídia; checkpoints incluem
 consumidor, evento, oferta e parte. O runner oficial aprovou 32 integrações em
 PostgreSQL 18.4 no head `20260816_0001`. Permanece pendente somente TASK-077.
 
-**Atualização 2026-08-16 (4) — estado operacional autoritativo:** a `main` no
+**Atualização 2026-08-16 (8):** a TASK-089, suporte a preço à vista e
+parcelado, foi formalmente registrada e não iniciada (`DEC-068`). `amount`
+permanece preço à vista e base exclusiva de alvo, queda e ranking; campos de
+parcelamento serão opcionais e jamais calculados. TASK-077 e TASK-089 estão
+planejadas, independentes e não devem ser executadas em paralelo. Nenhum código
+ou migration foi criado nesta abertura.
+
+**Atualização 2026-08-16 (9):** a TASK-077 está concluída. Amazon e KaBuM!
+classificam vendedor e entrega em cada nova `PriceObservation` como plataforma,
+parceiro ou desconhecido, após consulta sequencial e limitada somente aos
+candidatos finais. Histórico, Pichau e Terabyte permanecem `NULL`; identidade,
+ranking e preço não mudaram. Alertas e pré-listas exibem a classificação da
+observação do evento. PostgreSQL 18.4 aprovou 33 integrações, downgrade/upgrade
+e `alembic check` no head `20260816_0002`; 1.213 testes não-integração passaram
+(1 ignorado, 90,26%). TASK-089 continua planejada e não iniciada.
+
+**Atualização 2026-08-16 (4) — snapshot operacional histórico:** a `main` no
 Windows Server está em `0e90cf0805a24cfd873d4d0257dacd8ae03c7920`, igual a
 `origin/main`; os commits da TASK-086 (`f5c69e5`), TASK-076 (`c4b1e5e`),
 IA/Firecrawl (`0513d0a`) e TASK-087 (`0e90cf0`) já existem no remoto e foram
@@ -400,5 +416,5 @@ saudáveis. O WSL2 está limitado por `%UserProfile%\.wslconfig` a 4 GB de RAM,
 2 GB de swap e `autoMemoryReclaim=gradual`. Estado final das agendas: somente
 as 4 missões `active` estão habilitadas; agendas de missões `cancelled`,
 `completed` ou `expired` permanecem desabilitadas. Nenhum status de missão ou
-`MissionTransition` foi alterado pela manutenção. Permanecem pendentes somente
-TASK-077 e TASK-084; nenhuma foi iniciada.
+`MissionTransition` foi alterado pela manutenção. Os estados de TASK deste
+snapshot foram substituídos pelas atualizações (7), (8) e (9) acima.
