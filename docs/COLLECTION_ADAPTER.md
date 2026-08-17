@@ -28,6 +28,16 @@ Ela preserva quantidade e ordem, roda sequencialmente, sem retry, no máximo em
 três candidatos; 401/403/429 interrompe o lote. Providers sem a extensão
 continuam com o contrato original e campos `NULL`.
 
+A TASK-089 (DEC-069) acrescenta `RawInstallmentOption`/
+`InstallmentInterestKind` a `RawCollectedOffer.installment_options` (tupla,
+uma condição de parcelamento por item, nunca inferida). Toda fonte já
+preenche o que aparece no card de busca; Pichau e Terabyte também
+implementam a extensão opcional `enrich_installment_options` (mesma
+disciplina de `enrich_marketplace_parties`: candidatos finais, ordenado,
+sequencial, sem retry, limite de três, para no primeiro bloqueio) para
+complementar com a tabela de parcelamento da página individual -- Amazon e
+KaBuM! não têm tabela equivalente confirmada e não implementam a extensão.
+
 ## Evolução prevista
 
 A TASK-024 criou a infraestrutura base descrita em `docs/PLAYWRIGHT.md`. A TASK-055

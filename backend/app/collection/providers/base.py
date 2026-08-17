@@ -17,8 +17,10 @@ from app.collection.browser import BrowserSession, BrowserSettings
 from app.collection.contracts import (
     CollectionRequest,
     CollectionResult,
+    InstallmentInterestKind,
     MarketplacePartyKind,
     RawCollectedOffer,
+    RawInstallmentOption,
 )
 from app.collection.errors import (
     CollectionNormalizationError,
@@ -65,6 +67,7 @@ class PlaywrightStoreProvider:
         circuit_namespace: str = "search",
         availability_fallback_max_candidates: int = 3,
         marketplace_party_max_candidates: int = 3,
+        installment_option_max_candidates: int = 3,
     ) -> None:
         if max_offers <= 0:
             raise ValueError("max_offers must be positive")
@@ -74,6 +77,8 @@ class PlaywrightStoreProvider:
             )
         if marketplace_party_max_candidates < 0:
             raise ValueError("marketplace_party_max_candidates must not be negative")
+        if installment_option_max_candidates < 0:
+            raise ValueError("installment_option_max_candidates must not be negative")
         if not circuit_namespace.strip():
             raise ValueError("circuit_namespace must not be blank")
         self.settings = settings or BrowserSettings()
@@ -84,6 +89,7 @@ class PlaywrightStoreProvider:
             availability_fallback_max_candidates
         )
         self._marketplace_party_max_candidates = marketplace_party_max_candidates
+        self._installment_option_max_candidates = installment_option_max_candidates
         # TASK-083: `circuit_namespace` default ("search") preserva
         # exatamente a chave já usada pela coleta normal -- só um consumidor
         # que precisa de isolamento (ex.: resolução de identidade, que usa
@@ -165,6 +171,69 @@ class PlaywrightStoreProvider:
                 offer,
                 seller_kind=resolved[offer.url][0],
                 fulfillment_kind=resolved[offer.url][1],
+            )
+            if offer.url in resolved
+            else offer
+            for offer in offers
+        )
+
+    async def resolve_installment_options(
+        self, page: Page
+    ) -> tuple[RawInstallmentOption, ...]:
+        """TASK-089: opções de parcelamento adicionais só visíveis na
+        página individual (ex.: tabela "PARCELAMENTO" da Pichau, painel
+        "VER PARCELAMENTO" da Terabyte). `page` já está navegada na URL do
+        produto. Providers cuja investigação real não encontrou nenhuma
+        tabela equivalente (Amazon, KaBuM!) mantêm o padrão -- `()` nunca
+        aciona navegação extra (ver `enrich_installment_options`)."""
+        return ()
+
+    async def enrich_installment_options(
+        self, offers: tuple[RawCollectedOffer, ...]
+    ) -> tuple[RawCollectedOffer, ...]:
+        """Visita poucos candidatos finais para complementar as opções de
+        parcelamento já capturadas no card, mesma disciplina de
+        `enrich_marketplace_parties`: sequencial, sem retry, sem
+        navegação alguma quando o provider não sobrescreve o hook. Uma
+        opção nova com a mesma `installment_count` de uma já existente
+        (capturada no card) substitui a do card -- a página individual é
+        a fonte mais detalhada quando as duas existem."""
+        if self._installment_option_max_candidates == 0:
+            return offers
+        if (
+            type(self).resolve_installment_options
+            is PlaywrightStoreProvider.resolve_installment_options
+        ):
+            return offers
+        candidates = self._rank_offers(offers)[
+            : self._installment_option_max_candidates
+        ]
+        if not candidates:
+            return offers
+        resolved: dict[str, tuple[RawInstallmentOption, ...]] = {}
+        async with BrowserSession(self.settings) as session:
+            page = await session.new_page()
+            for offer in candidates:
+                try:
+                    response = await page.goto(offer.url, wait_until="domcontentloaded")
+                except Exception:
+                    continue
+                if response is None:
+                    continue
+                if response.status in _BLOCKED_STATUSES:
+                    break
+                if response.status == 408 or response.status >= 500:
+                    continue
+                try:
+                    resolved[offer.url] = await self.resolve_installment_options(page)
+                except Exception:
+                    continue
+        return tuple(
+            replace(
+                offer,
+                installment_options=_merge_installment_options(
+                    offer.installment_options, resolved[offer.url]
+                ),
             )
             if offer.url in resolved
             else offer
@@ -419,6 +488,7 @@ class PlaywrightStoreProvider:
                     raw_fulfillment=_optional(row.get("fulfillment")),
                     image_url=normalize_http_url(row.get("image")),
                     evidence={"card_text": str(row.get("evidence") or "")[:1000]},
+                    installment_options=_installment_options_from_row(row),
                 )
             )
         return tuple(offers)
@@ -427,3 +497,91 @@ class PlaywrightStoreProvider:
 def _optional(value: object) -> str | None:
     text = str(value or "").strip()
     return text or None
+
+
+def _installment_options_from_row(
+    row: dict[str, Any],
+) -> tuple[RawInstallmentOption, ...]:
+    """TASK-089: condição de parcelamento já visível no card da busca --
+    schema comum aos 4 providers (`installment_count`/`installment_amount`/
+    `installment_total`/`installment_interest_free`), preenchido só quando
+    a própria loja mostra o dado no card. Ausência de qualquer parte
+    obrigatória (contagem ou valor) nunca derruba a oferta -- só não gera
+    opção nenhuma para o card. `is_highlighted=True` sempre -- esta função
+    é a ÚNICA origem possível dessa flag (o card nunca expõe mais de uma
+    linha de parcelamento); opções vindas da página individual
+    (`resolve_installment_options`) nunca a definem."""
+    count_text = _optional(row.get("installment_count"))
+    amount = _optional(row.get("installment_amount"))
+    if count_text is None or amount is None or not _HAS_DIGIT.search(amount):
+        return ()
+    try:
+        count = int(count_text)
+    except ValueError:
+        return ()
+    if count <= 0:
+        return ()
+    total = _optional(row.get("installment_total"))
+    interest_kind = (
+        InstallmentInterestKind.INTEREST_FREE
+        if row.get("installment_interest_free")
+        else InstallmentInterestKind.UNKNOWN
+    )
+    return (
+        RawInstallmentOption(
+            installment_count=count,
+            raw_amount=amount,
+            raw_total_amount=total if total and _HAS_DIGIT.search(total) else None,
+            interest_kind=interest_kind,
+            is_highlighted=True,
+        ),
+    )
+
+
+def _merge_installment_options(
+    card_options: tuple[RawInstallmentOption, ...],
+    page_options: tuple[RawInstallmentOption, ...],
+) -> tuple[RawInstallmentOption, ...]:
+    """TASK-089: combina o que já veio do card com o que a página
+    individual acrescentou -- nunca duplica a mesma `installment_count`.
+
+    Mescla campo a campo, nunca substitui a opção inteira: o card às
+    vezes é a ÚNICA fonte de `raw_total_amount` (ex.: Pichau) para a
+    mesma quantidade que a página individual detalha com mais precisão
+    (desconto/juros explícitos, ex.: a tabela "PARCELAMENTO"). Perder o
+    total do card ao "vencer" com a versão da página seria destruir
+    informação real sem necessidade -- cada campo usa a fonte que o tem,
+    preferindo a página quando as duas o informam (mais recente/detalhada).
+
+    `is_highlighted` nunca é reescrito aqui: quando a página confirma a
+    mesma `installment_count` do card, o `replace(...)` abaixo não lista o
+    campo, então o `True` original do card sobrevive intacto -- é
+    exatamente a condição que a própria loja destacou. Contagens que só
+    existem na página entram com o próprio valor do `page_option`, que
+    nunca é `True` (só `_installment_options_from_row` produz `True`)."""
+    by_count = {option.installment_count: option for option in card_options}
+    for page_option in page_options:
+        existing = by_count.get(page_option.installment_count)
+        if existing is None:
+            by_count[page_option.installment_count] = page_option
+            continue
+        by_count[page_option.installment_count] = replace(
+            existing,
+            raw_amount=page_option.raw_amount,
+            raw_total_amount=(
+                page_option.raw_total_amount
+                if page_option.raw_total_amount is not None
+                else existing.raw_total_amount
+            ),
+            discount_percent=(
+                page_option.discount_percent
+                if page_option.discount_percent is not None
+                else existing.discount_percent
+            ),
+            interest_kind=(
+                page_option.interest_kind
+                if page_option.interest_kind != InstallmentInterestKind.UNKNOWN
+                else existing.interest_kind
+            ),
+        )
+    return tuple(by_count[count] for count in sorted(by_count))

@@ -562,15 +562,25 @@ Muitas mensagens em pouco tempo. Aguarde um minuto e tente novamente.
 
 ## Alertas e ofertas
 
+Desde a TASK-089 (extensão de apresentação, 2026-08-17), toda mensagem com
+preço mostra duas linhas separadas -- `💰 À vista` sempre; `💳 Parcelado`
+só quando existe ao menos uma `OfferInstallmentOption` real persistida
+para a observação apresentada (nunca calculado, nunca inventado). A
+linha `📦` de vendedor/entrega (TASK-078) também pode aparecer entre a
+loja e o preço, conforme a classificação da observação.
+
 ### Queda de preço
 
 ```text
-📉 QUEDA DE PREÇO
+📉 O PREÇO CAIU
 
 {produto}
 
 🏪 {loja}
-💰 {preço atual} (antes: {preço anterior})
+{📦 linha de vendedor/entrega, se classificada}
+💰 À vista: {preço atual}
+{💳 Parcelado: {parcela}, se houver opção confirmada}
+↘️ Preço anterior: {preço anterior}
 🔎 Missão: {missão}
 
 🔗 Ver anúncio
@@ -580,13 +590,15 @@ Muitas mensagens em pouco tempo. Aguarde um minuto e tente novamente.
 ### Preço-alvo
 
 ```text
-🔥 PREÇO ENCONTRADO
+🔥 PREÇO-ALVO ENCONTRADO
 
 {produto}
 
 🏪 {loja}
-💰 {preço atual}
-🎯 Alvo: {preço-alvo}
+{📦 linha de vendedor/entrega, se classificada}
+💰 À vista: {preço atual}
+{💳 Parcelado: {parcela}, se houver opção confirmada}
+🎯 Preço-alvo: {preço-alvo}
 🔎 Missão: {missão}
 
 🔗 Ver anúncio
@@ -598,30 +610,30 @@ Muitas mensagens em pouco tempo. Aguarde um minuto e tente novamente.
 ```text
 🧾 MELHORES OFERTAS ENCONTRADAS ATÉ AGORA
 
-Missão: {missão}
-
-Das lojas que você selecionou, essas são as melhores ofertas encontradas até agora:
-
+1️⃣ {produto}
 🏪 {loja}
-{produto}
-💰 {preço}
+{📦 linha de vendedor/entrega, se classificada}
+💰 À vista: {preço}
+{💳 Parcelado: {parcela}, se houver opção confirmada}
+🔎 Missão: {missão}
+⚠️ Frete não incluído. Consulte o valor na loja.
 🔗 Ver anúncio
 {url}
 
-⚠️ Valor sem frete. O frete será consultado na loja.
-
-Ainda estou buscando nas outras lojas.
-Se aparecer algo melhor, eu te aviso.
+A busca continua nas outras lojas. Se eu encontrar uma oferta melhor, aviso você.
 ```
+
+A segunda oferta (quando uma segunda loja já respondeu) segue exatamente
+o mesmo bloco, numerado `2️⃣`, sem o prefixo/sufixo acima.
 
 ### Correção ou primeira oferta
 
 ```text
-✏️ CORREÇÃO DA PRÉ-LISTA
+🔄 ATUALIZAÇÃO DA PRÉ-LISTA
 
-Missão: {missão}
+🔎 Missão: {missão}
 
-Uma das lojas que ainda estava buscando encontrou um preço melhor do que o mostrado antes:
+Uma das lojas que ainda estava sendo consultada encontrou uma oferta melhor:
 ```
 
 ou:
@@ -629,14 +641,34 @@ ou:
 ```text
 🧾 PRIMEIRA OFERTA RELEVANTE ENCONTRADA
 
-Missão: {missão}
+🔎 Missão: {missão}
 
-Ainda não tínhamos encontrado uma oferta relevante para essa missão.
-
-Agora encontramos esta:
+Até agora, nenhuma oferta relevante havia sido encontrada para esta missão. Agora apareceu esta:
 ```
 
-seguido de loja, produto, preço, link e aviso de frete no mesmo formato da pré-lista.
+seguido de `1️⃣ {produto}`, loja, linha de vendedor/entrega, à vista,
+parcelado (se houver), aviso de frete e link, no mesmo formato da
+pré-lista.
+
+### Regra de seleção da linha `💳 Parcelado`
+
+Quando a oferta tem múltiplas `OfferInstallmentOption` persistidas (comum
+em Pichau/Terabyte), a mensagem nunca lista todas -- mostra só UMA opção
+de resumo, escolhida de forma determinística
+(`_select_installment_summary_option` em `notifications.py`):
+
+1. a opção que a própria loja destacou no card da busca
+   (`is_highlighted=True`, carimbada na coleta -- TASK-089/DEC-069);
+2. sem destaque conhecido, a maior `installment_count` entre as
+   `interest_free`;
+3. sem nenhuma `interest_free`, a maior `installment_count` disponível;
+4. sem nenhuma opção persistida, a linha `💳` não aparece.
+
+`interest_kind=unknown` nunca aparece como texto -- vira sufixo vazio.
+`installment_total_amount` só aparece (`— total {valor}`) quando a
+própria loja o declarou explicitamente para aquela opção; nunca
+calculado. `discount_percent` fica disponível no banco para consulta
+futura, mas não aparece nesta linha resumida.
 
 ## Privacidade
 

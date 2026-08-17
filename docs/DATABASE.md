@@ -323,6 +323,31 @@ Evidência imutável de preço e disponibilidade obtida em uma coleta.
 
 Cada coleta válida adiciona uma linha. Não há `updated_at`, operação de atualização nem unicidade que descarte observações repetidas. Correções futuras devem ser anexadas e auditadas, nunca sobrescrever a evidência original.
 
+### `offer_installment_options` (TASK-089/DEC-069)
+
+Condição de parcelamento explicitamente apresentada pela loja para uma
+`price_observations` específica -- relação 1:N (uma oferta pode ter várias
+condições simultâneas, ex.: Pichau/Terabyte). `amount` continua
+representando o preço à vista em `price_observations`; esta tabela nunca
+o substitui nem participa de preço-alvo, queda ou ranking.
+
+| Coluna | Tipo | Regra |
+| --- | --- | --- |
+| `id` | `uuid` | Chave primária. |
+| `price_observation_id` | `uuid` | FK obrigatória para `price_observations.id`, com `RESTRICT`. |
+| `installment_count` | `integer` | Obrigatório, maior que zero. |
+| `installment_amount` | `numeric(19,4)` | Valor da parcela, obrigatório e maior que zero (`> 0`, não `>= 0`: diferente do preço à vista em `price_observations.amount`, uma parcela de R$0,00 nunca representa uma condição comercial real, só um bug de parsing). |
+| `installment_total_amount` | `numeric(19,4)` | Total parcelado, opcional e maior que zero quando presente -- só quando a própria loja rotula um total para esta opção; nunca calculado (nunca `count × amount`). |
+| `discount_percent` | `numeric(5,2)` | Percentual de desconto, opcional, entre `0` e `100` (ambos inclusive) -- só quando a loja o declara explicitamente para esta opção; nunca inferido a partir de diferença de preço. |
+| `interest_kind` | `varchar(32)` | `interest_free`, `with_interest` ou `unknown` (padrão). `unknown` nunca significa "provavelmente sem juros". |
+| `is_highlighted` | `boolean` | Padrão `false`. Extensão de apresentação Telegram (2026-08-17): marca a opção exatamente como a loja resumiu no card da busca -- carimbada só em `_installment_options_from_row`, nunca recalculada. Usada por `_select_installment_summary_option` (`app/telegram/notifications.py`) para escolher qual condição resumir num alerta/pré-lista sem listar a tabela inteira. |
+
+`UNIQUE (price_observation_id, installment_count)` impede duas opções para
+a mesma quantidade de parcelas na mesma observação. Sem `updated_at`: cada
+observação nova grava seu próprio conjunto de opções (o mesmo padrão
+append-only de `price_observations`); "condição atual" é sempre a das
+opções ligadas à observação mais recente da oferta -- nunca UPDATE/DELETE.
+
 ### `purchase_confirmations`
 
 Solicitação imutável de confirmação e snapshot sanitizado da evidência exibida.

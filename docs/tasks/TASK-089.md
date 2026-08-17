@@ -1,12 +1,113 @@
 # TASK-089 — Suporte a preço à vista e parcelado
 
-Status: **Planejada e não iniciada (2026-08-16).**
+Status: **Implementada e testada, incluindo apresentação Telegram
+(2026-08-17)**. Suíte não-integração verde (1264 passed, 1 skipped, 90,14%
+cobertura), integração real 14 passed em PostgreSQL 18 descartável, ruff
+limpo, `alembic check` sem drift. Mensagens de alerta/pré-lista agora
+mostram `💰 À vista`/`💳 Parcelado` dinamicamente (ver "Extensão de
+apresentação Telegram" abaixo). Interpretação de pedido de compra
+parcelada pelo usuário ("quero em 6x") foi explicitamente adiada para
+V2 -- ver seção correspondente.
 
-## Classificação
+## Correção arquitetural (DEC-069, 2026-08-17)
 
-**Nova TASK do MVP** (`DEC-068`). O parcelamento público exibido pelas lojas é
-informação adicional da oferta e não se confunde com a consulta autenticada de
-frete/parcelamento prevista para ADMIN/DEV na V1.2 (`DEC-045`).
+A investigação real de campo (ver seção original abaixo) revelou que uma
+oferta pode ter **várias** condições de parcelamento simultâneas -- o
+desenho original desta TASK (três campos escalares em `Offer`/
+`PriceObservation`) foi **abandonado antes de qualquer código ser
+consolidado** e substituído por uma relação 1:N (`OfferInstallmentOption`).
+Ver `DEC-069` em `docs/DECISION_LOG.md` para a decisão completa; a seção
+"Investigação real obrigatória" e as regras originais abaixo continuam
+válidas como registro histórico do que motivou a correção -- não foram
+apagadas.
+
+## Implementação (resumo objetivo)
+
+- **Modelo**: `OfferInstallmentOption` (`backend/app/collection/models.py`)
+  -- `id`, `price_observation_id` (FK para `price_observations.id`, não
+  para `offers.id`), `installment_count`, `installment_amount`,
+  `installment_total_amount` (nullable), `discount_percent` (nullable),
+  `interest_kind` (`InstallmentInterestKind`: `interest_free`/
+  `with_interest`/`unknown`, mesmo padrão de `MarketplacePartyKind`).
+  Vinculada à observação (não à oferta) para herdar de graça a semântica
+  "estado atual = opções da observação mais recente", sem UPDATE/DELETE/
+  flag -- consistente com o restante do projeto ser append-only.
+  `UniqueConstraint(price_observation_id, installment_count)` impede
+  duplicata da mesma quantidade de parcelas na mesma observação.
+- **Migration**: `20260817_0001_add_offer_installment_options.py` -- cria a
+  tabela nova, nenhuma coluna alterada em tabelas existentes, downgrade
+  remove a tabela inteira. Validada em PostgreSQL 18 descartável: upgrade
+  completo do baseline até o head, `alembic check` limpo, downgrade -1 e
+  upgrade novamente sem erro.
+- **Contratos** (`backend/app/collection/contracts.py`): `RawInstallmentOption`
+  (uma condição de parcelamento crua: `installment_count`, `raw_amount`,
+  `raw_total_amount` opcional, `discount_percent` opcional, `interest_kind`)
+  e `InstallmentInterestKind`. `RawCollectedOffer.installment_options`
+  (tupla, default vazia, nunca com `installment_count` repetido).
+- **Normalização** (`backend/app/collection/normalization.py`):
+  `NormalizedInstallmentOption` com valores já em `Decimal`, reaproveitando
+  `PriceNormalizer._amount` (mesmo parser de dinheiro já usado para
+  preço/frete, nenhum parser novo). `NormalizedCollectedOffer.installment_options`
+  é uma `@property` recalculada a partir de `raw_offer` a cada acesso
+  (mesmo padrão de `seller_kind`/`fulfillment_kind`) -- necessário porque
+  `enrich_installment_options` só atualiza `raw_offer` depois que a oferta
+  já foi normalizada uma vez; um campo congelado ficaria desatualizado.
+  Uma opção malformada (ex.: valor não numérico) é descartada e logada
+  (`installment_option_normalization_failed`), nunca derruba a oferta
+  inteira.
+- **Providers** (`backend/app/collection/providers/`):
+  - **Card (as 4 lojas, `stores.py`)**: cada `extract()` captura o resumo
+    de parcelamento já visível no card de busca (schema comum via
+    `_apply_installment_summary`/`_installment_options_from_row` em
+    `base.py`) -- Pichau (`price_parcelado_text`/`price_total`, com total
+    explícito), Terabyte (`.product-item__juros`, sem total), Amazon
+    (bloco `.a-row.a-size-base.a-color-base`, contagem **variável** --
+    confirmado 10x e 12x na mesma busca, nunca assumida fixa), KaBuM!
+    (span com "PIX"/"R$", nunca menciona "sem juros" -- `interest_kind`
+    fica `unknown`, nunca assumido `interest_free`).
+  - **Página individual (só Pichau e Terabyte, novo hook
+    `resolve_installment_options` + `enrich_installment_options` em
+    `base.py`, mesma disciplina de `enrich_marketplace_parties`: limitado,
+    ordenado por preço, sequencial, sem retry, para no primeiro
+    401/403/429)**: Pichau lê a tabela "PARCELAMENTO" (seletor por
+    substring `[class*="installment"]`, robusto a classes MUI hasheadas)
+    -- percentual de desconto por linha lido do texto atual, nunca
+    hardcoded (a mesma investigação achou 15% fixo num produto com selo
+    promocional e uma escala 10%→5%→5%→3%→3%→3%→sem-juros noutro sem
+    selo). Terabyte lê o painel "VER PARCELAMENTO" (já vem no HTML,
+    `id="detalheparcelamento"`, só visualmente recolhido -- lido via
+    `textContent`, sem precisar clicar) -- faixas de desconto/juros
+    também lidas do texto, incluindo a faixa real "com juros" a partir de
+    certa quantidade. Amazon e KaBuM! **não** implementam o hook -- a
+    investigação confirmou que não existe tabela equivalente (cliquei em
+    "Ver opções de pagamento"/"Ver detalhes de parcelamento" nos dois,
+    nada novo apareceu); `enrich_installment_options` nunca abre
+    `BrowserSession` para eles.
+  - **Merge card + página** (`_merge_installment_options`, `base.py`):
+    campo a campo, nunca substitui a opção inteira -- o card às vezes é a
+    única fonte do total (Pichau) para a mesma quantidade que a página
+    detalha melhor (desconto/juros); perder o total do card ao "vencer"
+    com a página destruiria informação real sem necessidade. Nunca
+    duplica `installment_count`.
+- **Persistência** (`backend/app/collection/orchestration.py`):
+  `_process_claim` chama `enrich_installment_options` logo após
+  `enrich_marketplace_parties` (mesmo ponto, já sobre o conjunto pequeno
+  e final de candidatos pós-filtro -- nunca a lista bruta do card),
+  tolerante a falha (loga e segue com o que já tinha, nunca derruba o
+  batch). `_persist_phase_a` grava um `OfferInstallmentOption` por opção
+  logo após o `flush()` da `PriceObservation`, usando o `id` dela recém
+  gerado.
+
+## Modelos e opções por loja (confirmado na investigação real)
+
+| Loja | Total explícito por opção | Quantidade de parcelas | Percentual de desconto | "Sem juros" declarado |
+| --- | --- | --- | --- | --- |
+| Pichau (card) | Sim (`price_total`) | Fixa no card (ex. 12x) | Não no card (só no PIX à vista) | Sim |
+| Pichau (página individual) | Não | 1x até a maior faixa (ex. 6x ou 12x) | Sim, variável por produto/parcela | Sim, por linha |
+| Terabyte (card) | Não | Fixa no card (ex. 12x) | Não | Sim |
+| Terabyte (página individual) | Não | 1x até 18x | Sim, variável (10%/7%/7%/0%...) | Sim, inclusive **"com juros"** a partir de certa faixa |
+| Amazon (card) | Não | Variável (10x ou 12x confirmados) | Não | Sim, quando presente |
+| KaBuM! (card) | Não | Variável (10x confirmado) | Não | **Nunca declarado** -- fica `unknown` |
 
 ## Objetivo
 
@@ -225,8 +326,269 @@ TASK deve revisar o head Alembic e integrar as mudanças já presentes.
 - `docs/PROJECT_CONTEXT.md`, `docs/CHANGELOG.md`, `docs/DECISION_LOG.md`,
   `docs/ROADMAP.md`, `docs/BACKLOG.md` e índice de TASKs.
 
-## Restrições desta abertura
+## Testes adicionados (implementação real, 2026-08-17)
 
-Esta abertura não autoriza código, migration, investigação externa, chamadas
-reais, alteração de banco, commit, push, rebuild, deploy ou início da TASK-077
-ou da própria TASK-089.
+- `tests/test_store_provider_installments.py` (novo): card de cada uma das
+  quatro lojas (com/sem total, contagem variável na Amazon, ausência de
+  "sem juros" na KaBuM!, NuPay/"até 36x" nunca virando opção inventada);
+  `resolve_installment_options` da Pichau (tabela real com desconto
+  variável por linha, incluindo o produto sem selo promocional que a
+  investigação encontrou com escala 10%→5%→5%→3%→3%→3%→sem juros) e da
+  Terabyte (painel 1x-18x com valores DIFERENTES dos originalmente
+  encontrados, provando que o parser lê o texto atual, nunca uma tabela
+  fixa; sufixo "+ Frete Grátis" ignorado sem quebrar o parsing); merge
+  card+página preservando o total do card ao enriquecer com o detalhe da
+  página, nunca duplicando `installment_count`.
+- `tests/test_price_normalization.py`: normalização para `Decimal`, total
+  nunca calculado, opção malformada descartada sem derrubar a oferta,
+  `installment_options` recalculada de `raw_offer` após `enrich_*`
+  (prova a necessidade da `@property`, não um campo congelado).
+- `tests/test_collection_adapter.py`: `enrich_installment_options`
+  repassa sem alteração quando o provider não implementa a extensão,
+  delega quando implementa, rejeita mudança de quantidade/ordem e fonte
+  não registrada.
+- `tests/test_store_providers.py`: `enrich_installment_options` limitado/
+  ordenado/sequencial, para no primeiro bloqueio (403), nunca abre
+  `BrowserSession` para providers sem o hook (Amazon/KaBuM!).
+- `tests/test_collection_orchestration_async.py`: `_persist_phase_a` grava
+  `OfferInstallmentOption` vinculada ao `id` da `PriceObservation` recém
+  criada; oferta sem opções não gera nenhuma linha extra.
+- `tests/test_database.py`: `offer_installment_options` adicionada à lista
+  de tabelas implementadas.
+
+Suíte completa (primeira rodada, antes da auditoria abaixo): 1245 passed,
+1 skipped, 90,12% cobertura. Ruff limpo. `alembic check` sem drift em
+PostgreSQL 18 descartável (upgrade completo do baseline, downgrade -1,
+upgrade novamente). Nenhuma chamada real ao Gemini; nenhuma missão/teste
+real de loja além da investigação read-only via navegador (Pichau,
+Terabyte, Amazon, KaBuM! reais, sem autenticação, sem tocar dados de
+produção).
+
+## Auditoria técnica crítica (segunda rodada, 2026-08-17)
+
+Após a primeira implementação, foi feita uma auditoria cética -- "não
+assumir que o desenho está correto só porque os testes passam" -- cobrindo
+10 pontos, cada um com evidência real, não suposição.
+
+1. **`discount_percent` nunca inferido**: releitura de
+   `_parse_pichau_installment_row`, `_apply_installment_summary` e
+   `PriceNormalizer._installment_options` confirma que o único caminho de
+   escrita é a captura literal de dígitos de um texto de desconto já
+   emitido pela própria loja (ex.: `15% de desconto no PIX`); não existe
+   nenhuma subtração/divisão de preços no pipeline. Prova adversarial:
+   `test_pichau_discount_percent_absent_without_explicit_percent_text_even_when_math_would_suggest_one`
+   e `test_terabyte_discount_percent_reads_literal_digit_not_derived_from_price_diff`
+   constroem cenários onde a matemática sugeriria um percentual diferente
+   do texto (ou nenhum texto) e provam que o campo fica `None`/lê o dígito
+   literal, nunca calcula.
+2. **`interest_kind` nunca inferido**: mesma releitura confirma que o
+   único caminho de escrita é regex sobre texto explícito
+   (`sem juros`/`s/juros` → `interest_free`; `com juros`/`c/juros` →
+   `with_interest`); ausência de texto → `unknown`, nunca um cálculo de
+   juros implícito por diferença de total. Prova adversarial:
+   `test_terabyte_interest_kind_never_derived_from_installment_total_comparison`
+   monta uma opção "6x s/juros" com total MAIOR que uma opção "3x c/juros"
+   (o oposto do que a matemática de juros sugeriria) e confirma que a
+   classificação segue o texto, não a comparação de totais.
+3. **Constraints monetárias reavaliadas**: `installment_amount` e
+   `installment_total_amount` mudaram de `>= 0` para `> 0` -- divergência
+   deliberada de `price_observations.amount` (`>= 0`), justificada porque
+   um preço-base pode ser R$0,00 em um cenário promocional/gratuito real,
+   mas uma parcela ou total parcelado de R$0,00 nunca representa uma
+   condição comercial genuína, só um bug de parsing. `discount_percent`
+   ganhou teto explícito `<= 100` (não existia precedente de campo
+   "percentual" no schema para comparar; o limite protege contra valores
+   sem sentido produzidos por um parser quebrado). Migration e modelo
+   atualizados em conjunto; `test_check_constraints_accept_boundary_values`
+   prova que `0.01` e `100.00` são aceitos nas bordas (sem off-by-one).
+4. **`UNIQUE(price_observation_id, installment_count)` validada contra DOM
+   real**: reinvestigação ao vivo (Pichau -- Palit RTX 5050; Terabyte --
+   Zotac RTX 5090) confirmou que a linha do card
+   (`Em até 12x de R$ 186,27 Sem juros no cartão` /
+   `12x de R$ 2.450,98 sem juros no cartão`) é byte-idêntica em contagem,
+   valor e texto de juros à linha correspondente da tabela da página
+   individual (`12x de R$186,27 (sem juros)` /
+   `12x de R$ 2.450,98 s/juros*`). Varredura completa do DOM de cada
+   página (`document.querySelectorAll` sobre toda a página) não encontrou
+   nenhuma segunda tabela/painel de parcelamento para uma modalidade de
+   pagamento alternativa que pudesse colidir na mesma contagem. Não foi
+   adicionado `payment_method` especulativo -- o comportamento real das
+   duas lojas hoje não exige essa dimensão.
+5. **`_merge_installment_options` auditada**: a mesma evidência do ponto 4
+   mostra que card e página individual descrevem a MESMA condição
+   comercial para a mesma contagem em Pichau e Terabyte, então o merge por
+   `installment_count` é semanticamente correto para o escopo atual. O
+   merge é campo-a-campo (`dataclasses.replace`), nunca substitui a opção
+   inteira -- bug pego pelo próprio teste
+   `test_merge_installment_options_page_enriches_without_losing_card_total`
+   antes desta auditoria (a primeira versão descartava o
+   `raw_total_amount` do card ao enriquecer com a página).
+6. **Teste de integração real em PostgreSQL**: `tests/integration/test_offer_installment_options.py`
+   (14 testes) roda contra um container PostgreSQL 18.4-alpine
+   descartável via `scripts/run_integration_tests.py` (nunca toca
+   produção) e prova: criação da `PriceObservation`; persistência de
+   múltiplas `OfferInstallmentOption`; leitura de volta com valores
+   corretos; FK rejeita `price_observation_id` órfão; UNIQUE rejeita
+   contagem duplicada na mesma observação; CHECK rejeita valores
+   inválidos (incluindo os novos limites `> 0`/`<= 100`, parametrizado);
+   CHECK aceita os valores de borda; rollback transacional descarta o
+   lote inteiro quando uma opção é inválida; duas observações sucessivas
+   da mesma oferta mantêm conjuntos de opções independentes (a mais
+   antiga não é alterada). Resultado: **14 passed**.
+7. **Relação append-only (`→ PriceObservation`, não `→ Offer`) verificada,
+   não só assumida**: o teste
+   `test_successive_observations_keep_independent_option_sets` (parte do
+   arquivo de integração acima) executa DUAS capturas reais via
+   `CollectionOrchestrator.run_batch`, a segunda com opções diferentes da
+   primeira (12x → 6x), e confirma no banco real que a observação antiga
+   continua com suas opções originais (12x) e a nova tem só as suas (6x)
+   -- nenhum UPDATE/DELETE ocorreu na primeira; "condição atual" é
+   definida por qual observação é mais recente, nunca por mutação.
+8. **Auditoria de performance/navegação**: `enrich_installment_options`
+   roda em `_process_claim` sobre `enriched_raw`, que deriva de
+   `selected_raw` -- o conjunto FINAL já filtrado pelo matching da
+   TASK-075 e pelo teto de 3 candidatos genéricos da TASK-082, não os
+   ~20 cards brutos de busca. Está limitado a
+   `installment_option_max_candidates=3` por fonte, sequencial (sem
+   concorrência interna), com timeouts de `BrowserSettings`
+   (`navigation_timeout_ms=30_000`, `action_timeout_ms=10_000`, mesma
+   configuração usada por `enrich_marketplace_parties`), parando no
+   primeiro 401/403/429 e nunca derrubando a oferta principal em caso de
+   falha (`try/except` por candidato). Amazon/KaBuM! nunca abrem
+   `BrowserSession` para isso (`resolve_installment_options` não
+   sobrescrito, confirmado por
+   `test_installment_enrichment_skips_navigation_when_provider_has_no_hook`).
+   Estimativa concreta: uma busca típica com Pichau e Terabyte
+   selecionados gera no máximo `3 + 3 = 6` navegações adicionais por
+   execução de missão (não centenas); Amazon/KaBuM! contribuem zero.
+   `CollectionOrchestrator.max_concurrency` (1–4) limita quantas
+   `_process_claim` -- e portanto quantas `BrowserSession` de
+   enriquecimento -- rodam ao mesmo tempo.
+9. **Fidelidade dos fixtures ao DOM real**: os HTML usados em
+   `tests/test_store_provider_installments.py` reproduzem as classes,
+   estrutura e texto literalmente observados na investigação (Pichau:
+   `mui-12athy2-price_vista`/`price_parcelado_text`/tabela
+   `installmentsWrapper`; Terabyte: `.product-item__juros`/
+   `#detalheparcelamento`; Amazon: `.a-row.a-size-base.a-color-base` com
+   a cadeia `à vista no Pix ou NuPay ... em até Nx de ... sem juros`;
+   KaBuM!: span folha contendo `PIX` e `R$`), incluindo variações
+   realmente vistas (escala de desconto 10%→5%→3%→sem juros na Pichau;
+   valores diferentes dos originais na Terabyte, provando leitura ao
+   vivo e não tabela fixa).
+10. **Categorias de teste executadas nesta rodada** (explícito, sem
+    ambiguidade): suíte não-integração completa via
+    `pytest --ignore=tests/integration --ignore=tests/e2e --cov=app --cov-fail-under=90`
+    → **1251 passed, 1 skipped**, cobertura 90,12%; integração real via
+    `python scripts/run_integration_tests.py tests/integration/test_offer_installment_options.py`
+    → **14 passed** contra PostgreSQL 18.4-alpine descartável;
+    `alembic upgrade head` → `downgrade -1` → `upgrade head` → `alembic check`
+    → sem drift, contra banco descartável dedicado (não o de integração);
+    `ruff check .` → limpo; `ruff format --check .` → 5 arquivos
+    pré-existentes fora do escopo desta TASK precisariam de reformatação
+    (`backend/app/offers/models.py`,
+    `backend/migrations/versions/20260816_0001_add_offer_media_delivery.py`,
+    `docs/tasks/TASK-080.md`, `tests/test_task084_offer_delivery.py`,
+    `tests/test_telegram_router.py` -- nenhum arquivo tocado por esta
+    TASK); `git diff --check` → limpo. **`tests/e2e` não foi executado**
+    (não requerido pelos critérios de aceite desta TASK e não há
+    suíte e2e cobrindo parcelamento).
+
+## Extensão de apresentação Telegram (terceira rodada, 2026-08-17)
+
+As mensagens de alerta (`_render_alert`) e de pré-lista
+(`_render_prelist_block_async`/`_render_prelist_errata_async`, em
+`backend/app/telegram/notifications.py`) passaram a mostrar duas linhas
+sempre que houver dado real: `💰 À vista: {preço}` (sempre) e
+`💳 Parcelado: {resumo}` (só quando existe ao menos uma
+`OfferInstallmentOption` persistida para a `PriceObservation` exata
+sendo apresentada -- nunca a mais recente da oferta, a mesma observação
+do evento/payload). Nenhum valor é hardcoded; todas as linhas são
+compostas a partir de dados carregados via `session.scalars(select(...))`
+por observação.
+
+**Campo novo (`is_highlighted`)**: como uma oferta pode ter várias opções
+de parcelamento persistidas (Pichau/Terabyte), foi preciso saber, no
+momento de renderizar, qual delas a própria loja destacou no card da
+busca -- essa informação se perdia depois do merge card+página
+individual (`_merge_installment_options`). Solução mínima: um booleano
+`is_highlighted` em `RawInstallmentOption`/`NormalizedInstallmentOption`/
+`OfferInstallmentOption` (contrato → normalização → modelo → migration
+`20260817_0001`, editada em vez de nova revisão pois ainda não fora
+aplicada em produção), carimbado exclusivamente em
+`_installment_options_from_row` (a única origem possível, já que o card
+nunca expõe mais de uma linha) e preservado (nunca recalculado) por
+`_merge_installment_options`.
+
+**Regra de seleção do resumo** (`_select_installment_summary_option`,
+determinística, sem IA, sem cálculo de vantagem financeira):
+1. opção com `is_highlighted=True`;
+2. sem destaque conhecido, maior `installment_count` entre as
+   `interest_free`;
+3. sem nenhuma `interest_free`, maior `installment_count` disponível;
+4. sem nenhuma opção persistida, a linha `💳` não aparece.
+
+`interest_kind=unknown` nunca vira texto literal (sufixo vazio).
+`installment_total_amount` só aparece (`— total {valor}`) quando a loja
+declarou explicitamente; nunca `count × amount`. `discount_percent`
+permanece no banco para consulta futura, mas não entra nesta linha
+resumida (decisão explícita do usuário, para não poluir o alerta).
+
+**Testes**: 13 novos em `tests/test_telegram_notifications.py` --
+`_installment_line`/`_select_installment_summary_option` isolados
+(vazio sem opção, `interest_free`, `with_interest`, `unknown` sem a
+palavra aparecer, total explícito, total ausente, destaque do card
+vence, fallback para maior `interest_free`, fallback para maior geral
+sem `interest_free`, `None` sem opções) e end-to-end via
+`process_telegram_notifications`/`process_telegram_prelist_notifications`
+com `session.scalars` mockado (linha completa com destaque+total, oferta
+sem parcelamento nunca mostra `💳`, múltiplas opções persistidas mas só a
+destacada aparece na pré-lista, sem linha em branco extra entre
+`💰 À vista` e `🔎 Missão`). `_fake_session_factory()` ganhou um default
+`session.scalars = AsyncMock(return_value=[])` para as chamadas
+existentes que não testam parcelamento. Teste de integração real
+(`tests/integration/test_offer_installment_options.py`) estendido para
+gravar e ler `is_highlighted` de volta contra PostgreSQL descartável.
+
+## V2 (explicitamente adiado pelo usuário em 2026-08-17)
+
+Depois de uma auditoria própria revelar que não existe, em lugar nenhum
+do projeto, rastreamento de "oferta apresentada" para uma resposta em
+texto livre resolver contra (nem `callback_query`/`InlineKeyboard`, nem
+ligação entre o fluxo de confirmação de compra já existente --
+`backend/app/purchase/confirmation.py`, TASK-040/041 -- e o Telegram), o
+usuário decidiu reduzir o escopo desta TASK de volta para só apresentação.
+Ficam para uma V2 futura, fora desta TASK:
+- novo `IntentKind` para parcelamento (`SELECT_PURCHASE_OPTION` ou
+  equivalente);
+- interpretação de frases como "quero em 6x"/"quero parcelado";
+- escolha de quantidade de parcelas pelo usuário;
+- mecanismo de rastreamento de "oferta apresentada" por usuário/chat/
+  missão;
+- vínculo entre a resposta do usuário e a `PriceObservation` correta;
+- qualquer alteração no `IntentInterpreter` ou no fluxo de compra/
+  confirmação;
+- IA analisando se um parcelamento "vale a pena", comparação entre
+  opções, cálculo de acréscimo percentual ou ranking de condições.
+
+## Limitações reais conhecidas (não resolvidas nesta rodada)
+
+- Não foi confirmado se KaBuM!/Amazon têm alguma tabela de parcelamento
+  atrás de login/cupom específico -- só o que é publicamente visível sem
+  autenticação foi investigado, conforme escopo (nunca usar credenciais
+  nas lojas).
+- O modelo não tem `payment_method` -- correto para o comportamento real
+  hoje (ponto 4/5 da auditoria), mas se Pichau/Terabyte no futuro
+  exibirem duas condições simultâneas para a mesma contagem em
+  modalidades diferentes, o `UNIQUE` atual rejeitaria a segunda até uma
+  nova investigação e decisão de produto.
+
+## Restrições desta abertura (histórico -- já superadas pela implementação)
+
+Esta abertura não autorizava código, migration, investigação externa,
+chamadas reais, alteração de banco, commit, push, rebuild, deploy ou início
+da TASK-077 ou da própria TASK-089. TASK-077 foi concluída antes desta
+(commit `9de77d6`); esta implementação da TASK-089 foi autorizada
+explicitamente pelo usuário em 2026-08-17, após a investigação real ter
+corrigido o desenho original (`DEC-069`). Commit, push, tag e deploy
+autorizados explicitamente pelo usuário em 2026-08-17, fechando a
+release `v1.0.7` -- ver `docs/CHANGELOG.md` para o registro oficial.

@@ -47,6 +47,7 @@ from app.collection.models import (
     CollectionRun,
     CollectionRunStatus,
     MissionOfferRelevance,
+    OfferInstallmentOption,
     PriceObservation,
 )
 from app.collection.normalization import (
@@ -526,6 +527,18 @@ class CollectionOrchestrator:
                         exc_info=True,
                     )
                     enriched_raw = selected_raw
+                try:
+                    enriched_raw = await self._adapter.enrich_installment_options(
+                        claim.source_code, enriched_raw
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    logger.warning(
+                        "installment_option_enrichment_failed",
+                        extra={"source_code": _safe_source(claim.source_code)},
+                        exc_info=True,
+                    )
             enriched = tuple(
                 replace(item, raw_offer=raw_offer)
                 for item, raw_offer in zip(selected, enriched_raw, strict=True)
@@ -845,6 +858,20 @@ async def _persist_phase_a(
             )
             session.add(observation)
             await session.flush()
+            for option in item.installment_options:
+                session.add(
+                    OfferInstallmentOption(
+                        price_observation_id=observation.id,
+                        installment_count=option.installment_count,
+                        installment_amount=option.installment_amount,
+                        installment_total_amount=option.installment_total_amount,
+                        discount_percent=option.discount_percent,
+                        interest_kind=option.interest_kind,
+                        is_highlighted=option.is_highlighted,
+                    )
+                )
+            if item.installment_options:
+                await session.flush()
 
             if (
                 previous is not None

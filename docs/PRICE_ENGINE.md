@@ -33,3 +33,7 @@ define a base dos alertas de monitoramento da V1: o avaliador de alertas
 `total_amount`, para nunca misturar bases diferentes entre observações.
 `app.purchase` (custo final/compra) é quem efetivamente usa a semântica de
 `total_amount` descrita aqui, exigindo frete conhecido para afirmar um total.
+
+`offer_installment_options` (TASK-089/DEC-069, ver `docs/DATABASE.md`) é
+informação adicional sobre formas de pagamento da mesma observação -- nunca
+participa de `amount`/`total_amount`, comparação, alerta ou ranking.

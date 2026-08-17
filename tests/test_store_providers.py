@@ -742,6 +742,139 @@ def test_rejects_negative_marketplace_party_max_candidates() -> None:
         KabumProvider(marketplace_party_max_candidates=-1)
 
 
+def test_rejects_negative_installment_option_max_candidates() -> None:
+    with pytest.raises(ValueError):
+        KabumProvider(installment_option_max_candidates=-1)
+
+
+# ---------------------------------------------------------------------------
+# TASK-089 (DEC-069): enrich_installment_options -- mesma disciplina de
+# enrich_marketplace_parties (limitado, ordenado, sequencial, para no bloqueio).
+# ---------------------------------------------------------------------------
+
+
+def test_installment_enrichment_is_bounded_sorted_and_sequential(monkeypatch) -> None:
+    from app.collection import InstallmentInterestKind, RawInstallmentOption
+
+    visited: list[str] = []
+
+    class Response:
+        status = 200
+
+    class Page:
+        async def goto(self, url, **kwargs):
+            visited.append(url)
+            return Response()
+
+    class Session:
+        def __init__(self, settings):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def new_page(self):
+            return Page()
+
+    class Provider(PichauProvider):
+        async def resolve_installment_options(self, page):
+            return (
+                RawInstallmentOption(
+                    installment_count=1,
+                    raw_amount="R$ 1,00",
+                    interest_kind=InstallmentInterestKind.INTEREST_FREE,
+                ),
+            )
+
+    monkeypatch.setattr("app.collection.providers.base.BrowserSession", Session)
+    offers = tuple(
+        RawCollectedOffer(
+            source_code="pichau",
+            url=f"https://example.invalid/{price}",
+            title=f"Produto {price}",
+            collected_at=NOW,
+            raw_price=f"R$ {price},00",
+            raw_currency="BRL",
+        )
+        for price in (40, 10, 30, 20)
+    )
+
+    enriched = asyncio.run(Provider().enrich_installment_options(offers))
+
+    assert visited == [
+        "https://example.invalid/10",
+        "https://example.invalid/20",
+        "https://example.invalid/30",
+    ]
+    assert sum(len(item.installment_options) == 1 for item in enriched) == 3
+    assert enriched[0].installment_options == ()  # quarto preço não foi avaliado
+
+
+def test_installment_enrichment_stops_after_block(monkeypatch) -> None:
+    visited: list[str] = []
+
+    class Response:
+        status = 403
+
+    class Page:
+        async def goto(self, url, **kwargs):
+            visited.append(url)
+            return Response()
+
+    class Session:
+        def __init__(self, settings):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def new_page(self):
+            return Page()
+
+    monkeypatch.setattr("app.collection.providers.base.BrowserSession", Session)
+    offers = tuple(
+        RawCollectedOffer(
+            source_code="pichau",
+            url=f"https://example.invalid/{index}",
+            title=f"Produto {index}",
+            collected_at=NOW,
+            raw_price=f"R$ {index},00",
+            raw_currency="BRL",
+        )
+        for index in (1, 2, 3)
+    )
+
+    enriched = asyncio.run(PichauProvider().enrich_installment_options(offers))
+
+    assert visited == ["https://example.invalid/1"]
+    assert all(item.installment_options == () for item in enriched)
+
+
+def test_installment_enrichment_skips_navigation_when_provider_has_no_hook() -> None:
+    """Amazon/KaBuM! não sobrescrevem `resolve_installment_options` --
+    `enrich_installment_options` nunca abre `BrowserSession`."""
+    offers = (
+        RawCollectedOffer(
+            source_code="amazon",
+            url="https://example.invalid/1",
+            title="Produto",
+            collected_at=NOW,
+            raw_price="R$ 10,00",
+            raw_currency="BRL",
+        ),
+    )
+
+    enriched = asyncio.run(AmazonProvider().enrich_installment_options(offers))
+
+    assert enriched == offers
+
+
 def test_marketplace_enrichment_is_bounded_sorted_and_sequential(monkeypatch) -> None:
     visited: list[str] = []
 

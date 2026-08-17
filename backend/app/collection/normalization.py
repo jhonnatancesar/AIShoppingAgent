@@ -1,5 +1,6 @@
 """Normalização monetária exata dos resultados brutos de coleta."""
 
+import logging
 import re
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
@@ -7,10 +8,14 @@ from enum import StrEnum
 
 from app.collection.contracts import (
     CollectionResult,
+    InstallmentInterestKind,
     MarketplacePartyKind,
     RawCollectedOffer,
+    RawInstallmentOption,
 )
 from app.collection.errors import CollectionNormalizationError
+
+logger = logging.getLogger("app.collection.normalization")
 
 _CURRENCY_SYMBOLS = {"R$": "BRL", "$": "USD", "€": "EUR", "£": "GBP"}
 _FREE_SHIPPING = re.compile(r"\b(frete\s+gr[aá]tis|gr[aá]tis|free\s+shipping)\b", re.I)
@@ -24,6 +29,21 @@ class Availability(StrEnum):
     AVAILABLE = "available"
     UNAVAILABLE = "unavailable"
     UNKNOWN = "unknown"
+
+
+@dataclass(frozen=True, slots=True)
+class NormalizedInstallmentOption:
+    """TASK-089: uma opção de parcelamento já com valores monetários
+    convertidos para `Decimal` -- `installment_total_amount` continua
+    `None` sempre que a loja não rotular um total para esta opção
+    específica (nunca `installment_count * installment_amount`)."""
+
+    installment_count: int
+    installment_amount: Decimal
+    installment_total_amount: Decimal | None
+    discount_percent: Decimal | None
+    interest_kind: InstallmentInterestKind
+    is_highlighted: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,6 +77,18 @@ class NormalizedCollectedOffer:
     def fulfillment_kind(self) -> MarketplacePartyKind | None:
         return self.raw_offer.fulfillment_kind
 
+    @property
+    def installment_options(self) -> tuple[NormalizedInstallmentOption, ...]:
+        """TASK-089: recalculado a partir de `raw_offer` a cada acesso --
+        nunca armazenado -- pelo mesmo motivo de `seller_kind`/
+        `fulfillment_kind`: `enrich_installment_options` (Pichau/Terabyte)
+        só atualiza `raw_offer` depois que a oferta já foi normalizada uma
+        vez; um campo armazenado ficaria com os dados de antes do
+        enriquecimento."""
+        return PriceNormalizer._installment_options(
+            self.raw_offer.installment_options, self.currency
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class NormalizedCollectionResult:
@@ -88,6 +120,48 @@ class PriceNormalizer:
             total_amount=total,
             availability=availability,
         )
+
+    @staticmethod
+    def _installment_options(
+        raw_options: tuple[RawInstallmentOption, ...], currency: str
+    ) -> tuple[NormalizedInstallmentOption, ...]:
+        """TASK-089: uma opção malformada nunca derruba a oferta inteira --
+        só aquela opção é descartada (logada), as demais e o preço à vista
+        seguem normalmente. `@staticmethod` de propósito: `installment_options`
+        em `NormalizedCollectedOffer` chama isto sem instanciar
+        `PriceNormalizer` (mesma razão de `_amount` já ser estático)."""
+        normalized: list[NormalizedInstallmentOption] = []
+        for raw_option in raw_options:
+            try:
+                installment_amount = PriceNormalizer._amount(
+                    raw_option.raw_amount, currency, field="installment_amount"
+                )
+                installment_total_amount = (
+                    PriceNormalizer._amount(
+                        raw_option.raw_total_amount,
+                        currency,
+                        field="installment_total_amount",
+                    )
+                    if raw_option.raw_total_amount is not None
+                    else None
+                )
+            except CollectionNormalizationError:
+                logger.warning(
+                    "installment_option_normalization_failed",
+                    extra={"installment_count": raw_option.installment_count},
+                )
+                continue
+            normalized.append(
+                NormalizedInstallmentOption(
+                    installment_count=raw_option.installment_count,
+                    installment_amount=installment_amount,
+                    installment_total_amount=installment_total_amount,
+                    discount_percent=raw_option.discount_percent,
+                    interest_kind=raw_option.interest_kind,
+                    is_highlighted=raw_option.is_highlighted,
+                )
+            )
+        return tuple(normalized)
 
     def _currency(self, raw_currency: str | None, raw_amount: str | None) -> str:
         declared = raw_currency.strip().upper() if raw_currency else None

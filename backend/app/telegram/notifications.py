@@ -2,6 +2,7 @@
 
 import logging
 import random
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
@@ -14,8 +15,8 @@ from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.authentication.models import CredentialAction, UserAuthSession
-from app.collection.contracts import MarketplacePartyKind
-from app.collection.models import PriceObservation
+from app.collection.contracts import InstallmentInterestKind, MarketplacePartyKind
+from app.collection.models import OfferInstallmentOption, PriceObservation
 from app.database.time import utc_now
 from app.events import ConsumptionOutcome, Event, EventType
 from app.events.consumption import (
@@ -552,9 +553,13 @@ async def _prepare_notification_async(
         raise TelegramNotificationError(
             "notification_recipient_inactive", permanent=False
         )
-    offer, product, store, observation = await _resolve_offer_context_async(
-        session, event
-    )
+    (
+        offer,
+        product,
+        store,
+        observation,
+        installment_options,
+    ) = await _resolve_offer_context_async(session, event)
     link = await get_or_create_offer_short_link(session, offer.id)
     short_url = build_offer_short_url(public_base_url, link.token)
     return (
@@ -570,6 +575,7 @@ async def _prepare_notification_async(
                     product,
                     store,
                     observation,
+                    installment_options,
                     short_url=short_url,
                 ),
                 offer.image_url,
@@ -580,7 +586,7 @@ async def _prepare_notification_async(
 
 async def _resolve_offer_context_async(
     session: AsyncSession, event: Event
-) -> tuple[Offer, Product, Store, PriceObservation]:
+) -> tuple[Offer, Product, Store, PriceObservation, tuple[OfferInstallmentOption, ...]]:
     """Busca a oferta real do alerta a partir do `offer_id` do evento.
 
     TASK-063: o alerta precisa representar o anúncio real (título, loja,
@@ -605,7 +611,26 @@ async def _resolve_offer_context_async(
         or observation.offer_id != offer.id
     ):
         raise TelegramNotificationError("notification_payload_invalid")
-    return offer, product, store, observation
+    installment_options = await _installment_options_for_observation_async(
+        session, observation.id
+    )
+    return offer, product, store, observation, installment_options
+
+
+async def _installment_options_for_observation_async(
+    session: AsyncSession, observation_id: UUID
+) -> tuple[OfferInstallmentOption, ...]:
+    """TASK-089 (extensão Telegram): opções reais persistidas para a
+    observação exata sendo apresentada -- nunca a mais recente da oferta
+    (essa observação já É a mais recente enviada nesta notificação),
+    nunca recalculada."""
+    return tuple(
+        await session.scalars(
+            select(OfferInstallmentOption)
+            .where(OfferInstallmentOption.price_observation_id == observation_id)
+            .order_by(OfferInstallmentOption.installment_count)
+        )
+    )
 
 
 async def _prepare_prelist_notification_async(
@@ -748,6 +773,7 @@ def _render_alert(
     product: Product,
     store: Store,
     observation: PriceObservation,
+    installment_options: Sequence[OfferInstallmentOption],
     *,
     short_url: str,
 ) -> str:
@@ -771,6 +797,7 @@ def _render_alert(
         event_type = EventType(event.event_type)
         currency = _currency(payload)
         current_total = _money(payload, "current_total")
+        installment_line = _installment_line(installment_options, currency)
         if event_type is EventType.PRICE_DECREASED_V1:
             previous_total = _money(payload, "previous_total")
             return (
@@ -778,7 +805,8 @@ def _render_alert(
                 f"{display_name}\n\n"
                 f"🏪 {store.name}\n"
                 f"{marketplace_line}"
-                f"💰 {format_money(current_total, currency)}\n"
+                f"💰 À vista: {format_money(current_total, currency)}\n"
+                f"{installment_line}"
                 f"↘️ Preço anterior: {format_money(previous_total, currency)}\n"
                 f"🔎 Missão: {mission_title}\n\n"
                 "🔗 Ver anúncio\n"
@@ -793,7 +821,8 @@ def _render_alert(
                 f"{display_name}\n\n"
                 f"🏪 {store.name}\n"
                 f"{marketplace_line}"
-                f"💰 {format_money(current_total, currency)}\n"
+                f"💰 À vista: {format_money(current_total, currency)}\n"
+                f"{installment_line}"
                 f"🎯 Preço-alvo: {format_money(target_total, currency)}\n"
                 f"🔎 Missão: {mission_title}\n\n"
                 "🔗 Ver anúncio\n"
@@ -806,7 +835,7 @@ def _render_alert(
 
 async def _load_offer_context_async(
     session: AsyncSession, offer_id: UUID, observation_id: UUID
-) -> tuple[Offer, Product, Store, PriceObservation]:
+) -> tuple[Offer, Product, Store, PriceObservation, tuple[OfferInstallmentOption, ...]]:
     offer = await session.get(Offer, offer_id)
     if offer is None:
         raise TelegramNotificationError("notification_payload_invalid")
@@ -820,7 +849,70 @@ async def _load_offer_context_async(
         or observation.offer_id != offer.id
     ):
         raise TelegramNotificationError("notification_payload_invalid")
-    return offer, product, store, observation
+    installment_options = await _installment_options_for_observation_async(
+        session, observation.id
+    )
+    return offer, product, store, observation, installment_options
+
+
+_INSTALLMENT_INTEREST_SUFFIXES = {
+    InstallmentInterestKind.INTEREST_FREE: " sem juros",
+    InstallmentInterestKind.WITH_INTEREST: " com juros",
+    InstallmentInterestKind.UNKNOWN: "",
+}
+
+
+def _select_installment_summary_option(
+    options: Sequence[OfferInstallmentOption],
+) -> OfferInstallmentOption | None:
+    """TASK-089 (extensão Telegram): escolhe UMA opção real para resumir
+    no card -- nunca a tabela inteira, nunca uma opção inventada/calculada.
+
+    Prioridade determinística, sem juízo de valor comercial:
+    1. a opção que a própria loja destacou no card da busca
+       (`is_highlighted=True`, carimbada em `providers/base.py`);
+    2. na ausência de destaque conhecido, a maior `installment_count`
+       entre as `interest_free` (mais parcelas sem juros é a condição
+       mais informativa quando não se sabe qual a loja preferia mostrar);
+    3. na ausência de qualquer `interest_free`, a maior `installment_count`
+       disponível, seja qual for o `interest_kind`;
+    4. sem nenhuma opção persistida, `None` -- a linha `💳` some.
+
+    Nunca calcula custo efetivo, nunca compara "vantagem" financeira entre
+    condições -- é só um critério de desempate determinístico."""
+    if not options:
+        return None
+    highlighted = next((option for option in options if option.is_highlighted), None)
+    if highlighted is not None:
+        return highlighted
+    interest_free = [
+        option
+        for option in options
+        if option.interest_kind is InstallmentInterestKind.INTEREST_FREE
+    ]
+    pool = interest_free if interest_free else options
+    return max(pool, key=lambda option: option.installment_count)
+
+
+def _installment_line(options: Sequence[OfferInstallmentOption], currency: str) -> str:
+    """Linha `💳 Parcelado: ...` ou string vazia -- nunca `None`/`NULL`/
+    `unknown` literal, nunca total calculado (`installment_total_amount`
+    só aparece quando a própria loja o declarou explicitamente)."""
+    option = _select_installment_summary_option(options)
+    if option is None:
+        return ""
+    interest_suffix = _INSTALLMENT_INTEREST_SUFFIXES[option.interest_kind]
+    total_suffix = (
+        f" — total {format_money(option.installment_total_amount, currency)}"
+        if option.installment_total_amount is not None
+        else ""
+    )
+    summary = (
+        f"{option.installment_count}x de "
+        f"{format_money(option.installment_amount, currency)}"
+        f"{interest_suffix}{total_suffix}"
+    )
+    return f"💳 Parcelado: {summary}\n"
 
 
 def _marketplace_party_line(store: Store, observation: PriceObservation) -> str:
@@ -863,9 +955,13 @@ async def _render_prelist_block_async(
     prefix: str = "",
     suffix: str = "",
 ) -> _PreparedMessagePart:
-    offer, product, store, observation = await _load_offer_context_async(
-        session, offer_id, observation_id
-    )
+    (
+        offer,
+        product,
+        store,
+        observation,
+        installment_options,
+    ) = await _load_offer_context_async(session, offer_id, observation_id)
     link = await get_or_create_offer_short_link(session, offer.id)
     short_url = build_offer_short_url(public_base_url, link.token)
     display_name = product.display_name or product.name
@@ -874,7 +970,8 @@ async def _render_prelist_block_async(
         prefix + f"{number} {display_name}\n"
         f"🏪 {store.name}\n"
         f"{_marketplace_party_line(store, observation)}"
-        f"💰 {format_money(amount, currency)}\n"
+        f"💰 À vista: {format_money(amount, currency)}\n"
+        f"{_installment_line(installment_options, currency)}"
         f"🔎 Missão: {mission_title}\n"
         f"{_PRELIST_SHIPPING_DISCLAIMER}\n"
         "🔗 Ver anúncio\n"
@@ -965,9 +1062,13 @@ async def _render_prelist_errata_async(
         had_previous = payload.get("previous_lowest_amount") is not None
     except InvalidOperation, TypeError, ValueError:
         raise TelegramNotificationError("notification_payload_invalid") from None
-    offer, product, store, observation = await _load_offer_context_async(
-        session, offer_id, observation_id
-    )
+    (
+        offer,
+        product,
+        store,
+        observation,
+        installment_options,
+    ) = await _load_offer_context_async(session, offer_id, observation_id)
     link = await get_or_create_offer_short_link(session, offer.id)
     short_url = build_offer_short_url(public_base_url, link.token)
     display_name = product.display_name or product.name
@@ -990,7 +1091,8 @@ async def _render_prelist_errata_async(
         f"1️⃣ {display_name}\n"
         f"🏪 {store.name}\n"
         f"{_marketplace_party_line(store, observation)}"
-        f"💰 {format_money(current_amount, currency)}\n"
+        f"💰 À vista: {format_money(current_amount, currency)}\n"
+        f"{_installment_line(installment_options, currency)}"
         f"{_PRELIST_SHIPPING_DISCLAIMER}\n\n"
         "🔗 Ver anúncio\n"
         f"{short_url}"

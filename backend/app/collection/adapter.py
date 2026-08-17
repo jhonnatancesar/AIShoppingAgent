@@ -77,6 +77,27 @@ class CollectionAdapter:
             )
         return enriched
 
+    async def enrich_installment_options(
+        self, source_code: str, offers: tuple[RawCollectedOffer, ...]
+    ) -> tuple[RawCollectedOffer, ...]:
+        """Enriquece apenas quando o provider oferece a extensão opcional
+        (TASK-089): Pichau/Terabyte a implementam de verdade; Amazon/KaBuM!
+        mantêm o padrão (nenhuma navegação extra, nenhuma tabela existe)."""
+        provider = self._providers.get(source_code)
+        if provider is None:
+            raise UnsupportedSourceError(
+                f"no provider registered for source: {source_code}"
+            )
+        enrich = getattr(provider, "enrich_installment_options", None)
+        if enrich is None:
+            return offers
+        enriched = await enrich(offers)
+        if len(enriched) != len(offers):
+            raise CollectionContractError(
+                "installment enrichment must preserve offer count and order"
+            )
+        return enriched
+
     async def collect_selected(
         self, requests: Iterable[CollectionRequest]
     ) -> tuple[CollectionResult, ...]:

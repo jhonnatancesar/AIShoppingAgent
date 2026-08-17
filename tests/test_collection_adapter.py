@@ -130,3 +130,56 @@ def test_result_rejects_inconsistent_timeline_and_offers() -> None:
         CollectionResult("kabum", NOW, NOW - timedelta(seconds=1))
     with pytest.raises(CollectionContractError):
         CollectionResult("kabum", NOW, NOW, result("amazon").offers)
+
+
+# ---------------------------------------------------------------------------
+# TASK-089 (DEC-069): enrich_installment_options.
+# ---------------------------------------------------------------------------
+
+
+def test_enrich_installment_options_passes_through_when_provider_lacks_hook() -> None:
+    """Amazon/KaBuM! -- nenhuma extensão implementada, offers voltam
+    exatamente como vieram, sem navegação alguma."""
+    provider = FakeProvider(result())
+    adapter = CollectionAdapter([provider])
+    offers = result().offers
+
+    enriched = asyncio.run(adapter.enrich_installment_options("kabum", offers))
+
+    assert enriched == offers
+
+
+def test_enrich_installment_options_delegates_to_provider_extension() -> None:
+    offers = result().offers
+
+    class EnrichingProvider(FakeProvider):
+        async def enrich_installment_options(self, offers):
+            self.enrich_called_with = offers
+            return offers
+
+    provider = EnrichingProvider(result())
+    adapter = CollectionAdapter([provider])
+
+    enriched = asyncio.run(adapter.enrich_installment_options("kabum", offers))
+
+    assert provider.enrich_called_with == offers
+    assert enriched == offers
+
+
+def test_enrich_installment_options_rejects_count_mismatch() -> None:
+    offers = result().offers
+
+    class BrokenProvider(FakeProvider):
+        async def enrich_installment_options(self, offers):
+            return ()
+
+    provider = BrokenProvider(result())
+    adapter = CollectionAdapter([provider])
+
+    with pytest.raises(CollectionContractError):
+        asyncio.run(adapter.enrich_installment_options("kabum", offers))
+
+
+def test_enrich_installment_options_rejects_unsupported_source() -> None:
+    with pytest.raises(UnsupportedSourceError):
+        asyncio.run(CollectionAdapter().enrich_installment_options("amazon", ()))

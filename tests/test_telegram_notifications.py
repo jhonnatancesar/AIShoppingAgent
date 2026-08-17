@@ -1,13 +1,14 @@
 """Testes do consumidor proativo de alertas Telegram (TASK-036)."""
 
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
 
 import pytest
 from app.authentication.models import CredentialAction, UserAuthSession
-from app.collection.contracts import MarketplacePartyKind
-from app.collection.models import PriceObservation
+from app.collection.contracts import InstallmentInterestKind, MarketplacePartyKind
+from app.collection.models import OfferInstallmentOption, PriceObservation
 from app.events import ConsumptionOutcome, Event
 from app.missions.models import Mission, MissionStatus
 from app.offers.models import Offer
@@ -20,7 +21,9 @@ from app.telegram.notifications import (
     TELEGRAM_NOTIFICATION_CONSUMER,
     TELEGRAM_PRELIST_CONSUMER,
     TelegramNotificationError,
+    _installment_line,
     _marketplace_party_line,
+    _select_installment_summary_option,
     process_telegram_authentication_notifications,
     process_telegram_notifications,
     process_telegram_prelist_notifications,
@@ -44,6 +47,10 @@ def _fake_session_factory() -> tuple[MagicMock, MagicMock]:
     # falhas anteriores por padrão (primeira tentativa), sobrescrito por
     # teste quando o cenário exigir um valor diferente.
     session.scalar = AsyncMock(return_value=0)
+    # `_installment_options_for_observation_async` usa `session.scalars` --
+    # sem parcelamento por padrão (nenhuma `OfferInstallmentOption`),
+    # sobrescrito por teste quando o cenário exigir opções persistidas.
+    session.scalars = AsyncMock(return_value=[])
     session.execute = AsyncMock()
     # `record_consumption_attempt_async` chama `session.flush()` -- `.add`
     # continua síncrono (mesmo em `AsyncSession` real).
@@ -891,3 +898,280 @@ async def test_prelist_notification_fails_closed_on_missing_recipient(
     assert (
         session.add.call_args.args[0].failure_code == "notification_recipient_missing"
     )
+
+
+# --- TASK-089 (extensão Telegram): 💰 À vista / 💳 Parcelado ---
+
+
+def _installment_option(
+    *,
+    count: int,
+    amount: str,
+    total: str | None = None,
+    discount: str | None = None,
+    interest: InstallmentInterestKind = InstallmentInterestKind.UNKNOWN,
+    highlighted: bool = False,
+) -> OfferInstallmentOption:
+    return OfferInstallmentOption(
+        id=uuid4(),
+        price_observation_id=uuid4(),
+        installment_count=count,
+        installment_amount=Decimal(amount),
+        installment_total_amount=Decimal(total) if total is not None else None,
+        discount_percent=Decimal(discount) if discount is not None else None,
+        interest_kind=interest,
+        is_highlighted=highlighted,
+    )
+
+
+def test_installment_line_is_empty_without_any_option() -> None:
+    assert _installment_line((), "BRL") == ""
+
+
+def test_installment_line_interest_free() -> None:
+    option = _installment_option(
+        count=12, amount="421.57", interest=InstallmentInterestKind.INTEREST_FREE
+    )
+
+    line = _installment_line((option,), "BRL")
+
+    assert line == "💳 Parcelado: 12x de R$ 421,57 sem juros\n"
+
+
+def test_installment_line_with_interest() -> None:
+    option = _installment_option(
+        count=6, amount="550.00", interest=InstallmentInterestKind.WITH_INTEREST
+    )
+
+    line = _installment_line((option,), "BRL")
+
+    assert line == "💳 Parcelado: 6x de R$ 550,00 com juros\n"
+
+
+def test_installment_line_unknown_interest_never_shows_the_word_unknown() -> None:
+    option = _installment_option(
+        count=3, amount="1433.33", interest=InstallmentInterestKind.UNKNOWN
+    )
+
+    line = _installment_line((option,), "BRL")
+
+    assert line == "💳 Parcelado: 3x de R$ 1.433,33\n"
+    assert "unknown" not in line.lower()
+    assert "none" not in line.lower()
+    assert "null" not in line.lower()
+
+
+def test_installment_line_shows_explicit_total() -> None:
+    option = _installment_option(
+        count=12,
+        amount="421.57",
+        total="5058.81",
+        interest=InstallmentInterestKind.INTEREST_FREE,
+    )
+
+    line = _installment_line((option,), "BRL")
+
+    assert line == "💳 Parcelado: 12x de R$ 421,57 sem juros — total R$ 5.058,81\n"
+
+
+def test_installment_line_omits_total_when_store_never_declared_one() -> None:
+    option = _installment_option(
+        count=12, amount="421.57", interest=InstallmentInterestKind.INTEREST_FREE
+    )
+
+    line = _installment_line((option,), "BRL")
+
+    assert "total" not in line
+    assert line == "💳 Parcelado: 12x de R$ 421,57 sem juros\n"
+
+
+def test_select_installment_summary_prefers_the_option_highlighted_by_the_card() -> (
+    None
+):
+    """TASK-089 (regra do resumo): a opção destacada pela própria loja no
+    card da busca vence qualquer outro critério de desempate."""
+    highlighted = _installment_option(
+        count=3,
+        amount="1433.33",
+        interest=InstallmentInterestKind.INTEREST_FREE,
+        highlighted=True,
+    )
+    longer_interest_free = _installment_option(
+        count=12, amount="421.57", interest=InstallmentInterestKind.INTEREST_FREE
+    )
+
+    selected = _select_installment_summary_option((longer_interest_free, highlighted))
+
+    assert selected is highlighted
+
+
+def test_select_installment_summary_falls_back_to_longest_interest_free() -> None:
+    """Sem opção destacada conhecida, usa a maior quantidade de parcelas
+    SEM JUROS -- nunca a de maior parcela absoluta nem a com juros."""
+    short_interest_free = _installment_option(
+        count=3, amount="1433.33", interest=InstallmentInterestKind.INTEREST_FREE
+    )
+    long_interest_free = _installment_option(
+        count=12, amount="421.57", interest=InstallmentInterestKind.INTEREST_FREE
+    )
+    longest_with_interest = _installment_option(
+        count=18, amount="300.00", interest=InstallmentInterestKind.WITH_INTEREST
+    )
+
+    selected = _select_installment_summary_option(
+        (short_interest_free, longest_with_interest, long_interest_free)
+    )
+
+    assert selected is long_interest_free
+
+
+def test_select_installment_summary_falls_back_to_longest_overall_without_interest_free() -> (
+    None
+):
+    with_interest = _installment_option(
+        count=6, amount="550.00", interest=InstallmentInterestKind.WITH_INTEREST
+    )
+    unknown = _installment_option(
+        count=10, amount="330.00", interest=InstallmentInterestKind.UNKNOWN
+    )
+
+    selected = _select_installment_summary_option((with_interest, unknown))
+
+    assert selected is unknown
+
+
+def test_select_installment_summary_returns_none_without_options() -> None:
+    assert _select_installment_summary_option(()) is None
+
+
+@pytest.mark.anyio
+async def test_alert_shows_cash_and_installment_lines_from_real_persisted_option(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user = _user()
+    mission = _mission(user)
+    event = _event(mission, event_type="price.decreased.v1")
+    offer, product, store = _offer_context()
+    session_factory, session = _fake_session_factory()
+    observation = _observation_for(event, offer, kind=MarketplacePartyKind.PLATFORM)
+    session.get.side_effect = [mission, user, offer, product, store, observation, event]
+    session.scalars = AsyncMock(
+        return_value=[
+            _installment_option(
+                count=12,
+                amount="421.57",
+                total="5058.81",
+                interest=InstallmentInterestKind.INTEREST_FREE,
+                highlighted=True,
+            )
+        ]
+    )
+    monkeypatch.setattr(
+        "app.telegram.notifications.claim_unconsumed_events_async",
+        AsyncMock(return_value=[event]),
+    )
+    sent: list[str] = []
+
+    async def _send(chat_id: int, text: str, *, bot_token, **kwargs: object) -> None:
+        sent.append(text)
+
+    monkeypatch.setattr("app.telegram.notifications.send_message", _send)
+
+    result = await process_telegram_notifications(
+        session_factory, bot_token=SecretStr("token")
+    )
+
+    assert result.succeeded == 1
+    text = sent[0]
+    assert "💰 À vista: R$ 4.499,90" in text
+    assert "💳 Parcelado: 12x de R$ 421,57 sem juros — total R$ 5.058,81" in text
+    # sem linha vazia entre "À vista" e "Parcelado", nem entre "Parcelado"
+    # e a linha seguinte (nunca duas quebras seguidas fora dos separadores
+    # de bloco intencionais do template).
+    assert "\n\n" not in text.split("💰 À vista")[1].split("🔎 Missão")[0]
+
+
+@pytest.mark.anyio
+async def test_alert_omits_installment_line_when_offer_has_no_confirmed_option(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user = _user()
+    mission = _mission(user)
+    event = _event(mission, event_type="price.decreased.v1")
+    offer, product, store = _offer_context()
+    session_factory, session = _fake_session_factory()
+    observation = _observation_for(event, offer, kind=MarketplacePartyKind.PLATFORM)
+    session.get.side_effect = [mission, user, offer, product, store, observation, event]
+    session.scalars = AsyncMock(return_value=[])
+    monkeypatch.setattr(
+        "app.telegram.notifications.claim_unconsumed_events_async",
+        AsyncMock(return_value=[event]),
+    )
+    sent: list[str] = []
+
+    async def _send(chat_id: int, text: str, *, bot_token, **kwargs: object) -> None:
+        sent.append(text)
+
+    monkeypatch.setattr("app.telegram.notifications.send_message", _send)
+
+    result = await process_telegram_notifications(
+        session_factory, bot_token=SecretStr("token")
+    )
+
+    assert result.succeeded == 1
+    text = sent[0]
+    assert "💳" not in text
+    assert "💰 À vista: R$ 4.499,90\n↘️ Preço anterior" in text
+
+
+@pytest.mark.anyio
+async def test_prelist_ready_shows_only_the_highlighted_option_among_many(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pichau/Terabyte podem persistir muitas opções para a mesma
+    observação -- o card deve mostrar só o resumo, nunca a tabela
+    inteira."""
+    user = _user()
+    mission = _mission(user)
+    offer, product, store = _offer_context()
+    event = _ready_event(mission, offer)
+    session_factory, session = _fake_session_factory()
+    observation = _observation_for(event, offer, field="first_observation_id")
+    session.get.side_effect = [mission, user, offer, product, store, observation, event]
+    session.scalars = AsyncMock(
+        return_value=[
+            _installment_option(count=1, amount="1900.00"),
+            _installment_option(
+                count=6,
+                amount="331.90",
+                interest=InstallmentInterestKind.INTEREST_FREE,
+                highlighted=True,
+            ),
+            _installment_option(
+                count=12,
+                amount="180.00",
+                interest=InstallmentInterestKind.WITH_INTEREST,
+            ),
+        ]
+    )
+    monkeypatch.setattr(
+        "app.telegram.notifications.claim_unconsumed_events_async",
+        AsyncMock(return_value=[event]),
+    )
+    sent: list[str] = []
+
+    async def _send(chat_id: int, text: str, **kwargs: object) -> None:
+        sent.append(text)
+
+    monkeypatch.setattr("app.telegram.notifications.send_message", _send)
+
+    result = await process_telegram_prelist_notifications(
+        session_factory, bot_token=SecretStr("token")
+    )
+
+    assert result.succeeded == 1
+    text = sent[0]
+    assert text.count("💳") == 1
+    assert "💳 Parcelado: 6x de R$ 331,90 sem juros" in text
+    assert "12x de R$ 180,00" not in text
+    assert "1x de R$ 1.900,00" not in text

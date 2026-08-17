@@ -7,13 +7,16 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import (
     CHAR,
+    Boolean,
     CheckConstraint,
     DateTime,
     Enum,
     ForeignKey,
     Index,
+    Integer,
     Numeric,
     String,
+    UniqueConstraint,
     desc,
     func,
 )
@@ -21,7 +24,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PostgreSQLUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.collection.contracts import MarketplacePartyKind
+from app.collection.contracts import InstallmentInterestKind, MarketplacePartyKind
 from app.collection.normalization import Availability
 from app.collection.relevance import OfferRelevance
 from app.database.base import Base
@@ -199,6 +202,119 @@ class PriceObservation(Base):
         server_default=func.now(),
     )
     raw_evidence: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+
+
+class OfferInstallmentOption(Base):
+    """TASK-089 (DEC-069): uma condição de parcelamento apresentada pela
+    loja no momento de uma `PriceObservation` específica -- relação 1:N,
+    nunca campos escalares em `Offer`/`PriceObservation`, porque a
+    investigação real confirmou que Pichau e Terabyte apresentam várias
+    condições simultâneas por oferta (ex.: 1x-6x com desconto e 12x sem
+    juros), não uma só.
+
+    Vinculada a `price_observation_id` (não a `offer_id` direto) para
+    herdar de graça a mesma semântica histórica/"estado atual" já usada
+    por `PriceObservation`: a busca do "estado atual" é sempre pelas
+    opções da observação mais recente daquela oferta (mesmo índice
+    `ix_price_observations_offer_observed`), nunca por
+    UPDATE/DELETE/flag -- consistente com o restante do projeto ser
+    append-only. Opções que a loja deixou de oferecer simplesmente não
+    aparecem mais na observação seguinte; as antigas permanecem no
+    histórico, nunca apagadas.
+
+    `installment_total_amount`/`discount_percent` continuam `NULL`
+    sempre que a própria loja não rotular esse dado para esta opção
+    específica -- nunca calculados (`installment_count *
+    installment_amount` é proibido).
+
+    Auditoria pós-implementação: `installment_amount`/`installment_total_amount`
+    exigem `> 0` (não só `>= 0`, ao contrário de `PriceObservation.amount`,
+    que aceita zero). Divergência deliberada, não inconsistência: o preço
+    de um produto pode, em tese, ser zero (brinde/promoção); uma PARCELA
+    ou um TOTAL PARCELADO de R$0,00 nunca representa uma condição
+    comercial real -- só pode ser evidência de parsing quebrado, então o
+    banco recusa antes de persistir lixo. `discount_percent` ganhou teto
+    de 100 pela mesma razão: um desconto percentual acima de 100% nunca é
+    um valor real capturado da loja, só sinal de campo errado.
+
+    Extensão (apresentação Telegram): `is_highlighted` marca a opção que
+    corresponde exatamente ao que a loja resumiu no card da busca -- é
+    carimbada em `_installment_options_from_row`/`_merge_installment_options`
+    (`providers/base.py`), nunca aqui; sem ela, depois do merge com a
+    página individual não haveria como saber qual condição resumir numa
+    notificação sem reabrir a página de novo. No máximo uma linha por
+    `price_observation_id` deveria ficar `True` (o card só destaca uma
+    condição por vez), mas isso não é reforçado por CHECK -- é uma
+    garantia da camada de coleta, não do schema."""
+
+    __tablename__ = "offer_installment_options"
+    __table_args__ = (
+        CheckConstraint(
+            "installment_count > 0", name="ck_offer_installment_options_count_positive"
+        ),
+        CheckConstraint(
+            "installment_amount > 0",
+            name="ck_offer_installment_options_amount_positive",
+        ),
+        CheckConstraint(
+            "installment_total_amount IS NULL OR installment_total_amount > 0",
+            name="ck_offer_installment_options_total_positive",
+        ),
+        CheckConstraint(
+            "discount_percent IS NULL OR "
+            "(discount_percent >= 0 AND discount_percent <= 100)",
+            name="ck_offer_installment_options_discount_range",
+        ),
+        CheckConstraint(
+            "interest_kind IN ('interest_free', 'with_interest', 'unknown')",
+            name="ck_offer_installment_options_interest_kind_values",
+        ),
+        UniqueConstraint(
+            "price_observation_id",
+            "installment_count",
+            name="uq_offer_installment_options_observation_count",
+        ),
+        Index(
+            "ix_offer_installment_options_price_observation_id",
+            "price_observation_id",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4
+    )
+    price_observation_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("price_observations.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    installment_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    installment_amount: Mapped[Decimal] = mapped_column(Numeric(19, 4), nullable=False)
+    installment_total_amount: Mapped[Decimal | None] = mapped_column(
+        Numeric(19, 4), nullable=True
+    )
+    discount_percent: Mapped[Decimal | None] = mapped_column(
+        Numeric(5, 2), nullable=True
+    )
+    interest_kind: Mapped[InstallmentInterestKind] = mapped_column(
+        Enum(
+            InstallmentInterestKind,
+            name="installment_interest_kind",
+            values_callable=lambda values: [value.value for value in values],
+            native_enum=False,
+            create_constraint=False,
+            length=32,
+        ),
+        nullable=False,
+        default=InstallmentInterestKind.UNKNOWN,
+        server_default=InstallmentInterestKind.UNKNOWN.value,
+    )
+    is_highlighted: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="false",
+    )
 
 
 class MissionOfferRelevance(Base):

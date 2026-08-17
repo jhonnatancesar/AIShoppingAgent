@@ -409,6 +409,137 @@ def test_persist_phase_a_raises_when_mission_data_missing() -> None:
         asyncio.run(_persist_phase_a(_session_factory(session), claim, normalized))
 
 
+# --- TASK-089 (DEC-069): persistência de OfferInstallmentOption ---
+
+
+def test_persist_phase_a_creates_installment_options_tied_to_new_observation(
+    monkeypatch,
+) -> None:
+    from app.collection.contracts import InstallmentInterestKind, RawInstallmentOption
+    from app.collection.models import OfferInstallmentOption
+
+    mission_id, run_id, store_id, offer_id, product_id = (
+        uuid4(),
+        uuid4(),
+        uuid4(),
+        uuid4(),
+        uuid4(),
+    )
+    run = SimpleNamespace(
+        id=run_id,
+        mission_id=mission_id,
+        store_id=store_id,
+        status=CollectionRunStatus.RUNNING,
+        started_at=NOW,
+    )
+    mission = SimpleNamespace(id=mission_id)
+    criteria = SimpleNamespace(
+        mission_id=mission_id,
+        search_query="GPU",
+        model=None,
+        target_amount=None,
+        target_currency=None,
+    )
+    session = _mock_async_session()
+    session.scalar.side_effect = [run, criteria, None]
+    product = SimpleNamespace(display_name=None)
+    session.get.side_effect = [mission, None, product]
+    offer = SimpleNamespace(id=offer_id, product_id=product_id)
+    monkeypatch.setattr(
+        "app.collection.orchestration._resolve_offer", AsyncMock(return_value=offer)
+    )
+    claim = ClaimedCollection(run_id, mission_id, store_id, "pichau", "GPU", NOW)
+    raw = RawCollectedOffer(
+        source_code="pichau",
+        url="https://example.invalid/offer",
+        title="Synthetic product",
+        collected_at=NOW + timedelta(seconds=1),
+        external_id="stable",
+        raw_price="R$ 4.299,99",
+        raw_currency="BRL",
+        raw_shipping="Frete grátis",
+        raw_availability="Em estoque",
+        evidence={"card": "safe"},
+        installment_options=(
+            RawInstallmentOption(
+                installment_count=12,
+                raw_amount="R$ 421,57",
+                raw_total_amount="R$ 5.058,81",
+                interest_kind=InstallmentInterestKind.INTEREST_FREE,
+            ),
+        ),
+    )
+    result = CollectionResult("pichau", NOW, NOW + timedelta(seconds=2), (raw,))
+    normalized = PriceNormalizer().normalize_result(result)
+
+    asyncio.run(_persist_phase_a(_session_factory(session), claim, normalized))
+
+    observation = next(
+        call.args[0]
+        for call in session.add.call_args_list
+        if isinstance(call.args[0], PriceObservation)
+    )
+    installment_row = next(
+        call.args[0]
+        for call in session.add.call_args_list
+        if isinstance(call.args[0], OfferInstallmentOption)
+    )
+    assert installment_row.price_observation_id == observation.id
+    assert installment_row.installment_count == 12
+    assert installment_row.installment_amount == Decimal("421.57")
+    assert installment_row.installment_total_amount == Decimal("5058.81")
+    assert installment_row.interest_kind is InstallmentInterestKind.INTEREST_FREE
+
+
+def test_persist_phase_a_adds_no_installment_row_when_offer_has_none(
+    monkeypatch,
+) -> None:
+    from app.collection.models import OfferInstallmentOption
+
+    mission_id, run_id, store_id, offer_id, product_id = (
+        uuid4(),
+        uuid4(),
+        uuid4(),
+        uuid4(),
+        uuid4(),
+    )
+    run = SimpleNamespace(
+        id=run_id,
+        mission_id=mission_id,
+        store_id=store_id,
+        status=CollectionRunStatus.RUNNING,
+        started_at=NOW,
+    )
+    mission = SimpleNamespace(id=mission_id)
+    criteria = SimpleNamespace(
+        mission_id=mission_id,
+        search_query="GPU",
+        model=None,
+        target_amount=None,
+        target_currency=None,
+    )
+    session = _mock_async_session()
+    session.scalar.side_effect = [run, criteria, None]
+    product = SimpleNamespace(display_name=None)
+    session.get.side_effect = [mission, None, product]
+    offer = SimpleNamespace(id=offer_id, product_id=product_id)
+    monkeypatch.setattr(
+        "app.collection.orchestration._resolve_offer", AsyncMock(return_value=offer)
+    )
+    claim = ClaimedCollection(run_id, mission_id, store_id, "kabum", "GPU", NOW)
+    result = CollectionResult(
+        "kabum", NOW, NOW + timedelta(seconds=2), (_raw(source="kabum"),)
+    )
+    normalized = PriceNormalizer().normalize_result(result)
+
+    asyncio.run(_persist_phase_a(_session_factory(session), claim, normalized))
+
+    assert not any(
+        isinstance(call.args[0], OfferInstallmentOption)
+        for call in session.add.call_args_list
+    )
+
+
 # --- TASK-082: limitação de candidatos em busca genérica, integrada na Fase A ---
 
 

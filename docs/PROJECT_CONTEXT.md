@@ -1126,3 +1126,29 @@ avaliada. O enriquecimento é sequencial, sem retry, limitado a três e para em
 `20260816_0002` foi validada com downgrade/upgrade, `alembic check` e 33
 integrações no PostgreSQL 18.4 descartável. A suíte não-integração aprovou
 1.213 testes (1 ignorado, 90,26%). TASK-089 permanece não iniciada.
+
+**Atualização 2026-08-17 — TASK-089 concluída (DEC-069); release `v1.0.7`:**
+a investigação real revelou que uma oferta pode ter várias condições de
+parcelamento simultâneas, corrigindo o desenho original da `DEC-068` (três
+campos escalares) para uma relação 1:N (`offer_installment_options`,
+vinculada a `price_observation_id`, mesma semântica append-only do resto
+do projeto). Nenhum dado inferido ou calculado -- `discount_percent`/
+`interest_kind` só existem quando a loja os declara explicitamente;
+`installment_total_amount` nunca é `count × amount`. Uma auditoria técnica
+crítica dedicada, na mesma sessão, validou contra DOM real (Pichau/
+Terabyte) e banco real (14 integrações PostgreSQL 18.4 descartável: FK,
+UNIQUE, CHECK, rollback, histórico append-only) a ausência de inferência,
+a validade do `UNIQUE(price_observation_id, installment_count)` e do merge
+card+página individual, e o custo de navegação limitado (no máximo 3
+candidatos por loja com hook). Em seguida, a mesma TASK ganhou apresentação
+Telegram: alertas e pré-lista mostram `💰 À vista`/`💳 Parcelado`
+dinamicamente, com `is_highlighted` (novo campo, carimbado só na leitura
+do card) resolvendo qual opção resumir quando há várias persistidas.
+Interpretação de "quero em 6x" pelo usuário, novo `IntentKind` e qualquer
+integração com o fluxo de compra (`purchase/confirmation.py`) foram
+explicitamente adiados para uma V2 -- nada disso foi implementado.
+Validado com 1.264 testes não-integração (1 ignorado, 90,14% cobertura),
+Ruff e `git diff --check` limpos, `alembic check` sem drift no head
+`20260817_0001`. Publicada como release `v1.0.7`, consolidando TASK-089
+junto com TASK-077/084/088 e a revisão de textos das ofertas (já
+documentadas em 2026-08-16, ainda não publicadas).

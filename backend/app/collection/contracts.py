@@ -3,6 +3,7 @@
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
+from decimal import Decimal
 from enum import StrEnum
 from typing import Protocol, runtime_checkable
 from uuid import UUID
@@ -19,6 +20,17 @@ class MarketplacePartyKind(StrEnum):
     UNKNOWN = "unknown"
 
 
+class InstallmentInterestKind(StrEnum):
+    """TASK-089: só marca `INTEREST_FREE`/`WITH_INTEREST` quando a própria
+    loja afirma isso explicitamente no texto (ex.: "sem juros"/"com juros")
+    -- `UNKNOWN` nunca é tratado como "provavelmente sem juros"; a
+    investigação real confirmou lojas (KaBuM!) que não declaram nada."""
+
+    INTEREST_FREE = "interest_free"
+    WITH_INTEREST = "with_interest"
+    UNKNOWN = "unknown"
+
+
 def _require_text(value: str, field_name: str) -> None:
     if not value.strip():
         raise CollectionContractError(f"{field_name} must not be blank")
@@ -27,6 +39,56 @@ def _require_text(value: str, field_name: str) -> None:
 def _require_aware(value: datetime, field_name: str) -> None:
     if value.tzinfo is None or value.utcoffset() is None:
         raise CollectionContractError(f"{field_name} must be timezone-aware")
+
+
+def _require_positive_int(value: int, field_name: str) -> None:
+    if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+        raise CollectionContractError(f"{field_name} must be a positive int")
+
+
+@dataclass(frozen=True, slots=True)
+class RawInstallmentOption:
+    """TASK-089: uma condição de parcelamento efetivamente apresentada pela
+    loja para uma oferta -- nunca inventada, nunca calculada.
+
+    `raw_amount`/`raw_total_amount` continuam texto bruto (mesmo motivo de
+    `RawCollectedOffer.raw_price`): a normalização monetária determinística
+    já existe em `PriceNormalizer` e não deve ser duplicada aqui.
+    `raw_total_amount` só é preenchido quando a própria loja mostra um
+    total rotulado para exatamente esta opção (ex.: `price_total` da
+    Pichau) -- na ausência, fica `None`, nunca `installment_count *
+    installment_amount`. `discount_percent` só existe quando a loja anuncia
+    esse percentual perto da opção (ex.: "com 15% de desconto"); nunca
+    inferido a partir de outros preços."""
+
+    installment_count: int
+    raw_amount: str
+    raw_total_amount: str | None = None
+    discount_percent: Decimal | None = None
+    interest_kind: InstallmentInterestKind = InstallmentInterestKind.UNKNOWN
+    is_highlighted: bool = False
+    """Extensão TASK-089 (apresentação Telegram): marca a opção exatamente
+    como resumida no card da busca -- a condição que a própria loja
+    decidiu destacar, nunca uma escolha do coletor. Só nasce `True` em
+    `_installment_options_from_row` (o card sempre expõe no máximo uma
+    linha) e é preservada por `_merge_installment_options`; jamais
+    recalculada a partir de preço/quantidade."""
+
+    def __post_init__(self) -> None:
+        _require_positive_int(self.installment_count, "installment_count")
+        _require_text(self.raw_amount, "raw_amount")
+        if self.raw_total_amount is not None and not self.raw_total_amount.strip():
+            raise CollectionContractError(
+                "raw_total_amount must not be blank when informed"
+            )
+        if self.discount_percent is not None and self.discount_percent < 0:
+            raise CollectionContractError("discount_percent must not be negative")
+        if not isinstance(self.interest_kind, InstallmentInterestKind):
+            raise CollectionContractError(
+                "interest_kind must use InstallmentInterestKind"
+            )
+        if not isinstance(self.is_highlighted, bool):
+            raise CollectionContractError("is_highlighted must be a bool")
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,6 +126,11 @@ class RawCollectedOffer:
     fulfillment_kind: MarketplacePartyKind | None = None
     image_url: str | None = None
     evidence: Mapping[str, object] = field(default_factory=dict)
+    installment_options: tuple[RawInstallmentOption, ...] = ()
+    """TASK-089: zero ou mais condições de parcelamento explicitamente
+    apresentadas pela loja para esta oferta -- card e/ou página individual
+    (`PlaywrightStoreProvider.enrich_installment_options`). Vazio nunca
+    invalida a oferta; preço à vista continua vindo só de `raw_price`."""
 
     def __post_init__(self) -> None:
         _require_text(self.source_code, "source_code")
@@ -73,6 +140,18 @@ class RawCollectedOffer:
         if self.image_url is not None and normalize_http_url(self.image_url) is None:
             raise CollectionContractError(
                 "image_url must be an absolute HTTP/HTTPS URL"
+            )
+        if not isinstance(self.installment_options, tuple) or any(
+            not isinstance(option, RawInstallmentOption)
+            for option in self.installment_options
+        ):
+            raise CollectionContractError(
+                "installment_options must be a tuple of RawInstallmentOption"
+            )
+        counts = [option.installment_count for option in self.installment_options]
+        if len(set(counts)) != len(counts):
+            raise CollectionContractError(
+                "installment_options must not repeat installment_count"
             )
 
 

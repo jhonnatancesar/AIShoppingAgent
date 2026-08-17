@@ -1,5 +1,53 @@
 # Decision Log
 
+## DEC-069 — Corrigir a modelagem de parcelamento da TASK-089 para relação 1:N
+
+- **Data:** 2026-08-17.
+- **Classificação:** Correção arquitetural da TASK-089/DEC-068, antes de
+  qualquer código ter sido consolidado (a investigação real de campo mudou
+  o entendimento do problema).
+- **O que mudou:** a investigação real nas quatro lojas (Pichau, Terabyte,
+  Amazon, KaBuM!) mostrou que uma oferta pode ter **várias** condições de
+  parcelamento simultâneas, não uma só. Pichau expõe 1x-6x com desconto
+  (percentual variável por produto, nunca fixo) mais um "12x sem juros"
+  padrão com total explícito; Terabyte expõe uma faixa completa 1x-18x com
+  desconto decrescente nas primeiras parcelas, "sem juros" nas
+  intermediárias e **juros reais** a partir de certa quantidade. O desenho
+  original de DEC-068 (`installment_total_amount`/`installment_count`/
+  `installment_amount` escalares direto em `Offer`/`PriceObservation`)
+  representa só UMA condição — insuficiente e, se implementado, teria
+  descartado a maior parte da evidência real encontrada.
+- **Decisão arquitetural:** os três campos escalares são substituídos por
+  uma entidade dedicada, `OfferInstallmentOption`, em relação 1:N —
+  vinculada a `PriceObservation.id` (não a `Offer.id` direto), pelo mesmo
+  motivo histórico/append-only que já rege `PriceObservation`: o "estado
+  atual" das opções é sempre o da observação mais recente da oferta,
+  nunca por UPDATE/DELETE/flag. Amazon e KaBuM! continuam gerando no
+  máximo uma opção por oferta (só o que o card mostra); Pichau e Terabyte
+  podem gerar várias.
+- **Guardrails que continuam valendo, agora por opção:** nunca calcular
+  `installment_total_amount` a partir de `count * amount`; nunca inferir
+  desconto, juros, ou usar preço riscado/"De:" como total; percentuais de
+  desconto lidos sempre do texto atual da página, nunca fixados no código
+  (a investigação encontrou percentuais diferentes até no mesmo produto
+  Pichau, dependendo de ter ou não o selo promocional "Desconto em Até
+  Nx"); ausência de parcelamento nunca invalida a oferta.
+- **Sem migration destrutiva:** como nenhum código da DEC-068 havia sido
+  consolidado ainda, a migration criada (`20260817_0001`) já nasce com o
+  modelo 1:N — não existiu uma migration anterior de 3 campos para
+  reverter.
+- **Fora de escopo mantido (rodada de modelo):** nenhuma alteração em
+  mensagens do Telegram/apresentação nesta rodada — só investigação,
+  modelo, migration, contratos, providers e persistência. Ver
+  `docs/tasks/TASK-089.md`.
+- **Atualização (2026-08-17, rodada de apresentação):** o escopo acima
+  foi retomado na mesma TASK-089 — alertas e pré-lista agora mostram
+  `💰 À vista`/`💳 Parcelado` dinamicamente, com `is_highlighted` extra
+  em `OfferInstallmentOption` para saber qual opção a loja destacou no
+  card. Interpretação de "quero em Nx" pelo usuário e qualquer alteração
+  no `IntentInterpreter`/fluxo de compra foram explicitamente adiadas
+  para uma V2 — ver seção "V2" em `docs/tasks/TASK-089.md`.
+
 ## DEC-068 — Separar preço à vista e parcelado da classificação de vendedor
 
 - **Data:** 2026-08-16

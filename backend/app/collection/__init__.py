@@ -6,9 +6,11 @@ from app.collection.contracts import (
     CollectionProvider,
     CollectionRequest,
     CollectionResult,
+    InstallmentInterestKind,
     MarketplacePartyKind,
     ProductIdentityResolver,
     RawCollectedOffer,
+    RawInstallmentOption,
     ResolvedProductIdentity,
 )
 from app.collection.errors import (
@@ -32,6 +34,7 @@ from app.collection.normalization import (
     Availability,
     NormalizedCollectedOffer,
     NormalizedCollectionResult,
+    NormalizedInstallmentOption,
     PriceNormalizer,
 )
 from app.collection.providers import (
@@ -51,11 +54,14 @@ __all__ = [
     "CollectionProvider",
     "CollectionRequest",
     "CollectionResult",
+    "InstallmentInterestKind",
     "MarketplacePartyKind",
     "Availability",
     "NormalizedCollectedOffer",
     "NormalizedCollectionResult",
+    "NormalizedInstallmentOption",
     "PriceNormalizer",
+    "RawInstallmentOption",
     "PriceHistoryPage",
     "PriceHistoryQueryError",
     "ProductIdentityResolver",

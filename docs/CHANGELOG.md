@@ -1,5 +1,54 @@
 # Changelog
 
+## 2026-08-17 — TASK-089 concluída (DEC-069) + apresentação Telegram; release `v1.0.7`
+
+- **Correção arquitetural (`DEC-069`)**: a investigação real de campo
+  (Pichau, Terabyte, Amazon, KaBuM!) mostrou que uma oferta pode ter
+  **várias** condições de parcelamento simultâneas — o desenho original
+  planejado em `DEC-068` (três campos escalares em `Offer`/
+  `PriceObservation`) foi abandonado antes de qualquer código ser
+  consolidado e substituído por uma relação 1:N
+  (`offer_installment_options`, vinculada a `price_observation_id`, mesma
+  semântica append-only/"estado atual = observação mais recente" já
+  usada no resto do projeto).
+- Nenhum dado é inferido ou calculado: `discount_percent`/`interest_kind`
+  só existem quando a própria loja os declara explicitamente no texto;
+  `installment_total_amount` nunca é `count × amount`. Constraints
+  `installment_amount`/`installment_total_amount > 0` (divergência
+  deliberada do `>= 0` de `price_observations.amount`) e
+  `discount_percent` entre `0` e `100`.
+- Auditoria técnica crítica dedicada (segunda rodada, mesma sessão)
+  validou contra DOM real e banco real: ausência de inferência (testes
+  adversariais), `UNIQUE(price_observation_id, installment_count)` e o
+  merge card+página individual confirmados equivalentes byte-a-byte em
+  Pichau/Terabyte reais, 14 testes de integração em PostgreSQL 18.4
+  descartável (FK, UNIQUE, CHECK, rollback transacional, histórico
+  append-only entre observações sucessivas), custo de navegação limitado
+  (no máximo 3 candidatos por loja com hook, Amazon/KaBuM! nunca abrem
+  página extra).
+- **Apresentação Telegram** (mesma TASK, terceira rodada): alertas de
+  queda/alvo e pré-lista passam a mostrar `💰 À vista: {preço}` sempre e
+  `💳 Parcelado: {resumo}` quando existe opção real persistida — nunca
+  hardcoded, nunca calculado. Como uma oferta pode ter várias opções
+  persistidas, foi adicionado `is_highlighted` (carimbado só na leitura
+  do card da busca, preservado pelo merge) para saber qual delas resumir;
+  regra determinística sem IA: destaque do card → maior `interest_free` →
+  maior contagem disponível → sem linha. `discount_percent` permanece no
+  banco, mas não entra nesta linha resumida.
+- **V2 explicitamente adiada** (decisão do usuário, mesma sessão):
+  interpretação de "quero em 6x"/"quero parcelado", novo `IntentKind`,
+  rastreamento de oferta apresentada e qualquer integração com o fluxo de
+  compra (`purchase/confirmation.py`) — nada disso foi implementado;
+  fica só documentado para uma versão futura.
+- Validação: 1.264 testes não-integração aprovados, 1 ignorado, cobertura
+  90,14%; 14 integrações aprovadas no PostgreSQL 18.4 descartável para
+  `offer_installment_options`; `alembic check` sem drift no head
+  `20260817_0001`; Ruff e `git diff --check` limpos.
+- Publicada como release `v1.0.7`, consolidando **TASK-089**
+  (`docs/tasks/TASK-089.md`, `DEC-069`) junto com o trabalho já
+  documentado em 2026-08-16 (**TASK-077**, **TASK-084**, **TASK-088** e a
+  revisão de textos das ofertas) que ainda não havia sido publicado.
+
 ## 2026-08-16 — TASK-077
 
 - Amazon e KaBuM! passam a classificar historicamente vendedor e entrega como

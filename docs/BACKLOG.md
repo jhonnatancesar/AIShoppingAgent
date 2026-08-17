@@ -1,7 +1,7 @@
 # Backlog de Evoluções Futuras
 
-> Estado em 2026-08-16: TASK-077 e TASK-084 estão concluídas; TASK-089 está
-> planejada e não iniciada. O limite WSL2 e a política de não habilitar
+> Estado em 2026-08-17: TASK-077, TASK-084 e TASK-089 estão concluídas
+> (release `v1.0.7`). O limite WSL2 e a política de não habilitar
 > schedules de missões terminais são estado operacional, não novos itens de
 > backlog.
 
@@ -51,11 +51,18 @@ Para cada item novo, registrar uma descrição curta, a motivação e eventuais 
 
 ## Dados e análise
 
-- **TASK-089 planejada — preço à vista e parcelado (`DEC-068`)**:
-  investigar os quatro providers e modelar separadamente preço à vista, preço
-  parcelado, quantidade e valor das parcelas quando explicitamente disponíveis;
-  preservar a semântica atual e todo o histórico. Formalmente registrada, mas
-  não iniciada e sem autorização de implementação.
+- **V2 de parcelamento (TASK-089/`DEC-069` concluída na `v1.0.7`)**: a
+  V1 já coleta, persiste (`offer_installment_options`, 1:N por
+  observação) e apresenta nas mensagens do Telegram (`💰 À vista`/
+  `💳 Parcelado`) as condições reais de parcelamento, sem inferência.
+  Ficam para uma V2 futura, explicitamente fora desta release: novo
+  `IntentKind` para o usuário escolher uma condição de parcelamento;
+  interpretação de frases como "quero em 6x"/"quero parcelado"; um
+  mecanismo de rastreamento de "oferta apresentada" por usuário/chat/
+  missão (hoje inexistente no projeto); integração dessa escolha com o
+  fluxo de compra/confirmação (`purchase/confirmation.py`); qualquer
+  análise (por IA ou determinística) de custo-benefício, comparação
+  entre condições ou "melhor parcelamento".
 - Analytics avançado de preços e comportamento de compra.
 - Relatórios exportáveis e agendados.
 - Comparador de preços avançado, com critérios configuráveis e visualizações históricas.
