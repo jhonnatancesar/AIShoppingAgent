@@ -36,14 +36,21 @@ A V1 permitirá pesquisar Pichau, Terabyte, Amazon e Kabum, conforme seleção d
 ## Continuidade no servidor — estado atual em 2026-08-17
 
 O ambiente autoritativo é `C:\App\AIShoppingAgent`, no Windows Server. A
-`main` está em `66ad35a461fe1970f13264cf54e12e4397aa61f7` (tag `v1.0.8`),
-igual a `origin/main`, e esse HEAD foi implantado no stack local de 7
-serviços (`api`, `collection_worker`, `telegram_notifier` reconstruídos e
-recriados juntos a partir da mesma imagem `aishoppingagent-app:local`).
-`v1.0.8` corrige os links do Telegram ("Ver anúncio"), que chegavam como
-texto puro em vez de clicáveis -- `parse_mode="HTML"` + entidade `<a
-href="...">` explícita, com todo texto dinâmico escapado
-(`html.escape`); sem migration nova. O head do Alembic continua
+`main` está em `942efcf4eac4b7b5f4d3db940c5888c1e655b401` (tag `v1.0.9`),
+igual a `origin/main`. `v1.0.8` corrigiu o formato do link do Telegram
+("Ver anúncio") com `parse_mode="HTML"` + entidade `<a href="...">`
+explícita e `html.escape` no texto dinâmico -- necessário mas não
+suficiente. `v1.0.9` corrigiu a causa raiz real: `telegram_notifier`
+nunca recebia `AISHOPPING_AUTH_PUBLIC_BASE_URL` no `compose.yaml` (só
+`api` tinha), então o link caía no default de código
+`http://localhost:8000`, inalcançável fora da máquina --
+`/cadastro`/`/entrar`/`/recuperar` sempre funcionaram por rodarem no
+`api`. Confirmado de dentro do container (`Settings().
+auth_public_base_url` e `build_offer_short_url` reais) que agora
+resolve para `https://cesar-server.tail7d0ce1.ts.net`. Só
+`telegram_notifier` foi recriado nesta correção (única fonte de link
+curto de oferta; sem rebuild de imagem, sem migration). O head do
+Alembic continua
 `20260817_0001` (migration de `offer_installment_options`, aplicada com
 `alembic upgrade head` a partir de `20260811_0001`, passando por
 `20260816_0001`/`20260816_0002`). Backup operacional validado antes da
