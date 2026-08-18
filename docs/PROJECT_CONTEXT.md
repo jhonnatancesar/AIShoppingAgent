@@ -1152,3 +1152,21 @@ Ruff e `git diff --check` limpos, `alembic check` sem drift no head
 `20260817_0001`. Publicada como release `v1.0.7`, consolidando TASK-089
 junto com TASK-077/084/088 e a revisão de textos das ofertas (já
 documentadas em 2026-08-16, ainda não publicadas).
+
+**Atualização 2026-08-17 (2) — releases `v1.0.8`/`v1.0.9`, correção do link
+do Telegram:** o usuário reportou que o link "🔗 Ver anúncio" chegava como
+texto puro, não clicável. `v1.0.8` corrigiu o formato
+(`parse_mode="HTML"` + `<a href="...">` explícita, `html.escape` em todo
+texto dinâmico) e foi declarada resolvida sem verificar a URL real
+embutida -- erro corrigido na mesma sessão. O usuário testou de novo,
+confirmou que continuava quebrado, e identificou a causa raiz real: o
+serviço `telegram_notifier` nunca recebia `AISHOPPING_AUTH_PUBLIC_BASE_URL`
+no `compose.yaml` (só `api` tinha), então o link caía no default de código
+`http://localhost:8000`, inalcançável fora do servidor --
+`/cadastro`/`/entrar`/`/recuperar` sempre funcionaram por rodarem no `api`.
+`v1.0.9` propagou a mesma variável ao `telegram_notifier` e a correção foi
+verificada de dentro do container real (`Settings().auth_public_base_url`
+e `build_offer_short_url(...)` produzindo a URL real do Tailscale), não só
+por `docker compose config`. Lição registrada em memória
+(`feedback_verify_actual_output_not_just_mechanism`): mecanismo testado
+com mock não prova valor real em produção.

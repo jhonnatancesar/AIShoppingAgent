@@ -1,5 +1,34 @@
 # Changelog
 
+## 2026-08-17 (3) — Correção: causa raiz real do link não clicável era `localhost`, não só `parse_mode`; release `v1.0.9`
+
+- **Erro cometido e corrigido na mesma sessão**: a `v1.0.8` (abaixo) tratou o
+  formato do link (`parse_mode="HTML"`) e foi declarada como resolvendo o
+  problema, mas o usuário testou de verdade e confirmou que o link
+  continuava não clicável -- a correção era necessária, mas não suficiente.
+- **Causa raiz real**: o serviço `telegram_notifier` (quem efetivamente
+  envia alertas/pré-lista) nunca recebia `AISHOPPING_AUTH_PUBLIC_BASE_URL`
+  no `compose.yaml` -- só o serviço `api` tinha essa variável configurada.
+  Sem ela, `Settings.auth_public_base_url` caía no default de código
+  `http://localhost:8000`, inalcançável fora do próprio servidor, e era
+  essa URL quebrada que ia parar em todo link curto de oferta.
+  `/cadastro`/`/entrar`/`/recuperar` sempre funcionaram porque rodam no
+  serviço `api`, que já tinha a variável certa -- o próprio usuário
+  identificou essa assimetria e apontou a causa.
+- Corrigido propagando a mesma `AISHOPPING_AUTH_PUBLIC_BASE_URL` para o
+  bloco `telegram_notifier` em `compose.yaml`. Verificado de dentro do
+  container real em produção (não só `docker compose config`):
+  `Settings().auth_public_base_url` e `build_offer_short_url(...)` passam a
+  produzir `https://cesar-server.tail7d0ce1.ts.net/r/...` de verdade.
+- Só `telegram_notifier` foi recriado (única fonte de link curto de
+  oferta; `collection_worker` nunca constrói esses links) -- sem rebuild de
+  imagem, sem migration, sem tocar nos outros 6 serviços.
+- **Lição registrada em memória** (`feedback_verify_actual_output_not_just_mechanism`):
+  corrigir um bug relatado exige verificar o valor real produzido em
+  produção, não só que o mecanismo de correção está sintaticamente certo e
+  passa em teste com mock.
+- Publicada como release `v1.0.9`.
+
 ## 2026-08-17 (2) — Correção: links do Telegram chegavam como texto puro; release `v1.0.8`
 
 - Alertas, pré-lista e atualização de pré-lista enviavam o link "🔗 Ver
