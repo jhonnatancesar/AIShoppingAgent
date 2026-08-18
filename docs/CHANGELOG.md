@@ -1,5 +1,24 @@
 # Changelog
 
+## 2026-08-17 (2) — Correção: links do Telegram chegavam como texto puro; release `v1.0.8`
+
+- Alertas, pré-lista e atualização de pré-lista enviavam o link "🔗 Ver
+  anúncio" via `sendMessage`/`sendPhoto` sem `parse_mode` -- a Bot API não
+  garante nem documenta auto-detecção de URL em texto plano, então o link
+  chegava como texto inerte em vez de clicável.
+- Corrigido com `parse_mode="HTML"` + entidade explícita
+  `<a href="...">` (`_telegram_link`, `backend/app/telegram/notifications.py`)
+  para o link, e `html.escape()` em todo texto dinâmico interpolado
+  (título do produto, nome da loja, título da missão) para não quebrar o
+  parser HTML nem permitir injeção de marcação.
+- Os links de `/entrar`/`/recuperar` (`router.py`) usam o mesmo padrão
+  antigo sem `parse_mode`, mas o usuário confirmou que esses dois
+  continuam funcionando -- não alterados nesta correção.
+- 1271 testes não-integração aprovados (8 novos cobrindo o payload com
+  `parse_mode`, o formato do link e o escape de `<`/`&`/`"`), Ruff e
+  `git diff --check` limpos. Sem migration.
+- Publicada como release `v1.0.8`.
+
 ## 2026-08-17 — TASK-089 concluída (DEC-069) + apresentação Telegram; release `v1.0.7`
 
 - **Correção arquitetural (`DEC-069`)**: a investigação real de campo

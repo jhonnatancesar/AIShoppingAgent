@@ -1,5 +1,6 @@
 """Consumidor de alertas de preço com entrega proativa pelo Telegram."""
 
+import html
 import logging
 import random
 from collections.abc import Sequence
@@ -434,8 +435,14 @@ async def _send_part(
     circuit_failure_threshold: int,
     circuit_open_seconds: float,
 ) -> None:
+    """Envia com `parse_mode="HTML"` sempre -- os links (`_telegram_link`)
+    exigem entidade `<a href="...">` explícita para ficar clicáveis, e todo
+    texto dinâmico dos templates já é escapado (`html.escape`) antes de
+    chegar aqui; mensagens sem link (ex.: autenticação) são texto fixo
+    seguro, sem caracteres HTML especiais."""
     kwargs = {
         "bot_token": bot_token,
+        "parse_mode": "HTML",
         "timeout_seconds": timeout_seconds,
         "retry_after_cap_seconds": retry_after_cap_seconds,
         "circuit_failure_threshold": circuit_failure_threshold,
@@ -791,8 +798,10 @@ def _render_alert(
     payload = event.payload
     if not isinstance(payload, dict):
         raise TelegramNotificationError("notification_payload_invalid")
-    display_name = product.display_name or product.name
+    display_name = html.escape(product.display_name or product.name)
+    mission_title_safe = html.escape(mission_title)
     marketplace_line = _marketplace_party_line(store, observation)
+    link_line = _telegram_link(short_url)
     try:
         event_type = EventType(event.event_type)
         currency = _currency(payload)
@@ -803,14 +812,14 @@ def _render_alert(
             return (
                 "📉 O PREÇO CAIU\n\n"
                 f"{display_name}\n\n"
-                f"🏪 {store.name}\n"
+                f"🏪 {html.escape(store.name)}\n"
                 f"{marketplace_line}"
                 f"💰 À vista: {format_money(current_total, currency)}\n"
                 f"{installment_line}"
                 f"↘️ Preço anterior: {format_money(previous_total, currency)}\n"
-                f"🔎 Missão: {mission_title}\n\n"
+                f"🔎 Missão: {mission_title_safe}\n\n"
                 "🔗 Ver anúncio\n"
-                f"{short_url}"
+                f"{link_line}"
             )
         if event_type is EventType.PRICE_TARGET_REACHED_V1:
             target_total = _money(payload, "target_total")
@@ -819,14 +828,14 @@ def _render_alert(
             return (
                 "🔥 PREÇO-ALVO ENCONTRADO\n\n"
                 f"{display_name}\n\n"
-                f"🏪 {store.name}\n"
+                f"🏪 {html.escape(store.name)}\n"
                 f"{marketplace_line}"
                 f"💰 À vista: {format_money(current_total, currency)}\n"
                 f"{installment_line}"
                 f"🎯 Preço-alvo: {format_money(target_total, currency)}\n"
-                f"🔎 Missão: {mission_title}\n\n"
+                f"🔎 Missão: {mission_title_safe}\n\n"
                 "🔗 Ver anúncio\n"
-                f"{short_url}"
+                f"{link_line}"
             )
     except InvalidOperation, TypeError, ValueError:
         raise TelegramNotificationError("notification_payload_invalid") from None
@@ -920,23 +929,34 @@ def _marketplace_party_line(store: Store, observation: PriceObservation) -> str:
     fulfillment = observation.fulfillment_kind
     if seller is None and fulfillment is None:
         return ""
+    store_name = html.escape(store.name)
     if seller is fulfillment is MarketplacePartyKind.PLATFORM:
         official = {
             "amazon": "Amazon.com.br",
             "kabum": "KaBuM!",
-        }.get(store.code, store.name)
+        }.get(store.code, store_name)
         return f"📦 Vendido e entregue por: {official}\n"
     if seller is fulfillment is MarketplacePartyKind.MARKETPLACE_PARTNER:
-        return f"📦 Vendido e entregue por: Loja parceira {store.name}\n"
+        return f"📦 Vendido e entregue por: Loja parceira {store_name}\n"
     if seller is fulfillment is MarketplacePartyKind.UNKNOWN:
         return "📦 Vendedor e entrega não identificados\n"
     labels = {
-        MarketplacePartyKind.PLATFORM: store.name,
-        MarketplacePartyKind.MARKETPLACE_PARTNER: f"Loja parceira {store.name}",
+        MarketplacePartyKind.PLATFORM: store_name,
+        MarketplacePartyKind.MARKETPLACE_PARTNER: f"Loja parceira {store_name}",
         MarketplacePartyKind.UNKNOWN: "Não identificado",
         None: "Não avaliado",
     }
     return f"📦 Vendido por: {labels[seller]}\n🚚 Entregue por: {labels[fulfillment]}\n"
+
+
+def _telegram_link(url: str) -> str:
+    """Link explícito via entidade HTML (`<a href="...">`) -- a Bot API não
+    garante/documenta auto-detecção de URL em texto plano (`sendMessage`
+    sem `parse_mode`); só uma entidade HTML explícita garante que o link
+    fique clicável em qualquer cliente. Exige `parse_mode="HTML"` no envio
+    (`_send_part`) e que todo o resto do texto já esteja escapado."""
+    escaped = html.escape(url, quote=True)
+    return f'<a href="{escaped}">{escaped}</a>'
 
 
 _PRELIST_SHIPPING_DISCLAIMER = "⚠️ Frete não incluído. Consulte o valor na loja."
@@ -964,18 +984,18 @@ async def _render_prelist_block_async(
     ) = await _load_offer_context_async(session, offer_id, observation_id)
     link = await get_or_create_offer_short_link(session, offer.id)
     short_url = build_offer_short_url(public_base_url, link.token)
-    display_name = product.display_name or product.name
+    display_name = html.escape(product.display_name or product.name)
     number = {1: "1️⃣", 2: "2️⃣"}.get(position, f"{position}.")
     text = (
         prefix + f"{number} {display_name}\n"
-        f"🏪 {store.name}\n"
+        f"🏪 {html.escape(store.name)}\n"
         f"{_marketplace_party_line(store, observation)}"
         f"💰 À vista: {format_money(amount, currency)}\n"
         f"{_installment_line(installment_options, currency)}"
-        f"🔎 Missão: {mission_title}\n"
+        f"🔎 Missão: {html.escape(mission_title)}\n"
         f"{_PRELIST_SHIPPING_DISCLAIMER}\n"
         "🔗 Ver anúncio\n"
-        f"{short_url}" + suffix
+        f"{_telegram_link(short_url)}" + suffix
     )
     return _PreparedMessagePart(offer.id, position - 1, text, offer.image_url)
 
@@ -1071,7 +1091,7 @@ async def _render_prelist_errata_async(
     ) = await _load_offer_context_async(session, offer_id, observation_id)
     link = await get_or_create_offer_short_link(session, offer.id)
     short_url = build_offer_short_url(public_base_url, link.token)
-    display_name = product.display_name or product.name
+    display_name = html.escape(product.display_name or product.name)
     if had_previous:
         header = "🔄 ATUALIZAÇÃO DA PRÉ-LISTA\n\n"
         note = (
@@ -1086,16 +1106,16 @@ async def _render_prelist_errata_async(
         )
     text = (
         f"{header}"
-        f"🔎 Missão: {mission_title}\n\n"
+        f"🔎 Missão: {html.escape(mission_title)}\n\n"
         f"{note}\n\n"
         f"1️⃣ {display_name}\n"
-        f"🏪 {store.name}\n"
+        f"🏪 {html.escape(store.name)}\n"
         f"{_marketplace_party_line(store, observation)}"
         f"💰 À vista: {format_money(current_amount, currency)}\n"
         f"{_installment_line(installment_options, currency)}"
         f"{_PRELIST_SHIPPING_DISCLAIMER}\n\n"
         "🔗 Ver anúncio\n"
-        f"{short_url}"
+        f"{_telegram_link(short_url)}"
     )
     return (_PreparedMessagePart(offer.id, 0, text, offer.image_url),)
 

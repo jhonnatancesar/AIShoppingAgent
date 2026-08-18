@@ -122,12 +122,19 @@ async def send_message(
     text: str,
     *,
     bot_token: SecretStr,
+    parse_mode: str | None = None,
     timeout_seconds: float = 10.0,
     retry_after_cap_seconds: float = 30.0,
     circuit_failure_threshold: int = 5,
     circuit_open_seconds: float = 30.0,
 ) -> None:
-    """Envia uma mensagem de texto para uma conversa, sem bloquear o loop de eventos."""
+    """Envia uma mensagem de texto para uma conversa, sem bloquear o loop de eventos.
+
+    `parse_mode` (ex.: `"HTML"`) só deve ser usado quando o chamador já
+    escapou todo texto dinâmico interpolado -- a Bot API não detecta URLs
+    em texto plano de forma confiável/documentada, então links clicáveis
+    exigem entidade HTML explícita (`<a href="...">`), nunca a esperança
+    de auto-detecção client-side."""
     circuit = CIRCUITS.get(
         _TELEGRAM_CIRCUIT_KEY,
         failure_threshold=circuit_failure_threshold,
@@ -138,11 +145,14 @@ async def send_message(
     except CircuitOpenError:
         observe_resilience_event("telegram", "circuit_open")
         raise TelegramBotAPIUnavailable("telegram_api_circuit_open") from None
+    params: dict[str, object] = {"chat_id": chat_id, "text": text}
+    if parse_mode is not None:
+        params["parse_mode"] = parse_mode
     try:
         response = await asyncio.to_thread(
             call_bot_api,
             "sendMessage",
-            {"chat_id": chat_id, "text": text},
+            params,
             bot_token=bot_token,
             timeout_seconds=timeout_seconds,
             retry_after_cap_seconds=retry_after_cap_seconds,
@@ -173,6 +183,7 @@ async def send_photo(
     caption: str,
     *,
     bot_token: SecretStr,
+    parse_mode: str | None = None,
     timeout_seconds: float = 10.0,
     retry_after_cap_seconds: float = 30.0,
     circuit_failure_threshold: int = 5,
@@ -191,11 +202,18 @@ async def send_photo(
     except CircuitOpenError:
         observe_resilience_event("telegram", "circuit_open")
         raise TelegramBotAPIUnavailable("telegram_api_circuit_open") from None
+    params: dict[str, object] = {
+        "chat_id": chat_id,
+        "photo": photo_url,
+        "caption": caption,
+    }
+    if parse_mode is not None:
+        params["parse_mode"] = parse_mode
     try:
         response = await asyncio.to_thread(
             call_bot_api,
             "sendPhoto",
-            {"chat_id": chat_id, "photo": photo_url, "caption": caption},
+            params,
             bot_token=bot_token,
             timeout_seconds=timeout_seconds,
             retry_after_cap_seconds=retry_after_cap_seconds,

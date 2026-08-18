@@ -24,6 +24,7 @@ from app.telegram.notifications import (
     _installment_line,
     _marketplace_party_line,
     _select_installment_summary_option,
+    _telegram_link,
     process_telegram_authentication_notifications,
     process_telegram_notifications,
     process_telegram_prelist_notifications,
@@ -1175,3 +1176,101 @@ async def test_prelist_ready_shows_only_the_highlighted_option_among_many(
     assert "💳 Parcelado: 6x de R$ 331,90 sem juros" in text
     assert "12x de R$ 180,00" not in text
     assert "1x de R$ 1.900,00" not in text
+
+
+# --- correção: links devem chegar como entidade HTML clicável, não texto ---
+
+
+def test_telegram_link_wraps_url_in_anchor_tag() -> None:
+    link = _telegram_link("https://exemplo.com/o/ab12cd34")
+
+    assert (
+        link
+        == '<a href="https://exemplo.com/o/ab12cd34">https://exemplo.com/o/ab12cd34</a>'
+    )
+
+
+def test_telegram_link_escapes_special_characters() -> None:
+    link = _telegram_link('https://exemplo.com/o/ab?x=1&y="2"')
+
+    assert "&amp;" in link
+    assert "&quot;" in link
+    assert '"2"' not in link  # aspas cruas quebrariam o atributo href
+
+
+@pytest.mark.anyio
+async def test_alert_sends_html_parse_mode_with_clickable_link(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A Bot API não garante auto-detecção de URL em texto plano -- o
+    link só fica clicável com `parse_mode="HTML"` e uma entidade
+    `<a href="...">` explícita."""
+    user = _user()
+    mission = _mission(user)
+    event = _event(mission, event_type="price.decreased.v1")
+    offer, product, store = _offer_context()
+    session_factory, session = _fake_session_factory()
+    observation = _observation_for(event, offer, kind=MarketplacePartyKind.PLATFORM)
+    session.get.side_effect = [mission, user, offer, product, store, observation, event]
+    monkeypatch.setattr(
+        "app.telegram.notifications.claim_unconsumed_events_async",
+        AsyncMock(return_value=[event]),
+    )
+    captured: dict[str, object] = {}
+
+    async def _send(chat_id: int, text: str, *, bot_token, **kwargs: object) -> None:
+        captured["text"] = text
+        captured["parse_mode"] = kwargs.get("parse_mode")
+
+    monkeypatch.setattr("app.telegram.notifications.send_message", _send)
+
+    result = await process_telegram_notifications(
+        session_factory, bot_token=SecretStr("token")
+    )
+
+    assert result.succeeded == 1
+    assert captured["parse_mode"] == "HTML"
+    text = captured["text"]
+    assert '🔗 Ver anúncio\n<a href="' in text
+    assert text.count("<a href=") == 1
+    assert text.count("</a>") == 1
+
+
+@pytest.mark.anyio
+async def test_alert_escapes_special_characters_in_dynamic_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Título de produto/nome de loja vêm de texto raspado de terceiros --
+    precisam ser escapados para HTML antes do envio com `parse_mode="HTML"`,
+    senão `<`/`&` quebram o parser da Bot API ou são interpretados como
+    marcação indevida."""
+    user = _user()
+    mission = _mission(user)
+    event = _event(mission, event_type="price.decreased.v1")
+    offer, product, store = _offer_context()
+    product.name = 'Placa <RTX 4070> & "Super" 12GB'
+    store.name = "Loja & Cia"
+    session_factory, session = _fake_session_factory()
+    observation = _observation_for(event, offer, kind=MarketplacePartyKind.PLATFORM)
+    session.get.side_effect = [mission, user, offer, product, store, observation, event]
+    monkeypatch.setattr(
+        "app.telegram.notifications.claim_unconsumed_events_async",
+        AsyncMock(return_value=[event]),
+    )
+    sent: list[str] = []
+
+    async def _send(chat_id: int, text: str, *, bot_token, **kwargs: object) -> None:
+        sent.append(text)
+
+    monkeypatch.setattr("app.telegram.notifications.send_message", _send)
+
+    result = await process_telegram_notifications(
+        session_factory, bot_token=SecretStr("token")
+    )
+
+    assert result.succeeded == 1
+    text = sent[0]
+    assert "Placa &lt;RTX 4070&gt; &amp; &quot;Super&quot; 12GB" in text
+    assert "Placa <RTX 4070>" not in text
+    assert "Loja &amp; Cia" in text
+    assert "Loja & Cia\n" not in text
