@@ -36,18 +36,21 @@ A V1 permitirá pesquisar Pichau, Terabyte, Amazon e Kabum, conforme seleção d
 ## Continuidade no servidor — estado atual em 2026-08-17
 
 O ambiente autoritativo é `C:\App\AIShoppingAgent`, no Windows Server. A
-`main` está em `270683547bd2199a5e92049fa7c4e21a5b65a2f5` (tag `v1.0.7`),
+`main` está em `66ad35a461fe1970f13264cf54e12e4397aa61f7` (tag `v1.0.8`),
 igual a `origin/main`, e esse HEAD foi implantado no stack local de 7
 serviços (`api`, `collection_worker`, `telegram_notifier` reconstruídos e
-recriados juntos a partir da mesma imagem `aishoppingagent-app:local`,
-eliminando o drift anterior entre eles). O head do Alembic é
+recriados juntos a partir da mesma imagem `aishoppingagent-app:local`).
+`v1.0.8` corrige os links do Telegram ("Ver anúncio"), que chegavam como
+texto puro em vez de clicáveis -- `parse_mode="HTML"` + entidade `<a
+href="...">` explícita, com todo texto dinâmico escapado
+(`html.escape`); sem migration nova. O head do Alembic continua
 `20260817_0001` (migration de `offer_installment_options`, aplicada com
 `alembic upgrade head` a partir de `20260811_0001`, passando por
 `20260816_0001`/`20260816_0002`). Backup operacional validado antes da
 migration (`backups/postgres-20260817T231541Z-pre-v1.0.7.dump`,
 restauração testada em banco de validação separado). TASK-077, TASK-084,
-TASK-088 e TASK-089 (com `DEC-069`) estão concluídas e publicadas nesta
-release; nenhuma TASK está pendente no momento. Apresentação Telegram já
+TASK-088 e TASK-089 (com `DEC-069`) estão concluídas e publicadas;
+nenhuma TASK está pendente no momento. Apresentação Telegram já
 mostra `💰 À vista`/`💳 Parcelado` dinamicamente; interpretação de pedido
 de compra parcelada pelo usuário ("quero em 6x") foi explicitamente
 adiada para uma V2, sem código residual desta rodada. O WSL2 opera com
