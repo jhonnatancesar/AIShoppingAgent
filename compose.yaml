@@ -91,6 +91,15 @@ services:
       AISHOPPING_DATABASE_USER: ${POSTGRES_USER:-aishoppingagent}
       AISHOPPING_DATABASE_PASSWORD_FILE: /run/secrets/postgres_password
       AISHOPPING_TELEGRAM_BOT_TOKEN_FILE: /run/secrets/telegram_bot_token
+      # Correção (2026-08-17): faltava aqui -- sem esta variável, o worker
+      # cai no default "http://localhost:8000" do código (`Settings.
+      # auth_public_base_url`), que é inalcançável fora da própria máquina.
+      # É o que monta o link curto de oferta ("Ver anúncio") enviado nos
+      # alertas/pré-lista; `/cadastro`/`/entrar`/`/recuperar` funcionavam
+      # porque rodam no serviço `api`, que já tinha a variável (linha acima
+      # no bloco `api`). Mesma env var usada pelo `api`, para as duas fontes
+      # de link nunca divergirem.
+      AISHOPPING_AUTH_PUBLIC_BASE_URL: ${AISHOPPING_AUTH_PUBLIC_BASE_URL:-http://localhost:8000}
       AISHOPPING_OBSERVABILITY_ENABLED: "true"
       AISHOPPING_OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://otel-collector:4318/v1/traces
       AISHOPPING_TRACE_SAMPLE_RATIO: ${AISHOPPING_TRACE_SAMPLE_RATIO:-1.0}
