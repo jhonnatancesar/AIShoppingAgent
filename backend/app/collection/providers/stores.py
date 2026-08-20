@@ -104,17 +104,6 @@ def _parse_pichau_installment_row(text: str) -> RawInstallmentOption | None:
         return None
 
 
-# TASK-089: linha real da tabela expandida de parcelamento da Terabyte --
-# ex.: "1x de R$ 26.470,58 c/desconto de 10%*", "4x de R$ 7.352,94
-# s/juros + Frete Grátis*", "13x de R$ 2.488,69 c/juros*". O sufixo
-# "+ Frete Grátis" é opcional e ignorado (não é parcelamento).
-_TERABYTE_INSTALLMENT_ROW = re.compile(
-    r"(\d+)x\s+de\s+R\$\s*([\d.,]+)\s*"
-    r"(c/desconto\s+de\s+(\d+)%|s/juros|c/juros)",
-    re.I,
-)
-
-
 class PichauProvider(PlaywrightStoreProvider):
     source_code, result_selector = "pichau", 'a[data-cy="list-product"]'
     # TASK-075 (correção 2): domcontentloaded demora 22-38s (às vezes >45s)
@@ -192,51 +181,17 @@ class TerabyteProvider(PlaywrightStoreProvider):
             return "Disponível"
         return None
 
-    async def resolve_installment_options(
-        self, page: Page
-    ) -> tuple[RawInstallmentOption, ...]:
-        """TASK-089: painel "VER PARCELAMENTO" da página individual --
-        já vem no HTML (Bootstrap collapse, `id="detalheparcelamento"`),
-        sem precisar clicar/expandir; só lido via `textContent` porque o
-        painel fica visualmente recolhido (não `display:none`, então
-        `inner_text` do Playwright já funcionaria, mas `textContent`
-        evita qualquer dependência de visibilidade). A investigação real
-        confirmou faixas de desconto/juros que variam por quantidade de
-        parcelas (1x-3x com desconto, 4x-12x sem juros, 13x+ com juros
-        num produto real) -- nunca fixadas aqui, só o que a página atual
-        mostrar."""
-        locator = page.locator("#detalheparcelamento")
-        if await locator.count() == 0:
-            return ()
-        text = await locator.first.evaluate("el => el.textContent || ''")
-        options: list[RawInstallmentOption] = []
-        seen: set[int] = set()
-        for match in _TERABYTE_INSTALLMENT_ROW.finditer(text):
-            count = int(match.group(1))
-            if count <= 0 or count in seen:
-                continue
-            marker, discount_text = match.group(3).lower(), match.group(4)
-            if discount_text is not None:
-                discount_percent: Decimal | None = Decimal(discount_text)
-                interest_kind = InstallmentInterestKind.UNKNOWN
-            elif "s/juros" in marker:
-                discount_percent = None
-                interest_kind = InstallmentInterestKind.INTEREST_FREE
-            else:
-                discount_percent = None
-                interest_kind = InstallmentInterestKind.WITH_INTEREST
-            try:
-                option = RawInstallmentOption(
-                    installment_count=count,
-                    raw_amount=f"R$ {match.group(2)}",
-                    discount_percent=discount_percent,
-                    interest_kind=interest_kind,
-                )
-            except Exception:
-                continue
-            seen.add(count)
-            options.append(option)
-        return tuple(options)
+    # Correção (bloqueio Cloudflare, 2026-08-20): `resolve_installment_options`
+    # foi removido de propósito -- a Terabyte não navega mais para a página
+    # individual do produto só para detalhar a tabela de parcelamento
+    # (1x-18x). O parcelamento desta loja agora vem exclusivamente do que
+    # `extract()`/`_apply_installment_summary` já capturam no card da busca
+    # (mesmo caminho comum a Amazon/KaBuM!). Reduz de até 4 navegações
+    # (1 busca + até 3 páginas) para exatamente 1 por execução. A ausência
+    # deste método faz `enrich_installment_options` (`providers/base.py`)
+    # pular a navegação inteira via
+    # `type(self).resolve_installment_options is PlaywrightStoreProvider.resolve_installment_options`
+    # -- não é um "desligamento" condicional, é a ausência estrutural do hook.
 
 
 class AmazonProvider(PlaywrightStoreProvider):

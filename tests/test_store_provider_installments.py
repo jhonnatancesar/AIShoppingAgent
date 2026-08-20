@@ -1,20 +1,23 @@
-"""TASK-089 (DEC-069): captura de opções de parcelamento por provider.
+"""TASK-089 (DEC-069) + DEC-070: captura de opções de parcelamento por
+provider.
 
-Cobre exatamente os quatro cenários confirmados na investigação real:
 Pichau (card + tabela individual com desconto variável por faixa e por
-produto), Terabyte (card + painel expandido 1x-18x com juros a partir de
-certa faixa), Amazon e KaBuM! (só o que já vem no card, nenhuma tabela
-individual real existe -- nunca inventa opções intermediárias)."""
+produto); Terabyte, Amazon e KaBuM! usam só o que já vem no card, nenhuma
+tabela individual é consultada -- nunca inventa opções intermediárias.
+Terabyte teve o hook de página individual removido em 2026-08-20
+(`DEC-070`, bloqueio persistente de Cloudflare Bot Management)."""
 
 import asyncio
 from datetime import UTC, datetime
 from decimal import Decimal
 
+import pytest
 from app.collection import (
     BrowserSession,
     InstallmentInterestKind,
     KabumProvider,
     PichauProvider,
+    RawCollectedOffer,
     RawInstallmentOption,
     TerabyteProvider,
 )
@@ -150,6 +153,10 @@ def test_pichau_resolve_installment_options_empty_when_no_table() -> None:
 
 
 def test_terabyte_card_captures_installment_without_total() -> None:
+    """DEC-070: única fonte de parcelamento da Terabyte agora -- exatamente
+    a opção destacada no card, `is_highlighted=True`, sem total nem
+    desconto (o card não os declara), `interest_kind` só do texto
+    explícito "sem juros"."""
     html = (
         '<div class="product-item">'
         '<a class="product-item__name" href="https://www.terabyteshop.com.br/produto/1/gpu">GPU</a>'
@@ -165,64 +172,73 @@ def test_terabyte_card_captures_installment_without_total() -> None:
     assert len(options) == 1
     assert options[0].installment_count == 12
     assert options[0].raw_total_amount is None  # Terabyte nunca rotula total
+    assert options[0].discount_percent is None  # card não declara percentual
+    assert options[0].interest_kind is InstallmentInterestKind.INTEREST_FREE
+    assert options[0].is_highlighted is True
     assert options[0].interest_kind is InstallmentInterestKind.INTEREST_FREE
 
 
-# --- Terabyte: painel expandido "VER PARCELAMENTO" ---
+# --- Terabyte: página individual removida (DEC-070, bloqueio Cloudflare) ---
 
 
-def test_terabyte_resolve_installment_options_reads_full_range_with_interest_tiers() -> (
-    None
-):
-    """Reproduz literalmente o painel real encontrado: 1x-3x com desconto,
-    4x-12x sem juros, 13x+ com juros -- faixas descobertas na investigação,
-    nunca hardcoded no parser (o teste usa valores DIFERENTES dos originais
-    para provar que o parser lê o texto, não uma tabela fixa)."""
-    html = (
-        '<div id="detalheparcelamento">'
-        "Crédito - em até 12x sem juros ou em até 18x com juros"
-        "1x de R$ 9.000,00 c/desconto de 20%*"
-        "2x de R$ 4.700,00 c/desconto de 8%*"
-        "6x de R$ 1.550,00 s/juros*"
-        "12x de R$ 800,00 s/juros*"
-        "13x de R$ 780,00 c/juros*"
-        "18x de R$ 600,00 c/juros*"
-        "* Para pagamentos no cartão de crédito"
-        "</div>"
+def test_terabyte_never_visits_individual_page_for_installments() -> None:
+    """DEC-070 (2026-08-20): a Terabyte deixou de implementar
+    `resolve_installment_options` -- bloqueio persistente de Cloudflare
+    Bot Management ao navegar página individual. O parcelamento desta
+    loja passa a vir só do card, mesmo caminho de Amazon/KaBuM!; nenhuma
+    navegação extra pode ser disparada procurando pela tabela detalhada
+    (1x-18x) que a página individual expunha antes."""
+    from app.collection.providers.base import PlaywrightStoreProvider
+
+    assert (
+        TerabyteProvider.resolve_installment_options
+        is PlaywrightStoreProvider.resolve_installment_options
     )
-    options = asyncio.run(_resolve_installment_options(TerabyteProvider(), html))
-
-    by_count = {option.installment_count: option for option in options}
-    assert set(by_count) == {1, 2, 6, 12, 13, 18}
-    assert by_count[1].discount_percent == Decimal("20")
-    assert by_count[1].interest_kind is InstallmentInterestKind.UNKNOWN
-    assert by_count[2].discount_percent == Decimal("8")
-    assert by_count[6].interest_kind is InstallmentInterestKind.INTEREST_FREE
-    assert by_count[6].discount_percent is None
-    assert by_count[13].interest_kind is InstallmentInterestKind.WITH_INTEREST
-    assert by_count[18].interest_kind is InstallmentInterestKind.WITH_INTEREST
-    # TASK-089: nenhuma opção carrega total explícito -- a página nunca mostra um
-    assert all(option.raw_total_amount is None for option in options)
 
 
-def test_terabyte_resolve_installment_options_ignores_free_shipping_suffix() -> None:
-    """ "+ Frete Grátis" (visto em algumas faixas reais) não é parcelamento
-    -- não pode virar campo nem quebrar o parsing da linha."""
-    html = (
-        '<div id="detalheparcelamento">4x de R$ 1.000,00 s/juros + Frete Grátis*</div>'
+@pytest.mark.anyio
+async def test_terabyte_enrich_installment_options_never_opens_browser_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Prova em tempo de execução (não só por identidade de método): com
+    o hook ausente, `enrich_installment_options` retorna as ofertas
+    intocadas sem sequer abrir uma `BrowserSession` -- 1 navegação (a
+    busca) por execução, nunca 1 + até 3."""
+    opened = False
+
+    class _ExplodingBrowserSession(BrowserSession):
+        async def __aenter__(self) -> _ExplodingBrowserSession:
+            nonlocal opened
+            opened = True
+            raise AssertionError("Terabyte não deveria abrir BrowserSession algum")
+
+    monkeypatch.setattr(
+        "app.collection.providers.base.BrowserSession", _ExplodingBrowserSession
     )
-    options = asyncio.run(_resolve_installment_options(TerabyteProvider(), html))
-
-    assert len(options) == 1
-    assert options[0].installment_count == 4
-    assert options[0].interest_kind is InstallmentInterestKind.INTEREST_FREE
-
-
-def test_terabyte_resolve_installment_options_empty_when_panel_absent() -> None:
-    options = asyncio.run(
-        _resolve_installment_options(TerabyteProvider(), "<div>sem painel</div>")
+    provider = TerabyteProvider()
+    offer = RawCollectedOffer(
+        source_code="terabyte",
+        url="https://www.terabyteshop.com.br/produto/1/gpu",
+        title="GPU",
+        collected_at=datetime.now(UTC),
+        external_id="1",
+        raw_price="R$ 1.900,00",
+        raw_currency="BRL",
+        installment_options=(
+            RawInstallmentOption(
+                installment_count=12,
+                raw_amount="R$ 158,33",
+                interest_kind=InstallmentInterestKind.INTEREST_FREE,
+                is_highlighted=True,
+            ),
+        ),
     )
-    assert options == ()
+
+    result = await provider.enrich_installment_options((offer,))
+
+    assert opened is False
+    assert result == (offer,)
+    assert result[0].installment_options == offer.installment_options
 
 
 # --- Amazon: só o card, contagem variável, nunca tabela individual ---
@@ -318,7 +334,9 @@ def test_kabum_never_visits_individual_page_for_installments() -> None:
     )
 
 
-# --- merge card + página individual (Pichau/Terabyte) ---
+# --- merge card + página individual (função genérica; só a Pichau usa
+# esse caminho hoje -- Terabyte não navega mais para página individual,
+# DEC-070) ---
 
 
 def test_merge_installment_options_page_enriches_without_losing_card_total() -> None:
@@ -401,38 +419,6 @@ def test_pichau_interest_kind_unknown_without_explicit_juros_text_regardless_of_
     option = _parse_pichau_installment_row("3x de R$999,99 (com 8% de desconto)")
     assert option is not None
     assert option.interest_kind is InstallmentInterestKind.UNKNOWN
-
-
-def test_terabyte_interest_kind_never_derived_from_installment_total_comparison() -> (
-    None
-):
-    """Constrói deliberadamente uma linha "c/juros" cujo valor de parcela,
-    multiplicado pela contagem, dá um total MENOR que uma opção "s/juros"
-    anterior -- se o parser estivesse comparando totais para decidir
-    juros, ele erraria aqui. Confirma que a classificação vem só do
-    marcador literal "c/juros"/"s/juros" no texto, nunca de conta."""
-    html = (
-        '<div id="detalheparcelamento">'
-        "6x de R$ 1.000,00 s/juros*"  # total "matemático" = 6.000,00
-        "3x de R$ 500,00 c/juros*"  # total "matemático" = 1.500,00 (menor!)
-        "</div>"
-    )
-    options = asyncio.run(_resolve_installment_options(TerabyteProvider(), html))
-    by_count = {option.installment_count: option for option in options}
-    assert by_count[6].interest_kind is InstallmentInterestKind.INTEREST_FREE
-    assert by_count[3].interest_kind is InstallmentInterestKind.WITH_INTEREST
-
-
-def test_terabyte_discount_percent_reads_literal_digit_not_derived_from_price_diff() -> (
-    None
-):
-    """Percentual de desconto igual ao dígito do texto, mesmo quando ele
-    não bate com nenhuma conta óbvia de "preço cheio - preço com
-    desconto" (não existe preço de referência nesta linha isolada para
-    calcular nada)."""
-    html = '<div id="detalheparcelamento">2x de R$ 999,00 c/desconto de 42%*</div>'
-    options = asyncio.run(_resolve_installment_options(TerabyteProvider(), html))
-    assert options[0].discount_percent == Decimal("42")
 
 
 def test_card_level_installment_never_sets_discount_percent() -> None:

@@ -582,6 +582,64 @@ Ficam para uma V2 futura, fora desta TASK:
   modalidades diferentes, o `UNIQUE` atual rejeitaria a segunda até uma
   nova investigação e decisão de produto.
 
+## Terabyte desativada e simplificada (2026-08-20, `DEC-070`)
+
+**Estado atual: Terabyte temporariamente desabilitada** devido a bloqueio
+persistente do Cloudflare Bot Management -- não removida, não apagada do
+banco, só `stores.is_active = false` (mecanismo já existente, respeitado
+em `orchestration.py` na seleção de fontes elegíveis para nova coleta).
+Reversível com um `UPDATE` de volta a `true`; nenhum histórico, missão ou
+`mission_sources` foi alterado ou apagado.
+
+**Diagnóstico que motivou a mudança**: investigação dedicada (evidência
+real, sem tentativa de evasão) confirmou `server: cloudflare`,
+`cf-mitigated: challenge`, cookie `__cf_bm` (Bot Management, não WAF
+genérico) em homepage/busca/produto igualmente, com Chrome comum
+carregando o site normalmente no mesmo IP onde o Playwright do coletor
+recebe 403 -- aponta para característica do navegador automatizado, não
+do IP isolado. Volume de requisições à Terabyte cresceu 2-7x entre
+17-19/08 (mesma janela em que a TASK-089 passou a abrir até 3 páginas
+individuais por busca para o parcelamento detalhado), mas o bloqueio só
+começou em 20/08 05:00 -- mais de dois dias depois do pico, então a
+correlação de volume é registrada como fator agravante possível, não
+causa direta comprovada.
+
+**Mudança de estratégia (V1)**: `TerabyteProvider.resolve_installment_options`
+foi removido -- a Terabyte não abre mais página individual de produto só
+para capturar a tabela detalhada de parcelamento (1x-18x, faixas de
+desconto/juros variáveis). O parcelamento desta loja passa a vir
+exclusivamente do que o card da busca já expõe (`.product-item__juros`),
+pelo mesmo caminho comum já usado por Amazon/KaBuM! -- no máximo uma
+condição por oferta, sempre com `is_highlighted=true` (é a única origem
+possível dessa flag). `installment_total_amount`/`discount_percent`
+continuam `NULL` quando o card não os declara explicitamente; nunca
+calculados. Reduz de até 4 navegações (1 busca + até 3 páginas) para
+exatamente 1 por execução.
+
+**Pichau, Amazon e KaBuM! não foram alterados** -- Pichau continua com
+enriquecimento individual completo (não apresentou o problema observado
+na Terabyte); Amazon/KaBuM! já usavam só o card, sem mudança.
+
+**Nenhuma técnica de evasão foi considerada ou implementada** (sem
+stealth, spoof de fingerprint, proxy, rotação de IP, CAPTCHA solver,
+cookies humanos ou login) -- fora de escopo por decisão explícita do
+usuário.
+
+**V2 (registrado, não implementado)**: investigação detalhada de faixas
+de parcelamento da Terabyte (1x-18x, desconto/juros variáveis por
+quantidade) fica como evolução futura, condicionada a uma solução para o
+bloqueio Cloudflare que não envolva evasão -- ex.: parceria/API oficial
+com a loja, decisão de produto fora do escopo técnico desta TASK.
+
+**Limitação conhecida, não corrigida nesta rodada**: a seleção de lojas
+na criação de missão (`MISSION_SOURCE_CODES` em `intent/contracts.py`) é
+uma lista fixa, independente de `Store.is_active` -- um usuário ainda
+consegue selecionar "Terabyte" ao criar uma missão nova, e o
+`MissionSource` é criado normalmente, só nunca chega a coletar de fato
+(filtrado silenciosamente em `orchestration.py`). Não há aviso ao usuário
+nesse fluxo. Registrado como gap de UX, não corrigido por estar fora do
+escopo pedido nesta TASK.
+
 ## Restrições desta abertura (histórico -- já superadas pela implementação)
 
 Esta abertura não autorizava código, migration, investigação externa,

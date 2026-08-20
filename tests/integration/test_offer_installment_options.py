@@ -175,6 +175,44 @@ def test_persists_and_reads_back_multiple_installment_options(
         assert rows[1].is_highlighted is True
 
 
+def test_historical_multi_option_observation_from_before_dec070_stays_valid(
+    integration_database,
+) -> None:
+    """DEC-070 (2026-08-20) removeu a navegação individual da Terabyte,
+    mas não mudou schema nem apagou histórico -- uma observação antiga
+    com a faixa completa 1x-18x (como a Terabyte gerava antes, nenhuma
+    opção `is_highlighted`) continua persistindo e sendo lida normalmente
+    pelo modelo atual."""
+    now = datetime.now(UTC).replace(microsecond=0)
+    legacy_options = tuple(
+        RawInstallmentOption(
+            installment_count=count,
+            raw_amount=f"R$ {1000 // count},00",
+            interest_kind=InstallmentInterestKind.INTEREST_FREE
+            if count <= 12
+            else InstallmentInterestKind.WITH_INTEREST,
+        )
+        for count in (1, 2, 3, 4, 6, 12, 13, 18)
+    )
+
+    observation_id = _run_batch_with_options(integration_database, now, legacy_options)
+
+    with integration_database.sessions() as session:
+        rows = list(
+            session.scalars(
+                select(OfferInstallmentOption)
+                .where(OfferInstallmentOption.price_observation_id == observation_id)
+                .order_by(OfferInstallmentOption.installment_count)
+            )
+        )
+        assert [row.installment_count for row in rows] == [1, 2, 3, 4, 6, 12, 13, 18]
+        assert all(row.is_highlighted is False for row in rows)
+        assert {row.interest_kind for row in rows} == {
+            InstallmentInterestKind.INTEREST_FREE,
+            InstallmentInterestKind.WITH_INTEREST,
+        }
+
+
 # --- 4: FK ---
 
 

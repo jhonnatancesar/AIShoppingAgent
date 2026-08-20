@@ -31,12 +31,15 @@ continuam com o contrato original e campos `NULL`.
 A TASK-089 (DEC-069) acrescenta `RawInstallmentOption`/
 `InstallmentInterestKind` a `RawCollectedOffer.installment_options` (tupla,
 uma condição de parcelamento por item, nunca inferida). Toda fonte já
-preenche o que aparece no card de busca; Pichau e Terabyte também
-implementam a extensão opcional `enrich_installment_options` (mesma
-disciplina de `enrich_marketplace_parties`: candidatos finais, ordenado,
-sequencial, sem retry, limite de três, para no primeiro bloqueio) para
-complementar com a tabela de parcelamento da página individual -- Amazon e
-KaBuM! não têm tabela equivalente confirmada e não implementam a extensão.
+preenche o que aparece no card de busca; **só a Pichau** implementa a
+extensão opcional `enrich_installment_options` (mesma disciplina de
+`enrich_marketplace_parties`: candidatos finais, ordenado, sequencial, sem
+retry, limite de três, para no primeiro bloqueio) para complementar com a
+tabela de parcelamento da página individual -- Amazon e KaBuM! não têm
+tabela equivalente confirmada; a Terabyte teve o hook removido em
+2026-08-20 (`DEC-070`) por bloqueio persistente de Cloudflare Bot
+Management ao navegar página individual, e passou a usar só o card, como
+Amazon/KaBuM!.
 
 ## Evolução prevista
 

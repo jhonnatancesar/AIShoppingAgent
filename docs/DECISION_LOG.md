@@ -1,5 +1,41 @@
 # Decision Log
 
+## DEC-070 — Desativar Terabyte temporariamente e simplificar parcelamento para só-card
+
+- **Data:** 2026-08-20.
+- **Classificação:** Reação operacional a bloqueio externo confirmado
+  (Cloudflare Bot Management), reduzindo o escopo da TASK-089 só para a
+  Terabyte.
+- **O que mudou:** diagnóstico dedicado (sem tentativa de evasão)
+  confirmou `server: cloudflare`, `cf-mitigated: challenge`, cookie
+  `__cf_bm` em homepage/busca/produto igualmente; Chrome comum, mesmo
+  IP do servidor, carrega o site normalmente enquanto o Playwright do
+  coletor recebe 403 -- aponta para característica do navegador
+  automatizado, não do IP isolado. Volume de requisições subiu 2-7x
+  entre 17-19/08 (mesma janela em que a TASK-089 passou a abrir até 3
+  páginas individuais por busca para parcelamento detalhado), mas o
+  bloqueio só começou em 20/08 05:00, mais de 2 dias depois -- fator
+  agravante possível, não causa direta comprovada.
+- **Decisão:** (1) `stores.is_active=false` para Terabyte -- mecanismo já
+  existente, reversível, não apaga histórico/missões/`mission_sources`;
+  (2) `TerabyteProvider.resolve_installment_options` removido -- a
+  Terabyte não abre mais página individual só para a tabela detalhada de
+  parcelamento (1x-18x); o parcelamento passa a vir só do card da busca,
+  mesmo caminho já usado por Amazon/KaBuM!, sempre `is_highlighted=true`.
+  Reduz de até 4 navegações (1 busca + até 3 páginas) para 1 por
+  execução.
+- **Fora de escopo, mantido de propósito:** nenhuma técnica de evasão
+  (stealth, spoof de fingerprint, proxy, rotação de IP, CAPTCHA solver,
+  cookies humanos, login) foi considerada ou implementada. Pichau, Amazon
+  e KaBuM! não foram alterados -- Pichau mantém o enriquecimento
+  individual completo (não apresentou o problema); Amazon/KaBuM! já
+  usavam só o card.
+- **V2 registrada:** investigação detalhada de faixas de parcelamento da
+  Terabyte (1x-18x) fica para quando houver solução ao bloqueio que não
+  envolva evasão (ex.: parceria/API oficial) -- decisão de produto, fora
+  do escopo técnico. Ver `docs/tasks/TASK-089.md`, seção "Terabyte
+  desativada e simplificada".
+
 ## DEC-069 — Corrigir a modelagem de parcelamento da TASK-089 para relação 1:N
 
 - **Data:** 2026-08-17.

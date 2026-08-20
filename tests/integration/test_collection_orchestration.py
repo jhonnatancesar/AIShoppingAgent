@@ -97,6 +97,23 @@ class _FailingProvider:
         raise ProviderBlockedError(self.source_code, 403)
 
 
+class _CountingProvider:
+    """DEC-070: usada para provar que uma `Store` com `is_active=False`
+    nunca chega a ter `collect()` chamado -- zero navegações externas,
+    não só zero linhas persistidas."""
+
+    def __init__(self, source_code: str) -> None:
+        self.source_code = source_code
+        self.calls = 0
+
+    async def collect(self, request: CollectionRequest) -> CollectionResult:
+        self.calls += 1
+        raise AssertionError(
+            f"{self.source_code} está desativada (is_active=False) -- "
+            "collect() nunca deveria ser chamado"
+        )
+
+
 class _EmptyProvider:
     source_code = "pichau"
 
@@ -202,6 +219,53 @@ def test_orchestrator_isolates_source_failure_and_publishes_real_events(
         )
         assert failed is not None
         assert failed.payload["failure_code"] == "provider_blocked"
+
+
+def test_disabled_store_generates_zero_claims_and_zero_provider_calls(
+    integration_database,
+) -> None:
+    """DEC-070: `stores.is_active=false` é o mecanismo real de
+    habilitar/desabilitar uma fonte -- uma missão com as duas fontes
+    (uma ativa, uma desativada) só reivindica/coleta a ativa; a
+    desativada gera zero `CollectionRun`, zero evento e zero chamada ao
+    provider (não só zero linhas persistidas -- o provider nunca é
+    sequer invocado)."""
+    now = datetime.now(UTC).replace(microsecond=0)
+    mission_id, pichau_id, kabum_id = _seed_due_mission(
+        integration_database.sessions, now
+    )
+    with integration_database.sessions.begin() as session:
+        kabum = session.get(Store, kabum_id)
+        kabum.is_active = False
+
+    kabum_provider = _CountingProvider("kabum")
+    orchestrator = CollectionOrchestrator(
+        integration_database.async_sessions,
+        CollectionAdapter((_SuccessfulProvider(), kabum_provider)),
+        ai_manager=_AlwaysMatchAIManager(),
+    )
+
+    result = asyncio.run(orchestrator.run_batch(now=now))
+
+    assert result.claimed == 1  # só a pichau, ativa
+    assert result.succeeded == 1
+    assert kabum_provider.calls == 0
+    with integration_database.sessions.begin() as session:
+        runs = list(
+            session.scalars(
+                select(CollectionRun).where(CollectionRun.mission_id == mission_id)
+            )
+        )
+        assert {run.store_id for run in runs} == {pichau_id}
+        assert (
+            session.scalar(
+                select(func.count(Event.id)).where(
+                    Event.mission_id == mission_id,
+                    Event.event_type == EventType.COLLECTION_FAILED_V1.value,
+                )
+            )
+            == 0
+        )
 
     assert asyncio.run(orchestrator.run_batch(now=now)).claimed == 0
 
