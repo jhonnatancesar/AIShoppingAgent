@@ -33,23 +33,26 @@ A V1 permitirá pesquisar Pichau, Terabyte, Amazon e Kabum, conforme seleção d
 
 `docs/PROJECT_CONTEXT.md` registra o estado vivo; `docs/ROADMAP.md` registra a ordem de trabalho; `docs/tasks/` contém o escopo unitário.
 
-## Continuidade no servidor — estado atual em 2026-08-17
+## Continuidade no servidor — estado atual em 2026-08-20
 
 O ambiente autoritativo é `C:\App\AIShoppingAgent`, no Windows Server. A
-`main` está em `942efcf4eac4b7b5f4d3db940c5888c1e655b401` (tag `v1.0.9`),
-igual a `origin/main`. `v1.0.8` corrigiu o formato do link do Telegram
-("Ver anúncio") com `parse_mode="HTML"` + entidade `<a href="...">`
-explícita e `html.escape` no texto dinâmico -- necessário mas não
-suficiente. `v1.0.9` corrigiu a causa raiz real: `telegram_notifier`
-nunca recebia `AISHOPPING_AUTH_PUBLIC_BASE_URL` no `compose.yaml` (só
-`api` tinha), então o link caía no default de código
-`http://localhost:8000`, inalcançável fora da máquina --
-`/cadastro`/`/entrar`/`/recuperar` sempre funcionaram por rodarem no
-`api`. Confirmado de dentro do container (`Settings().
-auth_public_base_url` e `build_offer_short_url` reais) que agora
-resolve para `https://cesar-server.tail7d0ce1.ts.net`. Só
-`telegram_notifier` foi recriado nesta correção (única fonte de link
-curto de oferta; sem rebuild de imagem, sem migration). O head do
+`main` está em `df7609b446612ff106c150a72902c99306c3ab58` (tag
+`v1.0.10`), igual a `origin/main`. `v1.0.8` corrigiu o formato do link do
+Telegram ("Ver anúncio") com `parse_mode="HTML"`; `v1.0.9` corrigiu a
+causa raiz real (`AISHOPPING_AUTH_PUBLIC_BASE_URL` faltando no
+`telegram_notifier`). `v1.0.10` (`DEC-070`): diagnóstico dedicado (sem
+evasão) confirmou bloqueio persistente de Cloudflare Bot Management na
+Terabyte (`server: cloudflare`, `cf-mitigated: challenge`, cookie
+`__cf_bm`, 403 em homepage/busca/produto; Chrome comum no mesmo IP do
+servidor carrega normal, Playwright do coletor não). Duas ações: (1)
+**Terabyte desativada** (`stores.is_active=false`, ação de dados
+reversível, aplicada antes do deploy de código); (2)
+`TerabyteProvider.resolve_installment_options` removido -- quando
+reativada, a Terabyte não navega mais para página individual só por
+parcelamento, usa só o card (como Amazon/KaBuM!). Confirmado no container
+recém-implantado que o método já não existe e que `is_active` continua
+`false` depois do deploy (deploy de código nunca mexe em dado). Pichau,
+Amazon, KaBuM! inalterados. O head do
 Alembic continua
 `20260817_0001` (migration de `offer_installment_options`, aplicada com
 `alembic upgrade head` a partir de `20260811_0001`, passando por
