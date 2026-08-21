@@ -1,5 +1,31 @@
 # Changelog
 
+## 2026-08-21 — Incidente: webhook do Telegram inacessível (Funnel "on" mas não registrado publicamente); healthcheck recriado para Windows
+
+- Usuário reportou bot sem responder, links não abrindo (erro de DNS no
+  navegador) e reenvio de alertas. Diagnóstico: `getWebhookInfo` mostrava
+  `pending_update_count: 4` (Telegram não conseguia entregar); o Tailscale
+  Funnel reportava "on" localmente (`tailscale funnel status`) mas não
+  estava de fato acessível de fora -- mesmo padrão de um incidente já
+  documentado em 2026-08-12, quando o servidor ainda rodava Linux.
+- **Correção manual aplicada**: `tailscale funnel reset` seguido de
+  `tailscale funnel --bg 8000` -- confirmado via `getWebhookInfo`
+  (`pending_update_count` caiu de 4 para 0) e nos logs do `api`
+  (4 requisições `POST /telegram/webhook` entregues com `204`).
+- **Causa da ausência de recuperação automática**: o mecanismo original
+  (timer systemd `telegram-funnel-healthcheck`, 2026-08-12) rodava só no
+  servidor Linux antigo; a migração para este Windows Server nunca
+  recriou o equivalente, e ninguém percebeu até o incidente se repetir.
+- **Reescrito para Windows**: `scripts/funnel_healthcheck.ps1` (testa
+  resolução DNS pública real via `Resolve-DnsName -Server 8.8.8.8` +
+  `curl.exe --resolve`, nunca o atalho do MagicDNS local; reinicia o
+  serviço Tailscale e reaplica o Funnel só depois de 2 falhas seguidas,
+  no máximo 1 restart a cada 10 min) + `scripts/register_funnel_healthcheck_task.ps1`
+  (Scheduled Task rodando como SYSTEM a cada 5 min). Registrado e
+  validado neste servidor (execução manual e via Task Scheduler, log em
+  `logs/funnel-healthcheck.log`). Documentado em
+  `docs/PRODUCTION_SETUP.md`.
+
 ## 2026-08-17 (3) — Correção: causa raiz real do link não clicável era `localhost`, não só `parse_mode`; release `v1.0.9`
 
 - **Erro cometido e corrigido na mesma sessão**: a `v1.0.8` (abaixo) tratou o

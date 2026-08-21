@@ -821,22 +821,35 @@ físico plugado na GPU continua mostrando o console de texto básico
 não é uma regressão de uso real, já que não havia desktop gráfico local
 configurado (GDM desabilitado) nem dependência disso no RDP.
 
-### Auto-recuperação do Tailscale Funnel (2026-08-12)
+### Auto-recuperação do Tailscale Funnel (criado 2026-08-12, reescrito para Windows em 2026-08-21)
 
-Depois de um reboot, o Tailscale Funnel (que expõe o webhook do Telegram
-publicamente em `https://cesar-server.tail7d0ce1.ts.net`) pode reportar
-"on" localmente sem estar de fato acessível de fora — só é detectável
-testando o IP público real (`dig @8.8.8.8` + `curl --resolve`, não o
-hostname direto, que usa o atalho do MagicDNS do Tailscale e mascara o
-problema). Para não depender de verificação manual, existe um timer
-systemd que checa isso a cada 5 minutos e reinicia `tailscaled`/reaplica
-o Funnel sozinho se detectar falha em duas checagens seguidas (limite de
-1 restart a cada 10 min, para não entrar em loop):
+Depois de um reboot ou de qualquer reinício do Tailscale/Docker, o
+Funnel (que expõe o webhook do Telegram publicamente em
+`https://cesar-server.tail7d0ce1.ts.net`) pode reportar "on" localmente
+sem estar de fato acessível de fora — só é detectável testando resolução
+DNS pública real (não o hostname direto, que usa o atalho do MagicDNS do
+Tailscale e mascara o problema) seguida de uma conexão HTTPS real ao IP
+resolvido.
 
-```bash
-systemctl status telegram-funnel-healthcheck.timer
-cat /usr/local/bin/telegram-funnel-healthcheck.sh
-journalctl -u telegram-funnel-healthcheck.service --since "1 hour ago"
+O mecanismo original (2026-08-12) era um timer systemd, criado quando o
+servidor de produção ainda rodava Linux. A migração para Windows Server
+não recriou o equivalente, e isso só foi percebido em 2026-08-21 quando
+o mesmo incidente se repetiu (Funnel "on" localmente, mas Telegram
+acumulando `pending_update_count` sem conseguir entregar) e ficou sem
+recuperação automática por horas. Reescrito como Scheduled Task do
+Windows, mesma disciplina do original (checa a cada 5 min, reinicia o
+serviço Tailscale e reaplica o Funnel só depois de 2 falhas seguidas,
+no máximo 1 restart a cada 10 min):
+
+```powershell
+# Registrar (uma vez, como Administrador):
+powershell -File scripts\register_funnel_healthcheck_task.ps1
+
+# Rodar manualmente / inspecionar:
+powershell -File scripts\funnel_healthcheck.ps1
+Get-ScheduledTask -TaskName AIShoppingAgent-FunnelHealthcheck
+Get-ScheduledTaskInfo -TaskName AIShoppingAgent-FunnelHealthcheck
+Get-Content logs\funnel-healthcheck.log -Tail 50
 ```
 
 Isso cobre só a recorrência específica desse problema — não substitui
