@@ -12,7 +12,7 @@ tipada, agnóstica de canal e sem lógica de domínio, usando exclusivamente o
 
 - Contrato imutável `Intent`/`IntentKind` com vocabulário fechado:
   `create_mission`, `query_mission`, `mission_command` (reaproveitando
-  diretamente `MissionCommand` de `docs/MISSION_SYSTEM.md`) e `unknown`.
+  diretamente `MissionCommand` de `docs/architecture/mission-system.md`) e `unknown`.
 - `IntentParameters` reaproveitando campos já existentes (`search_query`,
   `target_amount`/`target_currency` de `MissionCriteria`, `sources`
   restrito às quatro fontes selecionáveis da V1 e `mission_reference`),
@@ -27,12 +27,12 @@ tipada, agnóstica de canal e sem lógica de domínio, usando exclusivamente o
 
 ## Critério de aceite
 
-- Escopo concluído, documentado em `docs/INTENT_INTERPRETATION.md` e
+- Escopo concluído, documentado em `docs/architecture/intent-interpretation.md` e
   verificado conforme os critérios da tarefa.
 - Testes unitários cobrindo contrato, parsing estrito e fallback `unknown`
   aprovados com Ruff (lint e formatação) e com execução real do `pytest` em
   Python 3.14.6 (236 testes aprovados, 94,79% de cobertura).
 - Validação real contra o Gemini executada com o perfil `USER`, cobrindo os
   quatro valores de `IntentKind`: `create_mission`, `query_mission`,
-  `mission_command` e `unknown` (ver `docs/CHANGELOG.md`).
+  `mission_command` e `unknown` (ver `docs/releases/changelog.md`).
 

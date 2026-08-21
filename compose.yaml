@@ -45,7 +45,7 @@ services:
       AISHOPPING_CIRCUIT_FAILURE_THRESHOLD: ${AISHOPPING_CIRCUIT_FAILURE_THRESHOLD:-5}
       AISHOPPING_CIRCUIT_OPEN_SECONDS: ${AISHOPPING_CIRCUIT_OPEN_SECONDS:-30}
       # DEC-046: 30 min é a implantação temporária com 8 GB de RAM; o alvo
-      # da V1 é 15 min após o upgrade para 16 GB (docs/MISSION_SCHEDULES.md).
+      # da V1 é 15 min após o upgrade para 16 GB (docs/architecture/mission-schedules.md).
       # Mesma env var usada pelo collection_worker, para as duas fontes de
       # criação de agenda (Telegram/api e backfill/worker) nunca divergirem.
       AISHOPPING_COLLECTION_SCHEDULE_INTERVAL_MINUTES: ${AISHOPPING_COLLECTION_SCHEDULE_INTERVAL_MINUTES:-30}
@@ -181,7 +181,7 @@ services:
       AISHOPPING_COLLECTION_POLL_SECONDS: ${AISHOPPING_COLLECTION_POLL_SECONDS:-15}
       AISHOPPING_COLLECTION_BATCH_SIZE: ${AISHOPPING_COLLECTION_BATCH_SIZE:-25}
       # DEC-046: 30 min é a implantação temporária com 8 GB de RAM; o alvo
-      # da V1 é 15 min após o upgrade para 16 GB (docs/MISSION_SCHEDULES.md).
+      # da V1 é 15 min após o upgrade para 16 GB (docs/architecture/mission-schedules.md).
       AISHOPPING_COLLECTION_SCHEDULE_INTERVAL_MINUTES: ${AISHOPPING_COLLECTION_SCHEDULE_INTERVAL_MINUTES:-30}
       AISHOPPING_COLLECTION_SCHEDULE_STAGGER_SECONDS: ${AISHOPPING_COLLECTION_SCHEDULE_STAGGER_SECONDS:-300}
       AISHOPPING_COLLECTION_STALE_RUN_MINUTES: ${AISHOPPING_COLLECTION_STALE_RUN_MINUTES:-10}

@@ -26,8 +26,8 @@ responder ao usuário.
 
 ## Critério de aceite
 
-Escopo concluído, documentado em `docs/TELEGRAM_ADAPTER.md` e
-`docs/API_CONVENTIONS.md`, e coberto por testes automatizados aprovados
+Escopo concluído, documentado em `docs/architecture/telegram-adapter.md` e
+`docs/development/api-conventions.md`, e coberto por testes automatizados aprovados
 (`scripts\check.cmd` completo em Python 3.14.6: 265 testes, 94,41% de
 cobertura). Validado de ponta a ponta contra o Telegram real usando um túnel
 `cloudflared`: mensagem real recebida, autenticada, traduzida e processada

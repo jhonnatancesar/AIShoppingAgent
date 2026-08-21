@@ -3,7 +3,7 @@
 Status: **Concluída em 2026-08-10**, decisão aprovada explicitamente pelo
 usuário (aplicar aos 5 serviços restantes), implementada e validada.
 
-Dependência: nenhuma. Segunda TASK da `v1.0.2` (`docs/V1_0_2.md`, item 2);
+Dependência: nenhuma. Segunda TASK da `v1.0.2` (`docs/internal/v1.0.2-scope.md`, item 2);
 independente da TASK-065 (já concluída).
 
 ## Contexto
@@ -13,7 +13,7 @@ independente da TASK-065 (já concluída).
 `database`, `api`, `otel-collector`, `prometheus` e `jaeger` não têm
 política de restart definida e exigem `docker compose up -d` manual após
 reboot do host, queda de energia, restart do Docker Engine ou crash de
-container. `docs/PRODUCTION_SETUP.md` (seção 15) já documenta esse
+container. `docs/installation/linux-legacy-setup.md` (seção 15) já documenta esse
 comportamento como o estado real da `v1.0.1` em produção. O item 2 da
 `v1.0.2` pede uma auditoria serviço por serviço, aplicando
 `restart: unless-stopped` **só onde for tecnicamente apropriado** — sem
@@ -33,7 +33,7 @@ aplicar a decisão em `compose.yaml`.
    de dados.
 2. Propor e aplicar `restart: unless-stopped` só onde justificado.
 3. Atualizar a documentação operacional afetada
-   (`docs/PRODUCTION_SETUP.md` seção 15, e qualquer outra referência ao
+   (`docs/installation/linux-legacy-setup.md` seção 15, e qualquer outra referência ao
    comportamento atual).
 4. Não alterar nenhum outro campo de `compose.yaml` além da política de
    restart.
@@ -81,8 +81,8 @@ arbitrária "aplicar a mais um serviço".
 | `collection_worker` | já tem | Mantido sem alteração. |
 | `telegram_notifier` | já tem | Mantido sem alteração. |
 | `otel-collector` | **Sim** | Container stateless (só encaminha OTLP→Jaeger); nenhuma razão técnica para exigir intervenção manual; reinício automático não tem efeito colateral. |
-| `prometheus` | **Sim** | Métricas ficam em volume nomeado (`prometheus_data`, sobrevive a restart do container); perder coleta durante o downtime é aceitável (`docs/PRODUCTION_SETUP.md` seção 14 — "não são dado de negócio"), mas manter o serviço no ar automaticamente evita uma lacuna maior de observabilidade sem motivo para excluí-lo. |
-| `jaeger` | **Sim** | Armazenamento em memória (traces não sobrevivem a restart, por design já documentado — `docs/OPERATIONS.md`), mas isso não é razão para excluir o *serviço* do auto-restart — só significa que o histórico de traces anterior ao restart se perde, o que já é esperado e aceito hoje mesmo em restart manual. |
+| `prometheus` | **Sim** | Métricas ficam em volume nomeado (`prometheus_data`, sobrevive a restart do container); perder coleta durante o downtime é aceitável (`docs/installation/linux-legacy-setup.md` seção 14 — "não são dado de negócio"), mas manter o serviço no ar automaticamente evita uma lacuna maior de observabilidade sem motivo para excluí-lo. |
+| `jaeger` | **Sim** | Armazenamento em memória (traces não sobrevivem a restart, por design já documentado — `docs/operations/linux-runbook.md`), mas isso não é razão para excluir o *serviço* do auto-restart — só significa que o histórico de traces anterior ao restart se perde, o que já é esperado e aceito hoje mesmo em restart manual. |
 
 **Conclusão da auditoria**: não encontrei nenhum dos 7 serviços com uma
 razão técnica genuína para permanecer sem `restart: unless-stopped` — são
@@ -107,12 +107,12 @@ os 7 serviços consistentes.
   serviços (`database`, `api`, `otel-collector`, `prometheus`, `jaeger`).
   Nenhum outro campo alterado — diff confirmado como só essas 5 linhas
   novas.
-- **`docs/PRODUCTION_SETUP.md`**: seção "Serviços" (achado da auditoria)
+- **`docs/installation/linux-legacy-setup.md`**: seção "Serviços" (achado da auditoria)
   atualizada de "Correção planejada" para "Correção aplicada"; seção 15
   ("Inicialização após reboot") reescrita para descrever os 7 serviços
   com `restart: unless-stopped`, mantendo a recomendação de confirmar com
   `docker compose up -d` mesmo assim.
-- **`docs/V1_0_2.md`**: item 2 marcado como concluído.
+- **`docs/internal/v1.0.2-scope.md`**: item 2 marcado como concluído.
 
 ## Validação (2026-08-10)
 
@@ -149,7 +149,7 @@ crash simulado. Produção da `v1.0.1` intocada; TASK-067 não iniciada.
 ## Fora do escopo desta TASK
 
 - Instalar unidade systemd para subir `docker compose up -d` automaticamente
-  no boot (`docs/OPERATIONS.md` já registra que a V1 não faz isso) — item
+  no boot (`docs/operations/linux-runbook.md` já registra que a V1 não faz isso) — item
   não pedido, ampliaria escopo.
 - Qualquer alteração em produção.
 - TASK-067 a TASK-069.

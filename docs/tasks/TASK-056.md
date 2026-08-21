@@ -14,7 +14,7 @@ proprietário válido.
 - Adicionar `telegram_user_id`, identificador único e opcional da **pessoa**
   no Telegram (`message.from.id`, nunca `message.chat.id`), ao modelo de
   dados de usuário, com migração Alembic reversível, preservando as
-  restrições já existentes em `docs/USERS.md` (nome obrigatório, papel
+  restrições já existentes em `docs/architecture/users.md` (nome obrigatório, papel
   fechado, ativação lógica). Nenhum `chat_id` é persistido nesta tarefa, por
   falta de necessidade funcional definida.
 - Implementar resolução get-or-create (`get_or_create_telegram_user`): dado

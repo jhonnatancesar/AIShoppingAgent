@@ -31,7 +31,7 @@ A V1 permitirá pesquisar Pichau, Terabyte, Amazon e Kabum, conforme seleção d
 
 ## Fonte de verdade
 
-`docs/PROJECT_CONTEXT.md` registra o estado vivo; `docs/ROADMAP.md` registra a ordem de trabalho; `docs/tasks/` contém o escopo unitário.
+`docs/internal/project-context.md` registra o estado vivo; `docs/internal/roadmap.md` registra a ordem de trabalho; `docs/tasks/` contém o escopo unitário.
 
 ## Continuidade no servidor — estado atual em 2026-08-20
 

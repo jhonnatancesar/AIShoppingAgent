@@ -16,7 +16,7 @@ oferta pode ter **várias** condições de parcelamento simultâneas -- o
 desenho original desta TASK (três campos escalares em `Offer`/
 `PriceObservation`) foi **abandonado antes de qualquer código ser
 consolidado** e substituído por uma relação 1:N (`OfferInstallmentOption`).
-Ver `DEC-069` em `docs/DECISION_LOG.md` para a decisão completa; a seção
+Ver `DEC-069` em `docs/internal/decision-log.md` para a decisão completa; a seção
 "Investigação real obrigatória" e as regras originais abaixo continuam
 válidas como registro histórico do que motivou a correção -- não foram
 apagadas.
@@ -317,14 +317,14 @@ TASK deve revisar o head Alembic e integrar as mudanças já presentes.
 
 ## Documentação afetada na futura implementação
 
-- `docs/COLLECTION_ADAPTER.md`;
-- `docs/DATABASE.md`;
-- `docs/PRICE_ENGINE.md`;
-- `docs/MISSION_CRITERIA.md`;
+- `docs/architecture/collection-adapter.md`;
+- `docs/database/schema.md`;
+- `docs/architecture/price-engine.md`;
+- `docs/architecture/mission-criteria.md`;
 - `docs/EVENTS.md` e contratos de eventos afetados;
 - documentação das mensagens Telegram;
-- `docs/PROJECT_CONTEXT.md`, `docs/CHANGELOG.md`, `docs/DECISION_LOG.md`,
-  `docs/ROADMAP.md`, `docs/BACKLOG.md` e índice de TASKs.
+- `docs/internal/project-context.md`, `docs/releases/changelog.md`, `docs/internal/decision-log.md`,
+  `docs/internal/roadmap.md`, `docs/internal/backlog.md` e índice de TASKs.
 
 ## Testes adicionados (implementação real, 2026-08-17)
 
@@ -649,4 +649,4 @@ da TASK-077 ou da própria TASK-089. TASK-077 foi concluída antes desta
 explicitamente pelo usuário em 2026-08-17, após a investigação real ter
 corrigido o desenho original (`DEC-069`). Commit, push, tag e deploy
 autorizados explicitamente pelo usuário em 2026-08-17, fechando a
-release `v1.0.7` -- ver `docs/CHANGELOG.md` para o registro oficial.
+release `v1.0.7` -- ver `docs/releases/changelog.md` para o registro oficial.

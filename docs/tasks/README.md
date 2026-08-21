@@ -47,7 +47,7 @@ quatro fontes reais e Telegram real (2026-08-09), depois da disponibilidade
 por card, do DEC-045, do DEC-046 e do DEC-047, e foi encerrada com aprovação
 explícita do usuário. A falha isolada da Pichau no E2E externo é uma
 condição externa observada, não um bug interno pendente. A TASK-054 fechou
-`docs/RELEASE_CHECKLIST.md` (63/63) e publicou o tag `v1.0.0` em `origin`
+`docs/releases/checklist.md` (63/63) e publicou o tag `v1.0.0` em `origin`
 como marco revisado da V1 — sem deploy real, CI/CD ou GitHub Release
 pública, por decisão explícita do usuário. A TASK-063
 (`docs/tasks/TASK-063.md`, `DEC-048`), aberta depois de o usuário
@@ -65,20 +65,20 @@ chamadas reais (fallback Flash→Groq real confirmado; coleta representativa
 com 15/20 sucesso em classificação e em normalização; falhas restantes do
 Flash por cota registradas como condição operacional externa). Com a
 TASK-064 fechada, a condição que suspendia a release como definitiva está
-resolvida (`docs/RELEASE_CHECKLIST.md`, 65/65); o tag `v1.0.0` permanece
+resolvida (`docs/releases/checklist.md`, 65/65); o tag `v1.0.0` permanece
 publicado sem alteração.
 
 **Atualização 2026-08-10:** auditoria mostrou que `v1.0.0` nunca foi
 movida e não contém TASK-063/TASK-064 — a tag corretiva **`v1.0.1`**
 (`578dc29`) é a referência de release atual e **já foi implantada em
-produção real** (`docs/PRODUCTION_SETUP.md`). O planejamento de `v1.0.2`
-(release corretiva, 5 itens, `docs/V1_0_2.md`) e V1.2 (evolução
-funcional, 12 itens, `docs/V1_2.md` — documento separado, não confundir
-as duas versões) está registrado com `docs/DECISION_LOG.md` (`DEC-052` a
+produção real** (`docs/installation/linux-legacy-setup.md`). O planejamento de `v1.0.2`
+(release corretiva, 5 itens, `docs/internal/v1.0.2-scope.md`) e V1.2 (evolução
+funcional, 12 itens, `docs/internal/v1.2-scope.md` — documento separado, não confundir
+as duas versões) está registrado com `docs/internal/decision-log.md` (`DEC-052` a
 `DEC-059`).
 
 **Atualização 2026-08-10 (2):** a `v1.0.2` entrou em **planejamento
-ativo** por pedido explícito do usuário. Os 5 itens de `docs/V1_0_2.md`
+ativo** por pedido explícito do usuário. Os 5 itens de `docs/internal/v1.0.2-scope.md`
 foram propostos como TASK-065 a TASK-069 (numeração, nome, objetivo e
 dependências apresentados ao usuário, ordem recomendada sugerida). V1.2
 permanece só planejamento, sem nenhuma TASK.
@@ -134,7 +134,7 @@ TASK-069, o usuário ampliou o escopo da `v1.0.2` com mais dois itens
 (`DEC-060`) — impedir `/cadastro` para usuário já autenticado/logado, e
 perguntar as lojas por lista numerada (`1 Pichau`, `2 Terabyte`,
 `3 Amazon`, `4 Kabum`, `5 Todas`) quando uma missão for criada sem
-nenhuma informada. Registrados como itens 6 e 7 em `docs/V1_0_2.md`,
+nenhuma informada. Registrados como itens 6 e 7 em `docs/internal/v1.0.2-scope.md`,
 **sem implementação e sem TASK aberta** — pedido explícito de não
 implementar agora. **A `v1.0.2` continua aberta.**
 

@@ -23,4 +23,4 @@ Esquema relacional do MVP definido com entidades, tipos PostgreSQL, relações, 
 O contrato foi ampliado em 2026-08-02 para representar `mission_sources`, tipo
 de fonte, vendedores de marketplace, ofertas por vendedor, frete, total e
 fulfillment históricos. A correção preserva o histórico e está detalhada em
-`docs/DATABASE.md` e `docs/MARKETPLACE_SOURCES.md`.
+`docs/database/schema.md` e `docs/architecture/providers.md`.

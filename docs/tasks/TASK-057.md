@@ -8,7 +8,7 @@ Melhorar a robustez da classificação de `IntentKind` e da extração de
 `IntentParameters` pelo `IntentInterpreter` (TASK-032) para diferentes
 formas de escrita do usuário (informal, gírias, erros de digitação, ordens
 de frase variadas), sem alterar o vocabulário fechado nem o contrato já
-definido em `docs/INTENT_INTERPRETATION.md`.
+definido em `docs/architecture/intent-interpretation.md`.
 
 ## Contexto
 
@@ -114,4 +114,4 @@ especificamente — `unknown` só tem confirmação real via a cascata
 mas não há indício de comportamento incorreto observado para `unknown`,
 apenas lacuna de confirmação por escassez de cota. Ampliar ainda mais a
 variedade de linguagem testada fica registrado para a V2 em
-`docs/BACKLOG.md`.
+`docs/internal/backlog.md`.

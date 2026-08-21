@@ -1,34 +1,70 @@
 # AIShoppingAgent
 
-Agente inteligente de compras construído incrementalmente. O projeto possui a base FastAPI e a infraestrutura de persistência PostgreSQL preparadas para a implementação dos módulos de domínio.
+Agente de compras que monitora preços em várias lojas e avisa você no
+Telegram na hora certa de comprar.
 
-O desenvolvimento usa a versão estável mais recente do Python disponível. A versão validada atualmente está registrada em `docs/DEPENDENCIES.md`.
+> **Observação de segurança:** use somente a instalação oficial do Python da
+> máquina. Não instale dependências nem rode o projeto com runtimes internos
+> do Codex, plugins ou caches. Um alerta do antivírus deve interromper a
+> execução; não restaure o objeto nem crie exceções automaticamente.
+> Consulte o histórico em
+> [Log de incidentes de segurança](docs/internal/security-incident-log.md).
 
-> **Observação de segurança:** use somente a instalação oficial do Python da máquina.
-> Não instale dependências nem rode o projeto com runtimes internos do Codex, plugins
-> ou caches. Um alerta do antivírus deve interromper a execução; não restaure o objeto
-> nem crie exceções automaticamente. Consulte o histórico e as medidas adotadas no
-> [log de incidentes de segurança](docs/SECURITY_INCIDENT_LOG.md).
+## O que é
 
-Consulte `AGENTS.md` antes de executar tarefas e `docs/ROADMAP.md` para a sequência planejada. O procedimento de instalação e manutenção em Ubuntu Server está em [`docs/OPERATIONS.md`](docs/OPERATIONS.md).
+Você descreve, em linguagem natural pelo Telegram, o produto que quer
+comprar. O AIShoppingAgent interpreta o pedido com IA, cria uma missão de
+acompanhamento e monitora continuamente o preço nas lojas que você
+selecionar. Quando o preço cai ou atinge o valor-alvo definido, você recebe
+um alerta com o link direto para a oferta — a compra em si é sempre feita
+por você, direto na loja.
 
-## Deploy em produção
+## Como funciona
 
-O manual completo, passo a passo, para instalar o AIShoppingAgent do zero em
-um Ubuntu Server novo — a partir da release `v1.0.1` — está em
-[`docs/PRODUCTION_SETUP.md`](docs/PRODUCTION_SETUP.md). Cobre pré-requisitos
-do servidor, clonagem pelo Git, `.env`/`.secrets` de produção, PostgreSQL e
-migrations, criação do primeiro usuário `DEV`, Telegram, build/inicialização
-dos serviços, validação, backup/restauração, atualização entre releases e
-uma checklist final de deploy. Para operação contínua depois da instalação
-(rotina, rotação de credenciais, rollback, diagnóstico), use
-[`docs/OPERATIONS.md`](docs/OPERATIONS.md).
+1. Você descreve o produto pelo bot do Telegram.
+2. A IA interpreta o pedido e cria a missão.
+3. O `collection_worker` monitora continuamente as lojas selecionadas.
+4. Cada preço coletado é preservado no histórico (nada é sobrescrito).
+5. Ao detectar queda de preço ou preço-alvo atingido, o `telegram_notifier`
+   envia o alerta.
+6. Você decide comprar, direto na loja.
 
-## Ambiente local com Docker Compose
+## Principais recursos
 
-Copie o exemplo de configuração não sensível e inicialize os secrets com
-entrada oculta. O Compose monta os valores em `/run/secrets`; não os coloque
-no `.env` usado pelos contêineres:
+- Criação de missão por linguagem natural, sem formulário.
+- Monitoramento contínuo, sem prazo de expiração por padrão.
+- Alertas de queda de preço e de preço-alvo atingido, configuráveis
+  separadamente.
+- Histórico completo de preço, append-only.
+- Exibição de preço à vista e, quando a loja informa, condições de
+  parcelamento — nunca calculado.
+- Autenticação por sessão, papéis `USER`/`ADMIN`/`DEV` e isolamento por
+  proprietário.
+- Observabilidade própria (logs estruturados, métricas Prometheus, traces
+  Jaeger).
+
+## Arquitetura resumida
+
+Monólito modular em FastAPI, com PostgreSQL como fonte de verdade
+transacional. Sete serviços via Docker Compose: `api` (HTTP + webhook do
+Telegram), `collection_worker` (coleta agendada via Playwright),
+`telegram_notifier` (entrega de alertas), `database` (PostgreSQL),
+`otel-collector`, `prometheus` e `jaeger` (observabilidade). Todo acesso a
+provedores de IA passa pelo `AIProviderManager` — nenhum módulo fala
+diretamente com Gemini, Groq ou OpenRouter. Detalhes completos em
+[Arquitetura → Visão geral](docs/architecture/overview.md).
+
+## Plataforma atual
+
+A produção roda em **Windows Server**, com Docker Desktop (WSL2) e
+Tailscale Funnel para o HTTPS público do webhook do Telegram. Ubuntu Server
+foi a plataforma original e permanece documentado como instalação legada.
+Veja [Instalação → Windows Server](docs/installation/windows-server.md) e
+[Instalação → Linux (legado)](docs/installation/linux.md).
+
+## Instalação rápida
+
+Ambiente local, para desenvolvimento:
 
 ```powershell
 Copy-Item .env.example .env
@@ -39,65 +75,49 @@ docker compose run --rm api python -m alembic -c alembic.ini upgrade head
 docker compose up --build
 ```
 
-Quem já possui valores em `.env` pode usar
-`python -m backend.scripts.manage_secrets migrate` sem imprimir nem apagar os
-arquivos de origem. Desenvolvimento Python fora do Docker ainda aceita
-`backend/.env`; produção aceita somente `*_FILE`. Consulte
-`docs/SECRETS.md`, especialmente antes de rotacionar a senha de um banco já
-inicializado.
+A API fica em `http://localhost:8000`. Detalhes completos em
+[Instalação → Docker Compose local](docs/installation/docker.md).
 
-A API ficará disponível em `http://localhost:8000`, o PostgreSQL em
-`localhost:5432`, o Prometheus em `http://localhost:9090` e o Jaeger em
-`http://localhost:16686`. O serviço `collection_worker` pesquisa as missões
-agendadas e publica eventos; `telegram_notifier` consome continuamente os
-alertas de preço. Para encerrar os contêineres sem apagar o volume do banco,
-execute `docker compose down`.
+Para produção do zero, siga
+[Instalação → Windows Server](docs/installation/windows-server.md).
 
-Essas portas usam `127.0.0.1` por padrão. PostgreSQL, Prometheus, Jaeger,
-Collector e métricas do worker nunca devem ser abertos diretamente para a
-Internet; consulte o runbook antes de alterar qualquer bind ou firewall.
+## Documentação
 
-No Telegram, `/preferencias` consulta as notificações. Use
-`/preferencias quedas ativar|desativar` e
-`/preferencias alvo ativar|desativar` para configurá-las separadamente.
-As duas preferências começam ativadas; eventos bloqueados não são reenviados
-quando a preferência correspondente for reativada.
-`/privacidade` apresenta, sem IA, um resumo do uso e proteção de dados. O
-inventário, as retenções operacionais e a desidentificação controlada estão em
-[`docs/PRIVACY.md`](docs/PRIVACY.md).
+A documentação técnica completa vive em [`docs/`](docs/):
 
-Operações de usuário pelo bot são aceitas somente no chat privado direto da
-própria pessoa e para uma conta interna ativa. Depois da autenticação, a
-política `USER ⊂ ADMIN ⊂ DEV` autoriza a operação sem remover o isolamento por
-proprietário. Papel inválido ou recurso alheio falha fechado e termina sem
-resposta funcional. Grupos, supergrupos e canais são ignorados. A autenticação
-pública usa `/recuperar`, `/entrar` e `/sair`: `/recuperar` cria a primeira
-senha ou redefine a existente, sempre pelo formulário HTTPS; comandos
-funcionais exigem sessão absoluta de 12 horas.
-Consulte `docs/AUTHORIZATION.md` e `docs/AUTHENTICATION.md`.
+| Área | Conteúdo |
+| --- | --- |
+| [`docs/installation/`](docs/installation/) | Instalação (Windows Server, Docker local, Linux legado), configuração, atualização. |
+| [`docs/architecture/`](docs/architecture/) | Como cada parte do sistema funciona (missões, ofertas, Telegram, IA, privacidade). |
+| [`docs/administration/`](docs/administration/) | Administração manual de usuários e missões. |
+| [`docs/operations/`](docs/operations/) | Runbook, containers, backup/restauração, health checks. |
+| [`docs/database/`](docs/database/) | Schema, acesso ao PostgreSQL, migrations. |
+| [`docs/development/`](docs/development/) | Ambiente de desenvolvimento, testes, convenções. |
+| [`docs/troubleshooting.md`](docs/troubleshooting.md) | Problemas comuns e como resolvê-los. |
+| [`docs/releases/`](docs/releases/) | Changelog, checklist de release, índice de versões. |
+| [`docs/adr/`](docs/adr/), [`docs/rfc/`](docs/rfc/), [`docs/tasks/`](docs/tasks/), [`docs/internal/`](docs/internal/) | Decisões de arquitetura, propostas, tarefas e contexto interno do projeto. |
 
-Para criar uma missão, use `/criar_missao`; somente a descrição seguinte é
-interpretada por IA. Mensagens soltas, escolhas numéricas e confirmações não
-chamam IA. O cancelamento começa por `/cancelar_missao` e usa exclusivamente o
-fluxo determinístico com ownership e transição de estado. Os aliases digitados
-com hífen (`/criar-missao`, `/cancelar-missao` e `/editar-missao`) continuam
-aceitos, mas o menu formal usa underscore por exigência da Bot API.
+A apresentação pública do projeto (site institucional, sem documentação
+técnica/administrativa) vive em um repositório próprio, separado deste:
+[`jhonnatancesar/AIShoppingAgent-site`](https://github.com/jhonnatancesar/AIShoppingAgent-site),
+publicado em `https://jhonnatancesar.github.io/AIShoppingAgent-site/`.
 
-Com a API em execução, verifique sua vivacidade em `http://localhost:8000/health`. A resposta esperada é:
+## Administração
 
-```json
-{"status":"ok"}
-```
+Operar o sistema sem depender do bot — containers, PostgreSQL, usuários e
+missões — está documentado em [`docs/administration/`](docs/administration/)
+e no [Runbook de operação](docs/operations/runbook.md).
 
-`/health` não consulta dependências. Use `/ready` para verificar o PostgreSQL
-real (`200` com `{"status":"ready"}` ou `503` com
-`{"status":"not_ready"}`). `/metrics` é operacional e não aparece no
-OpenAPI. A arquitetura, as regras de privacidade e a distinção entre estado
-Prometheus e notificação externa estão em `docs/OBSERVABILITY.md`.
+## Releases / Downloads
 
-## Qualidade de código
+Versões são publicadas como tags Git anotadas. Veja o
+[índice de releases](docs/releases/index.md) para a versão atual, o
+histórico completo e como atualizar produção para uma nova tag.
 
-Instale as dependências de desenvolvimento e execute as verificações a partir da raiz do projeto:
+## Desenvolvimento
+
+Instale as dependências de desenvolvimento e execute as verificações a
+partir da raiz do projeto:
 
 ```powershell
 python -m pip install -r backend/requirements-dev.txt
@@ -107,45 +127,23 @@ python -m ruff format --check .
 python -m pytest
 ```
 
-Para aplicar automaticamente correções seguras e formatação:
-
-```powershell
-python -m ruff check . --fix
-python -m ruff format .
-```
-
-Os testes geram relatório de cobertura no terminal e exigem cobertura mínima de 90% do pacote `app`.
-
-As regras para novos endpoints estão em `docs/API_CONVENTIONS.md`. O contrato executável da aplicação pode ser consultado em `http://localhost:8000/openapi.json` quando a API estiver ativa.
-
-Os logs da aplicação são emitidos como JSON em `stdout`. Use
-`docker compose logs --follow api collection_worker telegram_notifier` para acompanhá-los e
-consulte `docs/LOGGING.md` para o contrato dos eventos.
-
-## Pipeline local
-
-Execute todas as verificações obrigatórias com:
+Pipeline completo (inclui varredura de segredos):
 
 ```powershell
 .\scripts\check.cmd
 ```
 
-O pipeline também instala o Gitleaks 8.29.1 com checksum verificado, examina
-working tree, arquivos versionados e histórico, e valida um canário gerado em
-repositório temporário. O detalhamento está em `docs/LOCAL_PIPELINE.md`.
-
-A suíte PostgreSQL real também pode ser executada isoladamente com
-`.\scripts\check-integration.cmd` no Windows ou
-`python scripts/run_integration_tests.py` no Ubuntu. Ela cria e remove somente
-recursos sintéticos exclusivos; consulte `docs/INTEGRATION_TESTS.md`.
-
-## Migrações
-
-Após configurar os secret files e iniciar o PostgreSQL, aplique as migrações
-pelo ambiente reproduzível do Compose:
+Suíte de integração PostgreSQL isolada:
 
 ```powershell
-docker compose run --rm api python -m alembic -c alembic.ini upgrade head
+.\scripts\check-integration.cmd
 ```
 
-O ciclo completo, os comandos de inspeção e os cuidados com downgrade estão em `docs/MIGRATIONS.md`.
+Testes exigem cobertura mínima de 90% do pacote `app`. Convenções de API,
+ambiente de desenvolvimento, testes e estrutura do projeto estão em
+[`docs/development/`](docs/development/).
+
+## Licença
+
+Ainda não definida. Este repositório é privado e não deve ser tratado como
+disponível para reuso até que uma licença seja explicitamente escolhida.

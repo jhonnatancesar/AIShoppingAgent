@@ -10,7 +10,7 @@ declarar o sistema pronto para produção.
 
 ## Escopo aprovado
 
-- criar `docs/OPERATIONS.md` como ponto de entrada operacional;
+- criar `docs/operations/linux-runbook.md` como ponto de entrada operacional;
 - documentar preparação de Ubuntu Server, Docker Engine/Compose e Git;
 - configurar dados não sensíveis e secrets por arquivo com permissões
   restritas;
@@ -76,7 +76,7 @@ declarar o sistema pronto para produção.
 
 ## Resultado
 
-- `docs/OPERATIONS.md` consolidou preparação, operação, diagnóstico, backup,
+- `docs/operations/linux-runbook.md` consolidou preparação, operação, diagnóstico, backup,
   restauração e rollback seguro para um único Ubuntu Server headless;
 - API, PostgreSQL, Prometheus e Jaeger passaram a bindar no loopback por
   padrão; Collector já permanecia no loopback e métricas do worker continuam

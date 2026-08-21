@@ -12,7 +12,7 @@ pelas TASKs 032 a 034.
 ## Escopo
 
 - Seed das quatro lojas selecionáveis da V1 (Pichau, Terabyte, Amazon,
-  Kabum), necessário para `MissionSource.store_id` (`docs/MARKETPLACE_SOURCES.md`).
+  Kabum), necessário para `MissionSource.store_id` (`docs/architecture/providers.md`).
 - `create_mission_from_criteria`: cria `Mission` + `MissionCriteria` +
   `MissionSource` e ativa imediatamente. Fontes vêm de
   `IntentParameters.sources` quando informadas; quando ausentes, usa
@@ -40,7 +40,7 @@ pelas TASKs 032 a 034.
 
 ## Critério de aceite
 
-Escopo concluído, documentado em `docs/MISSION_COMMANDS.md`, coberto por
+Escopo concluído, documentado em `docs/architecture/mission-commands.md`, coberto por
 testes automatizados (`scripts\check.cmd` completo em Python 3.14.6: 298
 testes, 94,73% de cobertura) e validado de ponta a ponta contra PostgreSQL
 18, o Gemini e o Telegram reais: criação com fonte explícita e sem fonte

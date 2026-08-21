@@ -19,7 +19,7 @@ def test_build_adapter_registers_exactly_v1_sources() -> None:
 
 def test_build_adapter_uses_headed_only_for_pichau_and_terabyte() -> None:
     """Pichau/Terabyte exigem headed (Xvfb) para não serem bloqueadas; ver
-    docs/PLAYWRIGHT.md e backend/scripts/validate_store_providers.py."""
+    docs/architecture/playwright.md e backend/scripts/validate_store_providers.py."""
     adapter = build_collection_adapter(Settings(_env_file=None))
 
     assert adapter._providers["pichau"].settings.headless is False

@@ -4,7 +4,7 @@ Status: **Concluída em 2026-08-11**, desenho aprovado explicitamente pelo
 usuário (com ajustes sobre a mensagem de bloqueio e o escopo exato da
 checagem de username), implementada e validada com pipeline oficial.
 
-Dependência: nenhuma. Item 6 da `v1.0.2` (`docs/V1_0_2.md`, `DEC-060`) —
+Dependência: nenhuma. Item 6 da `v1.0.2` (`docs/internal/v1.0.2-scope.md`, `DEC-060`) —
 último item pendente da versão.
 
 ## Contexto
@@ -16,7 +16,7 @@ uma conta "logando" num dispositivo que não é o dela. Uma auditoria
 dedicada mostrou que as duas últimas **já são estruturalmente
 garantidas** pelo sistema hoje — `User.telegram_user_id` tem constraint
 `UNIQUE` no banco e `get_or_create_telegram_user` é seguro contra
-corrida (`docs/USERS.md`); não existe nenhum caminho onde uma conta
+corrida (`docs/architecture/users.md`); não existe nenhum caminho onde uma conta
 diferente autentique através da identidade do Telegram de outra pessoa,
 já que a sessão é sempre resolvida a partir do `telegram_user_id`
 recebido, nunca de um dado informado pelo usuário. Nenhuma mudança foi

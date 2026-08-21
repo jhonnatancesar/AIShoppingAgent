@@ -78,7 +78,7 @@ API real).
 
 Duas correções reais de infraestrutura, encontradas durante essa validação
 e fora do escopo original da TASK, mas bloqueando-a — ver
-`docs/CHANGELOG.md` e `docs/AI_PROVIDER_MANAGER.md` para detalhes:
+`docs/releases/changelog.md` e `docs/architecture/ai-provider-manager.md` para detalhes:
 
 1. Chave Gemini separada por perfil (`AISHOPPING_GEMINI_API_KEY_USER` /
    `AISHOPPING_GEMINI_API_KEY_ADMIN_DEV`), pedida pelo usuário.

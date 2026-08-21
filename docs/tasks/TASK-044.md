@@ -36,7 +36,7 @@ TASK-043, preservando rastreabilidade e permitindo retry após falha.
   `app.events.consumption`.
 - Revisão Alembic `20260808_0004`, com FK `RESTRICT`, índice parcial de
   sucessos e trigger contra `UPDATE`/`DELETE`.
-- Contrato operacional detalhado em `docs/EVENT_CONSUMPTION.md`.
+- Contrato operacional detalhado em `docs/architecture/event-consumption.md`.
 - Extensão posterior da TASK-037: `skipped` é terminal como `succeeded`, sem
   `failure_code`, para preferências que suprimem a entrega sem gerar retry.
 

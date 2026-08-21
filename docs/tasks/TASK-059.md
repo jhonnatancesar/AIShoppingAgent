@@ -35,7 +35,7 @@ no script de validação teria efeito sem essa mudança.
   corpo bruto nem credenciais.
 - `AISHOPPING_GROQ_API_KEY` e `AISHOPPING_GROQ_MODEL` (default
   `openai/gpt-oss-120b`) em `backend/app/core/config.py`,
-  `backend/.env.example` e `docs/DEPENDENCIES.md`. `httpx` declarado
+  `backend/.env.example` e `docs/development/dependencies.md`. `httpx` declarado
   explicitamente em `backend/requirements.txt` (já presente de forma
   transitiva).
 - `AdminDevAIProviderManager` (`backend/app/ai_provider/manager.py`) passa a

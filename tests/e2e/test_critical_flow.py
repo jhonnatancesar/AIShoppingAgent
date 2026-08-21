@@ -147,7 +147,7 @@ class _ControlledAIManager:
     """Fronteira de IA controlada do E2E (TASK-063): sempre MATCH + título fixo.
 
     O E2E reproduzível controla só as bordas externas de IA, marketplace e
-    Telegram (`docs/E2E_TESTS.md`) -- nunca chama o Gemini/Groq reais.
+    Telegram (`docs/development/e2e-tests.md`) -- nunca chama o Gemini/Groq reais.
     """
 
     async def generate(self, request):

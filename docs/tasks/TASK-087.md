@@ -21,7 +21,7 @@ listas no padrão `1 — Opção` e confirmações com opções em linhas própr
 - Criação, listagem, transição, cancelamento e edição de missão.
 - Preferências, rate limit, alertas, pré-listas e privacidade.
 - Atualização somente dos testes/snapshots afetados pelos textos.
-- Sincronização de `docs/TELEGRAM_TEXTS_REVIEW.md` com o catálogo revisado.
+- Sincronização de `docs/architecture/telegram-texts.md` com o catálogo revisado.
 
 ## Regras imutáveis
 
@@ -59,7 +59,7 @@ placeholder nem linha vazia.
 O texto integral entregue pelo usuário em 2026-08-16, intitulado **“Catálogo
 revisado de textos visíveis ao usuário”**, é a especificação de copy. Antes da
 implementação, ele deve substituir o catálogo preliminar local em
-`docs/TELEGRAM_TEXTS_REVIEW.md`, preservando literalmente o conteúdo aprovado.
+`docs/architecture/telegram-texts.md`, preservando literalmente o conteúdo aprovado.
 
 ## Resultado
 

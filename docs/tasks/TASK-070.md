@@ -5,7 +5,7 @@ usuário (com ajustes obrigatórios sobre ordem, validação estrita e
 preservação do `_DEFAULT_V1_SOURCE_CODES` do service), implementada e
 validada com pipeline oficial.
 
-Dependência: nenhuma direta. Item 7 da `v1.0.2` (`docs/V1_0_2.md`,
+Dependência: nenhuma direta. Item 7 da `v1.0.2` (`docs/internal/v1.0.2-scope.md`,
 `DEC-060`), registrado depois da TASK-069 concluir o planejamento
 original de 5 itens. Reaproveita o padrão de confirmação da TASK-058 e o
 precedente de lista numerada da TASK-067 (`/cadastro`), sem alterá-los.

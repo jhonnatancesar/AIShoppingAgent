@@ -15,6 +15,6 @@ Implementar a execução persistente e atômica das transições de missão defi
 
 ## Critério de aceite
 
-Ciclo de vida executável conforme `docs/MISSION_SYSTEM.md`, histórico imutável,
+Ciclo de vida executável conforme `docs/architecture/mission-system.md`, histórico imutável,
 concorrência protegida e migration validada em PostgreSQL real.
 

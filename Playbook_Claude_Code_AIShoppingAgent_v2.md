@@ -27,11 +27,11 @@ Construir um agente inteligente de compras de forma incremental.
 Crie: docs/ adr/ rfc/ tasks/ future_ideas/ backend/ frontend/ tests/
 docker/ scripts/
 
-Arquivos: README.md CLAUDE.md docs/PROJECT_CONTEXT.md docs/ROADMAP.md
-docs/CHANGELOG.md docs/VISION.md docs/ARCHITECTURE.md docs/DATABASE.md
-docs/MISSION_SYSTEM.md docs/AGENTS.md docs/PRICE_ENGINE.md
-docs/PURCHASE_ENGINE.md docs/TELEGRAM.md docs/EVENT_MONITOR.md
-docs/AI_PROVIDER_MANAGER.md
+Arquivos: README.md CLAUDE.md docs/internal/project-context.md docs/internal/roadmap.md
+docs/releases/changelog.md docs/internal/vision.md docs/architecture/overview.md docs/database/schema.md
+docs/architecture/mission-system.md docs/internal/agents.md docs/architecture/price-engine.md
+docs/architecture/purchase-engine.md docs/architecture/telegram.md docs/architecture/event-monitor.md
+docs/architecture/ai-provider-manager.md
 
 ## RFCs
 

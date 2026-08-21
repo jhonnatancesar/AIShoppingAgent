@@ -6,7 +6,7 @@ de editar), implementada e validada com pipeline oficial e testes de
 integração real (PostgreSQL).
 
 Dependência: nenhuma direta. Última TASK da `v1.0.2`
-(`docs/V1_0_2.md`, item 3; `DEC-057`); TASK-065/066/067/068 já
+(`docs/internal/v1.0.2-scope.md`, item 3; `DEC-057`); TASK-065/066/067/068 já
 concluídas. É o item de maior superfície de mudança — domain model,
 confirmação por IA e efeito sobre agenda/histórico.
 
@@ -31,7 +31,7 @@ propor o desenho.
 tabelas, e sempre cria uma `Mission` nova (UUID novo). Busca em todo
 `backend/app` confirma: `MissionCriteria.target_amount`/
 `target_currency` e `MissionSource` nunca aparecem do lado esquerdo de
-uma atribuição fora dessa função. `docs/MISSION_CRITERIA.md` chama os
+uma atribuição fora dessa função. `docs/architecture/mission-criteria.md` chama os
 critérios de "editáveis", mas isso é uma descrição aspiracional — não
 existe código que edite.
 
@@ -332,12 +332,12 @@ coleta de uma loja removida nunca é apagado (confirmado por teste de
 integração real). Nenhuma IA nova envolvida — reusa o classificador de
 intenção (vocabulário fechado estendido) e o classificador de
 confirmação já existentes. Com esta TASK, os 5 itens do **planejamento
-original** de `docs/V1_0_2.md` estão implementados e validados; produção
+original** de `docs/internal/v1.0.2-scope.md` estão implementados e validados; produção
 da `v1.0.1` intocada; nenhuma tag `v1.0.2` criada.
 
 **Nota pós-conclusão (2026-08-10):** ao aprovar a publicação desta TASK,
 o usuário ampliou o escopo da `v1.0.2` com mais dois itens (`DEC-060`,
-registrados em `docs/V1_0_2.md` como 6 e 7 — bloquear `/cadastro` para
+registrados em `docs/internal/v1.0.2-scope.md` como 6 e 7 — bloquear `/cadastro` para
 usuário já autenticado e perguntar as lojas por lista numerada quando
 uma missão for criada sem nenhuma informada), sem implementação e sem
 TASK aberta. **A `v1.0.2` continua aberta** — esta nota não altera nada

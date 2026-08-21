@@ -40,3 +40,7 @@ secrets/
 
 # Local virtual environments
 backend/.venv/
+
+# Build local do site público (MkDocs); publicado via GitHub Actions, não versionado
+.site-build/
+site/

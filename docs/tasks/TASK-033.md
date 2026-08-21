@@ -19,7 +19,7 @@ exclusivamente o `IntentInterpreter` da TASK-032.
 
 ## Critério de aceite
 
-Escopo concluído, documentado em `docs/TELEGRAM_ADAPTER.md` e coberto por
+Escopo concluído, documentado em `docs/architecture/telegram-adapter.md` e coberto por
 testes automatizados aprovados (`ruff check`, `ruff format --check` e
 `pytest` com cobertura, executados em Python 3.14.6 via `scripts\check.cmd`).
 Sem integração externa nova, não houve validação manual adicional além da

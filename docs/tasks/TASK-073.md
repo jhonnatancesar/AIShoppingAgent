@@ -87,7 +87,7 @@ sempre — isso não é afetado por esta TASK.
   alteração (`20260810_0001`), integrações PostgreSQL reais.
 - **Produção**: nenhuma alteração feita como parte da implementação em
   si; deploy tratado separadamente como release `v1.0.3` (ver
-  `docs/CHANGELOG.md` e commit de publicação).
+  `docs/releases/changelog.md` e commit de publicação).
 
 ## Escopo confirmado
 

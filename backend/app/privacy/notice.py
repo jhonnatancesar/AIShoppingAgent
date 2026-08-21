@@ -20,5 +20,5 @@ def privacy_notice() -> str:
         "do sistema podem permanecer vinculados apenas a um UUID interno "
         "pseudônimo.\n\n"
         "Isso não representa garantia de anonimização irreversível.\n\n"
-        "Para mais detalhes, consulte docs/PRIVACY.md no projeto."
+        "Para mais detalhes, consulte docs/architecture/privacy.md no projeto."
     )

@@ -11,7 +11,7 @@ históricos imutáveis.
 ## Escopo aprovado
 
 - inventariar dados, finalidades, armazenamento e terceiros em
-  `docs/PRIVACY.md`;
+  `docs/architecture/privacy.md`;
 - criar `/privacidade` como resposta fixa, sem IA e disponível antes da sessão;
 - remover Telegram IDs e campos pessoais de logs;
 - registrar somente classe segura de exceção, nunca mensagem/traceback bruto;

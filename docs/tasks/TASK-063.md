@@ -327,7 +327,7 @@ notifier. O que exige desenho novo é: (a) normalização do título via IA
    continua string fixa no código, não gerada por IA.
 5. **Infra** — `collection_worker` ganhou acesso ao secret
    `gemini_api_key_admin_dev` (+ `groq_api_key` opcional, mesma cascata da
-   `api`) em `compose.yaml`/`docs/SECRETS.md`, perfil `ADMIN` fixo, nunca a
+   `api`) em `compose.yaml`/`docs/installation/secrets.md`, perfil `ADMIN` fixo, nunca a
    chave/cota do perfil `USER`. Não recebe token do bot nem segredo do
    webhook.
 6. **Achado adicional não implementado**: nenhum outro ajuste além do
@@ -342,7 +342,7 @@ notifier. O que exige desenho novo é: (a) normalização do título via IA
   de isolamento entre duas missões na mesma oferta), migration head
   `20260809_0004`.
 - **E2E reproduzível**: 2/2 aprovados, com a fronteira de IA controlada
-  (sem chamar Gemini/Groq reais), consistente com `docs/E2E_TESTS.md`.
+  (sem chamar Gemini/Groq reais), consistente com `docs/development/e2e-tests.md`.
 - **Missão real via Telegram**: stack Docker reconstruído com o código
   atual, migration aplicada, `collection_worker` com o novo secret. Missão
   "mouse Logitech g pro 2" (alvo R$ 999.999,99, Kabum) processada pelo

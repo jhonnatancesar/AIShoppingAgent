@@ -53,7 +53,7 @@ despacho do webhook.
   sozinho por este fluxo; a elevação do dono do projeto é manual e pontual.
 - Não implementa cobrança, plano pago, créditos ou qualquer lógica
   funcional de upgrade — o placeholder fica sempre inativo
-  (`docs/OUT_OF_SCOPE.md`: "Plano PLUS", "Usuário pago" ficam para a V2).
+  (`docs/internal/out-of-scope.md`: "Plano PLUS", "Usuário pago" ficam para a V2).
 - Não implementa senha nem autenticação real — ver TASK-061 (`DEC-019`).
 - Não altera o vocabulário fechado de `IntentKind`/`IntentParameters`/
   `MissionCommand`.

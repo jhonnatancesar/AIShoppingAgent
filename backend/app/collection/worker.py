@@ -35,7 +35,7 @@ logger = logging.getLogger("app.collection.worker")
 # Pichau e Terabyte exigem Chromium headed (via Xvfb) para não serem
 # bloqueadas por proteção anti-bot; Amazon e Kabum toleram headless.
 # Mesma distinção de backend/scripts/validate_store_providers.py e
-# docs/PLAYWRIGHT.md (TASK-055) — o worker de produção não a herdava.
+# docs/architecture/playwright.md (TASK-055) — o worker de produção não a herdava.
 _HEADED_SOURCES = frozenset({"pichau", "terabyte"})
 
 

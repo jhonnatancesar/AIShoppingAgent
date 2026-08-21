@@ -1,6 +1,6 @@
 <#
 Porta para Windows do antigo timer systemd
-telegram-funnel-healthcheck (documentado em docs/PRODUCTION_SETUP.md,
+telegram-funnel-healthcheck (documentado em docs/installation/linux-legacy-setup.md,
 "Auto-recuperação do Tailscale Funnel", criado em 2026-08-12 quando o
 servidor ainda rodava Linux; perdido na migração para Windows Server e
 recriado em 2026-08-21 depois de um incidente real onde a ausência dele

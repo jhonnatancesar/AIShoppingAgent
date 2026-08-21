@@ -65,7 +65,7 @@ Versão alvo: a definir pelo usuário.
 ## Verificação de duplicata (obrigatória antes de criar TASK nova)
 
 O usuário mencionou "provavelmente TASK-080". Busca sistemática nesta
-rodada (todo `docs/`, incluindo `docs/BACKLOG.md`, `docs/ROADMAP.md`,
+rodada (todo `docs/`, incluindo `docs/internal/backlog.md`, `docs/internal/roadmap.md`,
 histórico de TASKs 070-079) **não encontrou nenhuma menção a seleção
 numérica de missões em nenhum documento**. `TASK-080` (criada nesta
 mesma rodada, Etapa 1) é sobre um assunto diferente e não relacionado —
@@ -88,7 +88,7 @@ if len(candidates) > 1:
 Hoje, sem `mission_reference` (texto livre) suficiente para reduzir a
 **exatamente uma** missão não terminal, o comando falha e pede pro
 usuário "ser mais específico" — não existe nenhuma lista numerada nem
-seleção múltipla neste caminho. `docs/MISSION_COMMANDS.md` confirma
+seleção múltipla neste caminho. `docs/architecture/mission-commands.md` confirma
 isso explicitamente: *"a V1 nunca expõe um identificador de missão"*.
 
 ## Componentes reutilizáveis já existentes (evitar duplicação)

@@ -259,7 +259,7 @@ diferença continua sendo só permissão) e autorizou a implementação.
   inalterada, 14 integrações PostgreSQL reais aprovadas.
 - **E2E reproduzível** (`scripts/run_e2e_tests.py`): 2/2 aprovados (a
   fronteira de IA continua mockada nesse suite, por design —
-  `docs/E2E_TESTS.md` — então isso valida a fiação do
+  `docs/development/e2e-tests.md` — então isso valida a fiação do
   `collection_worker`/`build_admin_dev_ai_provider_manager`, não a
   disponibilidade real).
 - **Stack Docker reconstruído** com o código novo
@@ -277,7 +277,7 @@ diferença continua sendo só permissão) e autorizou a implementação.
   confirmar o comportamento (evitar nova carga artificial), mas o sucesso
   do Flash como modelo já está documentado nesta auditoria (`gemini-3.5-flash`
   respondeu com sucesso num teste mínimo) e em validações reais anteriores
-  (`docs/AI_PROVIDER_MANAGER.md`, 2026-08-02 e 2026-08-08) — o código de
+  (`docs/architecture/ai-provider-manager.md`, 2026-08-02 e 2026-08-08) — o código de
   chamada do Flash não foi alterado por esta TASK, só a ordem/composição da
   cascata.
 - **Fallback Flash→Groq, chamada real**: validado de duas formas
@@ -360,7 +360,7 @@ fechamento:
   `MATCH`/`POSSIBLE_MATCH`/`NO_MATCH` da TASK-063 intocada.
 - Nenhuma outra TASK iniciada.
 
-`docs/AI_PROVIDER_MANAGER.md`, `docs/CHANGELOG.md`, `docs/PROJECT_CONTEXT.md`,
-`docs/ROADMAP.md`, `docs/tasks/README.md`, `docs/RELEASE_CHECKLIST.md` e
+`docs/architecture/ai-provider-manager.md`, `docs/releases/changelog.md`, `docs/internal/project-context.md`,
+`docs/internal/roadmap.md`, `docs/tasks/README.md`, `docs/releases/checklist.md` e
 `AGENTS.md` foram sincronizados com este fechamento. `v1.0.0` e
 `origin/main` não foram tocados.

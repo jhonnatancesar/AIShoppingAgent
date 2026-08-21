@@ -203,7 +203,7 @@ exatamente os pontos que o usuário pediu para analisar:
   continuar funcionando enquanto o histórico da missão for consultável)
   ou expirar depois de um tempo generoso; se expirar, precisa de
   rotina de limpeza (fora do escopo de automação da V1 conforme
-  `docs/OPERATIONS.md`, seguiria o mesmo padrão manual documentado lá).
+  `docs/operations/linux-runbook.md`, seguiria o mesmo padrão manual documentado lá).
 - **Destino/segurança — requisito crítico, já reforçado pelo usuário**:
   a rota de redirect **só pode aceitar o `token`**, nunca uma URL
   arbitrária via query string — o destino vem exclusivamente de uma

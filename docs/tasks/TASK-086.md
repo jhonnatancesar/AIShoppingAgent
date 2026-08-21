@@ -62,8 +62,8 @@ comparação de `CheckConstraint`, ou na configuração do Alembic/autogenerate.
 
 ## Referências obrigatórias
 
-- `docs/INTEGRATION_TESTS.md`, seção do erro conhecido do `alembic check`;
-- `docs/CHANGELOG.md`, registro de 2026-08-15;
+- `docs/development/integration-tests.md`, seção do erro conhecido do `alembic check`;
+- `docs/releases/changelog.md`, registro de 2026-08-15;
 - `docs/tasks/TASK-079.md`;
 - `docs/tasks/TASK-080.md`.
 

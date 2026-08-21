@@ -1,7 +1,7 @@
 <#
 Registra a Scheduled Task do Windows que roda scripts\funnel_healthcheck.ps1
 a cada 5 minutos -- equivalente ao antigo timer systemd
-telegram-funnel-healthcheck.timer (ver docs/PRODUCTION_SETUP.md).
+telegram-funnel-healthcheck.timer (ver docs/installation/linux-legacy-setup.md).
 
 Precisa rodar como Administrador (cria a tarefa na sessão SYSTEM, para
 funcionar mesmo sem sessão RDP interativa aberta).

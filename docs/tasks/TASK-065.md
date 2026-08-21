@@ -2,7 +2,7 @@
 
 Status: **Concluída em 2026-08-10**, pipeline oficial aprovado e publicada,
 autorizada explicitamente pelo usuário como primeira TASK da `v1.0.2`
-(`docs/V1_0_2.md`, item 1).
+(`docs/internal/v1.0.2-scope.md`, item 1).
 
 Dependência: nenhuma. Primeira TASK da `v1.0.2`; não bloqueia nem depende
 de TASK-066 a TASK-069.
@@ -10,7 +10,7 @@ de TASK-066 a TASK-069.
 ## Contexto
 
 `DEC-052` registrou dois achados durante a preparação de
-`docs/PRODUCTION_SETUP.md` para a `v1.0.1`. O primeiro: `.env.example`
+`docs/installation/linux-legacy-setup.md` para a `v1.0.1`. O primeiro: `.env.example`
 (raiz), `backend/.env.example` e o `.env` local declaram
 `AISHOPPING_GEMINI_MODEL`/`AISHOPPING_GROQ_MODEL`, mas `compose.yaml` não
 propaga nenhuma das duas a nenhum serviço — o nome do modelo em produção é
@@ -18,7 +18,7 @@ sempre o default hardcoded em `Settings.gemini_model`/`Settings.groq_model`
 (`backend/app/core/config.py`), independentemente do que estiver nesses
 arquivos. O usuário decidiu adiar a correção para a `v1.0.2`, para não
 misturar limpeza de configuração morta com a primeira subida real da
-`v1.0.1` em produção. `docs/PRODUCTION_SETUP.md` já registra esse achado
+`v1.0.1` em produção. `docs/installation/linux-legacy-setup.md` já registra esse achado
 como "correção planejada" (linhas 279-295, antes desta TASK).
 
 ## Objetivo
@@ -49,11 +49,11 @@ runtime.
 
 - `AISHOPPING_TELEGRAM_NOTIFICATION_POLL_SECONDS`/`_BATCH_SIZE` — mesmo
   achado de "não aparecem em `.env.example`" mencionado incidentalmente em
-  `docs/PRODUCTION_SETUP.md`, mas **não fazem parte do item 1 da
+  `docs/installation/linux-legacy-setup.md`, mas **não fazem parte do item 1 da
   `v1.0.2`** e não são tocadas aqui.
-- Qualquer um dos outros 4 itens de `docs/V1_0_2.md` (restart policy,
+- Qualquer um dos outros 4 itens de `docs/internal/v1.0.2-scope.md` (restart policy,
   editar missão, categorias numeradas, pré-lista sem IA).
-- A menção stale a "Gemini premium" em `docs/DEPENDENCIES.md` (linhas
+- A menção stale a "Gemini premium" em `docs/development/dependencies.md` (linhas
   72/75), resíduo da cascata de 3 camadas anterior à TASK-064 — é uma
   imprecisão de documentação sobre a cascata, não sobre as variáveis desta
   TASK; deixada de fora para não ampliar escopo. Sinalizada ao usuário
@@ -87,10 +87,10 @@ sobrescrevíveis via `.env`/Compose nesta TASK.
 | --- | --- | --- |
 | `.env.example` (raiz) | 40 | Exemplo de configuração — remover |
 | `backend/.env.example` | 32, 34 | Exemplo de configuração — remover |
-| `docs/DEPENDENCIES.md` | 73-74 | Descrição como "configurável" — corrigir |
-| `docs/PRODUCTION_SETUP.md` | 279-295 | Achado + "correção planejada" — atualizar para concluído |
-| `docs/V1_0_2.md` | item 1 | Escopo da própria TASK — marcar concluído |
-| `docs/DECISION_LOG.md` (`DEC-052`) | — | Registro histórico da decisão original — **não editado**, descreve corretamente o estado da época |
+| `docs/development/dependencies.md` | 73-74 | Descrição como "configurável" — corrigir |
+| `docs/installation/linux-legacy-setup.md` | 279-295 | Achado + "correção planejada" — atualizar para concluído |
+| `docs/internal/v1.0.2-scope.md` | item 1 | Escopo da própria TASK — marcar concluído |
+| `docs/internal/decision-log.md` (`DEC-052`) | — | Registro histórico da decisão original — **não editado**, descreve corretamente o estado da época |
 | `docs/tasks/TASK-059.md` | 36 | Registro histórico da TASK-059 — **não editado**, descreve corretamente o que foi entregue naquela TASK |
 
 ### 4. Arquivos locais não versionados (`.gitignore`)
@@ -116,18 +116,18 @@ sobrescrevíveis via `.env`/Compose nesta TASK.
   do código, sem efeito prático mesmo antes desta limpeza). O `.env`
   (raiz) local não continha nenhuma das duas variáveis — nada a remover.
   Nenhum valor de segredo foi exibido ou alterado neste arquivo.
-- **`docs/DEPENDENCIES.md`**: os dois parágrafos que descreviam
+- **`docs/development/dependencies.md`**: os dois parágrafos que descreviam
   `AISHOPPING_GEMINI_MODEL`/`AISHOPPING_GROQ_MODEL` como "modelo padrão
   configurável" foram reescritos para deixar claro que o nome do modelo é
   fixado em `Settings.gemini_model`/`Settings.groq_model`
   (`backend/app/core/config.py`), sem override real via `compose.yaml`.
-- **`docs/PRODUCTION_SETUP.md`**: o callout "Achado da auditoria" foi
+- **`docs/installation/linux-legacy-setup.md`**: o callout "Achado da auditoria" foi
   dividido — a parte sobre `AISHOPPING_TELEGRAM_NOTIFICATION_POLL_SECONDS`/
   `_BATCH_SIZE` (fora do escopo desta TASK) foi mantida; a parte sobre
   `AISHOPPING_GEMINI_MODEL`/`AISHOPPING_GROQ_MODEL` foi trocada de
   "Correção planejada" para "Correção aplicada (TASK-065)", deixando
   explícito que a produção da `v1.0.1` já implantada não foi tocada.
-- **`docs/V1_0_2.md`**: item 1 marcado como concluído, com link para este
+- **`docs/internal/v1.0.2-scope.md`**: item 1 marcado como concluído, com link para este
   arquivo.
 - **Nenhum código de runtime alterado**: `backend/app/core/config.py`
   (campos `gemini_model`/`groq_model`), `backend/app/ai_provider/manager.py`
@@ -155,7 +155,7 @@ sobrescrevíveis via `.env`/Compose nesta TASK.
 - **Auditoria pós-remoção**: busca por `AISHOPPING_GEMINI_MODEL`/
   `AISHOPPING_GROQ_MODEL` em toda a árvore versionada retorna zero
   ocorrências fora de registros históricos intencionalmente preservados
-  (`docs/DECISION_LOG.md` `DEC-052`, `docs/tasks/TASK-059.md`) e desta
+  (`docs/internal/decision-log.md` `DEC-052`, `docs/tasks/TASK-059.md`) e desta
   própria TASK.
 - **`compose.yaml`**: não editado (confirmado por diff vazio) — a ausência
   das duas variáveis em `environment:` já era a prova de que não tinham

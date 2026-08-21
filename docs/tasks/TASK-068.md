@@ -4,7 +4,7 @@ Status: **Concluída em 2026-08-10**, desenho aprovado explicitamente pelo
 usuário (incluindo revisão do desenho inicial), implementada e validada
 com pipeline oficial e teste de integração real (PostgreSQL).
 
-Dependência: nenhuma. Quarta TASK da `v1.0.2` (`docs/V1_0_2.md`, item 5);
+Dependência: nenhuma. Quarta TASK da `v1.0.2` (`docs/internal/v1.0.2-scope.md`, item 5);
 independente de TASK-065/066/067 (já concluídas).
 
 ## Contexto
@@ -12,7 +12,7 @@ independente de TASK-065/066/067 (já concluídas).
 `DEC-058` registrou que hoje o usuário só recebe alerta quando o preço
 cai ou atinge o alvo (`app/alerts/evaluator.py`) — nenhuma mensagem
 confirma que a missão está rodando nem mostra o que já foi encontrado.
-`docs/V1_0_2.md` item 5 deixou o gatilho exato, o template e a lógica de
+`docs/internal/v1.0.2-scope.md` item 5 deixou o gatilho exato, o template e a lógica de
 seleção **não decididos**, para esta TASK definir.
 
 ## Auditoria (2026-08-10)
@@ -80,7 +80,7 @@ passou a ser **sempre `PriceObservation.amount`** (preço anunciado do
 produto, sem frete) — nunca estimado, nunca tratado como zero, nunca
 usado para bloquear a pré-lista. A mensagem final deixa explícito que o
 valor não inclui frete (item 4). Isso é **parecido, mas não igual**, ao
-que `evaluate_price_alerts` (`docs/PRICE_ALERTS.md`, `DEC-045`) já faz —
+que `evaluate_price_alerts` (`docs/architecture/price-alerts.md`, `DEC-045`) já faz —
 também compara só `amount`, mas para a *mesma* oferta ao longo do
 tempo — a pré-lista ranqueia *ofertas diferentes* de lojas diferentes
 num único instante; os dois usam `amount` pelo mesmo motivo de fundo

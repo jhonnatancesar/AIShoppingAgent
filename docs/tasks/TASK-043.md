@@ -5,7 +5,7 @@ Status: Concluída
 ## Objetivo
 
 Persistir de forma durável e append-only, na tabela `events`
-(`docs/DATABASE.md`), qualquer evento validado pelo catálogo fechado da
+(`docs/database/schema.md`), qualquer evento validado pelo catálogo fechado da
 TASK-042 (`app.events.catalog`). "Publicar" nesta TASK significa
 exclusivamente validar e registrar o evento — a própria tabela é o log de
 publicação. Não inclui message broker, worker, consumidor, notificação de
@@ -14,8 +14,8 @@ qualquer canal, nem qualquer parte da TASK-044.
 ## Contexto
 
 TASK-036 ("Criar notificações Telegram") é a próxima tarefa executável pela
-ordem do `docs/ROADMAP.md`, mas o preflight revelou que ela depende de um
-pipeline real de eventos persistidos/publicados (`docs/PRICE_ALERTS.md`:
+ordem do `docs/internal/roadmap.md`, mas o preflight revelou que ela depende de um
+pipeline real de eventos persistidos/publicados (`docs/architecture/price-alerts.md`:
 "Persistência e publicação pertencem à TASK-043, consumo à TASK-044 e
 notificação Telegram à TASK-036") e de um `chat_id` persistido, nenhum dos
 dois existente. O usuário confirmou implementar TASK-043 e TASK-044 antes
@@ -34,7 +34,7 @@ detecção ainda.
 ## Escopo
 
 - `backend/migrations/versions/20260808_0003_create_events.py`: cria
-  `events` exatamente conforme `docs/DATABASE.md` (colunas, dois índices
+  `events` exatamente conforme `docs/database/schema.md` (colunas, dois índices
   compostos, CHECK constraints de texto/JSONB) e um trigger `BEFORE UPDATE
   OR DELETE` que rejeita qualquer alteração ou remoção, mesmo padrão de
   `mission_transitions`/`audit_entries`.

@@ -3,7 +3,7 @@
 Status: **Concluída em 2026-08-10**, lista consolidada aprovada
 explicitamente pelo usuário, implementada e validada.
 
-Dependência: nenhuma. Terceira TASK da `v1.0.2` (`docs/V1_0_2.md`, item
+Dependência: nenhuma. Terceira TASK da `v1.0.2` (`docs/internal/v1.0.2-scope.md`, item
 4); independente de TASK-065/066 (já concluídas).
 
 ## Contexto
@@ -136,7 +136,7 @@ alterações.
   `_MAX_CATEGORY_LENGTH`), que não fazem mais sentido com vocabulário
   fechado. `favorite_stores` e os demais passos do cadastro não foram
   tocados.
-- **`docs/USERS.md`**: descrição de `preferred_categories` corrigida de
+- **`docs/architecture/users.md`**: descrição de `preferred_categories` corrigida de
   "lista livre" para a lista fechada de 15 slugs; parágrafo do `/cadastro`
   atualizado com o novo padrão numerado.
 - **Testes** (`tests/test_user_registration.py`,
