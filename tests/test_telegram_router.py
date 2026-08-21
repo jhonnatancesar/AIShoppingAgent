@@ -1679,9 +1679,12 @@ async def test_edit_mission_intent_via_free_text_redirects_to_editar_missao_comm
 
 
 @pytest.mark.anyio
-async def test_confirmed_pause_for_edit_pauses_and_points_to_edit_command(
+async def test_confirmed_pause_for_edit_pauses_and_opens_edit_menu(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """TASK-090: em vez de terminar o fluxo pedindo /editar_missao de novo,
+    a confirmação de pausa segue direto para o menu de edição, na mesma
+    cadeia de `pending_intent`, marcada como `auto_paused=True`."""
     mission_id = uuid4()
     fake_user = _fake_user(
         pending_intent={
@@ -1724,10 +1727,18 @@ async def test_confirmed_pause_for_edit_pauses_and_points_to_edit_command(
     )
 
     assert response.status_code == 204
-    assert fake_user.pending_intent is None
     assert transition_calls[0]["command"].value == "pause"
-    assert "notebook gamer" in send_calls[0][1]
-    assert "/editar_missao" in send_calls[0][1]
+    assert fake_user.pending_intent == {
+        "kind": "await_edit_menu_choice",
+        "mission_id": str(mission_id),
+        "mission_title": "notebook gamer",
+        "expected_state_version": 2,
+        "auto_paused": True,
+    }
+    reply = send_calls[0][1]
+    assert "notebook gamer" in reply
+    assert "1 — Lojas" in reply
+    assert "2 — Preço-alvo" in reply
 
 
 @pytest.mark.anyio
@@ -1837,6 +1848,342 @@ async def test_confirmed_pending_edit_mission_executes_and_clears_step(
     assert "continua pausada" in send_calls[0][1]
 
 
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("auto_paused", "expected_fragment"),
+    [
+        (True, "A missão continua pausada."),
+        (False, "como já estava antes desta edição"),
+    ],
+)
+async def test_execute_edit_mission_message_reflects_auto_paused_origin(
+    monkeypatch: pytest.MonkeyPatch, auto_paused: bool, expected_fragment: str
+) -> None:
+    """TASK-090: audita o comportamento de `/editar_missao` -- a mensagem
+    final distingue se a pausa foi provocada agora pela própria edição
+    (`auto_paused=True`, missão estava `ACTIVE`) ou se a missão já estava
+    `PAUSED` por escolha anterior do usuário (`auto_paused=False`), sem
+    jamais retomar sozinho em nenhum dos dois casos. As duas variantes
+    apontam para o comando real `/retomar` -- nunca para um comando
+    inexistente."""
+    mission_id = uuid4()
+    fake_user = _fake_user(
+        pending_intent={
+            "kind": "edit_mission",
+            "mission_id": str(mission_id),
+            "mission_title": "teclado mecanico",
+            "expected_state_version": 2,
+            "changes_target": True,
+            "target_amount": "300.00",
+            "target_currency": "BRL",
+            "changes_sources": False,
+            "sources": [],
+            "previous_target_amount": "500.00",
+            "previous_target_currency": "BRL",
+            "previous_sources": [],
+            "auto_paused": auto_paused,
+        }
+    )
+    _patch_user(monkeypatch, fake_user)
+    _patch_resolve_answer(monkeypatch, True)
+
+    async def _fake_edit(session: object, **kwargs: object):
+        return SimpleNamespace(id=mission_id), ()
+
+    monkeypatch.setattr("app.telegram.router.edit_mission_criteria", _fake_edit)
+    send_calls = _patch_send_message(monkeypatch)
+    adapter = _FakeAdapter(_intent())
+    session = _async_session()
+    session.get.return_value = SimpleNamespace(user_id=fake_user.id)
+
+    await receive_telegram_webhook(
+        update=_update(
+            message=_TelegramIncomingMessage(
+                text="1",
+                date=1754586000,
+                chat=_TelegramChat(id=222, type=TelegramChatType.PRIVATE),
+                from_=_TelegramSender(id=222, first_name="Fulano"),
+            )
+        ),
+        x_telegram_bot_api_secret_token="correct-secret",
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        settings=_settings(),
+        session=session,
+    )
+
+    reply = send_calls[0][1]
+    assert expected_fragment in reply
+    assert "/retomar" in reply
+    assert "continua pausada" in reply
+
+
+@pytest.mark.anyio
+async def test_resolve_pending_intent_preserves_new_state_set_by_executor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regressão direta do bug corrigido nesta TASK: quando o executor do
+    `pending_intent` (ex.: `_execute_pause_for_edit`) substitui
+    `user.pending_intent` por um NOVO estado antes de retornar (para
+    encadear no menu de edição), o cleanup de `_resolve_pending_intent`
+    não pode apagar esse novo estado. Com a implementação anterior ao fix
+    (`user.pending_intent = None` incondicional após executar), este
+    teste falha -- verificado manualmente revertendo a correção."""
+    original_payload = {"kind": "pause_for_edit", "mission_id": "x"}
+    replacement = {"kind": "await_edit_menu_choice", "mission_id": "x"}
+    user = _registered_user(pending_intent=dict(original_payload))
+
+    async def _fake_execute(payload: dict, *, session: object, user: object) -> str:
+        assert payload == original_payload
+        user.pending_intent = replacement
+        return "menu de edição"
+
+    monkeypatch.setattr("app.telegram.router._execute_pending_intent", _fake_execute)
+    adapter = _FakeAdapter(AssertionError("AI must not run"))
+
+    reply = await _resolve_pending_intent(
+        _message("sim"),
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        session=_async_session(),
+        user=user,
+    )
+
+    assert reply == "menu de edição"
+    assert user.pending_intent == replacement  # não foi apagado pelo cleanup
+    assert adapter.calls == []
+
+
+@pytest.mark.anyio
+async def test_resolve_pending_intent_clears_state_when_executor_does_not_replace_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Contraparte do teste acima: quando o executor NÃO substitui
+    `pending_intent` (o caso comum -- create_mission, edit_mission,
+    mission_command), o cleanup ainda precisa limpar o estado."""
+    original_payload = {"kind": "mission_command", "mission_id": "x"}
+    user = _registered_user(pending_intent=dict(original_payload))
+
+    async def _fake_execute(payload: dict, *, session: object, user: object) -> str:
+        return "cancelada"
+
+    monkeypatch.setattr("app.telegram.router._execute_pending_intent", _fake_execute)
+    adapter = _FakeAdapter(AssertionError("AI must not run"))
+
+    reply = await _resolve_pending_intent(
+        _message("sim"),
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        session=_async_session(),
+        user=user,
+    )
+
+    assert reply == "cancelada"
+    assert user.pending_intent is None
+    assert adapter.calls == []
+
+
+@pytest.mark.anyio
+async def test_full_cycle_active_pause_edit_resume_returns_to_active(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cenário A da auditoria do usuário (2026-08-21): missão ACTIVE ->
+    /editar_missao pausa para editar -> edição concluída -> PAUSED ->
+    /retomar -> ACTIVE de novo, com status/`auto_paused` corretos em cada
+    etapa, a transição oficial (`transition_mission_async`) sendo usada
+    tanto para pausar quanto para retomar, e nenhuma chamada à IA em
+    nenhum dos 7 turnos."""
+    from app.missions.models import MissionCommand
+
+    mission = _fake_mission(
+        title="RTX 5070", status=MissionStatus.ACTIVE, state_version=1
+    )
+    user = _registered_user()
+    adapter = _FakeAdapter(AssertionError("AI must never run in this cycle"))
+    monkeypatch.setattr(
+        "app.telegram.router.has_active_session_async", AsyncMock(return_value=True)
+    )
+
+    async def _fake_query_by_status(
+        session: object, *, user_id: object, status_value: MissionStatus
+    ) -> list:
+        return [mission] if mission.status == status_value else []
+
+    monkeypatch.setattr(
+        "app.telegram.router._query_missions_by_status", _fake_query_by_status
+    )
+    session = _async_session()
+    session.get = AsyncMock(return_value=SimpleNamespace(user_id=user.id))
+    session.scalar = AsyncMock(return_value=None)  # MissionCriteria: sem alvo anterior
+    transition_calls: list[dict] = []
+
+    async def _fake_transition(session: object, **kwargs: object) -> SimpleNamespace:
+        assert kwargs["expected_state_version"] == mission.state_version
+        transition_calls.append(kwargs)
+        if kwargs["command"] == MissionCommand.PAUSE:
+            mission.status = MissionStatus.PAUSED
+        elif kwargs["command"] == MissionCommand.RESUME:
+            mission.status = MissionStatus.ACTIVE
+        mission.state_version += 1
+        return SimpleNamespace(to_status=mission.status)
+
+    monkeypatch.setattr(
+        "app.telegram.router.transition_mission_async", _fake_transition
+    )
+    edit_calls: list[dict] = []
+
+    async def _fake_edit(session: object, **kwargs: object):
+        edit_calls.append(kwargs)
+        return SimpleNamespace(id=mission.id), ()
+
+    monkeypatch.setattr("app.telegram.router.edit_mission_criteria", _fake_edit)
+
+    async def _send(text: str) -> str:
+        return await _handle_message(
+            _message(text),
+            user=user,
+            adapters=_adapters(adapter),  # type: ignore[arg-type]
+            session=session,
+            auth_public_base_url="https://example.test",
+            created_now=False,
+        )
+
+    # 1) /editar_missao com a única missão ACTIVE -> oferece pausar primeiro
+    await _send("/editar_missao")
+    assert mission.status == MissionStatus.ACTIVE
+    assert user.pending_intent["kind"] == "pause_for_edit"
+
+    # 2) confirma a pausa -> pausa de verdade (transição oficial) e já abre
+    #    o menu de edição na mesma resposta
+    reply_2 = await _send("sim")
+    assert mission.status == MissionStatus.PAUSED
+    assert transition_calls[0]["command"] == MissionCommand.PAUSE
+    assert user.pending_intent == {
+        "kind": "await_edit_menu_choice",
+        "mission_id": str(mission.id),
+        "mission_title": "RTX 5070",
+        "expected_state_version": 2,
+        "auto_paused": True,
+    }
+    assert "1 — Lojas" in reply_2 and "2 — Preço-alvo" in reply_2
+
+    # 3) escolhe "Preço-alvo"
+    await _send("2")
+    assert user.pending_intent["kind"] == "await_edit_target_amount"
+    assert user.pending_intent["auto_paused"] is True
+
+    # 4) digita o novo valor
+    await _send("300")
+    assert user.pending_intent["kind"] == "edit_mission"
+    assert user.pending_intent["auto_paused"] is True
+
+    # 5) confirma a edição -> executa, missão CONTINUA pausada (nunca
+    #    retoma sozinha só por causa da edição)
+    reply_5 = await _send("sim")
+    assert edit_calls[0]["expected_state_version"] == 2
+    assert edit_calls[0]["target_update"] == (Decimal("300"), "BRL")
+    assert mission.status == MissionStatus.PAUSED
+    assert len(transition_calls) == 1  # só a pausa do passo 2 até aqui
+    assert "A missão continua pausada." in reply_5
+    assert "Use /retomar" in reply_5
+    assert user.pending_intent is None
+
+    # 6) /retomar -- única missão PAUSED
+    await _send("/retomar")
+    assert user.pending_intent["kind"] == "mission_command"
+    assert user.pending_intent["command"] == "resume"
+
+    # 7) confirma -- usa a mesma transição oficial, volta a ACTIVE
+    reply_7 = await _send("sim")
+    assert transition_calls[-1]["command"] == MissionCommand.RESUME
+    assert len(transition_calls) == 2
+    assert mission.status == MissionStatus.ACTIVE  # elegível para coleta de novo
+    assert "ativa" in reply_7.lower()
+    assert user.pending_intent is None
+
+    assert adapter.calls == []  # zero chamadas à IA nos 7 turnos
+
+
+@pytest.mark.anyio
+async def test_full_cycle_paused_edit_stays_paused_without_auto_resume(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cenário B da auditoria do usuário (2026-08-21): missão já PAUSED ->
+    /editar_missao -> edição concluída -> continua PAUSED,
+    `auto_paused=False`, nenhuma retomada automática, mensagem final não
+    dá a entender que o sistema acabou de pausar, nenhuma chamada à IA."""
+    mission = _fake_mission(
+        title="Monitor 4K", status=MissionStatus.PAUSED, state_version=5
+    )
+    user = _registered_user()
+    adapter = _FakeAdapter(AssertionError("AI must never run in this cycle"))
+    monkeypatch.setattr(
+        "app.telegram.router.has_active_session_async", AsyncMock(return_value=True)
+    )
+
+    async def _fake_query_by_status(
+        session: object, *, user_id: object, status_value: MissionStatus
+    ) -> list:
+        return [mission] if mission.status == status_value else []
+
+    monkeypatch.setattr(
+        "app.telegram.router._query_missions_by_status", _fake_query_by_status
+    )
+    session = _async_session()
+    session.get = AsyncMock(return_value=SimpleNamespace(user_id=user.id))
+    session.scalar = AsyncMock(return_value=None)
+    transition = AsyncMock(
+        side_effect=AssertionError(
+            "pausar/retomar não deve ser chamado neste cenário"
+        )
+    )
+    monkeypatch.setattr("app.telegram.router.transition_mission_async", transition)
+    edit_calls: list[dict] = []
+
+    async def _fake_edit(session: object, **kwargs: object):
+        edit_calls.append(kwargs)
+        return SimpleNamespace(id=mission.id), ()
+
+    monkeypatch.setattr("app.telegram.router.edit_mission_criteria", _fake_edit)
+
+    async def _send(text: str) -> str:
+        return await _handle_message(
+            _message(text),
+            user=user,
+            adapters=_adapters(adapter),  # type: ignore[arg-type]
+            session=session,
+            auth_public_base_url="https://example.test",
+            created_now=False,
+        )
+
+    # 1) /editar_missao com a única missão já PAUSED -> vai direto ao menu,
+    #    sem pausar de novo
+    await _send("/editar_missao")
+    assert user.pending_intent == {
+        "kind": "await_edit_menu_choice",
+        "mission_id": str(mission.id),
+        "mission_title": "Monitor 4K",
+        "expected_state_version": 5,
+        "auto_paused": False,
+    }
+
+    # 2) Preço-alvo
+    await _send("2")
+    assert user.pending_intent["auto_paused"] is False
+
+    # 3) novo valor
+    await _send("500")
+    assert user.pending_intent["auto_paused"] is False
+
+    # 4) confirma
+    reply = await _send("sim")
+
+    transition.assert_not_awaited()  # nenhuma pausa/retomada disparada
+    assert mission.status == MissionStatus.PAUSED  # nunca muda sozinho
+    assert edit_calls[0]["expected_state_version"] == 5
+    assert "como já estava antes desta edição" in reply
+    assert "pausada.\n\nUse /retomar" not in reply  # não é a variante auto_paused=True
+    assert user.pending_intent is None
+    assert adapter.calls == []
+
+
 def _patch_missions_by_status(
     monkeypatch: pytest.MonkeyPatch, by_status: dict[MissionStatus, list]
 ) -> None:
@@ -1905,6 +2252,7 @@ async def test_editar_missao_with_one_paused_mission_shows_main_menu(
         "mission_id": str(mission.id),
         "mission_title": "teclado mecanico",
         "expected_state_version": 2,
+        "auto_paused": False,
     }
     reply = send_calls[0][1]
     assert "teclado mecanico" in reply
@@ -2036,6 +2384,7 @@ async def test_mission_choice_answer_advances_to_menu_for_paused(
         "mission_id": mission_ids[1],
         "mission_title": "monitor curvo",
         "expected_state_version": 3,
+        "auto_paused": False,
     }
     assert "monitor curvo" in send_calls[0][1]
 
@@ -2140,6 +2489,7 @@ async def test_edit_menu_choice_lojas_shows_lojas_submenu(
         "mission_title": "teclado mecanico",
         "expected_state_version": 2,
         "current_sources": ["pichau"],
+        "auto_paused": False,
     }
     reply = send_calls[0][1]
     assert "Adicionar" in reply
@@ -2182,6 +2532,7 @@ async def test_edit_menu_choice_preco_shows_price_prompt(
         "expected_state_version": 2,
         "previous_target_amount": "500.00",
         "previous_target_currency": "BRL",
+        "auto_paused": False,
     }
     assert "novo preço-alvo" in send_calls[0][1]
 
@@ -2246,6 +2597,7 @@ async def test_lojas_choice_add_shows_missing_stores(
         "expected_state_version": 2,
         "current_sources": ["pichau"],
         "option_map": {"1": "terabyte", "2": "amazon", "3": "kabum"},
+        "auto_paused": False,
     }
     reply = send_calls[0][1]
     assert "1 — Terabyte" in reply
@@ -2287,6 +2639,7 @@ async def test_lojas_choice_remove_shows_current_stores(
         "expected_state_version": 2,
         "current_sources": ["pichau", "kabum"],
         "option_map": {"1": "pichau", "2": "kabum"},
+        "auto_paused": False,
     }
     reply = send_calls[0][1]
     assert "1 — Pichau" in reply
@@ -2391,6 +2744,7 @@ async def test_add_sources_valid_selection_advances_to_edit_mission_confirmation
         "previous_target_amount": None,
         "previous_target_currency": None,
         "previous_sources": ["pichau"],
+        "auto_paused": False,
     }
     reply = send_calls[0][1]
     assert "Pichau" in reply
@@ -2466,6 +2820,7 @@ async def test_remove_sources_valid_selection_advances_to_edit_mission_confirmat
         "previous_target_amount": None,
         "previous_target_currency": None,
         "previous_sources": ["pichau", "kabum"],
+        "auto_paused": False,
     }
     assert "Kabum" in send_calls[0][1]
 
@@ -2539,6 +2894,7 @@ async def test_target_amount_valid_number_advances_to_edit_mission_confirmation(
         "previous_target_amount": "500.00",
         "previous_target_currency": "BRL",
         "previous_sources": [],
+        "auto_paused": False,
     }
     reply = send_calls[0][1]
     assert "R$ 500,00" in reply
@@ -3949,9 +4305,13 @@ async def test_cancel_mission_command_with_one_candidate_stages_without_ai(
 
 
 @pytest.mark.anyio
-async def test_cancel_mission_numeric_choice_advances_to_local_confirmation(
+async def test_cancel_mission_numeric_choice_executes_immediately_without_ai(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """TASK-090: `/cancelar_missao` com mais de uma candidata agora reusa a
+    mesma infraestrutura genérica de seleção múltipla da TASK-085
+    (`kind: "mission_command_choice"`) -- a resposta numérica já executa o
+    cancelamento e devolve o resultado, sem um segundo par sim/não."""
     missions = [
         _fake_mission(title="Ryzen", status=MissionStatus.ACTIVE),
         _fake_mission(title="RTX", status=MissionStatus.PAUSED),
@@ -3966,6 +4326,12 @@ async def test_cancel_mission_numeric_choice_advances_to_local_confirmation(
         AsyncMock(return_value=missions),
     )
     session = _async_session()
+    session.get = AsyncMock(return_value=SimpleNamespace(user_id=user.id))
+    transition = SimpleNamespace(to_status=MissionStatus.CANCELLED)
+    monkeypatch.setattr(
+        "app.telegram.router.transition_mission_async",
+        AsyncMock(return_value=transition),
+    )
     first = await _handle_message(
         _message("/cancelar_missao"),
         user=user,
@@ -3985,9 +4351,69 @@ async def test_cancel_mission_numeric_choice_advances_to_local_confirmation(
 
     assert adapter.calls == []
     assert "1 — Ryzen" in first and "2 — RTX" in first
-    assert user.pending_intent["kind"] == "mission_command"
-    assert user.pending_intent["mission_id"] == str(missions[1].id)
-    assert "1 — sim" in second.lower()
+    assert "cancelar" in first.lower()
+    assert "Exemplo: 1,3" in first
+    assert user.pending_intent is None
+    assert "2 — \"RTX\" — cancelada" in second
+
+
+@pytest.mark.anyio
+async def test_cancel_mission_multi_selection_cancels_several_without_ai(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Prova explícita de #4/#5 do escopo: "1,3" cancela duas missões numa
+    única resposta, sem duplicar e sem nenhuma chamada ao IntentInterpreter
+    nem a provider de IA."""
+    missions = [
+        _fake_mission(title="Ryzen", status=MissionStatus.ACTIVE),
+        _fake_mission(title="Cadeira gamer", status=MissionStatus.ACTIVE),
+        _fake_mission(title="RTX", status=MissionStatus.PAUSED),
+    ]
+    user = _registered_user()
+    adapter = _FakeAdapter(AssertionError("AI must never run in cancellation"))
+    monkeypatch.setattr(
+        "app.telegram.router.has_active_session_async", AsyncMock(return_value=True)
+    )
+    monkeypatch.setattr(
+        "app.telegram.router.list_mission_command_candidates",
+        AsyncMock(return_value=missions),
+    )
+    session = _async_session()
+    session.get = AsyncMock(return_value=SimpleNamespace(user_id=user.id))
+    transition_calls: list[dict] = []
+
+    async def _fake_transition(session: object, **kwargs: object) -> SimpleNamespace:
+        transition_calls.append(kwargs)
+        return SimpleNamespace(to_status=MissionStatus.CANCELLED)
+
+    monkeypatch.setattr(
+        "app.telegram.router.transition_mission_async", _fake_transition
+    )
+    await _handle_message(
+        _message("/cancelar_missao"),
+        user=user,
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        session=session,
+        auth_public_base_url="https://example.test",
+        created_now=False,
+    )
+    reply = await _handle_message(
+        _message("1,1,3"),  # duplicata proposital do índice 1
+        user=user,
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        session=session,
+        auth_public_base_url="https://example.test",
+        created_now=False,
+    )
+
+    assert adapter.calls == []
+    assert len(transition_calls) == 2  # "1" deduplicado, "3" processado uma vez
+    assert transition_calls[0]["mission_id"] == missions[0].id
+    assert transition_calls[1]["mission_id"] == missions[2].id
+    assert '1 — "Ryzen" — cancelada' in reply
+    assert '3 — "RTX" — cancelada' in reply
+    assert "Cadeira gamer" not in reply
+    assert user.pending_intent is None
 
 
 @pytest.mark.anyio
@@ -3996,7 +4422,7 @@ async def test_invalid_cancel_mission_choice_is_deterministic_and_keeps_state(
 ) -> None:
     user = _registered_user(
         pending_intent={
-            "kind": "cancel_mission_choice",
+            "kind": "mission_command_choice",
             "command": "cancel",
             "missions": [
                 {
@@ -4028,7 +4454,102 @@ async def test_invalid_cancel_mission_choice_is_deterministic_and_keeps_state(
 
     assert adapter.calls == []
     assert user.pending_intent == original
-    assert reply == "Opção inválida.\n\nEscolha uma das opções mostradas na lista."
+    assert reply == (
+        "Não entendi.\n\nDigite o número de uma ou mais missões da lista, "
+        "separados por vírgula.\n\nExemplo: 1 ou 1,3"
+    )
+
+
+@pytest.mark.anyio
+async def test_cancel_mission_partial_invalid_selection_rejects_entire_batch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Auditoria do usuário: "1,3,99" com só 3 candidatas (99 inválido)
+    não pode cancelar 1 e 3 parcialmente -- a resposta inteira é
+    rejeitada, sem nenhuma transição executada."""
+    missions = [
+        _fake_mission(title="Ryzen", status=MissionStatus.ACTIVE),
+        _fake_mission(title="Cadeira gamer", status=MissionStatus.ACTIVE),
+        _fake_mission(title="RTX", status=MissionStatus.PAUSED),
+    ]
+    user = _registered_user()
+    adapter = _FakeAdapter(AssertionError("AI must never run in cancellation"))
+    monkeypatch.setattr(
+        "app.telegram.router.has_active_session_async", AsyncMock(return_value=True)
+    )
+    monkeypatch.setattr(
+        "app.telegram.router.list_mission_command_candidates",
+        AsyncMock(return_value=missions),
+    )
+    session = _async_session()
+    transition = AsyncMock(
+        side_effect=AssertionError("transition must not run on invalid selection")
+    )
+    monkeypatch.setattr("app.telegram.router.transition_mission_async", transition)
+    await _handle_message(
+        _message("/cancelar_missao"),
+        user=user,
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        session=session,
+        auth_public_base_url="https://example.test",
+        created_now=False,
+    )
+    original = dict(user.pending_intent)
+
+    reply = await _handle_message(
+        _message("1,3,99"),
+        user=user,
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        session=session,
+        auth_public_base_url="https://example.test",
+        created_now=False,
+    )
+
+    assert adapter.calls == []
+    transition.assert_not_awaited()
+    assert user.pending_intent == original
+    assert "Não entendi" in reply
+
+
+@pytest.mark.anyio
+async def test_cancel_mission_choice_only_resolves_missions_from_own_listing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TASK-090 (#11): o número digitado é só um índice para o payload já
+    gravado no `pending_intent` no momento da listagem -- nunca um ID real
+    nem uma nova consulta ao banco por outro usuário."""
+    other_users_mission_id = uuid4()
+    user = _registered_user(
+        pending_intent={
+            "kind": "mission_command_choice",
+            "command": "cancel",
+            "missions": [
+                {
+                    "mission_id": str(other_users_mission_id),
+                    "mission_title": "Ryzen",
+                    "expected_state_version": 1,
+                },
+            ],
+        }
+    )
+    session = _async_session()
+    session.get = AsyncMock(
+        return_value=SimpleNamespace(user_id=uuid4())
+    )  # dono diferente
+    adapter = _FakeAdapter(AssertionError("AI must never run in cancellation"))
+
+    reply = await _handle_message(
+        _message("1"),
+        user=user,
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        session=session,
+        auth_public_base_url="https://example.test",
+        created_now=False,
+    )
+
+    assert adapter.calls == []
+    assert "não encontrada" in reply
+    assert user.pending_intent is None
 
 
 @pytest.mark.anyio
@@ -4114,12 +4635,381 @@ async def test_ambiguous_confirmation_retries_without_ai_and_keeps_state() -> No
     assert user.pending_intent == pending
 
 
+@pytest.mark.anyio
+async def test_pause_command_with_one_active_mission_stages_without_ai(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user = _registered_user()
+    mission = _fake_mission(title="RTX 5070", status=MissionStatus.ACTIVE)
+    adapter = _FakeAdapter(AssertionError("AI must never run for /pausar"))
+    monkeypatch.setattr(
+        "app.telegram.router.has_active_session_async", AsyncMock(return_value=True)
+    )
+    monkeypatch.setattr(
+        "app.telegram.router._query_missions_by_status",
+        AsyncMock(return_value=[mission]),
+    )
+    reply = await _handle_message(
+        _message("/pausar"),
+        user=user,
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        session=_async_session(),
+        auth_public_base_url="https://example.test",
+        created_now=False,
+    )
+
+    assert adapter.calls == []
+    assert user.pending_intent["kind"] == "mission_command"
+    assert user.pending_intent["command"] == "pause"
+    assert user.pending_intent["mission_id"] == str(mission.id)
+    assert "pausar" in reply.lower()
+
+
+@pytest.mark.anyio
+async def test_pause_command_multi_selection_pauses_several_without_ai(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    missions = [
+        _fake_mission(title="Ryzen", status=MissionStatus.ACTIVE),
+        _fake_mission(title="Cadeira gamer", status=MissionStatus.ACTIVE),
+        _fake_mission(title="RTX", status=MissionStatus.ACTIVE),
+    ]
+    user = _registered_user()
+    adapter = _FakeAdapter(AssertionError("AI must never run for /pausar"))
+    monkeypatch.setattr(
+        "app.telegram.router.has_active_session_async", AsyncMock(return_value=True)
+    )
+    monkeypatch.setattr(
+        "app.telegram.router._query_missions_by_status",
+        AsyncMock(return_value=missions),
+    )
+    session = _async_session()
+    session.get = AsyncMock(return_value=SimpleNamespace(user_id=user.id))
+    transition_calls: list[dict] = []
+
+    async def _fake_transition(session: object, **kwargs: object) -> SimpleNamespace:
+        transition_calls.append(kwargs)
+        return SimpleNamespace(to_status=MissionStatus.PAUSED)
+
+    monkeypatch.setattr(
+        "app.telegram.router.transition_mission_async", _fake_transition
+    )
+    first = await _handle_message(
+        _message("/pausar"),
+        user=user,
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        session=session,
+        auth_public_base_url="https://example.test",
+        created_now=False,
+    )
+    second = await _handle_message(
+        _message("1, 3"),
+        user=user,
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        session=session,
+        auth_public_base_url="https://example.test",
+        created_now=False,
+    )
+
+    assert adapter.calls == []
+    assert "pausar" in first.lower()
+    assert len(transition_calls) == 2
+    assert all(call["command"].value == "pause" for call in transition_calls)
+    assert '1 — "Ryzen" — pausada' in second
+    assert '3 — "RTX" — pausada' in second
+    assert "Cadeira gamer" not in second
+    assert user.pending_intent is None
+
+
+@pytest.mark.anyio
+async def test_pause_command_invalid_selection_is_deterministic(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    missions = [
+        _fake_mission(title="Ryzen", status=MissionStatus.ACTIVE),
+        _fake_mission(title="RTX", status=MissionStatus.ACTIVE),
+    ]
+    user = _registered_user()
+    adapter = _FakeAdapter(AssertionError("AI must never run for /pausar"))
+    monkeypatch.setattr(
+        "app.telegram.router.has_active_session_async", AsyncMock(return_value=True)
+    )
+    monkeypatch.setattr(
+        "app.telegram.router._query_missions_by_status",
+        AsyncMock(return_value=missions),
+    )
+    session = _async_session()
+    await _handle_message(
+        _message("/pausar"),
+        user=user,
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        session=session,
+        auth_public_base_url="https://example.test",
+        created_now=False,
+    )
+    original = dict(user.pending_intent)
+
+    reply = await _handle_message(
+        _message("1,abc"),
+        user=user,
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        session=session,
+        auth_public_base_url="https://example.test",
+        created_now=False,
+    )
+
+    assert adapter.calls == []
+    assert user.pending_intent == original
+    assert "Não entendi" in reply
+
+
+@pytest.mark.anyio
+async def test_pause_command_partial_invalid_selection_rejects_entire_batch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Auditoria do usuário: "1,3,99" com só 3 candidatas (99 inválido)
+    não pode pausar 1 e 3 parcialmente -- a resposta inteira é rejeitada,
+    sem nenhuma transição executada."""
+    missions = [
+        _fake_mission(title="Ryzen", status=MissionStatus.ACTIVE),
+        _fake_mission(title="Cadeira gamer", status=MissionStatus.ACTIVE),
+        _fake_mission(title="RTX", status=MissionStatus.ACTIVE),
+    ]
+    user = _registered_user()
+    adapter = _FakeAdapter(AssertionError("AI must never run for /pausar"))
+    monkeypatch.setattr(
+        "app.telegram.router.has_active_session_async", AsyncMock(return_value=True)
+    )
+    monkeypatch.setattr(
+        "app.telegram.router._query_missions_by_status",
+        AsyncMock(return_value=missions),
+    )
+    session = _async_session()
+    transition = AsyncMock(
+        side_effect=AssertionError("transition must not run on invalid selection")
+    )
+    monkeypatch.setattr("app.telegram.router.transition_mission_async", transition)
+    await _handle_message(
+        _message("/pausar"),
+        user=user,
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        session=session,
+        auth_public_base_url="https://example.test",
+        created_now=False,
+    )
+    original = dict(user.pending_intent)
+
+    reply = await _handle_message(
+        _message("1,3,99"),
+        user=user,
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        session=session,
+        auth_public_base_url="https://example.test",
+        created_now=False,
+    )
+
+    assert adapter.calls == []
+    transition.assert_not_awaited()
+    assert user.pending_intent == original
+    assert "Não entendi" in reply
+
+
+@pytest.mark.anyio
+async def test_pause_command_with_no_active_missions_replies_without_ai(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user = _registered_user()
+    adapter = _FakeAdapter(AssertionError("AI must never run for /pausar"))
+    monkeypatch.setattr(
+        "app.telegram.router.has_active_session_async", AsyncMock(return_value=True)
+    )
+    monkeypatch.setattr(
+        "app.telegram.router._query_missions_by_status",
+        AsyncMock(return_value=[]),
+    )
+    reply = await _handle_message(
+        _message("/pausar"),
+        user=user,
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        session=_async_session(),
+        auth_public_base_url="https://example.test",
+        created_now=False,
+    )
+
+    assert adapter.calls == []
+    assert user.pending_intent is None
+    assert "nenhuma missão ativa" in reply.lower()
+
+
+@pytest.mark.anyio
+async def test_resume_command_with_one_paused_mission_stages_without_ai(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user = _registered_user()
+    mission = _fake_mission(title="RTX 5070", status=MissionStatus.PAUSED)
+    adapter = _FakeAdapter(AssertionError("AI must never run for /retomar"))
+    monkeypatch.setattr(
+        "app.telegram.router.has_active_session_async", AsyncMock(return_value=True)
+    )
+    monkeypatch.setattr(
+        "app.telegram.router._query_missions_by_status",
+        AsyncMock(return_value=[mission]),
+    )
+    reply = await _handle_message(
+        _message("/retomar"),
+        user=user,
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        session=_async_session(),
+        auth_public_base_url="https://example.test",
+        created_now=False,
+    )
+
+    assert adapter.calls == []
+    assert user.pending_intent["kind"] == "mission_command"
+    assert user.pending_intent["command"] == "resume"
+    assert user.pending_intent["mission_id"] == str(mission.id)
+    assert "retomar" in reply.lower()
+
+
+@pytest.mark.anyio
+async def test_resume_command_multi_selection_resumes_several_without_ai(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    missions = [
+        _fake_mission(title="Ryzen", status=MissionStatus.PAUSED),
+        _fake_mission(title="RTX", status=MissionStatus.PAUSED),
+    ]
+    user = _registered_user()
+    adapter = _FakeAdapter(AssertionError("AI must never run for /retomar"))
+    monkeypatch.setattr(
+        "app.telegram.router.has_active_session_async", AsyncMock(return_value=True)
+    )
+    monkeypatch.setattr(
+        "app.telegram.router._query_missions_by_status",
+        AsyncMock(return_value=missions),
+    )
+    session = _async_session()
+    session.get = AsyncMock(return_value=SimpleNamespace(user_id=user.id))
+    transition_calls: list[dict] = []
+
+    async def _fake_transition(session: object, **kwargs: object) -> SimpleNamespace:
+        transition_calls.append(kwargs)
+        return SimpleNamespace(to_status=MissionStatus.ACTIVE)
+
+    monkeypatch.setattr(
+        "app.telegram.router.transition_mission_async", _fake_transition
+    )
+    await _handle_message(
+        _message("/retomar"),
+        user=user,
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        session=session,
+        auth_public_base_url="https://example.test",
+        created_now=False,
+    )
+    reply = await _handle_message(
+        _message("1,2"),
+        user=user,
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        session=session,
+        auth_public_base_url="https://example.test",
+        created_now=False,
+    )
+
+    assert adapter.calls == []
+    assert len(transition_calls) == 2
+    assert all(call["command"].value == "resume" for call in transition_calls)
+    assert '1 — "Ryzen" — ativa' in reply
+    assert '2 — "RTX" — ativa' in reply
+    assert user.pending_intent is None
+
+
+@pytest.mark.anyio
+async def test_resume_command_partial_invalid_selection_rejects_entire_batch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Auditoria do usuário: "1,3,99" com só 3 candidatas (99 inválido)
+    não pode retomar 1 e 3 parcialmente -- a resposta inteira é
+    rejeitada, sem nenhuma transição executada."""
+    missions = [
+        _fake_mission(title="Ryzen", status=MissionStatus.PAUSED),
+        _fake_mission(title="Cadeira gamer", status=MissionStatus.PAUSED),
+        _fake_mission(title="RTX", status=MissionStatus.PAUSED),
+    ]
+    user = _registered_user()
+    adapter = _FakeAdapter(AssertionError("AI must never run for /retomar"))
+    monkeypatch.setattr(
+        "app.telegram.router.has_active_session_async", AsyncMock(return_value=True)
+    )
+    monkeypatch.setattr(
+        "app.telegram.router._query_missions_by_status",
+        AsyncMock(return_value=missions),
+    )
+    session = _async_session()
+    transition = AsyncMock(
+        side_effect=AssertionError("transition must not run on invalid selection")
+    )
+    monkeypatch.setattr("app.telegram.router.transition_mission_async", transition)
+    await _handle_message(
+        _message("/retomar"),
+        user=user,
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        session=session,
+        auth_public_base_url="https://example.test",
+        created_now=False,
+    )
+    original = dict(user.pending_intent)
+
+    reply = await _handle_message(
+        _message("1,3,99"),
+        user=user,
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        session=session,
+        auth_public_base_url="https://example.test",
+        created_now=False,
+    )
+
+    assert adapter.calls == []
+    transition.assert_not_awaited()
+    assert user.pending_intent == original
+    assert "Não entendi" in reply
+
+
+@pytest.mark.anyio
+async def test_resume_command_with_no_paused_missions_replies_without_ai(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user = _registered_user()
+    adapter = _FakeAdapter(AssertionError("AI must never run for /retomar"))
+    monkeypatch.setattr(
+        "app.telegram.router.has_active_session_async", AsyncMock(return_value=True)
+    )
+    monkeypatch.setattr(
+        "app.telegram.router._query_missions_by_status",
+        AsyncMock(return_value=[]),
+    )
+    reply = await _handle_message(
+        _message("/retomar"),
+        user=user,
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        session=_async_session(),
+        auth_public_base_url="https://example.test",
+        created_now=False,
+    )
+
+    assert adapter.calls == []
+    assert user.pending_intent is None
+    assert "nenhuma missão pausada" in reply.lower()
+
+
 def test_registered_telegram_commands_use_only_bot_api_compatible_names() -> None:
     names = {command["command"] for command in _COMMANDS}
 
     assert {
         "criar_missao",
         "cancelar_missao",
+        "pausar",
+        "retomar",
         "editar_missao",
         "listar_missoes",
     } <= names

@@ -30,6 +30,7 @@
 | Mídia e entrega individual de ofertas | TASK-084 | Concluída; imagem persistente, link curto próprio e checkpoint por evento (`DEC-066`) |
 | Classificação de vendedor/entrega | TASK-077 | Concluída; classificação histórica Amazon/KaBuM! com detalhe limitado e fail-soft (`DEC-067`) |
 | Preço à vista e parcelado | TASK-089 | Implementada e testada; modelo 1:N `OfferInstallmentOption` por observação, corrigido pela investigação real (`DEC-069`, substitui o desenho de 3 campos da `DEC-068`); alertas/pré-lista já mostram `💰 À vista`/`💳 Parcelado`; interpretação de "quero em Nx" pelo usuário adiada para V2. Terabyte temporariamente desativada e simplificada para só-card (`DEC-070`, bloqueio Cloudflare) |
+| Pausar/retomar manual e cancelamento em massa | TASK-090 | Implementada e testada; `/pausar` e `/retomar` novos, `/cancelar_missao` aceita seleção múltipla, todos reaproveitando a infraestrutura genérica da TASK-085 sem IA; `/editar_missao` encadeia direto no menu após pausar para editar, sem retomar sozinho. Alerta de preço-alvo repetitivo e busca "iphone 16 512" seguem pendentes, fora de escopo |
 | Estado operacional no Windows Server | manutenção 2026-08-16 | HEAD `0e90cf0` implantado; 7 serviços saudáveis; WSL2 limitado a 4 GB; somente schedules de missões ativas habilitados |
 | Expansão de fontes (futuro) | Tarefas a definir | Mercado Livre, Shopee, AliExpress e outras fontes futuras |
 
@@ -273,7 +274,11 @@ adicional", é o item 1 desta lista, já coberto acima):
    múltipla para cancelar/pausar missões ambíguas; nenhuma TASK anterior
    encontrada sobre o assunto (verificado nesta rodada); reaproveita
    componentes já existentes das TASK-070/071
-   (`parse_numbered_store_selection`, `parse_single_numbered_choice`).
+   (`parse_numbered_store_selection`, `parse_single_numbered_choice`). A
+   infraestrutura genérica só foi conectada ao caminho ambíguo da IA na
+   época; a TASK-090 (`docs/tasks/TASK-090.md`) conectou o mesmo código a
+   três comandos manuais dedicados (`/cancelar_missao`, `/pausar`,
+   `/retomar`), sem IA em nenhum deles.
 
 **TASK-083 concluída e validada (2026-08-14)**, commit local `d86587e` —
 verificação em camadas implementada (gatilho determinístico +

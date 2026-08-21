@@ -77,10 +77,11 @@ autenticadas usam `discarded`.
 
 ## Comandos dedicados
 
-Doze comandos são registrados no menu. Os comandos de autenticação, perfil,
-privacidade e edição de missão são reconhecidos diretamente pelo webhook,
-antes de qualquer interpretação por IA — não passam pelo vocabulário
-fechado do `IntentInterpreter`:
+Quinze comandos são registrados no menu. Os comandos de autenticação, perfil,
+privacidade e gerenciamento de missão (criar, editar, pausar, retomar,
+cancelar, listar) são reconhecidos diretamente pelo webhook, antes de
+qualquer interpretação por IA — não passam pelo vocabulário fechado do
+`IntentInterpreter`:
 
 - `/cadastro`: inicia (ou reinicia) o cadastro inicial não sensível, com
   passos sequenciais (nome de usuário, e-mail, lojas favoritas numeradas,
@@ -107,19 +108,32 @@ fechado do `IntentInterpreter`:
   a próxima descrição chama o `IntentInterpreter`. Mensagens soltas fora desse
   estado recebem orientação fixa e não consomem IA. O texto digitado
   `/criar-missao` é aceito como alias.
-- `/cancelar_missao`: fluxo integralmente determinístico. Lista apenas missões
-  canceláveis do proprietário, resolve escolha numérica, pede confirmação e
-  executa `MissionTransition(command=cancel)` sem IA. O texto digitado
-  `/cancelar-missao` é aceito como alias.
-- `/editar_missao` (TASK-069, redesenhado como menu guiado na TASK-071):
-  abre um menu guiado e 100% determinístico para editar lojas e/ou
-  preço-alvo de uma missão — resolve qual missão, o que editar e (para
-  lojas) quais lojas adicionar/remover, tudo por escolha numerada, sem
-  nenhuma chamada ao `IntentInterpreter`. Editar por texto livre foi
-  **desativado**: o `IntentKind.EDIT_MISSION` continua existindo, mas o
-  webhook só responde orientando a usar o comando dedicado. O texto digitado
-  `/editar-missao` continua aceito como alias. Detalhes em
-  `docs/architecture/mission-commands.md`.
+- `/cancelar_missao`, `/pausar` e `/retomar` (TASK-090): fluxo integralmente
+  determinístico e compartilhado. Cada comando lista apenas as missões do
+  proprietário no status relevante (canceláveis para `/cancelar_missao`,
+  `ACTIVE` para `/pausar`, `PAUSED` para `/retomar`); com uma única missão
+  elegível, pede confirmação direta; com várias, aceita seleção numérica
+  múltipla (`1`, `1,3`, `2, 4, 5`) via `parse_multi_numbered_choice`,
+  descarta a resposta inteira se algum número for inválido e ignora
+  duplicatas. Executa `MissionTransition(command=cancel|pause|resume)` sem
+  nenhuma chamada ao `IntentInterpreter` ou a qualquer provider de IA. O
+  texto digitado `/cancelar-missao` é aceito como alias.
+- `/editar_missao` (TASK-069, redesenhado como menu guiado na TASK-071;
+  fluxo de pausa ajustado na TASK-090): abre um menu guiado e 100%
+  determinístico para editar lojas e/ou preço-alvo de uma missão — resolve
+  qual missão, o que editar e (para lojas) quais lojas adicionar/remover,
+  tudo por escolha numerada, sem nenhuma chamada ao `IntentInterpreter`.
+  Editar por texto livre foi **desativado**: o `IntentKind.EDIT_MISSION`
+  continua existindo, mas o webhook só responde orientando a usar o comando
+  dedicado. O texto digitado `/editar-missao` continua aceito como alias.
+  Se a missão escolhida estiver `ACTIVE`, o comando pausa automaticamente
+  (pré-condição do domínio para editar critérios) e segue direto para o
+  menu de edição, sem exigir reenviar `/editar_missao`; se a missão já
+  estava `PAUSED` antes da edição, nenhuma pausa nova é disparada. Em
+  qualquer um dos dois casos, a missão permanece pausada ao final e a
+  mensagem de conclusão orienta usar `/retomar` — a diferença é só o texto
+  (pausa provocada agora vs. pausa preexistente), nunca uma retomada
+  automática. Detalhes em `docs/architecture/mission-commands.md`.
 - `/start` e `/ajuda`: orientação de onboarding e autenticação.
 - `/listar_missoes` (também `/listar-missoes`, `missoes` e `missões`): lista
   numerada e sem IA das missões ativas, pausadas e canceladas do proprietário.

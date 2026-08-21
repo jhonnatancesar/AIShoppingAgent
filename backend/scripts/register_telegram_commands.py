@@ -7,7 +7,9 @@ _COMMANDS = [
     {"command": "start", "description": "Iniciar o bot"},
     {"command": "ajuda", "description": "Ver ajuda"},
     {"command": "criar_missao", "description": "Criar uma nova missão"},
-    {"command": "cancelar_missao", "description": "Cancelar uma missão existente"},
+    {"command": "cancelar_missao", "description": "Cancelar uma ou mais missões"},
+    {"command": "pausar", "description": "Pausar uma ou mais missões ativas"},
+    {"command": "retomar", "description": "Retomar uma ou mais missões pausadas"},
     {
         "command": "listar_missoes",
         "description": "Listar missões ativas, pausadas e canceladas",

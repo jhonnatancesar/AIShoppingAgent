@@ -59,13 +59,27 @@ o item `edit_mission` abaixo).
   não um detalhe de implementação. Ao ser confirmado, `transition_mission`
   (TASK-021) executa o comando usando a versão de estado capturada no
   momento em que a confirmação foi encenada.
-- **Cancelamento público**: `/cancelar_missao` (alias digitável
-  `/cancelar-missao`) consulta somente missões não terminais do próprio
-  usuário. Zero candidatas gera resposta fixa; uma candidata segue para
-  confirmação; várias geram lista numerada e uma escolha única, seguida de
-  confirmação. Comando, seleção, confirmação e execução não usam IA. A
-  transição continua usando `command=cancel`, versão otimista, ownership e
-  desativa `MissionSchedule.is_enabled` na mesma transação.
+- **Cancelamento, pausa e retomada públicos (TASK-090)**: `/cancelar_missao`
+  (alias digitável `/cancelar-missao`), `/pausar` e `/retomar` compartilham o
+  mesmo fluxo local determinístico (`_start_manual_command_flow`,
+  `backend/app/telegram/router.py`), variando só a consulta de candidatas —
+  `/cancelar_missao` usa `list_mission_command_candidates` (todas as missões
+  não terminais do usuário); `/pausar` usa `_query_missions_by_status` restrita
+  a `ACTIVE`; `/retomar` usa a mesma consulta restrita a `PAUSED`. Zero
+  candidatas gera resposta fixa (sem IA); uma candidata segue para
+  confirmação única (`stage_mission_command`); várias geram lista numerada e
+  aceitam seleção múltipla (`stage_mission_command_choice` +
+  `parse_multi_numbered_choice`, TASK-085) — `1`, `1,3` e `2, 4, 5` são
+  aceitos, espaços são tolerados, duplicatas são ignoradas e qualquer token
+  inválido invalida a resposta inteira (nunca execução parcial). Comando,
+  seleção, confirmação e execução não usam IA em nenhum dos três; a seleção
+  numérica só resolve missões da própria listagem do usuário (isolamento por
+  ownership). A transição usa `command=cancel|pause|resume`, versão
+  otimista e ownership; somente `cancel` também desativa
+  `MissionSchedule.is_enabled` na mesma transação — pausar e retomar não
+  precisam disso porque a elegibilidade de coleta já filtra diretamente por
+  `Mission.status == ACTIVE` (`backend/app/collection/orchestration.py`,
+  `backend/app/missions/schedule.py`).
 - **`edit_mission`**: **desativado como intenção livre desde a TASK-071**
   — o `IntentInterpreter` ainda classifica mensagens como `edit_mission`,
   mas o webhook não executa mais nada a partir disso; responde só
@@ -82,7 +96,16 @@ o item `edit_mission` abaixo).
      escolher; sem nenhuma `PAUSED`, reaproveita o pedido de pausa já
      existente (`pause_for_edit`, TASK-069) para a(s) missão(ões)
      `ACTIVE` — sem nenhuma pausada nem ativa, avisa que não há nada para
-     editar. Nunca edita uma `ACTIVE` diretamente.
+     editar. Nunca edita uma `ACTIVE` diretamente. Desde a TASK-090, ao
+     confirmar a pausa de uma missão `ACTIVE`, o fluxo não termina mais numa
+     mensagem pedindo para reenviar `/editar_missao`: encena diretamente o
+     próximo estado (`await_edit_menu_choice`) e o menu principal já aparece
+     na mesma resposta, carregando `auto_paused=True` até o fim da edição.
+     Quando a missão já estava `PAUSED` antes do comando, `auto_paused` fica
+     `False`. Esse booleano não altera nenhuma regra de transição — só o
+     texto final do passo 5, para diferenciar "pausei agora para editar" de
+     "já estava pausada". Em nenhum dos dois casos `/editar_missao` retoma a
+     missão sozinho.
   2. Menu principal (`1 - Lojas`, `2 - Preço-alvo`), sem IA.
   3. **Lojas**: submenu `1 - Adicionar` / `2 - Remover`. Adicionar mostra
      só as lojas ainda não vinculadas; remover mostra só as vinculadas e
@@ -94,10 +117,11 @@ o item `edit_mission` abaixo).
      separador decimal, moeda sempre BRL), parser determinístico; `0`
      remove o alvo.
   5. Todos os caminhos convergem para o mesmo payload
-     `stage_edit_mission`/`describe_edit_mission` (TASK-069, sem
-     alteração) — a confirmação final sim/não continua usando
-     `resolve_answer` (classificação local de vocabulário fechado). Missões
-     `DRAFT` ou em status terminal nunca aparecem como candidatas.
+     `stage_edit_mission`/`describe_edit_mission` (TASK-069, com o campo
+     `auto_paused` acrescentado na TASK-090) — a confirmação final sim/não
+     continua usando `resolve_answer` (classificação local de vocabulário
+     fechado). A mensagem de conclusão sempre orienta usar `/retomar`.
+     Missões `DRAFT` ou em status terminal nunca aparecem como candidatas.
 - **`unknown`/mensagem solta**: resposta fixa orientando a usar
   `/criar_missao` ou `/ajuda`; nunca chama IA.
 
@@ -126,7 +150,8 @@ impede uma confirmação nem um cancelamento.
 
 A Bot API aceita apenas letras minúsculas, dígitos e underscore no campo
 `BotCommand.command`. Por isso o menu registra `/criar_missao`,
-`/cancelar_missao`, `/listar_missoes` e `/editar_missao`. Os equivalentes com hífen são aceitos
+`/cancelar_missao`, `/pausar`, `/retomar`, `/listar_missoes` e
+`/editar_missao`. Os equivalentes com hífen (quando existem) são aceitos
 pelo roteador quando digitados como texto, mas não são enviados a
 `setMyCommands`.
 

@@ -1170,3 +1170,56 @@ e `build_offer_short_url(...)` produzindo a URL real do Tailscale), não só
 por `docker compose config`. Lição registrada em memória
 (`feedback_verify_actual_output_not_just_mechanism`): mecanismo testado
 com mock não prova valor real em produção.
+
+**Atualização 2026-08-21 — TASK-090 implementada, aguardando revisão do
+usuário (sem commit/push/deploy):** o usuário relatou 5 queixas reais de
+uso do bot; esta TASK resolveu 3 delas. `/pausar` e `/retomar` são
+comandos novos, cada um listando as missões do usuário no status
+relevante (`ACTIVE`/`PAUSED`); `/cancelar_missao` passou a aceitar
+seleção múltipla (`"1"`, `"1,3"`, `"2, 4, 5"`, deduplicada). Os três
+reaproveitam integralmente a infraestrutura genérica de seleção
+numerada única/múltipla já construída (sem uso, até agora) pela
+TASK-085, sem nenhuma chamada a `IntentInterpreter` ou provider de IA —
+comprovado por teste com adapter poison-pill. `/editar_missao` ganhou um
+campo `auto_paused` no `pending_intent` para distinguir, só na mensagem
+final, se a pausa foi provocada agora pela própria edição ou se a
+missão já estava pausada antes; em nenhum dos dois casos a edição retoma
+a missão sozinha, e a pausa-para-editar agora encadeia direto no menu de
+edição em vez de exigir reenviar o comando (mudança de UX sinalizada
+deliberadamente ao usuário, não um bug corrigido). 214 testes de
+Telegram (207 da primeira rodada + 7 de uma auditoria própria pedida
+pelo usuário: seleção parcial inválida `"1,3,99"` sem execução parcial
+nos três comandos, ciclo completo `ACTIVE → editar → pausa real →
+PAUSED → /retomar → ACTIVE` e o cenário inverso `PAUSED → editar →
+PAUSED` sem retomada automática, e prova de regressão do fix de
+`pending_intent` verificada revertendo temporariamente a correção e
+confirmando que o teste novo falha sem ela). Suíte não-integração
+completa aprovada com **1.286 passed, 1 skipped, 0 falhas** usando a
+invocação correta do projeto (`pytest --ignore=tests/integration
+--ignore=tests/e2e -m "not integration and not e2e"`, sem `tests/`
+posicional). Uma rodada anterior desta mesma TASK havia reportado "31
+FAILED" numa suíte "verde" -- contradição que o usuário recusou aceitar
+sem explicação; a causa raiz real (não só "pré-existente") foi isolada:
+passar `tests/` como argumento posicional junto de
+`--ignore=tests/integration` ainda importa `tests/integration/conftest.py`
+durante a coleta, cujo código de módulo troca a política global de
+event loop do `asyncio` para `WindowsSelectorEventLoopPolicy` (necessária
+para o psycopg assíncrono da integração) -- que não suporta subprocessos
+no Windows, quebrando todo teste que abre Playwright/Chromium real na
+mesma sessão do pytest. Comprovado byte a byte que as 31 falhas eram
+idênticas com e sem o código desta TASK (`git stash` comparado), e que a
+invocação documentada do projeto (sem `tests/` posicional) nunca importa
+esse `conftest.py` e sempre esteve verde -- classificação **B: problema
+de isolamento/invocação da suíte de testes** (as falhas não foram
+causadas pela TASK-090, mas a causa é um problema de isolamento entre a
+suíte de integração e a não-integração, não uma falha do produto), fruto
+de um artefato de invocação do pytest escolhida ad-hoc numa
+rodada anterior. E 18 integrações reais em PostgreSQL 18.4 descartável
+(`test_mission_edit.py`, `test_collection_orchestration.py`) aprovados;
+Ruff e `git diff --check` limpos. As outras duas queixas
+(alerta de preço-alvo repetindo mesmo sem queda; busca "iphone 16 512"
+não encontrando a oferta real da Amazon) permanecem **pendentes, sem
+TASK aberta ainda** — `backend/app/alerts/evaluator.py` e
+`backend/app/collection/model_matching.py` não foram tocados, por
+instrução explícita do usuário para não ampliar o escopo. Detalhes
+completos em `docs/tasks/TASK-090.md`.

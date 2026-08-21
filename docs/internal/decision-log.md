@@ -1,5 +1,41 @@
 # Decision Log
 
+## DEC-071 — Comandos manuais de missão reaproveitam a seleção múltipla da TASK-085; edição encadeia direto no menu após pausar
+
+- **Data:** 2026-08-21.
+- **Classificação:** Correção de bug real (pausa sem retomada) e extensão
+  de UX determinística, sem introduzir IA em nenhum ponto novo.
+- **Contexto:** usuário reportou que editar uma missão `ACTIVE` a deixava
+  `PAUSED` sem nenhuma forma de voltar a `ACTIVE`, que não havia comando
+  manual dedicado para pausar/retomar, e que `/cancelar_missao` só
+  cancelava uma missão por vez.
+- **Decisão (reuso de infraestrutura):** `/pausar` e `/retomar` (novos) e
+  `/cancelar_missao` (reescrito) passam a compartilhar o mesmo caminho
+  local determinístico, reaproveitando integralmente
+  `stage_mission_command`/`stage_mission_command_choice`/
+  `parse_multi_numbered_choice` já construídos pela TASK-085 — até esta
+  TASK, essa infraestrutura só era alcançada pelo caminho ambíguo via IA.
+  Nenhuma máquina de estados nova foi criada; o código próprio antigo de
+  seleção única de `/cancelar_missao` foi removido, não duplicado.
+- **Decisão (UX de `/editar_missao`):** pausar uma missão `ACTIVE` para
+  poder editá-la (pré-condição já existente do domínio) deixou de
+  terminar numa mensagem pedindo para reenviar `/editar_missao` — agora
+  encadeia diretamente no menu de edição na mesma resposta. Um campo
+  novo, `auto_paused`, propagado por todo o `pending_intent` da edição,
+  distingue essa origem de uma missão que já estava `PAUSED` antes,
+  apenas para variar o texto final; nenhum dos dois casos retoma a
+  missão sozinho. É uma "solução mínima coerente" (só mais um campo no
+  JSON existente), não uma máquina de estados nova.
+- **Garantia mantida:** os três comandos manuais e a edição continuam
+  100% determinísticos — comprovado por teste com adapter poison-pill
+  (`AssertionError` se a IA for chamada) e `assert adapter.calls == []`
+  explícito.
+- **Fora de escopo, mantido de propósito:** alerta de preço-alvo
+  notificando repetidamente sem queda real e busca sem correspondência
+  (`iphone 16 512` vs. oferta real da Amazon) — `alerts/evaluator.py` e
+  `collection/model_matching.py` não foram tocados. Ver
+  `docs/tasks/TASK-090.md`.
+
 ## DEC-070 — Desativar Terabyte temporariamente e simplificar parcelamento para só-card
 
 - **Data:** 2026-08-20.

@@ -189,6 +189,8 @@ _CREATE_MISSION_COMMAND = "/criar_missao"
 _CREATE_MISSION_COMMAND_ALIAS = "/criar-missao"
 _CANCEL_MISSION_COMMAND = "/cancelar_missao"
 _CANCEL_MISSION_COMMAND_ALIAS = "/cancelar-missao"
+_PAUSE_MISSION_COMMAND = "/pausar"
+_RESUME_MISSION_COMMAND = "/retomar"
 _EDIT_MISSION_COMMAND = "/editar_missao"
 _EDIT_MISSION_COMMAND_ALIAS = "/editar-missao"
 _LIST_MISSIONS_COMMAND = "/listar_missoes"
@@ -198,7 +200,6 @@ _LIST_MISSIONS_ALIASES = frozenset(
 _LIST_MISSIONS_DISPLAY_LIMIT = 15
 _MISSION_DESCRIPTION_TTL = timedelta(minutes=10)
 _AWAIT_CREATE_MISSION_DESCRIPTION = "await_create_mission_description"
-_CANCEL_MISSION_CHOICE = "cancel_mission_choice"
 _CREATE_MISSION_PROMPT = (
     "Beleza! Me diga o que você quer encontrar.\n\n"
     "Se quiser, já informe o modelo, preço-alvo ou loja.\n\n"
@@ -207,9 +208,6 @@ _CREATE_MISSION_PROMPT = (
 _CREATE_MISSION_FLOW_EXPIRED = (
     "⌛ O tempo para descrever a missão acabou.\n\n"
     "Use /criar_missao quando quiser começar novamente."
-)
-_CANCEL_MISSION_CHOICE_RETRY = (
-    "Opção inválida.\n\nEscolha uma das opções mostradas na lista."
 )
 _EDIT_MISSION_FREE_TEXT_REDIRECT = (
     f"✏️ Para editar lojas ou preço-alvo, use {_EDIT_MISSION_COMMAND}.\n\n"
@@ -265,7 +263,9 @@ _HELP_REPLY = (
     "📖 Aqui está o que posso fazer por você:\n\n"
     "🛒 COMPRAS\n"
     "/criar_missao — criar uma nova missão\n"
-    "/cancelar_missao — cancelar uma missão existente\n"
+    "/pausar — pausar uma ou mais missões ativas\n"
+    "/retomar — retomar uma ou mais missões pausadas\n"
+    "/cancelar_missao — cancelar uma ou mais missões existentes\n"
     "/listar_missoes — listar missões ativas, pausadas e canceladas\n"
     "/missao — entender como funcionam as missões\n"
     "/editar_missao — mudar lojas ou preço-alvo de uma missão pausada\n\n"
@@ -673,6 +673,12 @@ async def _handle_message(
     if lowered in {_CANCEL_MISSION_COMMAND, _CANCEL_MISSION_COMMAND_ALIAS}:
         authorize(session, user, Permission.MISSION_TRANSITION)
         return await _start_cancel_mission_flow(session=session, user=user)
+    if lowered == _PAUSE_MISSION_COMMAND:
+        authorize(session, user, Permission.MISSION_TRANSITION)
+        return await _start_pause_mission_flow(session=session, user=user)
+    if lowered == _RESUME_MISSION_COMMAND:
+        authorize(session, user, Permission.MISSION_TRANSITION)
+        return await _start_resume_mission_flow(session=session, user=user)
     if lowered in {_EDIT_MISSION_COMMAND, _EDIT_MISSION_COMMAND_ALIAS}:
         authorize(session, user, Permission.MISSION_EDIT)
         return await _start_edit_mission_flow(session=session, user=user)
@@ -769,8 +775,6 @@ async def _resolve_pending_intent(
         return await _apply_mission_command_choice(
             message.text, session=session, user=user
         )
-    if kind == _CANCEL_MISSION_CHOICE:
-        return _apply_cancel_mission_choice(message.text, user=user)
 
     try:
         confirmed = await resolve_answer(message.text)
@@ -798,7 +802,13 @@ async def _resolve_pending_intent(
     except Exception:
         user.pending_intent = None
         raise
-    user.pending_intent = None
+    # TASK-090: `_execute_pause_for_edit` (kind "pause_for_edit") segue
+    # direto para o menu de edição, deixando um NOVO pending_intent no
+    # lugar -- só limpa aqui quando o executor não substituiu o estado
+    # (todos os outros kinds terminam de fato: create_mission, edit_mission,
+    # mission_command).
+    if user.pending_intent is payload:
+        user.pending_intent = None
     return reply
 
 
@@ -1007,6 +1017,42 @@ async def _stage_mission_command(
     return describe_mission_command_choice_prompt(candidates, command=intent.command)
 
 
+def _start_manual_command_flow(
+    candidates: list[Mission],
+    *,
+    command: MissionCommand,
+    user: User,
+    empty_reply: str,
+) -> str:
+    """Inicia um comando de ciclo de vida (pausar/retomar/cancelar) 100%
+    determinístico, disparado por um comando dedicado do Telegram (TASK-090).
+
+    Nunca chama `IntentInterpreter` nem qualquer provider de IA -- as
+    candidatas já vêm resolvidas por uma consulta local ao banco. Uma
+    única candidata pede confirmação sim/não (`stage_mission_command`);
+    mais de uma abre seleção numerada aceitando um ou vários números
+    separados por vírgula, reaproveitando a mesma infraestrutura
+    determinística da TASK-085 (`stage_mission_command_choice` /
+    `_apply_mission_command_choice`, `kind: "mission_command_choice"`)."""
+    if not candidates:
+        user.pending_intent = None
+        return empty_reply
+    if len(candidates) == 1:
+        mission = candidates[0]
+        payload = stage_mission_command(
+            mission_id=mission.id,
+            mission_title=mission.title,
+            command=command,
+            expected_state_version=mission.state_version,
+        )
+        user.pending_intent = payload
+        return describe_mission_command(payload)
+
+    payload = stage_mission_command_choice(missions=candidates, command=command)
+    user.pending_intent = payload
+    return describe_mission_command_choice_prompt(candidates, command=command)
+
+
 async def _start_cancel_mission_flow(*, session: AsyncSession, user: User) -> str:
     """Inicia cancelamento sem interpretar intenção por IA."""
     candidates = await list_mission_command_candidates(
@@ -1014,49 +1060,38 @@ async def _start_cancel_mission_flow(*, session: AsyncSession, user: User) -> st
         user_id=user.id,
         reference=None,
     )
-    if not candidates:
-        user.pending_intent = None
-        return "Você não tem nenhuma missão cancelável."
-    if len(candidates) == 1:
-        mission = candidates[0]
-        payload = stage_mission_command(
-            mission_id=mission.id,
-            mission_title=mission.title,
-            command=MissionCommand.CANCEL,
-            expected_state_version=mission.state_version,
-        )
-        user.pending_intent = payload
-        return describe_mission_command(payload)
-
-    payload = stage_mission_command_choice(
-        missions=candidates,
+    return _start_manual_command_flow(
+        candidates,
         command=MissionCommand.CANCEL,
-    )
-    payload["kind"] = _CANCEL_MISSION_CHOICE
-    user.pending_intent = payload
-    return describe_mission_choice_prompt(
-        [mission.title for mission in candidates],
-        header="Encontrei mais de uma missão para cancelar:",
+        user=user,
+        empty_reply="Você não tem nenhuma missão cancelável.",
     )
 
 
-def _apply_cancel_mission_choice(text: str, *, user: User) -> str:
-    """Seleciona uma missão e avança à confirmação local, sem executar ainda."""
-    payload = user.pending_intent
-    entries = payload["missions"]
-    index = parse_single_numbered_choice(text, count=len(entries))
-    if index is None:
-        return _CANCEL_MISSION_CHOICE_RETRY
-    entry = entries[index]
-    confirmation = {
-        "kind": "mission_command",
-        "mission_id": entry["mission_id"],
-        "mission_title": entry["mission_title"],
-        "command": MissionCommand.CANCEL.value,
-        "expected_state_version": entry["expected_state_version"],
-    }
-    user.pending_intent = confirmation
-    return describe_mission_command(confirmation)
+async def _start_pause_mission_flow(*, session: AsyncSession, user: User) -> str:
+    """TASK-090: pausa manual explícita, sem IA -- só missões `ACTIVE`."""
+    candidates = await _query_missions_by_status(
+        session, user_id=user.id, status_value=MissionStatus.ACTIVE
+    )
+    return _start_manual_command_flow(
+        candidates,
+        command=MissionCommand.PAUSE,
+        user=user,
+        empty_reply="Você não tem nenhuma missão ativa para pausar.",
+    )
+
+
+async def _start_resume_mission_flow(*, session: AsyncSession, user: User) -> str:
+    """TASK-090: retomada manual explícita, sem IA -- só missões `PAUSED`."""
+    candidates = await _query_missions_by_status(
+        session, user_id=user.id, status_value=MissionStatus.PAUSED
+    )
+    return _start_manual_command_flow(
+        candidates,
+        command=MissionCommand.RESUME,
+        user=user,
+        empty_reply="Você não tem nenhuma missão pausada para retomar.",
+    )
 
 
 async def _query_missions_by_status(
@@ -1179,13 +1214,19 @@ def _stage_pause_offer_for_edit(
 
 
 def _stage_edit_menu(
-    *, mission_id: str, mission_title: str, state_version: int, user: User
+    *,
+    mission_id: str,
+    mission_title: str,
+    state_version: int,
+    user: User,
+    auto_paused: bool = False,
 ) -> str:
     user.pending_intent = {
         "kind": "await_edit_menu_choice",
         "mission_id": mission_id,
         "mission_title": mission_title,
         "expected_state_version": state_version,
+        "auto_paused": auto_paused,
     }
     return describe_edit_menu(mission_title)
 
@@ -1198,6 +1239,7 @@ async def _apply_edit_menu_choice(
     if choice is None:
         return describe_edit_menu_retry()
     mission_id = payload["mission_id"]
+    auto_paused = payload.get("auto_paused", False)
     if choice == 0:  # "1 — Lojas"
         current_sources = await _query_mission_source_codes(session, UUID(mission_id))
         user.pending_intent = {
@@ -1206,6 +1248,7 @@ async def _apply_edit_menu_choice(
             "mission_title": payload["mission_title"],
             "expected_state_version": payload["expected_state_version"],
             "current_sources": list(current_sources),
+            "auto_paused": auto_paused,
         }
         return describe_edit_lojas_menu()
     # choice == 1: "2 — Preço-alvo"
@@ -1223,6 +1266,7 @@ async def _apply_edit_menu_choice(
             else None
         ),
         "previous_target_currency": criteria.target_currency if criteria else None,
+        "auto_paused": auto_paused,
     }
     return describe_edit_target_amount_prompt()
 
@@ -1252,6 +1296,7 @@ def _start_add_sources(
         "expected_state_version": payload["expected_state_version"],
         "current_sources": list(current_sources),
         "option_map": option_map,
+        "auto_paused": payload.get("auto_paused", False),
     }
     return describe_edit_add_sources_prompt(option_map)
 
@@ -1270,6 +1315,7 @@ def _start_remove_sources(
         "expected_state_version": payload["expected_state_version"],
         "current_sources": list(current_sources),
         "option_map": option_map,
+        "auto_paused": payload.get("auto_paused", False),
     }
     return describe_edit_remove_sources_prompt(option_map)
 
@@ -1294,6 +1340,7 @@ def _apply_edit_add_sources(text: str, *, user: User) -> str:
         target_currency=None,
         clear_target=False,
         sources=combined,
+        auto_paused=payload.get("auto_paused", False),
     )
     user.pending_intent = create_payload
     return describe_edit_mission(create_payload)
@@ -1319,6 +1366,7 @@ def _apply_edit_remove_sources(text: str, *, user: User) -> str:
         target_currency=None,
         clear_target=False,
         sources=remaining,
+        auto_paused=payload.get("auto_paused", False),
     )
     user.pending_intent = create_payload
     return describe_edit_mission(create_payload)
@@ -1341,6 +1389,7 @@ def _apply_edit_target_amount(text: str, *, user: User) -> str:
         target_currency=None if clear_target else "BRL",
         clear_target=clear_target,
         sources=(),
+        auto_paused=payload.get("auto_paused", False),
     )
     user.pending_intent = create_payload
     return describe_edit_mission(create_payload)
@@ -1534,14 +1583,29 @@ async def _execute_edit_mission(
             )
     if payload["changes_sources"]:
         lines.append(f"🏪 Lojas: {format_store_list(effective_codes)}")
-    lines.extend(
-        [
-            "",
-            "A missão continua pausada.",
-            "",
-            "Use /retomar quando quiser voltar a monitorar.",
-        ]
-    )
+    # TASK-090: distingue se a pausa foi provocada agora pelo próprio fluxo
+    # de edição (missão estava ACTIVE antes de /editar_missao) ou se a
+    # missão já estava PAUSED por escolha anterior do usuário -- nunca
+    # retoma sozinho em nenhum dos dois casos, só varia a redação para não
+    # perder essa distinção silenciosamente.
+    if payload.get("auto_paused", False):
+        lines.extend(
+            [
+                "",
+                "A missão continua pausada.",
+                "",
+                "Use /retomar quando quiser voltar a monitorar.",
+            ]
+        )
+    else:
+        lines.extend(
+            [
+                "",
+                "A missão continua pausada, como já estava antes desta edição.",
+                "",
+                "Use /retomar quando quiser voltar a monitorar.",
+            ]
+        )
     return "\n".join(lines)
 
 
@@ -1573,10 +1637,18 @@ async def _execute_pause_for_edit(
         actor_type="telegram",
         actor_id=user.id,
     )
-    title = payload["mission_title"]
-    return (
-        f'⏸️ "{title}" está pausada agora.\n\n'
-        f"Para editar, envie {_EDIT_MISSION_COMMAND}."
+    # TASK-090: segue direto para o menu de edição em vez de encerrar o
+    # fluxo pedindo /editar_missao de novo -- mesma cadeia de
+    # pending_intent, marcada como auto_paused=True (a missão estava
+    # ACTIVE um instante atrás; a pausa só existe por causa desta edição).
+    # `expected_state_version` avança +1 porque a transição acima já
+    # confirmou a mudança nesta mesma execução.
+    return _stage_edit_menu(
+        mission_id=payload["mission_id"],
+        mission_title=payload["mission_title"],
+        state_version=payload["expected_state_version"] + 1,
+        user=user,
+        auto_paused=True,
     )
 
 

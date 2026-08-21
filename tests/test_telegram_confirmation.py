@@ -359,6 +359,7 @@ def test_stage_and_describe_edit_mission_target_change_only() -> None:
         "previous_target_amount": "500.00",
         "previous_target_currency": "BRL",
         "previous_sources": ["kabum"],
+        "auto_paused": False,
     }
     description = describe_edit_mission(payload)
     assert "teclado mecanico" in description

@@ -250,10 +250,17 @@ def stage_edit_mission(
     target_currency: str | None,
     clear_target: bool,
     sources: tuple[str, ...],
+    auto_paused: bool = False,
 ) -> dict[str, Any]:
     """TASK-069: monta o payload de edição -- só chamado quando a missão já
     está `PAUSED` no momento do *stage*; `expected_state_version` garante
-    que a execução rejeita a confirmação se isso mudar antes de confirmar."""
+    que a execução rejeita a confirmação se isso mudar antes de confirmar.
+
+    `auto_paused` (TASK-090) distingue, para a mensagem final, se esta
+    pausa foi provocada agora mesmo pelo próprio fluxo de edição (missão
+    estava `ACTIVE` antes de `/editar_missao`) ou se a missão já estava
+    `PAUSED` por escolha anterior do usuário -- nunca decide nem altera
+    nenhuma transição, só a redação da confirmação."""
     changes_target = clear_target or target_amount is not None
     changes_sources = bool(sources)
     return {
@@ -271,6 +278,7 @@ def stage_edit_mission(
         ),
         "previous_target_currency": previous_target_currency,
         "previous_sources": list(previous_sources),
+        "auto_paused": auto_paused,
     }
 
 
