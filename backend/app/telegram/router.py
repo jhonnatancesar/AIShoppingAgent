@@ -40,6 +40,10 @@ from app.authentication.service import (
     issue_action_link_async,
     logout_async,
 )
+from app.authentication.telegram_linking import (
+    TelegramLinkError,
+    complete_telegram_link,
+)
 from app.authorization import (
     AuthorizationDenied,
     Permission,
@@ -187,6 +191,7 @@ _MISSION_HELP_COMMAND = "/missao"
 _LOGIN_COMMAND = "/entrar"
 _LOGOUT_COMMAND = "/sair"
 _RECOVERY_COMMAND = "/recuperar"
+_LINK_TELEGRAM_COMMAND = "/vincular"
 _CREATE_MISSION_COMMAND = "/criar_missao"
 _CREATE_MISSION_COMMAND_ALIAS = "/criar-missao"
 _CANCEL_MISSION_COMMAND = "/cancelar_missao"
@@ -469,6 +474,35 @@ async def _process_authenticated_message(
     primeiro contato -- para nunca existir uma janela em que algo já foi
     lido sem o lock ainda estar seguro."""
     async with user_serialization_lock(engine, message.user_id):
+        link_command, link_token = _parse_telegram_link_command(message.text)
+        if link_command:
+            if (
+                message.chat_type is not TelegramChatType.PRIVATE
+                or message.chat_id != message.user_id
+            ):
+                await session.commit()
+                return Response(status_code=status.HTTP_204_NO_CONTENT)
+            try:
+                await complete_telegram_link(
+                    session,
+                    raw_token=link_token or "",
+                    telegram_user_id=message.user_id,
+                    telegram_chat_id=message.chat_id,
+                )
+            except TelegramLinkError:
+                reply = (
+                    "Não foi possível vincular. O código é inválido, expirou "
+                    "ou já foi usado. Gere um novo código em Minha conta."
+                )
+            else:
+                reply = (
+                    "✅ Telegram vinculado à sua conta Web.\n\n"
+                    "O site continua funcionando normalmente mesmo sem Telegram."
+                )
+            await session.commit()
+            if settings.telegram_bot_token is not None:
+                await _send_reply_safely(message.chat_id, reply, settings=settings)
+            return Response(status_code=status.HTTP_204_NO_CONTENT)
         authentication = await authenticate_telegram_user_async(
             session,
             message=message,
@@ -548,6 +582,13 @@ async def _process_authenticated_message(
                 settings=settings,
             )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+def _parse_telegram_link_command(text: str) -> tuple[bool, str | None]:
+    parts = text.strip().split(maxsplit=1)
+    if not parts or parts[0].lower() != _LINK_TELEGRAM_COMMAND:
+        return False, None
+    return True, parts[1].strip() if len(parts) == 2 and parts[1].strip() else None
 
 
 async def _send_reply_safely(chat_id: int, text: str, *, settings: Settings) -> None:

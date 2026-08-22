@@ -1,8 +1,12 @@
 # Tarefas
 
-**TASK-100 implementada no DEV e aguardando revisão:** listagem geral USER de
-Offers acessíveis, paginada, filtrável e deduplicada entre missões. Ver
-`docs/tasks/TASK-100.md` e `DEC-084`.
+**TASK-101 implementada no DEV e aguardando revisão:** área Minha conta para
+perfil e preferências persistidas do próprio USER. Ver `docs/tasks/TASK-101.md`
+e `DEC-085`.
+
+**TASK-100 concluída, aprovada e publicada:** listagem geral USER de Offers
+acessíveis, paginada, filtrável e deduplicada entre missões, commit `b4e61c5`.
+Ver `docs/tasks/TASK-100.md` e `DEC-084`.
 
 **TASK-099 concluída, aprovada e publicada:** pesquisa autenticada em
 `/app/search`, read-only até a ação explícita “Monitorar”, preservando os três

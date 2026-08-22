@@ -59,6 +59,35 @@ export interface MissionCriteria {
   variant_selection_mode: 'not_required' | 'pending' | 'selected' | 'all'
 }
 
+export interface AccountOption {
+  code: string
+  label: string
+}
+
+export interface AccountProfile {
+  id: string
+  display_name: string
+  username: string | null
+  email: string | null
+  role: UserRole
+  telegram_linked: boolean
+  telegram_link_status: 'not_linked' | 'pending' | 'linked'
+  telegram_link_expires_at: string | null
+  created_at: string
+  favorite_stores: string[]
+  preferred_categories: string[]
+  notify_price_decreases: boolean
+  notify_target_reached: boolean
+  available_stores: AccountOption[]
+  available_categories: AccountOption[]
+}
+
+export interface TelegramLinkChallenge {
+  command: string
+  expires_at: string
+  account: AccountProfile
+}
+
 export interface ProductVariantOption {
   product_id: string
   label: string

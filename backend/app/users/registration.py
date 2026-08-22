@@ -61,6 +61,9 @@ _NUMBERED_CATEGORIES = {
     "14": "seguranca",
     "15": "geek_colecionaveis",
 }
+PREFERRED_CATEGORY_CODES: Final[frozenset[str]] = frozenset(
+    _NUMBERED_CATEGORIES.values()
+)
 _ALL_CATEGORIES = frozenset({"16", "todo", "todos", "toda", "todas"})
 
 _PROMPTS: Final[dict[str, str]] = {

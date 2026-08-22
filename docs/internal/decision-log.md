@@ -1,5 +1,27 @@
 # Decision Log
 
+## DEC-085 — Minha conta edita somente dados existentes da própria sessão
+
+- **Data:** 2026-08-22.
+- **Classificação:** implementar agora, como TASK-101 e item 10 da V1.2.
+- **Decisão:** `/app/account` usa exclusivamente o `User` resolvido pela
+  `WebSession`; a API não recebe `user_id`. Perfil e notificações permanecem
+  separados pelas permissões já existentes e todos os métodos mutáveis herdam
+  CSRF de `require_web_session`.
+- **Reuso:** nome, e-mail, lojas/categorias preferidas e os dois flags de
+  notificação são os campos atuais de `User`. A Web e o Telegram passam a
+  editar/consumir o mesmo estado persistido.
+- **Extensibilidade:** opções válidas são fornecidas pelo backend, sem catálogo
+  paralelo no React.
+- **Vínculo opcional:** a Web emite uma challenge de alta entropia, armazena só
+  o hash SHA-256 por 10 minutos e a consome uma única vez após `/vincular` no
+  chat privado autenticado do próprio Telegram. O cliente Web nunca fornece IDs
+  Telegram. Desvincular revoga apenas o canal Telegram e preserva a WebSession,
+  conta, missões e ofertas.
+- **Persistência mínima necessária:** `telegram_link_tokens` é exclusiva para a
+  prova de posse; não é uma segunda identidade nem duplica `User`.
+- **Fora de escopo:** IA, username, papel, senha e exclusão de conta.
+
 ## DEC-084 — Área USER de ofertas usa EXISTS sobre relevância do proprietário
 
 - **Data:** 2026-08-22.

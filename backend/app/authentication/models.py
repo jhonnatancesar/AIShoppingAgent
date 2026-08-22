@@ -265,3 +265,50 @@ class CredentialActionToken(Base):
         default=utc_now,
         server_default=func.now(),
     )
+
+
+class TelegramLinkToken(Base):
+    """Prova temporária Web -> chat privado, persistida somente como hash."""
+
+    __tablename__ = "telegram_link_tokens"
+    __table_args__ = (
+        CheckConstraint(
+            "expires_at = created_at + INTERVAL '10 minutes'",
+            name="ck_telegram_link_tokens_ttl",
+        ),
+        CheckConstraint(
+            "consumed_at IS NULL OR invalidated_at IS NULL",
+            name="ck_telegram_link_tokens_single_terminal",
+        ),
+        Index(
+            "ix_telegram_link_tokens_user_active",
+            "user_id",
+            "expires_at",
+            postgresql_where="consumed_at IS NULL AND invalidated_at IS NULL",
+        ),
+        Index("ix_telegram_link_tokens_expiry", "expires_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4
+    )
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    user_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    consumed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    invalidated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    recorded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+        server_default=func.now(),
+    )

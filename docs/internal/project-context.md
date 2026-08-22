@@ -1,6 +1,15 @@
 # Project Context
 
-**Atualização 2026-08-22 (TASK-100 implementada no DEV, aguardando revisão):**
+**Atualização 2026-08-22 (TASK-101 implementada no DEV, aguardando revisão):**
+`/app/account` permite ao USER editar o próprio perfil, lojas/categorias
+preferidas e os flags de notificação já usados pelo Telegram. Três endpoints
+iniciais e dois endpoints de vínculo exigem WebSession e as permissões
+existentes; nenhum recebe `user_id` ou IDs Telegram. O vínculo opcional usa
+challenge com hash, TTL de 10 minutos e prova única no chat privado; desvincular
+preserva Web e missões. A migration `20260822_0005` cria somente essa challenge.
+Sem IA ou produção. TASK-100 foi publicada em `origin/main` (`b4e61c5`).
+
+**Atualização 2026-08-22 (TASK-100 concluída, aprovada e publicada):**
 `/app/offers` lista Offers únicas acessíveis por relevância ligada às missões do
 USER. O endpoint usa `EXISTS` fail-closed, aceita somente `MATCH`/
 `POSSIBLE_MATCH`, pagina e filtra sobre a última PriceObservation. Sem

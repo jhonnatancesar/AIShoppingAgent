@@ -1,0 +1,195 @@
+import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from 'react'
+import { Bell, Check, Clock3, Link2, RefreshCw, Save, ShieldCheck, Unlink, UserRound } from 'lucide-react'
+import { accountApi } from '@/api/account'
+import { ApiError } from '@/api/client'
+import type { AccountOption, AccountProfile } from '@/api/types'
+import { useAuth } from '@/auth/AuthContext'
+import { PageHeader } from '@/components/PageHeader'
+import { ErrorState, LoadingState } from '@/components/StatePanel'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
+
+export function AccountPage() {
+  const [account, setAccount] = useState<AccountProfile | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const { refresh } = useAuth()
+
+  const load = useCallback(async () => {
+    setError(null)
+    try {
+      setAccount(await accountApi.get())
+    } catch (loadError) {
+      setError(loadError instanceof ApiError ? loadError.message : 'Não foi possível carregar sua conta.')
+    }
+  }, [])
+
+  useEffect(() => { load() }, [load])
+
+  if (error && !account) return <ErrorState title="Conta indisponível" description={error} onRetry={load} />
+  if (!account) return <LoadingState label="Carregando sua conta…" />
+
+  return (
+    <AccountView
+      account={account}
+      onProfileSaved={async (updated) => { setAccount(updated); await refresh() }}
+      onNotificationsSaved={setAccount}
+      onTelegramChanged={setAccount}
+    />
+  )
+}
+
+export function AccountView({
+  account,
+  onProfileSaved,
+  onNotificationsSaved,
+  onTelegramChanged,
+}: {
+  account: AccountProfile
+  onProfileSaved: (account: AccountProfile) => void | Promise<void>
+  onNotificationsSaved: (account: AccountProfile) => void
+  onTelegramChanged: (account: AccountProfile) => void
+}) {
+  return (
+    <section>
+      <PageHeader
+        eyebrow="Sua área"
+        title="Minha conta"
+        description="Gerencie seus dados e preferências usando a mesma conta do Telegram."
+      />
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.4fr)_minmax(19rem,.6fr)]">
+        <div className="space-y-6">
+          <ProfileForm account={account} onSaved={onProfileSaved} />
+          <NotificationForm account={account} onSaved={onNotificationsSaved} />
+        </div>
+        <AccountSummary account={account} onChanged={onTelegramChanged} />
+      </div>
+    </section>
+  )
+}
+
+function ProfileForm({ account, onSaved }: { account: AccountProfile; onSaved: (account: AccountProfile) => void | Promise<void> }) {
+  const [displayName, setDisplayName] = useState(account.display_name)
+  const [email, setEmail] = useState(account.email || '')
+  const [stores, setStores] = useState(account.favorite_stores)
+  const [categories, setCategories] = useState(account.preferred_categories)
+  const [saving, setSaving] = useState(false)
+  const [message, setMessage] = useState<string | null>(null)
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setSaving(true)
+    setMessage(null)
+    try {
+      const updated = await accountApi.updateProfile({
+        display_name: displayName,
+        email: email.trim() || null,
+        favorite_stores: stores,
+        preferred_categories: categories,
+      })
+      if (updated) await onSaved(updated)
+      setMessage('Perfil atualizado.')
+    } catch (error) {
+      setMessage(error instanceof ApiError ? error.message : 'Não foi possível salvar o perfil.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader><CardTitle className="flex items-center gap-2"><UserRound className="size-5 text-primary" />Perfil</CardTitle><CardDescription>Informações visíveis na sua experiência pessoal.</CardDescription></CardHeader>
+      <CardContent>
+        <form className="space-y-6" onSubmit={submit}>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field label="Nome"><Input value={displayName} maxLength={160} required onChange={(event) => setDisplayName(event.target.value)} /></Field>
+            <Field label="E-mail"><Input type="email" value={email} maxLength={254} placeholder="Opcional" onChange={(event) => setEmail(event.target.value)} /></Field>
+          </div>
+          <OptionGroup title="Lojas preferidas" options={account.available_stores} selected={stores} onChange={setStores} />
+          <OptionGroup title="Categorias preferidas" options={account.available_categories} selected={categories} onChange={setCategories} />
+          <div className="flex items-center justify-between gap-3"><Feedback message={message} /><Button disabled={saving}><Save />{saving ? 'Salvando…' : 'Salvar perfil'}</Button></div>
+        </form>
+      </CardContent>
+    </Card>
+  )
+}
+
+function NotificationForm({ account, onSaved }: { account: AccountProfile; onSaved: (account: AccountProfile) => void }) {
+  const [priceDrops, setPriceDrops] = useState(account.notify_price_decreases)
+  const [targetReached, setTargetReached] = useState(account.notify_target_reached)
+  const [saving, setSaving] = useState(false)
+  const [message, setMessage] = useState<string | null>(null)
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setSaving(true)
+    setMessage(null)
+    try {
+      const updated = await accountApi.updateNotifications({ notify_price_decreases: priceDrops, notify_target_reached: targetReached })
+      if (updated) onSaved(updated)
+      setMessage('Preferências atualizadas.')
+    } catch (error) {
+      setMessage(error instanceof ApiError ? error.message : 'Não foi possível salvar as preferências.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader><CardTitle className="flex items-center gap-2"><Bell className="size-5 text-primary" />Notificações</CardTitle><CardDescription>As escolhas valem para os alertas enviados pelo Telegram.</CardDescription></CardHeader>
+      <CardContent><form className="space-y-4" onSubmit={submit}><Toggle label="Quedas de preço" description="Avise quando uma oferta monitorada ficar mais barata." checked={priceDrops} onChange={setPriceDrops} /><Toggle label="Preço-alvo atingido" description="Avise quando o valor definido na missão for alcançado." checked={targetReached} onChange={setTargetReached} /><div className="flex items-center justify-between gap-3 pt-2"><Feedback message={message} /><Button disabled={saving}><Save />{saving ? 'Salvando…' : 'Salvar notificações'}</Button></div></form></CardContent>
+    </Card>
+  )
+}
+
+function AccountSummary({ account, onChanged }: { account: AccountProfile; onChanged: (account: AccountProfile) => void }) {
+  const [command, setCommand] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [message, setMessage] = useState<string | null>(null)
+
+  async function startLink() {
+    setBusy(true); setMessage(null)
+    try {
+      const challenge = await accountApi.startTelegramLink()
+      if (challenge) { setCommand(challenge.command); onChanged(challenge.account) }
+    } catch (error) {
+      setMessage(error instanceof ApiError ? error.message : 'Não foi possível gerar o código.')
+    } finally { setBusy(false) }
+  }
+
+  async function refreshLink() {
+    setBusy(true); setMessage(null)
+    try { const updated = await accountApi.get(); if (updated) onChanged(updated) }
+    catch (error) { setMessage(error instanceof ApiError ? error.message : 'Não foi possível atualizar o vínculo.') }
+    finally { setBusy(false) }
+  }
+
+  async function unlinkTelegram() {
+    if (!window.confirm('Desvincular o Telegram desta conta? Suas missões e dados Web serão preservados.')) return
+    setBusy(true); setMessage(null)
+    try { const updated = await accountApi.unlinkTelegram(); if (updated) { setCommand(null); onChanged(updated) } }
+    catch (error) { setMessage(error instanceof ApiError ? error.message : 'Não foi possível desvincular.') }
+    finally { setBusy(false) }
+  }
+
+  const statusLabel = account.telegram_link_status === 'linked' ? 'Vinculado' : account.telegram_link_status === 'pending' ? 'Vinculação pendente' : 'Não vinculado'
+  return <Card className="h-fit xl:sticky xl:top-24"><CardHeader><CardTitle>Conta</CardTitle><CardDescription>Identidade e integrações protegidas.</CardDescription></CardHeader><CardContent className="space-y-4"><Summary icon={UserRound} label="Usuário" value={account.username ? `@${account.username}` : 'Não definido'} /><Summary icon={ShieldCheck} label="Perfil de acesso" value={account.role} /><Summary icon={Link2} label="Telegram" value={statusLabel} badge={account.telegram_link_status === 'linked'} />{account.telegram_link_status === 'pending' ? <div className="rounded-lg border border-amber-500/30 bg-amber-500/8 p-3 text-xs text-muted-foreground"><p className="flex items-center gap-2 font-medium text-foreground"><Clock3 className="size-4" />Vinculação pendente</p><p className="mt-1">Envie o comando temporário no chat privado do bot. Ele expira em até 10 minutos e funciona uma única vez.</p></div> : null}{command ? <div className="space-y-2 rounded-lg border border-primary/25 bg-primary/7 p-3"><p className="text-xs text-muted-foreground">No chat privado do bot, envie exatamente:</p><code className="block break-all rounded bg-background p-2 text-xs text-foreground">{command}</code></div> : null}<div className="grid gap-2">{account.telegram_link_status === 'linked' ? <Button type="button" variant="outline" disabled={busy} onClick={unlinkTelegram}><Unlink />Desvincular Telegram</Button> : <Button type="button" variant="outline" disabled={busy} onClick={startLink}><Link2 />{account.telegram_link_status === 'pending' ? 'Gerar novo código' : 'Vincular Telegram'}</Button>}<Button type="button" variant="ghost" disabled={busy} onClick={refreshLink}><RefreshCw />Atualizar status</Button></div><Feedback message={message} /><div className="rounded-lg border border-border bg-muted/35 p-3 text-xs text-muted-foreground">Conta criada em {new Date(account.created_at).toLocaleDateString('pt-BR')}. O Telegram é opcional; desvincular não remove sua conta, missões ou acesso Web.</div></CardContent></Card>
+}
+
+function Field({ label, children }: { label: string; children: ReactNode }) { return <label className="space-y-2 text-sm font-medium"><span>{label}</span>{children}</label> }
+function Feedback({ message }: { message: string | null }) { return <span className="text-sm text-muted-foreground" role="status">{message}</span> }
+
+function OptionGroup({ title, options, selected, onChange }: { title: string; options: AccountOption[]; selected: string[]; onChange: (value: string[]) => void }) {
+  function toggle(code: string) { onChange(selected.includes(code) ? selected.filter((item) => item !== code) : [...selected, code]) }
+  return <fieldset><legend className="mb-2 text-sm font-medium">{title}</legend><div className="flex flex-wrap gap-2">{options.map((option) => <button type="button" key={option.code} aria-pressed={selected.includes(option.code)} onClick={() => toggle(option.code)} className="inline-flex items-center gap-1.5 rounded-full border border-border px-3 py-1.5 text-sm transition-colors aria-pressed:border-primary aria-pressed:bg-primary/10 aria-pressed:text-primary">{selected.includes(option.code) ? <Check className="size-3.5" /> : null}{option.label}</button>)}</div></fieldset>
+}
+
+function Toggle({ label, description, checked, onChange }: { label: string; description: string; checked: boolean; onChange: (value: boolean) => void }) {
+  return <label className="flex cursor-pointer items-center justify-between gap-4 rounded-xl border border-border p-4"><span><span className="block text-sm font-medium">{label}</span><span className="mt-1 block text-xs text-muted-foreground">{description}</span></span><input className="size-4 accent-primary" type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} /></label>
+}
+
+function Summary({ icon: Icon, label, value, badge }: { icon: typeof UserRound; label: string; value: string; badge?: boolean }) {
+  return <div className="flex items-center gap-3"><div className="grid size-9 place-items-center rounded-lg bg-primary/10 text-primary"><Icon className="size-4" /></div><div className="min-w-0 flex-1"><p className="text-xs text-muted-foreground">{label}</p><p className="truncate text-sm font-medium">{value}</p></div>{badge ? <Badge>Ativo</Badge> : null}</div>
+}

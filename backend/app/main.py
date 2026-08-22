@@ -13,6 +13,7 @@ from .observability.metrics import metrics_router
 from .observability.tracing import configure_tracing
 from .offers.router import router as offers_router
 from .telegram.router import router as telegram_router
+from .webapp.account_router import router as webapp_account_router
 from .webapp.missions_router import router as webapp_missions_router
 from .webapp.offers_router import router as webapp_offers_router
 from .webapp.router import router as webapp_router
@@ -41,6 +42,7 @@ app.include_router(authentication_router)
 app.include_router(offers_router)
 app.include_router(telegram_router)
 app.include_router(webapp_router)
+app.include_router(webapp_account_router)
 app.include_router(webapp_missions_router)
 app.include_router(webapp_offers_router)
 app.include_router(webapp_search_router)

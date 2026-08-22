@@ -23,6 +23,7 @@ _COMMANDS = [
     {"command": "entrar", "description": "Autenticar por senha"},
     {"command": "recuperar", "description": "Criar ou recuperar sua senha"},
     {"command": "sair", "description": "Encerrar a sessão autenticada"},
+    {"command": "vincular", "description": "Vincular uma conta Web com código"},
     {"command": "preferencias", "description": "Configurar notificações"},
     {"command": "privacidade", "description": "Consultar uso e proteção de dados"},
 ]

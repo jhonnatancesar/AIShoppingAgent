@@ -3,6 +3,7 @@
 from app.authentication.models import (
     CredentialAction,
     CredentialActionToken,
+    TelegramLinkToken,
     UserAuthSession,
     UserCredential,
 )
@@ -10,6 +11,7 @@ from app.authentication.models import (
 __all__ = [
     "CredentialAction",
     "CredentialActionToken",
+    "TelegramLinkToken",
     "UserAuthSession",
     "UserCredential",
 ]

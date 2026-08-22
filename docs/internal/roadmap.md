@@ -34,9 +34,9 @@
 | Página rica de oferta USER | TASK-095 | Concluída, aprovada e publicada em `origin/main` (`0924f42`); detalhe centrado em Offer com ownership por missão/relevância |
 | Avaliações por oferta/loja | TASK-096 | Concluída, aprovada e publicada em `origin/main` (`fd5a6f9`); snapshot explícito na Offer, página USER e Telegram (`DEC-078`) |
 | Identidade global de produto/variante | TASK-097 | Concluída, aprovada e publicada em `origin/main` (`eeb2f4a`); equivalência fail-closed e escolha determinística de variantes (`DEC-079`) |
-| Pesquisa de produtos pela Web | TASK-099 | Implementada no DEV; pesquisa read-only, três fluxos da TASK-097 e missão somente após “Monitorar” (`DEC-083`) |
-| Área USER — ofertas | TASK-100 | Implementada no DEV; listagem paginada, fail-closed e sem duplicação entre missões (`DEC-084`) |
-| Área USER — minha conta | Próxima TASK a formalizar | Item 10 da V1.2 (`DEC-082`) |
+| Pesquisa de produtos pela Web | TASK-099 | Concluída, aprovada e publicada em `origin/main` (`e9610c3`); pesquisa read-only e missão somente após “Monitorar” (`DEC-083`) |
+| Área USER — ofertas | TASK-100 | Concluída, aprovada e publicada em `origin/main` (`b4e61c5`); listagem paginada, fail-closed e sem duplicação (`DEC-084`) |
+| Área USER — minha conta | TASK-101 | Implementada no DEV; perfil, preferências e vínculo Telegram opcional com prova privada (`DEC-085`) |
 | Área DEV/ADMIN | Tarefas a definir | Dashboard, administração de dados e controles, itens 11 a 13 (`DEC-082`) |
 | Comparação entre lojas | Tarefa a definir | Adiada para depois do bloco Web, item 14 (`DEC-082`) |
 | Histórico e gráficos por produto/variante | TASK-098 | Formalizada e reservada como último item da V1.2 (`DEC-081`/`DEC-082`) |
@@ -349,7 +349,8 @@ os itens de e-mail
 (opt-in no cadastro e notificações por e-mail) saíram da V1.2 e foram
 movidos para a V2 (`docs/internal/backlog.md`). Estado atual: itens 1 a 7
 concluídos e publicados no DEV; TASK-099 foi aprovada/publicada e o item 9 foi
-implementado como TASK-100, aguardando revisão. Minha conta é o próximo item.
+concluído/publicado como TASK-100. Minha conta foi implementada como TASK-101,
+aguardando revisão; o dashboard DEV/ADMIN é o próximo item.
 Comparação ficou no item 14 e
 TASK-098 permanece reservada como item 18.)
 → V2.

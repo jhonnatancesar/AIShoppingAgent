@@ -1,6 +1,16 @@
 # Changelog
 
-## 2026-08-22 — TASK-100: área USER de ofertas (DEV, aguardando revisão)
+## 2026-08-22 — TASK-101: Minha conta (DEV, aguardando revisão)
+
+- adicionados endpoints USER de leitura, perfil e preferências de notificação;
+- criada `/app/account`, com dados pessoais, preferências e resumo do vínculo;
+- Web e Telegram reutilizam os mesmos flags persistidos de alerta;
+- vínculo opcional usa token com hash, TTL, uso único e prova no chat privado;
+- desvinculação preserva conta, WebSession e missões;
+- migration `20260822_0005` adiciona apenas a challenge de vínculo; nenhuma IA,
+  provider, coleta ou produção foi alterada.
+
+## 2026-08-22 — TASK-100: área USER de ofertas (concluída e aprovada)
 
 - Nova rota `/app/offers` e endpoint USER paginado com filtros de texto, loja,
   condição, disponibilidade e ordenação.

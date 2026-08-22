@@ -110,10 +110,17 @@ Nunca iniciar automaticamente a próxima TASK. Encerrar apresentando resumo da i
 
 ## Estado atual
 
+**Atualização DEV 2026-08-22:** a TASK-101 implementa `/app/account` com perfil,
+lojas/categorias preferidas e notificações do próprio USER. Reutiliza o modelo
+`User`, WebSession, CSRF e permissões existentes. Telegram é opcional: challenge
+com hash/TTL/uso único é comprovada no chat privado, e desvincular preserva Web
+e missões. A migration `20260822_0005` cria só a challenge. Aguarda revisão,
+sem deploy. TASK-100 foi publicada em `origin/main` (`b4e61c5`).
+
 **Atualização DEV 2026-08-22:** a TASK-100 implementa `/app/offers`, listagem
 USER paginada e fail-closed por relevância das próprias missões. Usa a última
-observação, deduplica Offer com `EXISTS` e aguarda revisão, sem deploy. A
-TASK-099 foi aprovada e publicada em `origin/main` (`e9610c3`).
+observação e deduplica Offer com `EXISTS`. Foi aprovada e publicada em
+`origin/main` (`b4e61c5`), sem deploy.
 
 **Atualização DEV 2026-08-22:** a TASK-099 implementa a pesquisa de produtos
 pela Web como consulta read-only do catálogo persistido. Pesquisar nunca cria

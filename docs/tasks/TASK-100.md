@@ -1,6 +1,6 @@
 # TASK-100 — Área USER: listagem geral de ofertas relevantes
 
-Status: **Implementada no DEV, aguardando revisão.**
+Status: **Concluída, aprovada e publicada no DEV** (`b4e61c5`).
 
 ## Objetivo
 
