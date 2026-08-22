@@ -519,30 +519,18 @@ class CollectionOrchestrator:
                 )
                 selected_raw = tuple(item.raw_offer for item in selected)
                 try:
-                    enriched_raw = await self._adapter.enrich_marketplace_parties(
+                    enriched_raw = await self._adapter.enrich_offer_details(
                         claim.source_code, selected_raw
                     )
                 except asyncio.CancelledError:
                     raise
                 except Exception:
                     logger.warning(
-                        "marketplace_party_enrichment_failed",
+                        "offer_detail_enrichment_failed",
                         extra={"source_code": _safe_source(claim.source_code)},
                         exc_info=True,
                     )
                     enriched_raw = selected_raw
-                try:
-                    enriched_raw = await self._adapter.enrich_installment_options(
-                        claim.source_code, enriched_raw
-                    )
-                except asyncio.CancelledError:
-                    raise
-                except Exception:
-                    logger.warning(
-                        "installment_option_enrichment_failed",
-                        extra={"source_code": _safe_source(claim.source_code)},
-                        exc_info=True,
-                    )
             enriched = tuple(
                 replace(item, raw_offer=raw_offer)
                 for item, raw_offer in zip(selected, enriched_raw, strict=True)
@@ -1141,6 +1129,7 @@ async def _resolve_offer(session: AsyncSession, store_id: UUID, item: Any) -> Of
     if offer is not None:
         if item.raw_offer.image_url is not None:
             offer.image_url = item.raw_offer.image_url
+        _apply_rating_snapshot(offer, item)
         return offer
     product = Product(id=uuid4(), name=item.raw_offer.title[:300])
     offer = Offer(
@@ -1151,6 +1140,7 @@ async def _resolve_offer(session: AsyncSession, store_id: UUID, item: Any) -> Of
         url=item.raw_offer.url,
         image_url=item.raw_offer.image_url,
     )
+    _apply_rating_snapshot(offer, item)
     try:
         async with session.begin_nested():
             session.add(product)
@@ -1171,8 +1161,18 @@ async def _resolve_offer(session: AsyncSession, store_id: UUID, item: Any) -> Of
             raise
         if item.raw_offer.image_url is not None:
             winner.image_url = item.raw_offer.image_url
+        _apply_rating_snapshot(winner, item)
         return winner
     return offer
+
+
+def _apply_rating_snapshot(offer: Offer, item: Any) -> None:
+    """Atualiza só um par explícito; ausência nunca apaga o último snapshot."""
+    if item.rating_average is None or item.review_count is None:
+        return
+    offer.rating_average = item.rating_average
+    offer.review_count = item.review_count
+    offer.rating_observed_at = item.raw_offer.collected_at
 
 
 async def _find_offer(
@@ -1779,6 +1779,8 @@ def _raw_evidence(raw_offer: Any) -> dict[str, Any]:
         "raw_availability": _bounded(raw_offer.raw_availability, 120),
         "raw_fulfillment": _bounded(raw_offer.raw_fulfillment, 120),
         "raw_condition": _bounded(raw_offer.raw_condition, 32),
+        "raw_rating_average": _bounded(raw_offer.raw_rating_average, 80),
+        "raw_review_count": _bounded(raw_offer.raw_review_count, 80),
         "provider_evidence": _sanitize_json(raw_offer.evidence),
     }
 

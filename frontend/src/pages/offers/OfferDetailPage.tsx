@@ -42,6 +42,12 @@ function dateTime(value: string) {
   }).format(new Date(value))
 }
 
+function ratingAverage(value: string) {
+  return new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 2 }).format(
+    Number(value),
+  )
+}
+
 export function OfferDetailView({ offer }: { offer: OfferDetail }) {
   const observation = offer.latest_observation
   return (
@@ -106,6 +112,25 @@ export function OfferDetailView({ offer }: { offer: OfferDetail }) {
             <p className="field-hint">Ainda não há observação comercial disponível.</p>
           )}
         </div>
+      </div>
+
+      <div className="mission-section">
+        <h2>Avaliações na {offer.store.name}</h2>
+        {offer.rating ? (
+          <>
+            <p className="offer-rating">
+              ⭐ {ratingAverage(offer.rating.average)} ·{' '}
+              {offer.rating.review_count.toLocaleString('pt-BR')}{' '}
+              {offer.rating.review_count === 1 ? 'avaliação' : 'avaliações'}
+            </p>
+            <p className="field-hint">
+              Informação da própria loja, observada em{' '}
+              {dateTime(offer.rating.observed_at)}.
+            </p>
+          </>
+        ) : (
+          <p className="field-hint">Avaliação não informada pela loja.</p>
+        )}
       </div>
 
       <div className="mission-section">

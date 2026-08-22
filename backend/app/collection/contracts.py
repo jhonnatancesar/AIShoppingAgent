@@ -132,6 +132,8 @@ class RawCollectedOffer:
     raw_availability: str | None = None
     raw_fulfillment: str | None = None
     raw_condition: str | None = None
+    raw_rating_average: str | None = None
+    raw_review_count: str | None = None
     seller_kind: MarketplacePartyKind | None = None
     fulfillment_kind: MarketplacePartyKind | None = None
     image_url: str | None = None

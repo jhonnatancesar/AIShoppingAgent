@@ -38,6 +38,7 @@ from app.collection.normalization import Availability, PriceNormalizer
 from app.collection.orchestration import (
     _PRELIST_INTERMEDIATE_CANDIDATE_LIMIT,
     CollectionOrchestrator,
+    _apply_rating_snapshot,
     _failure_code,
     _filter_deterministic_candidates,
     _is_confirmed_external_block,
@@ -51,6 +52,7 @@ from app.collection.orchestration import (
     rank_prelist_candidates,
 )
 from app.collection.relevance import OfferRelevance
+from app.offers.models import Offer
 
 NOW = datetime(2026, 8, 9, 12, 0, tzinfo=UTC)
 
@@ -105,6 +107,39 @@ def _normalized_offers(*raws: RawCollectedOffer):
         raws[0].source_code, NOW, NOW + timedelta(seconds=2), raws
     )
     return PriceNormalizer().normalize_result(result).offers
+
+
+def test_offer_rating_snapshot_updates_and_missing_evidence_never_erases() -> None:
+    offer = Offer(product_id=uuid4(), store_id=uuid4(), url="https://x/offer")
+    explicit = PriceNormalizer().normalize_offer(
+        RawCollectedOffer(
+            source_code="amazon",
+            url=offer.url,
+            title="Produto",
+            collected_at=NOW,
+            raw_price="R$ 100,00",
+            raw_currency="BRL",
+            raw_rating_average="4.8",
+            raw_review_count="2256",
+        )
+    )
+    missing = PriceNormalizer().normalize_offer(
+        RawCollectedOffer(
+            source_code="amazon",
+            url=offer.url,
+            title="Produto",
+            collected_at=NOW + timedelta(hours=1),
+            raw_price="R$ 100,00",
+            raw_currency="BRL",
+        )
+    )
+
+    _apply_rating_snapshot(offer, explicit)
+    _apply_rating_snapshot(offer, missing)
+
+    assert offer.rating_average == Decimal("4.8")
+    assert offer.review_count == 2256
+    assert offer.rating_observed_at == NOW
 
 
 @pytest.mark.parametrize(

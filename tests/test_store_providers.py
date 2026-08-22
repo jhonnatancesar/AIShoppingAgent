@@ -1,5 +1,6 @@
 import asyncio
 from datetime import UTC, datetime
+from decimal import Decimal
 from uuid import uuid4
 
 import pytest
@@ -90,6 +91,95 @@ def test_amazon_uses_only_explicit_shipping_and_availability_evidence() -> None:
 
     assert offer.raw_shipping == "Frete grátis"
     assert offer.raw_availability == "Disponível"
+
+
+def test_amazon_collects_exact_rating_evidence_from_card_accessibility() -> None:
+    html = (
+        '<div data-component-type="s-search-result" data-asin="B0RATING">'
+        '<h2><a href="https://www.amazon.com.br/dp/B0RATING">Produto</a></h2>'
+        '<span class="a-price"><span class="a-offscreen">R$ 99,90</span></span>'
+        '<a aria-label="4,8 de 5 estrelas, detalhes da classificação"></a>'
+        '<a href="#customerReviews" aria-label="2.256 classificações">'
+        "(2,2 mil)</a></div>"
+    )
+
+    async def scenario():
+        async with BrowserSession() as session:
+            page = await session.new_page()
+            await page.set_content(html)
+            return await AmazonProvider().extract(page, NOW)
+
+    offer = asyncio.run(scenario())[0]
+    normalized = PriceNormalizer().normalize_offer(offer)
+
+    assert normalized.rating_average == Decimal("4.8")
+    assert normalized.review_count == 2256
+
+
+@pytest.mark.parametrize(
+    ("provider_type", "html"),
+    (
+        (
+            PichauProvider,
+            '<a data-cy="list-product" href="https://pichau.com.br/item">'
+            '<h2>Produto</h2><span class="price_vista">R$ 100,00</span>'
+            '<meta itemprop="ratingValue" content="4.7">'
+            '<meta itemprop="reviewCount" content="82"></a>',
+        ),
+        (
+            TerabyteProvider,
+            '<div class="product-item"><a class="product-item__name" '
+            'href="https://terabyteshop.com.br/produto/1/item">Produto</a>'
+            '<div class="product-item__new-price"><span>R$ 100,00</span></div>'
+            '<meta itemprop="ratingValue" content="4.7">'
+            '<meta itemprop="reviewCount" content="82"></div>',
+        ),
+        (
+            AmazonProvider,
+            '<div data-component-type="s-search-result" data-asin="B0CARD">'
+            '<h2><a href="https://amazon.com.br/dp/B0CARD">Produto</a></h2>'
+            '<span class="a-price"><span class="a-offscreen">R$ 100,00</span></span>'
+            '<a aria-label="4,7 de 5 estrelas"></a>'
+            '<a href="#customerReviews" aria-label="82 avaliações"></a></div>',
+        ),
+        (
+            KabumProvider,
+            '<main><a href="https://kabum.com.br/produto/1/item">'
+            '<span class="line-clamp-2">Produto</span>'
+            '<span class="text-base font-semibold">R$ 100,00</span>'
+            '<meta itemprop="ratingValue" content="4.7">'
+            '<meta itemprop="reviewCount" content="82"></a></main>',
+        ),
+    ),
+)
+def test_all_store_cards_share_explicit_rating_contract(provider_type, html) -> None:
+    async def scenario():
+        async with BrowserSession() as session:
+            page = await session.new_page()
+            await page.set_content(html)
+            return await provider_type().extract(page, NOW)
+
+    normalized = PriceNormalizer().normalize_offer(asyncio.run(scenario())[0])
+
+    assert normalized.rating_average == Decimal("4.7")
+    assert normalized.review_count == 82
+
+
+def test_common_detail_rating_reads_five_star_aggregate_rating() -> None:
+    html = (
+        '<script type="application/ld+json">'
+        '{"@type":"Product","aggregateRating":{"@type":"AggregateRating",'
+        '"ratingValue":"4.9","reviewCount":317,"bestRating":5}}'
+        "</script>"
+    )
+
+    async def scenario():
+        async with BrowserSession() as session:
+            page = await session.new_page()
+            await page.set_content(html)
+            return await PichauProvider().resolve_offer_rating(page)
+
+    assert asyncio.run(scenario()) == ("4.9", "317")
 
 
 def test_amazon_collects_only_explicit_card_condition_and_seller_kind() -> None:
@@ -1034,6 +1124,90 @@ def test_marketplace_enrichment_is_bounded_sorted_and_sequential(monkeypatch) ->
         sum(item.seller_kind is MarketplacePartyKind.PLATFORM for item in enriched) == 3
     )
     assert enriched[0].seller_kind is None  # quarto preço não foi avaliado
+
+
+def test_unified_detail_enrichment_opens_each_offer_only_once(monkeypatch) -> None:
+    from app.collection import InstallmentInterestKind, RawInstallmentOption
+
+    visited: list[str] = []
+
+    class Response:
+        status = 200
+
+    class Page:
+        async def goto(self, url, **kwargs):
+            visited.append(url)
+            return Response()
+
+    class Session:
+        def __init__(self, settings):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def new_page(self):
+            return Page()
+
+    class Provider(PlaywrightStoreProvider):
+        source_code = "future_store"
+        result_selector = ".product"
+
+        async def resolve_marketplace_parties(self, page):
+            return (MarketplacePartyKind.PLATFORM, MarketplacePartyKind.PLATFORM)
+
+        async def resolve_installment_options(self, page):
+            return (
+                RawInstallmentOption(
+                    installment_count=10,
+                    raw_amount="R$ 10,00",
+                    interest_kind=InstallmentInterestKind.INTEREST_FREE,
+                ),
+            )
+
+        async def resolve_offer_rating(self, page):
+            return ("4.7", "82")
+
+    monkeypatch.setattr("app.collection.providers.base.BrowserSession", Session)
+    offer = RawCollectedOffer(
+        source_code="future_store",
+        url="https://example.invalid/product",
+        title="Produto",
+        collected_at=NOW,
+        raw_price="R$ 100,00",
+        raw_currency="BRL",
+    )
+
+    enriched = asyncio.run(Provider().enrich_offer_details((offer,)))[0]
+
+    assert visited == [offer.url]
+    assert enriched.seller_kind is MarketplacePartyKind.PLATFORM
+    assert len(enriched.installment_options) == 1
+    assert enriched.raw_rating_average == "4.7"
+    assert enriched.raw_review_count == "82"
+
+
+def test_terabyte_unified_detail_enrichment_never_opens_page(monkeypatch) -> None:
+    class ForbiddenSession:
+        def __init__(self, settings):
+            raise AssertionError("Terabyte must not open product pages")
+
+    monkeypatch.setattr(
+        "app.collection.providers.base.BrowserSession", ForbiddenSession
+    )
+    offer = RawCollectedOffer(
+        source_code="terabyte",
+        url="https://example.invalid/product",
+        title="Produto",
+        collected_at=NOW,
+        raw_price="R$ 100,00",
+        raw_currency="BRL",
+    )
+
+    assert asyncio.run(TerabyteProvider().enrich_offer_details((offer,))) == (offer,)
 
 
 def test_marketplace_enrichment_stops_after_block(monkeypatch) -> None:

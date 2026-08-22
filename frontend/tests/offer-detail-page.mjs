@@ -25,6 +25,11 @@ try {
           last_seen_at: '2026-08-22T15:00:00Z',
           store: { code: 'amazon', name: 'Amazon' },
           seller: { name: 'Amazon.com.br' },
+          rating: {
+            average: '4.80',
+            review_count: 2256,
+            observed_at: '2026-08-22T15:00:00Z',
+          },
           latest_observation: {
             amount: '4599.00',
             currency: 'BRL',
@@ -51,6 +56,7 @@ try {
   )
   assert.match(html, /Galaxy S24 Ultra/)
   assert.match(html, /Amazon\.com\.br/)
+  assert.match(html, /4,8.*2\.256 avaliações/)
   assert.match(html, /R\$\s*4\.599,00/)
   assert.match(html, /12x de/)
   assert.match(html, /Abrir oferta na loja/)

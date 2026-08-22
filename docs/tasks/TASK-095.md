@@ -1,6 +1,7 @@
 # TASK-095 — Página rica de oferta na área USER
 
-Status: **Implementada em DEV e aguardando revisão.**
+Status: **Concluída, aprovada e publicada em `origin/main` em 2026-08-22
+(`0924f42`).**
 
 ## Origem
 

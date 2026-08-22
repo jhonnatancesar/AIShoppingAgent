@@ -38,6 +38,12 @@ class SellerOut(BaseModel):
     name: str
 
 
+class OfferRatingOut(BaseModel):
+    average: Decimal
+    review_count: int
+    observed_at: str
+
+
 class InstallmentOut(BaseModel):
     installment_count: int
     installment_amount: Decimal
@@ -69,6 +75,7 @@ class OfferDetailResponse(BaseModel):
     last_seen_at: str
     store: StoreOut
     seller: SellerOut | None
+    rating: OfferRatingOut | None
     latest_observation: LatestOfferObservationOut | None
 
 
@@ -103,6 +110,17 @@ def _as_response(detail: UserOfferDetail) -> OfferDetailResponse:
         last_seen_at=detail.offer.last_seen_at.isoformat(),
         store=StoreOut(code=detail.store.code, name=detail.store.name),
         seller=SellerOut(name=detail.seller.name) if detail.seller else None,
+        rating=(
+            OfferRatingOut(
+                average=detail.offer.rating_average,
+                review_count=detail.offer.review_count,
+                observed_at=detail.offer.rating_observed_at.isoformat(),
+            )
+            if detail.offer.rating_average is not None
+            and detail.offer.review_count is not None
+            and detail.offer.rating_observed_at is not None
+            else None
+        ),
         latest_observation=(
             LatestOfferObservationOut(
                 amount=observation.amount,

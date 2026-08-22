@@ -1,5 +1,22 @@
 # Decision Log
 
+## DEC-078 — TASK-096: avaliações pertencem à Offer/Store e compartilham a abertura de detalhe
+
+- **Data:** 2026-08-22.
+- **Decisão de domínio:** persistir em `Offer` o snapshot atual completo
+  (`rating_average`, `review_count`, `rating_observed_at`). Não é nota global de
+  Product e não integra `PriceObservation`, pois sua mudança não representa
+  mudança de preço/estado comercial nem deve criar observações redundantes.
+- **Evidência:** aceitar somente nota e contagem explicitamente declaradas em
+  card, JSON-LD `AggregateRating` ou microdata. Ausência/ambiguidade não apaga
+  snapshot anterior; contagem abreviada não é convertida em número exato.
+- **Navegação e extensibilidade:** `enrich_offer_details` combina vendedor,
+  condição, parcelamento e avaliação na mesma abertura, no máximo uma vez por
+  oferta. Terabyte permanece só-card sob o bloqueio atual. Uma loja nova adere
+  pelo contrato Raw e hooks do provider, sem mudanças nas camadas consumidoras.
+- **Apresentação:** página USER e Telegram mostram a origem; sem textos de
+  reviews, histórico de notas, agregação, IA ou influência no ranking.
+
 ## DEC-077 — TASK-095: primeira página rica é centrada em Offer e exige relevância ligada a missão do usuário
 
 - **Data:** 2026-08-22.

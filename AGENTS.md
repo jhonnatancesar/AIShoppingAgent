@@ -430,4 +430,11 @@ Telegram agrupada por loja. Foi aprovada e publicada em
 página USER `/app/offers/{offer_id}`, centrada em Offer e protegida por
 WebSession + relevância ligada a missão do proprietário. Reutiliza a última
 PriceObservation e suas parcelas, sem migration, IA ou nova coleta. Aguarda
-revisão; sem commit, push, deploy ou acesso à produção.
+revisão; sem commit, push, deploy ou acesso à produção. Foi posteriormente
+aprovada e publicada em `origin/main` no commit `0924f42`, sem deploy.
+
+**Atualização DEV 2026-08-22 (TASK-096):** o item 6 da V1.2 está implementado
+e aguarda revisão. Avaliações são snapshot explícito da Offer/Store e aparecem na
+página USER e Telegram. O enriquecimento de detalhe é único por oferta e
+extensível por provider; Terabyte permanece só-card. Sem texto de reviews,
+nota global, IA, produção, deploy, commit ou push.

@@ -29,6 +29,7 @@ from app.telegram.notifications import (
     TelegramNotificationError,
     _installment_line,
     _marketplace_party_line,
+    _rating_line,
     _render_prelist_v2_async,
     _select_installment_summary_option,
     _telegram_link,
@@ -41,6 +42,22 @@ from app.users.models import User, UserRole
 from pydantic import SecretStr
 
 NOW = datetime(2026, 8, 8, 20, 0, tzinfo=UTC)
+
+
+def test_rating_line_is_source_bound_and_omits_missing_snapshot() -> None:
+    offer = Offer(
+        id=uuid4(),
+        product_id=uuid4(),
+        store_id=uuid4(),
+        url="https://example.test/offer",
+        rating_average=Decimal("4.80"),
+        review_count=2256,
+        rating_observed_at=NOW,
+    )
+
+    assert _rating_line(offer) == "⭐ 4,8 · 2.256 avaliações\n"
+    offer.review_count = None
+    assert _rating_line(offer) == ""
 
 
 def _fake_session_factory() -> tuple[MagicMock, MagicMock]:
@@ -702,6 +719,9 @@ async def test_prelist_v2_renderer_groups_one_message_per_store(
             product_id=product.id,
             store_id=store.id,
             url=f"https://example.invalid/{index}",
+            rating_average=Decimal("4.80") if index == 0 else None,
+            review_count=2256 if index == 0 else None,
+            rating_observed_at=NOW if index == 0 else None,
         )
         observation = PriceObservation(
             id=uuid4(),
@@ -777,6 +797,7 @@ async def test_prelist_v2_renderer_groups_one_message_per_store(
     assert len(parts) == 2
     assert "Amazon — opções encontradas" in parts[0].text
     assert "Produto 1" in parts[0].text and "Produto 2" in parts[0].text
+    assert "⭐ 4,8 · 2.256 avaliações" in parts[0].text
     assert "Usado" in parts[0].text
     assert "KaBuM! — opções encontradas" in parts[1].text
 

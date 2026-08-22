@@ -85,6 +85,50 @@ def test_preserves_marketplace_seller_fulfillment_and_evidence() -> None:
     assert normalized.raw_offer.evidence == {"card_text": "sanitized"}
 
 
+def test_normalizes_explicit_offer_rating_snapshot() -> None:
+    normalized = PriceNormalizer().normalize_offer(
+        raw_offer(
+            raw_rating_average="4,8 de 5 estrelas, detalhes da classificação",
+            raw_review_count="2.256 classificações",
+        )
+    )
+
+    assert normalized.rating_average == Decimal("4.8")
+    assert normalized.review_count == 2256
+
+
+@pytest.mark.parametrize(
+    ("average", "count"),
+    (("4,8 de 5 estrelas", None), (None, "200 avaliações"), ("cinco", "200")),
+)
+def test_incomplete_or_ambiguous_rating_never_invents_values(
+    average: str | None, count: str | None
+) -> None:
+    normalized = PriceNormalizer().normalize_offer(
+        raw_offer(raw_rating_average=average, raw_review_count=count)
+    )
+
+    assert normalized.rating_average is None
+    assert normalized.review_count is None
+
+
+def test_rating_recomputes_after_existing_detail_enrichment() -> None:
+    from dataclasses import replace
+
+    normalized = PriceNormalizer().normalize_offer(raw_offer())
+    enriched = replace(
+        normalized,
+        raw_offer=replace(
+            normalized.raw_offer,
+            raw_rating_average="4.9",
+            raw_review_count="317",
+        ),
+    )
+
+    assert enriched.rating_average == Decimal("4.9")
+    assert enriched.review_count == 317
+
+
 @pytest.mark.parametrize(
     ("raw", "expected"),
     (

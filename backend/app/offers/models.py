@@ -1,14 +1,17 @@
 """Modelo persistente de ofertas."""
 
 from datetime import datetime
+from decimal import Decimal
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
+    BigInteger,
     CheckConstraint,
     DateTime,
     ForeignKey,
     ForeignKeyConstraint,
     Index,
+    Numeric,
     String,
     Text,
     UniqueConstraint,
@@ -34,6 +37,22 @@ class Offer(Base):
         CheckConstraint(
             "image_url IS NULL OR image_url ~* '^https?://[^/@?#[:space:]]+([/?#]|$)'",
             name="ck_offers_image_url_http",
+        ),
+        CheckConstraint(
+            "rating_average IS NULL OR "
+            "(rating_average >= 0 AND rating_average <= 5)",
+            name="ck_offers_rating_average_range",
+        ),
+        CheckConstraint(
+            "review_count IS NULL OR review_count >= 0",
+            name="ck_offers_review_count_non_negative",
+        ),
+        CheckConstraint(
+            "(rating_average IS NULL AND review_count IS NULL AND "
+            "rating_observed_at IS NULL) OR "
+            "(rating_average IS NOT NULL AND review_count IS NOT NULL AND "
+            "rating_observed_at IS NOT NULL)",
+            name="ck_offers_rating_snapshot_complete",
         ),
         Index("ix_offers_product_id", "product_id"),
         Index("ix_offers_store_id", "store_id"),
@@ -97,6 +116,13 @@ class Offer(Base):
     external_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     url: Mapped[str] = mapped_column(Text, nullable=False)
     image_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    rating_average: Mapped[Decimal | None] = mapped_column(
+        Numeric(3, 2), nullable=True
+    )
+    review_count: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    rating_observed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

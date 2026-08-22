@@ -819,6 +819,7 @@ def _render_alert(
     display_name = html.escape(product.display_name or product.name)
     mission_title_safe = html.escape(mission_title)
     marketplace_line = _marketplace_party_line(store, observation)
+    rating_line = _rating_line(offer)
     link_line = _telegram_link(short_url)
     try:
         event_type = EventType(event.event_type)
@@ -832,6 +833,7 @@ def _render_alert(
                 f"{display_name}\n\n"
                 f"🏪 {html.escape(store.name)}\n"
                 f"{marketplace_line}"
+                f"{rating_line}"
                 f"💰 À vista: {format_money(current_total, currency)}\n"
                 f"{installment_line}"
                 f"↘️ Preço anterior: {format_money(previous_total, currency)}\n"
@@ -848,6 +850,7 @@ def _render_alert(
                 f"{display_name}\n\n"
                 f"🏪 {html.escape(store.name)}\n"
                 f"{marketplace_line}"
+                f"{rating_line}"
                 f"💰 À vista: {format_money(current_total, currency)}\n"
                 f"{installment_line}"
                 f"🎯 Preço-alvo: {format_money(target_total, currency)}\n"
@@ -1008,6 +1011,7 @@ async def _render_prelist_block_async(
         prefix + f"{number} {display_name}\n"
         f"🏪 {html.escape(store.name)}\n"
         f"{_marketplace_party_line(store, observation)}"
+        f"{_rating_line(offer)}"
         f"💰 À vista: {format_money(amount, currency)}\n"
         f"{_installment_line(installment_options, currency)}"
         f"🔎 Missão: {html.escape(mission_title)}\n"
@@ -1129,6 +1133,7 @@ async def _render_prelist_errata_async(
         f"1️⃣ {display_name}\n"
         f"🏪 {html.escape(store.name)}\n"
         f"{_marketplace_party_line(store, observation)}"
+        f"{_rating_line(offer)}"
         f"💰 À vista: {format_money(current_amount, currency)}\n"
         f"{_installment_line(installment_options, currency)}"
         f"{_PRELIST_SHIPPING_DISCLAIMER}\n\n"
@@ -1150,6 +1155,16 @@ _AVAILABILITY_LABELS = {
     Availability.UNAVAILABLE: "❌ Indisponível",
 }
 _TELEGRAM_TEXT_SAFE_LIMIT = 4000
+
+
+def _rating_line(offer: Offer) -> str:
+    """Avaliação da própria origem; nunca agrega notas entre lojas."""
+    if offer.rating_average is None or offer.review_count is None:
+        return ""
+    average = format(offer.rating_average.normalize(), "f").replace(".", ",")
+    count = f"{offer.review_count:,}".replace(",", ".")
+    label = "avaliação" if offer.review_count == 1 else "avaliações"
+    return f"⭐ {average} · {count} {label}\n"
 
 
 async def _render_prelist_v2_async(
@@ -1209,6 +1224,7 @@ async def _render_prelist_v2_async(
             f"{position}. {html.escape(product.display_name or product.name)}\n"
             f"📋 {_CONDITION_LABELS[condition]}\n"
             f"{_marketplace_party_line(store, observation)}"
+            f"{_rating_line(offer)}"
             f"{_AVAILABILITY_LABELS[availability]}\n"
             f"💰 À vista: {format_money(amount, currency)}\n"
             f"{_installment_line(installments, currency)}"

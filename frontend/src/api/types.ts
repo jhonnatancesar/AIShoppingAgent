@@ -130,5 +130,10 @@ export interface OfferDetail {
   last_seen_at: string
   store: { code: string; name: string }
   seller: { name: string } | null
+  rating: {
+    average: string
+    review_count: number
+    observed_at: string
+  } | null
   latest_observation: LatestOfferObservation | null
 }

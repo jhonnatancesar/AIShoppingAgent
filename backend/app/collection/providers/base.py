@@ -2,6 +2,7 @@
 
 import asyncio
 import contextlib
+import json
 import re
 from collections.abc import Callable
 from dataclasses import replace
@@ -47,6 +48,7 @@ _BLOCKED_STATUSES = frozenset({401, 403, 429})
 class PlaywrightStoreProvider:
     source_code: str
     result_selector: str
+    rating_detail_enabled: bool = False
 
     # Estratégia de espera do `page.goto`. A maioria das fontes usa
     # "domcontentloaded" (padrão). Providers cujo readiness real independe
@@ -128,6 +130,69 @@ class PlaywrightStoreProvider:
 
     async def resolve_offer_condition(self, page: Page) -> str | None:
         """Lê condição explícita na mesma página já aberta para marketplace."""
+        return None
+
+    async def resolve_offer_rating(self, page: Page) -> tuple[str, str] | None:
+        """Lê nota+contagem estruturadas na página já aberta por outro motivo."""
+
+        def aggregate_ratings(value: object):
+            if isinstance(value, dict):
+                aggregate = value.get("aggregateRating")
+                if isinstance(aggregate, dict):
+                    yield aggregate
+                for child in value.values():
+                    yield from aggregate_ratings(child)
+            elif isinstance(value, list):
+                for child in value:
+                    yield from aggregate_ratings(child)
+
+        scripts = await page.locator(
+            'script[type="application/ld+json"]'
+        ).all_text_contents()
+        for raw_json in scripts:
+            try:
+                document = json.loads(raw_json)
+            except (TypeError, ValueError):
+                continue
+            for aggregate in aggregate_ratings(document):
+                average = aggregate.get("ratingValue")
+                count = aggregate.get("reviewCount", aggregate.get("ratingCount"))
+                best = aggregate.get("bestRating")
+                if best is not None:
+                    try:
+                        if Decimal(str(best).replace(",", ".")) != Decimal(5):
+                            continue
+                    except Exception:
+                        continue
+                if average is not None and count is not None:
+                    return (str(average).strip(), str(count).strip())
+
+        average_element = page.locator('[itemprop="ratingValue"]').first
+        count_element = page.locator(
+            '[itemprop="reviewCount"], [itemprop="ratingCount"]'
+        ).first
+        if await average_element.count() and await count_element.count():
+            best_element = page.locator('[itemprop="bestRating"]').first
+            if await best_element.count():
+                best = (
+                    await best_element.get_attribute("content")
+                    or await best_element.text_content()
+                )
+                try:
+                    if best is None or Decimal(best.replace(",", ".")) != Decimal(5):
+                        return None
+                except Exception:
+                    return None
+            average = (
+                await average_element.get_attribute("content")
+                or await average_element.text_content()
+            )
+            count = (
+                await count_element.get_attribute("content")
+                or await count_element.text_content()
+            )
+            if average and count:
+                return (average.strip(), count.strip())
         return None
 
     async def enrich_marketplace_parties(
@@ -267,6 +332,140 @@ class PlaywrightStoreProvider:
             else offer
             for offer in offers
         )
+
+    async def enrich_offer_details(
+        self, offers: tuple[RawCollectedOffer, ...]
+    ) -> tuple[RawCollectedOffer, ...]:
+        """Enriquecimento extensível com no máximo uma abertura por oferta.
+
+        Um provider novo só implementa os hooks de detalhe que suporta. O
+        núcleo combina vendedor, condição, parcelamento e avaliação durante
+        a mesma navegação, sem uma rodada exclusiva para cada capability.
+        """
+        parties_enabled = (
+            type(self).resolve_marketplace_parties
+            is not PlaywrightStoreProvider.resolve_marketplace_parties
+            and self._marketplace_party_max_candidates > 0
+        )
+        installments_enabled = (
+            type(self).resolve_installment_options
+            is not PlaywrightStoreProvider.resolve_installment_options
+            and self._installment_option_max_candidates > 0
+        )
+        condition_enabled = (
+            type(self).resolve_offer_condition
+            is not PlaywrightStoreProvider.resolve_offer_condition
+            and self._marketplace_party_max_candidates > 0
+        )
+        if not (
+            parties_enabled
+            or condition_enabled
+            or installments_enabled
+            or self.rating_detail_enabled
+        ):
+            return offers
+        limits = []
+        if parties_enabled:
+            limits.append(self._marketplace_party_max_candidates)
+        if condition_enabled:
+            limits.append(self._marketplace_party_max_candidates)
+        if installments_enabled:
+            limits.append(self._installment_option_max_candidates)
+        if self.rating_detail_enabled:
+            limits.append(max(self._marketplace_party_max_candidates, 1))
+        candidates = self._rank_offers(offers)[: max(limits)]
+        resolved: dict[
+            str,
+            tuple[
+                MarketplacePartyKind | None,
+                MarketplacePartyKind | None,
+                str | None,
+                tuple[RawInstallmentOption, ...] | None,
+                tuple[str, str] | None,
+            ],
+        ] = {}
+        async with BrowserSession(self.settings) as session:
+            page = await session.new_page()
+            for position, offer in enumerate(candidates):
+                try:
+                    response = await page.goto(offer.url, wait_until="domcontentloaded")
+                except Exception:
+                    continue
+                if response is None:
+                    continue
+                if response.status in _BLOCKED_STATUSES:
+                    break
+                if response.status == 408 or response.status >= 500:
+                    continue
+                seller_kind: MarketplacePartyKind | None = None
+                fulfillment_kind: MarketplacePartyKind | None = None
+                raw_condition: str | None = None
+                options: tuple[RawInstallmentOption, ...] | None = None
+                if parties_enabled and position < self._marketplace_party_max_candidates:
+                    try:
+                        seller_kind, fulfillment_kind = (
+                            await self.resolve_marketplace_parties(page)
+                        )
+                    except Exception:
+                        seller_kind = fulfillment_kind = MarketplacePartyKind.UNKNOWN
+                if condition_enabled and position < self._marketplace_party_max_candidates:
+                    try:
+                        raw_condition = await self.resolve_offer_condition(page)
+                    except Exception:
+                        raw_condition = None
+                if (
+                    installments_enabled
+                    and position < self._installment_option_max_candidates
+                ):
+                    try:
+                        options = await self.resolve_installment_options(page)
+                    except Exception:
+                        options = ()
+                try:
+                    rating = await self.resolve_offer_rating(page)
+                except Exception:
+                    rating = None
+                resolved[offer.url] = (
+                    seller_kind,
+                    fulfillment_kind,
+                    raw_condition,
+                    options,
+                    rating,
+                )
+
+        def enriched(offer: RawCollectedOffer) -> RawCollectedOffer:
+            if offer.url not in resolved:
+                return offer
+            seller, fulfillment, condition, options, rating = resolved[offer.url]
+            return replace(
+                offer,
+                seller_kind=(
+                    offer.seller_kind
+                    if seller in {None, MarketplacePartyKind.UNKNOWN}
+                    and offer.seller_kind is not None
+                    else seller or offer.seller_kind
+                ),
+                fulfillment_kind=(
+                    offer.fulfillment_kind
+                    if fulfillment in {None, MarketplacePartyKind.UNKNOWN}
+                    and offer.fulfillment_kind is not None
+                    else fulfillment or offer.fulfillment_kind
+                ),
+                raw_condition=condition or offer.raw_condition,
+                installment_options=(
+                    _merge_installment_options(offer.installment_options, options)
+                    if options is not None
+                    else offer.installment_options
+                ),
+                raw_rating_average=(
+                    rating[0] if rating is not None else offer.raw_rating_average
+                ),
+                raw_review_count=(
+                    rating[1] if rating is not None else offer.raw_review_count
+                ),
+            )
+
+        return tuple(enriched(offer) for offer in offers)
 
     def _rank_offers(
         self, offers: tuple[RawCollectedOffer, ...]
@@ -515,6 +714,8 @@ class PlaywrightStoreProvider:
                     raw_availability=_optional(row.get("availability")),
                     raw_fulfillment=_optional(row.get("fulfillment")),
                     raw_condition=_optional(row.get("condition")),
+                    raw_rating_average=_optional(row.get("rating_average")),
+                    raw_review_count=_optional(row.get("review_count")),
                     seller_kind=_party_kind(row.get("seller_kind")),
                     image_url=normalize_http_url(row.get("image")),
                     evidence={"card_text": str(row.get("evidence") or "")[:1000]},

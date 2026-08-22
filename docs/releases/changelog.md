@@ -1,13 +1,25 @@
 # Changelog
 
-## 2026-08-22 — TASK-095: página rica de oferta na área USER (DEV, aguardando revisão)
+## 2026-08-22 — TASK-096: avaliações por oferta/loja (DEV, aguardando revisão)
+
+- Snapshot explícito de nota/contagem na Offer, apresentado na página USER e
+  no Telegram, sempre identificado com a origem.
+- Enriquecimento de detalhe consolidado: vendedor, condição, parcelamento e
+  avaliação compartilham a mesma abertura; Terabyte permanece sem navegação
+  individual sob o bloqueio atual.
+- Sem texto de reviews, nota global, IA, produção, deploy, commit ou push.
+- PostgreSQL 18.4 descartável, testes backend/React focados, Ruff e frontend
+  aprovados no head Alembic `20260822_0003`.
+
+## 2026-08-22 — TASK-095: página rica de oferta na área USER (concluída e aprovada)
 
 - Endpoint e rota React `/app/offers/{offer_id}`, com WebSession e ownership
   por relevância ligada a missão do usuário; `NO_MATCH` não autoriza.
 - Exibe os dados existentes da Offer, sua última PriceObservation e parcelas,
   sem migration, tabela, IA ou coleta. Missões ganharam links para ofertas
   relevantes atuais.
-- Sem produção, deploy, commit ou push nesta implementação.
+- Publicada em `origin/main` no commit `0924f42`, sem deploy ou acesso à
+  produção.
 
 ## 2026-08-22 — TASK-094: pré-lista com múltiplas ofertas relevantes por loja (concluída e aprovada)
 

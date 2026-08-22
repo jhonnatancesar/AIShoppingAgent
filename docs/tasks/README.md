@@ -1,8 +1,12 @@
 # Tarefas
 
-**TASK-095 implementada e aguardando revisão:** página USER centrada em Offer,
+**TASK-096 implementada e aguardando revisão:** avaliações explícitas por Offer/Store na
+página USER e no Telegram, com snapshot atual, coleta extensível e no máximo
+uma abertura de detalhe por oferta. Ver `docs/tasks/TASK-096.md` e `DEC-078`.
+
+**TASK-095 concluída, aprovada e publicada:** página USER centrada em Offer,
 com ownership por missão/relevância, último estado comercial e links no detalhe
-da missão; sem migration. Ver `docs/tasks/TASK-095.md` e `DEC-077`.
+da missão; commit `0924f42`. Ver `docs/tasks/TASK-095.md` e `DEC-077`.
 
 **TASK-094 concluída, aprovada e publicada:** a pré-lista seleciona até cinco
 ofertas relevantes por loja com ranking comercial determinístico, condição

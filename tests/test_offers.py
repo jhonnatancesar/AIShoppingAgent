@@ -85,8 +85,12 @@ def test_offer_table_matches_data_contract() -> None:
         table.c.external_id,
         table.c.url,
         table.c.image_url,
+        table.c.rating_average,
+        table.c.review_count,
+        table.c.rating_observed_at,
         table.c.created_at,
         table.c.updated_at,
+        table.c.last_seen_at,
     ]
     assert table.c.product_id.nullable is False
     assert table.c.store_id.nullable is False
@@ -95,6 +99,9 @@ def test_offer_table_matches_data_contract() -> None:
     assert table.c.external_id.type.length == 255
     assert table.c.url.nullable is False
     assert table.c.image_url.nullable is True
+    assert table.c.rating_average.nullable is True
+    assert table.c.review_count.nullable is True
+    assert table.c.rating_observed_at.nullable is True
     assert "price" not in table.columns
     assert "availability" not in table.columns
 
@@ -163,6 +170,9 @@ def test_offer_table_rejects_blank_identifiers_and_url() -> None:
     assert check_names == {
         "ck_offers_external_id_not_blank",
         "ck_offers_image_url_http",
+        "ck_offers_rating_average_range",
+        "ck_offers_rating_snapshot_complete",
+        "ck_offers_review_count_non_negative",
         "ck_offers_url_not_blank",
     }
 

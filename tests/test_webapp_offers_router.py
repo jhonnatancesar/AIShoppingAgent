@@ -51,6 +51,9 @@ def _detail() -> UserOfferDetail:
         seller_id=seller.id,
         url="https://amazon.com.br/dp/example",
         image_url="https://images.example/offer.jpg",
+        rating_average=Decimal("4.80"),
+        review_count=2256,
+        rating_observed_at=NOW,
         last_seen_at=NOW,
     )
     observation = PriceObservation(
@@ -122,6 +125,11 @@ def test_user_accesses_offer_linked_to_own_mission(
     assert response.status_code == 200
     body = response.json()
     assert body["title"] == "Galaxy S24 Ultra"
+    assert body["rating"] == {
+        "average": "4.80",
+        "review_count": 2256,
+        "observed_at": NOW.isoformat(),
+    }
     assert body["latest_observation"]["amount"] == "4599.00"
     assert body["latest_observation"]["installments"][0]["installment_count"] == 12
 

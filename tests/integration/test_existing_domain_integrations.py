@@ -3,6 +3,7 @@
 import asyncio
 import selectors
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from uuid import UUID, uuid4
 
 import pytest
@@ -157,6 +158,72 @@ def test_task084_offer_image_is_updated_only_by_valid_non_null_collection(
     )
     assert same_id == offer_id
     assert updated == "https://cdn.example.test/second.jpg"
+
+
+def test_task096_offer_rating_snapshot_is_source_bound_and_complete(
+    integration_database,
+) -> None:
+    with integration_database.sessions.begin() as session:
+        store = Store(
+            code=f"task096_rating_{uuid4().hex[:8]}",
+            name="Loja avaliação TASK-096",
+            base_url="https://ratings.example.test",
+        )
+        session.add(store)
+        session.flush()
+        store_id = store.id
+
+    normalizer = PriceNormalizer()
+
+    async def _persist(
+        average: str | None, count: str | None
+    ) -> tuple[UUID, Decimal | None, int | None]:
+        raw = RawCollectedOffer(
+            source_code="task096",
+            url="https://ratings.example.test/item",
+            title="Produto avaliado",
+            collected_at=datetime.now(UTC),
+            external_id="task096-item",
+            raw_price="R$ 100,00",
+            raw_currency="BRL",
+            raw_rating_average=average,
+            raw_review_count=count,
+        )
+        item = normalizer.normalize_offer(raw)
+        async with integration_database.async_sessions() as session, session.begin():
+            offer = await _resolve_offer(session, store_id, item)
+            await session.flush()
+            return offer.id, offer.rating_average, offer.review_count
+
+    def loop_factory() -> asyncio.SelectorEventLoop:
+        return asyncio.SelectorEventLoop(selectors.SelectSelector())
+
+    offer_id, average, count = asyncio.run(
+        _persist("4.8", "2256"), loop_factory=loop_factory
+    )
+    assert average == Decimal("4.8")
+    assert count == 2256
+    same_id, retained_average, retained_count = asyncio.run(
+        _persist(None, None), loop_factory=loop_factory
+    )
+    assert same_id == offer_id
+    assert retained_average == Decimal("4.8")
+    assert retained_count == 2256
+
+    with integration_database.sessions.begin() as session:
+        invalid_product = Product(name="Snapshot parcial inválido")
+        session.add(invalid_product)
+        session.flush()
+        with pytest.raises(IntegrityError), session.begin_nested():
+            session.add(
+                Offer(
+                    product_id=invalid_product.id,
+                    store_id=store_id,
+                    url="https://ratings.example.test/invalid",
+                    rating_average=Decimal("4.5"),
+                )
+            )
+            session.flush()
 
 
 def test_visible_mission_list_filters_owner_and_status_in_postgresql(

@@ -98,6 +98,25 @@ class CollectionAdapter:
             )
         return enriched
 
+    async def enrich_offer_details(
+        self, source_code: str, offers: tuple[RawCollectedOffer, ...]
+    ) -> tuple[RawCollectedOffer, ...]:
+        """Executa todas as capabilities de detalhe numa única navegação."""
+        provider = self._providers.get(source_code)
+        if provider is None:
+            raise UnsupportedSourceError(
+                f"no provider registered for source: {source_code}"
+            )
+        enrich = getattr(provider, "enrich_offer_details", None)
+        if enrich is None:
+            return offers
+        enriched = await enrich(offers)
+        if len(enriched) != len(offers):
+            raise CollectionContractError(
+                "detail enrichment must preserve offer count and order"
+            )
+        return enriched
+
     async def collect_selected(
         self, requests: Iterable[CollectionRequest]
     ) -> tuple[CollectionResult, ...]:

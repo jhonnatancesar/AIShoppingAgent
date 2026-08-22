@@ -1,12 +1,22 @@
 # Project Context
 
-**Atualização 2026-08-22 (TASK-095, item 5 da V1.2, aguardando revisão):**
+**Atualização 2026-08-22 (TASK-096, item 6 da V1.2, aguardando revisão):**
+avaliações passam a ser snapshot atual da própria `Offer`/`Store`, nunca nota
+global de Product. Card é a primeira fonte; detalhe estruturado só é lido numa
+abertura já necessária e compartilhada com vendedor/condição/parcelamento.
+Terabyte não ganha navegação individual sob o bloqueio atual. Página USER e
+Telegram exibem o par nota/contagem quando completo; sem texto de reviews.
+PostgreSQL 18.4 descartável aprovou migration/check e o teste de snapshot no
+head `20260822_0003`; testes focados, Ruff e frontend foram aprovados.
+
+**Atualização 2026-08-22 (TASK-095, item 5 da V1.2, concluída):**
 a primeira página rica USER é centrada em `Offer`, em
 `/app/offers/{offer_id}`. O endpoint autenticado só retorna `MATCH` ou
 `POSSIBLE_MATCH` ligado a missão do próprio usuário e compõe Product, Store,
 Seller, última PriceObservation e suas parcelas, sem migration/tabela/IA/nova
 coleta. O detalhe da missão oferece os links relevantes. Reviews, gráficos e
 comparação continuam nos itens 6–8.
+Foi aprovada e publicada em `origin/main` no commit `0924f42`, sem deploy.
 
 **Atualização 2026-08-22 (TASK-094, item 4 da V1.2, concluída):**
 a pré-lista agora preserva um pool comum de até 8 candidatos e seleciona até 5

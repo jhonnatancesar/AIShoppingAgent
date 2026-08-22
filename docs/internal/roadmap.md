@@ -31,6 +31,8 @@
 | Classificação de vendedor/entrega | TASK-077 | Concluída; classificação histórica Amazon/KaBuM! com detalhe limitado e fail-soft (`DEC-067`) |
 | Preço à vista e parcelado | TASK-089 | Implementada e testada; modelo 1:N `OfferInstallmentOption` por observação, corrigido pela investigação real (`DEC-069`, substitui o desenho de 3 campos da `DEC-068`); alertas/pré-lista já mostram `💰 À vista`/`💳 Parcelado`; interpretação de "quero em Nx" pelo usuário adiada para V2. Terabyte temporariamente desativada e simplificada para só-card (`DEC-070`, bloqueio Cloudflare) |
 | Pausar/retomar manual e cancelamento em massa | TASK-090 | Implementada e testada; `/pausar` e `/retomar` novos, `/cancelar_missao` aceita seleção múltipla, todos reaproveitando a infraestrutura genérica da TASK-085 sem IA; `/editar_missao` encadeia direto no menu após pausar para editar, sem retomar sozinho. Alerta de preço-alvo repetitivo e busca "iphone 16 512" seguem pendentes, fora de escopo |
+| Página rica de oferta USER | TASK-095 | Concluída, aprovada e publicada em `origin/main` (`0924f42`); detalhe centrado em Offer com ownership por missão/relevância |
+| Avaliações por oferta/loja | TASK-096 | Implementada em DEV e aguardando revisão; snapshot explícito na Offer, página USER e Telegram, sem nota global ou texto de reviews (`DEC-078`) |
 | Estado operacional no Windows Server | manutenção 2026-08-16 | HEAD `0e90cf0` implantado; 7 serviços saudáveis; WSL2 limitado a 4 GB; somente schedules de missões ativas habilitados |
 | Expansão de fontes (futuro) | Tarefas a definir | Mercado Livre, Shopee, AliExpress e outras fontes futuras |
 

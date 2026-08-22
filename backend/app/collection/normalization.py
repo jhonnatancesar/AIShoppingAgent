@@ -80,6 +80,20 @@ class NormalizedCollectedOffer:
         return self.raw_offer.fulfillment_kind
 
     @property
+    def rating_average(self) -> Decimal | None:
+        return PriceNormalizer._rating_snapshot(
+            self.raw_offer.raw_rating_average,
+            self.raw_offer.raw_review_count,
+        )[0]
+
+    @property
+    def review_count(self) -> int | None:
+        return PriceNormalizer._rating_snapshot(
+            self.raw_offer.raw_rating_average,
+            self.raw_offer.raw_review_count,
+        )[1]
+
+    @property
     def installment_options(self) -> tuple[NormalizedInstallmentOption, ...]:
         """TASK-089: recalculado a partir de `raw_offer` a cada acesso --
         nunca armazenado -- pelo mesmo motivo de `seller_kind`/
@@ -124,6 +138,52 @@ class PriceNormalizer:
             availability=availability,
             condition=condition,
         )
+
+    @staticmethod
+    def _rating_snapshot(
+        raw_average: str | None, raw_count: str | None
+    ) -> tuple[Decimal | None, int | None]:
+        """Normaliza somente o par explicitamente declarado pela loja.
+
+        Avaliação é opcional e nunca invalida uma oferta comercial válida.
+        Contagens visuais abreviadas não são expandidas; o provider deve
+        fornecer a evidência exata (por exemplo, o ``aria-label`` da Amazon).
+        """
+        if raw_average is None and raw_count is None:
+            return (None, None)
+        if raw_average is None or raw_count is None:
+            logger.warning("offer_rating_snapshot_incomplete")
+            return (None, None)
+        clean_average = raw_average.replace("\xa0", " ").strip()
+        clean_count = raw_count.replace("\xa0", " ").strip()
+        average_match = re.fullmatch(r"([0-5](?:[.,]\d{1,2})?)", clean_average)
+        if average_match is None:
+            average_match = re.search(
+                r"(?<!\d)([0-5](?:[.,]\d{1,2})?)\s+de\s+5\s+estrelas?",
+                clean_average,
+                re.I,
+            )
+        count_match = re.fullmatch(r"(\d+)", clean_count)
+        if count_match is None:
+            count_match = re.search(
+                r"(?<!\d)(\d{1,3}(?:[.\s]\d{3})*|\d+)\s+"
+                r"(?:classificaç(?:ão|ões)|avaliaç(?:ão|ões))",
+                clean_count,
+                re.I,
+            )
+        if average_match is None or count_match is None:
+            logger.warning("offer_rating_snapshot_normalization_failed")
+            return (None, None)
+        try:
+            average = Decimal(average_match.group(1).replace(",", "."))
+            count = int(re.sub(r"[.\s]", "", count_match.group(1)))
+        except (InvalidOperation, ValueError):
+            logger.warning("offer_rating_snapshot_normalization_failed")
+            return (None, None)
+        if not average.is_finite() or not Decimal(0) <= average <= Decimal(5):
+            logger.warning("offer_rating_snapshot_normalization_failed")
+            return (None, None)
+        return (average, count)
 
     @staticmethod
     def _installment_options(
