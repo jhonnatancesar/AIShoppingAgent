@@ -324,8 +324,17 @@ Nenhum push/tag feito para nenhuma das quatro. Status individual das
 demais duas (080, 081) e da 084 não reverificado nesta rodada — ver o
 commit log e `docs/tasks/` de cada uma para o estado real mais recente.)
 → V1.2
-(evolução funcional, documento `docs/internal/v1.2-scope.md`, 12 itens,
-incluindo Magalu como quinta loja, redução de `PriceObservation`
-redundante, e comparação de menor preço histórico externo/interno estilo
-Steam Inventory Helper (a mesma pré-lista da `v1.0.2`, com IA por cima) e
-pesquisa de ofertas em lives — `DEC-053`/`DEC-054`/`DEC-056`) → V2.
+(evolução funcional, documento `docs/internal/v1.2-scope.md`; reorganizada em
+2026-08-21, `DEC-072`, para 16 itens ordenados com **objetivo central de
+transformar o AIShoppingAgent numa aplicação web completa** de monitoramento
+e comparação de preços — duas áreas na mesma aplicação/backend/banco,
+`/app` para USER e `/admin` para DEV/ADMIN, autorização real no backend —
+mantendo o Telegram principalmente como canal de alertas. Itens já
+aprovados anteriormente foram preservados e renumerados (Magalu como
+quinta loja, redução de `PriceObservation` redundante, comparação de menor
+preço histórico externo/interno estilo Steam Inventory Helper, pesquisa de
+ofertas em lives, pesquisa de cupons, frete/parcelamento autenticado só
+DEV/ADMIN — `DEC-045`/`DEC-053`/`DEC-054`/`DEC-056`); os itens de e-mail
+(opt-in no cadastro e notificações por e-mail) saíram da V1.2 e foram
+movidos para a V2 (`docs/internal/backlog.md`). Nenhuma TASK aberta por esta
+reorganização — só documentação.) → V2.

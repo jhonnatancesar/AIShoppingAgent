@@ -5,6 +5,15 @@
 > schedules de missões terminais são estado operacional, não novos itens de
 > backlog.
 
+> Estado em 2026-08-21 (`DEC-072`): a V1.2 foi reorganizada em torno de uma
+> aplicação web completa (`docs/internal/v1.2-scope.md`) — o item "Dashboard
+> web para acompanhamento de missões, ofertas e histórico", antes registrado
+> aqui como ideia solta da V2, passa a ser o próprio núcleo da V1.2 (itens 1,
+> 2, 4, 6, 7 e 8 daquele documento) e foi removido deste backlog para não
+> duplicar/contradizer o escopo. Em contrapartida, os itens de e-mail (opt-in
+> de notificação no cadastro e notificações por e-mail de fato) saíram da
+> V1.2 e entraram aqui, na V2.
+
 Este documento é o repositório de ideias que surgirem durante o desenvolvimento e não pertencem à versão atual. Registrar uma ideia aqui não a aprova, não cria uma TASK e não altera o escopo da V1.
 
 Para cada item novo, registrar uma descrição curta, a motivação e eventuais dependências. A priorização e a transformação em tarefa dependem de decisão explícita posterior.
@@ -17,18 +26,26 @@ Para cada item novo, registrar uma descrição curta, a motivação e eventuais 
 - Evolução da normalização de vendedores, frete, impostos, prazo e políticas específicas além do necessário às fontes selecionadas.
 - **Frete e parcelamento autenticados por usuário** (`DEC-045`): depois que
   a V1.2 disponibilizar consulta autenticada de frete/parcelamento somente
-  para ADMIN/DEV, a V2 poderá abrir essa mesma capacidade para usuários
-  comuns. Exige projeto próprio de credenciais/sessões isoladas por
-  usuário, autorização, proteção de dados e ciclo de vida das sessões,
-  além de regras específicas por marketplace — nada disso é antecipado na
-  V1 nem na V1.2.
+  para DEV/ADMIN (item 13 de `docs/internal/v1.2-scope.md`), a V2 poderá abrir
+  essa mesma capacidade para usuários comuns. Exige projeto próprio de
+  credenciais/sessões isoladas por usuário, autorização, proteção de dados
+  e ciclo de vida das sessões, além de regras específicas por marketplace —
+  nada disso é antecipado na V1 nem na V1.2.
 
 ## Canais e experiência do usuário
 
-- Dashboard web para acompanhamento de missões, ofertas e histórico.
-- Integração com WhatsApp.
-- Aplicativo mobile.
-- Multi-idioma.
+- Integração com WhatsApp, aplicativo mobile e multi-idioma — avaliar se
+  ainda fazem sentido como capabilities separadas diante da aplicação web
+  que passa a ser o núcleo da V1.2 (`docs/internal/v1.2-scope.md`, `DEC-072`);
+  não descartados, só precisam de revisão quando a V1.2 estiver mais
+  avançada.
+- **E-mail (movido da V1.2 para a V2 em `DEC-072`)**: opt-in de notificação
+  por e-mail no `/cadastro` e envio de notificações por e-mail de fato,
+  condicionado a esse opt-in — a V1.2 original previa isso como os dois
+  primeiros itens da lista ordenada; com o novo núcleo da V1.2 sendo a
+  aplicação web (que não depende de e-mail para existir), o usuário decidiu
+  adiar toda a capability de e-mail para a V2, unificada com o item de
+  confirmação/verificação abaixo.
 - Confirmação/verificação de e-mail no onboarding da V2; o e-mail da V1
   permanece opcional, não verificado e sem uso para recuperação.
 
@@ -74,6 +91,9 @@ Para cada item novo, registrar uma descrição curta, a motivação e eventuais 
 - Integrações adicionais não essenciais à V1.
 
 ## Papéis e planos da V2
+
+A V1.2 usa só a divisão USER x DEV/ADMIN exclusivo (autorização já
+existente, papel único) — nenhum dos itens abaixo faz parte dela (`DEC-073`).
 
 - múltiplos papéis por usuário e tabela `user_roles`;
 - composição simultânea de USER, ADMIN e DEV;

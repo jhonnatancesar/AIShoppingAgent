@@ -1,5 +1,135 @@
 # Decision Log
 
+## DEC-073 — Esclarecer três pontos da reorganização da V1.2 (`DEC-072`): DEV/ADMIN exclusivo sem multi-papel, avaliações sempre por origem, `PriceObservation` redundante é semântica
+
+- **Data:** 2026-08-21.
+- **Ideia:** o usuário aprovou a direção da `DEC-072` e pediu três ajustes
+  documentais pontuais, antes do commit, para evitar ambiguidade
+  arquitetural futura — sem mudar a ordem nem o conteúdo de nenhum dos 16
+  itens da V1.2.
+- **Ajuste 1 (DEV/ADMIN exclusivo, não multi-papel):** a divisão USER x
+  DEV/ADMIN da V1.2 (item 1 de `docs/internal/v1.2-scope.md`) continua sendo
+  só uma fronteira de rotas (`/app` x `/admin`) sobre a autorização já
+  existente (`app.authorization`, papel único `USER ⊂ ADMIN ⊂ DEV`,
+  `DEC-034`) — nunca uma reformulação dela. Explicitado que a V1.2 **não**
+  introduz `user_roles`, múltiplos papéis simultâneos, hierarquia complexa
+  de roles, RBAC avançado nem planos FREE/PLUS/PRO; isso permanece
+  integralmente na V2 (`docs/internal/backlog.md`, "Papéis e planos da V2").
+  A V1.2 só precisa de autorização suficiente para garantir que USER nunca
+  acesse recursos administrativos e que DEV/ADMIN acesse a área
+  administrativa exclusiva do desenvolvedor/administrador atual.
+- **Ajuste 2 (avaliações sempre por origem):** reforçado no item 5 que
+  `rating_average`/`review_count` nunca representam uma avaliação global do
+  produto — pertencem sempre à loja/origem da oferta (ex.: Amazon ⭐4,8,
+  KaBuM! ⭐4,9, Pichau ⭐4,7, nunca um `RTX 5070 Ti ⭐4,8` único), salvo regra
+  de agregação explicitamente aprovada no futuro. A modelagem definitiva
+  (colunas, tabela nova ou reaproveitada) permanece decidida só quando a
+  TASK for aberta — nenhuma entidade nova inventada agora.
+- **Ajuste 3 (`PriceObservation` redundante é semântica, não só preço):**
+  corrigida a redação do item 3 para não sugerir "preço igual = não grava
+  observação" — critério simplista demais. A regra registrada é evitar
+  observação **semanticamente redundante**: uma `PriceObservation` nova é
+  necessária quando qualquer parte do estado relevante mudar (preço,
+  disponibilidade, moeda, vendedor/fulfillment relevante, condição
+  comercial relevante, ou outro estado que o domínio considerar histórico),
+  não só o preço isoladamente. Exemplo registrado: mesmo preço com
+  disponibilidade diferente (`AVAILABLE` → `UNAVAILABLE`) **não** é
+  redundante. A lista definitiva de campos comparados continua dependendo
+  de auditar `backend/app/collection/models.py` na própria TASK.
+- **Classificação:** Versão futura (esclarecimento documental da `DEC-072`
+  — `docs/internal/v1.2-scope.md`; nenhuma TASK criada, nenhuma
+  implementação, migration, frontend, endpoint, commit de código, push ou
+  redeploy).
+- **Justificativa:** os três pontos eram fonte real de ambiguidade
+  arquitetural para quando cada item virar TASK — sem o esclarecimento,
+  "DEV/ADMIN" poderia ser mal interpretado como um convite a desenhar RBAC
+  completo agora, "avaliações" poderia levar a uma nota global inventada
+  sem aprovação, e "reduzir `PriceObservation` redundante" poderia virar
+  uma deduplicação ingênua por preço que perderia mudanças reais de
+  disponibilidade/condição comercial no histórico.
+- **Próxima ação:** nenhuma além da documentação já ajustada. Revisão de
+  consistência entre `docs/internal/v1.2-scope.md`, `docs/internal/backlog.md`,
+  `docs/internal/roadmap.md`, `docs/internal/project-context.md` e este log
+  feita nesta mesma rodada, sem alterar nenhum bloco histórico/datado
+  anterior.
+
+## DEC-072 — Reorganizar a V1.2 em torno de uma aplicação web completa (USER/DEV-ADMIN); Telegram passa a canal de alertas; itens de e-mail movidos para V2
+
+- **Data:** 2026-08-21.
+- **Ideia:** o usuário decidiu reorganizar oficialmente o roadmap: a V1.2
+  deixa de ser uma lista solta de evoluções incrementais sobre o Telegram e
+  passa a ter como objetivo central transformar o AIShoppingAgent numa
+  plataforma web completa de monitoramento e comparação de preços. A
+  aplicação web se torna o núcleo da experiência, com duas áreas
+  conceituais (`/app/...` para USER, `/admin/...` para DEV/ADMIN) — mesma
+  aplicação, mesmo backend, mesmo banco, autorização por papel real no
+  backend (nunca só escondida na interface). O Telegram continua existindo
+  e continua controlando as mesmas missões, mas sua função central passa a
+  ser alertar rapidamente o usuário, deixando de precisar carregar sozinho
+  toda a experiência do produto.
+- **Classificação:** Versão futura (reorganização de escopo da V1.2 e do
+  backlog da V2 — `docs/internal/v1.2-scope.md`, `docs/internal/backlog.md`,
+  `docs/internal/roadmap.md`, `docs/internal/project-context.md`; nenhuma
+  TASK criada, nenhuma implementação, migration, frontend, endpoint, commit,
+  push ou redeploy nesta rodada — só documentação).
+- **Justificativa:** o Telegram, como único canal, satura rápido para
+  apresentar dado rico (páginas de produto, gráficos de histórico,
+  comparação entre lojas, avaliações, dashboard técnico) — a interface de
+  chat não é o formato certo para essas necessidades já registradas como
+  ideias soltas no backlog (dashboard web, analytics, painel administrativo
+  dividido em quatro itens incrementais). Consolidar tudo isso numa única
+  aplicação web, com o Telegram reposicionado como canal de alerta,
+  resolve a fragmentação sem duplicar o domínio (missões, ofertas,
+  histórico, coleta continuam sendo os mesmos, servidos por uma segunda
+  interface). A separação USER/DEV-ADMIN pela mesma aplicação (em vez de
+  dois sistemas) evita duplicar autenticação/autorização/sessão e mantém a
+  matriz de permissão fail-closed já existente (`app.authorization`,
+  `DEC-034`) como única fonte de verdade, sem depender da interface para
+  esconder recursos administrativos.
+- **Itens preservados, renumerados dentro da nova ordem da V1.2** (nenhuma
+  ideia já aprovada foi descartada): redução de `PriceObservation`
+  redundante (`DEC-053`), Magalu como quinta loja (`DEC-054`), comparação
+  de menor preço histórico externo/interno estilo Steam Inventory Helper
+  (`DEC-056`), pesquisa de ofertas em lives — YouTube e Shopee Live
+  (`DEC-056`), pesquisa de cupons e consulta autenticada de frete/
+  parcelamento restrita a DEV/ADMIN (`DEC-045`). O painel administrativo,
+  antes desmembrado em quatro itens incrementais e ainda tratado como
+  conceito à parte, passa a ser simplesmente a área `/admin` da mesma
+  aplicação web — mesma ideia, sem retrabalho, só sem mais precisar de uma
+  seção própria separada da V1.2.
+- **Itens removidos da V1.2, movidos para V2** (nenhum descartado, só
+  adiado): opt-in de notificação por e-mail no cadastro e notificações por
+  e-mail de fato — ambos exigiam a V1.2 original pedir e-mail no `/cadastro`
+  antes de qualquer entrega de valor por e-mail; com o novo núcleo da V1.2
+  sendo a aplicação web (que não depende de e-mail para existir), o usuário
+  decidiu adiar toda a capability de e-mail inteira para a V2, unificada com
+  a confirmação/verificação de e-mail que já estava lá.
+- **Princípios arquiteturais registrados para a V1.2** (a valer quando cada
+  item virar TASK): (1) web, Telegram e futuros clientes usam o mesmo
+  domínio/backend sempre que possível; (2) nunca duplicar regras de missão
+  entre Telegram e web; (3) nunca duplicar `Offer`/`PriceObservation` numa
+  tabela de "anúncio" só para apresentação — a página de produto é
+  construída sobre os dados reais já existentes; (4) dados financeiros vêm
+  sempre dos collectors/banco, nunca da IA; (5) gráficos e métricas
+  históricas (menor/maior preço do período, média, variação percentual) são
+  determinísticos, calculados localmente pelo backend/PostgreSQL, nunca por
+  IA; (6) avaliações (`rating_average`/`review_count`) permanecem vinculadas
+  à loja de origem, nunca misturadas numa nota global sem decisão explícita
+  futura; (7) USER e DEV/ADMIN têm autorização real checada no backend,
+  nunca só escondida na interface; (8) operações administrativas perigosas
+  (ex.: restart de PostgreSQL) recebem proteção maior que operações de
+  menor risco (ex.: restart de um worker); (9) qualquer recurso que aumente
+  muito o scraping (ex.: avaliações, histórico externo) é avaliado
+  criticamente antes de implementar — por isso a V1.2 começa só com
+  `rating_average`/`review_count`, sem coletar texto de review individual;
+  (10) cada um dos 16 itens da nova V1.2 só vira TASK quando o usuário pedir
+  explicitamente — esta reorganização não abre nenhuma TASK sozinha.
+- **Próxima ação:** nenhuma. Documentação atualizada
+  (`docs/internal/v1.2-scope.md`, `docs/internal/backlog.md`,
+  `docs/internal/roadmap.md`, `docs/internal/project-context.md`); aguardar
+  revisão do usuário e só então, se solicitado, abrir a primeira TASK (item
+  1, fundação da aplicação web) pelo workflow oficial (`AGENTS.md`).
+
 ## DEC-071 — Comandos manuais de missão reaproveitam a seleção múltipla da TASK-085; edição encadeia direto no menu após pausar
 
 - **Data:** 2026-08-21.

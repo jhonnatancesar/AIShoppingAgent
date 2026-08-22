@@ -1,5 +1,25 @@
 # Project Context
 
+**Atualização 2026-08-21 (reorganização de roadmap, `DEC-072`, só
+documentação):** a V1.2 foi reorganizada para ter como objetivo central
+transformar o AIShoppingAgent numa aplicação web completa de monitoramento
+e comparação de preços — mesma aplicação/backend/banco, `/app` para USER e
+`/admin` para DEV/ADMIN, autorização real checada no backend (nunca só
+escondida na interface), reaproveitando a matriz fail-closed já existente
+(`app.authorization`, `DEC-034`). O Telegram continua controlando as
+mesmas missões, mas passa a ter como função principal alertar rapidamente
+o usuário, com convite para abrir a aplicação web para o detalhe completo.
+A lista anterior de 12 itens da V1.2 foi ampliada e reordenada para 16
+itens (`docs/internal/v1.2-scope.md`); nenhuma ideia já aprovada foi
+descartada. Os itens de e-mail (opt-in de notificação no cadastro e
+notificações por e-mail) saíram da V1.2 e foram movidos para a V2
+(`docs/internal/backlog.md`), unificados com a confirmação/verificação de
+e-mail que já estava lá; em contrapartida, o item solto "dashboard web"
+que estava na V2 foi removido de lá por já ser o núcleo da nova V1.2.
+Nenhuma TASK foi criada, nenhum código, migration, frontend ou endpoint
+foi alterado — só `docs/internal/v1.2-scope.md`, `docs/internal/backlog.md`,
+`docs/internal/roadmap.md` e este documento.
+
 **Atualização 2026-08-16 (TASK-077):** Amazon e KaBuM! agora classificam
 vendedor e entrega historicamente em cada nova `PriceObservation`. Somente
 candidatos finais têm página individual consultada, sequencialmente, sem retry,
