@@ -1,5 +1,11 @@
 # Tarefas
 
+**TASK-094 implementada e aguardando revisão:** a pré-lista seleciona até cinco
+ofertas relevantes por loja com ranking comercial determinístico, condição
+histórica e eventos V2; Telegram agrupa uma mensagem por loja. É o item 4 da
+V1.2 e antecede a página rica. O arquivo formal da TASK-093 não existe e não foi
+reconstruído retroativamente. Ver `docs/tasks/TASK-094.md` e `DEC-076`.
+
 **TASK-088 concluída:** `/listar_missoes`, seus aliases e as palavras
 `missoes`/`missões` listam deterministicamente missões ativas, pausadas e
 canceladas; o menu nativo passa a publicar o novo comando.

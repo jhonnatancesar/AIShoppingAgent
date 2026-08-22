@@ -325,7 +325,8 @@ demais duas (080, 081) e da 084 não reverificado nesta rodada — ver o
 commit log e `docs/tasks/` de cada uma para o estado real mais recente.)
 → V1.2
 (evolução funcional, documento `docs/internal/v1.2-scope.md`; reorganizada em
-2026-08-21, `DEC-072`, para 16 itens ordenados com **objetivo central de
+2026-08-21, `DEC-072`, e ampliada em 2026-08-22 por `DEC-076` para 17 itens
+ordenados com **objetivo central de
 transformar o AIShoppingAgent numa aplicação web completa** de monitoramento
 e comparação de preços — duas áreas na mesma aplicação/backend/banco,
 `/app` para USER e `/admin` para DEV/ADMIN, autorização real no backend —
@@ -337,4 +338,7 @@ ofertas em lives, pesquisa de cupons, frete/parcelamento autenticado só
 DEV/ADMIN — `DEC-045`/`DEC-053`/`DEC-054`/`DEC-056`); os itens de e-mail
 (opt-in no cadastro e notificações por e-mail) saíram da V1.2 e foram
 movidos para a V2 (`docs/internal/backlog.md`). Nenhuma TASK aberta por esta
-reorganização — só documentação.) → V2.
+reorganização — só documentação. Estado atual: itens 1 a 3 concluídos e
+publicados no DEV; item 4, TASK-094, implementado e aguardando revisão; página
+rica de produto/oferta é o item 5 e próxima atividade, ainda sem TASK formal.)
+→ V2.

@@ -14,12 +14,19 @@ rápido, não a prova de concorrência real.
 
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from types import SimpleNamespace
 from unittest.mock import MagicMock
+from uuid import uuid4
 
 import pytest
 from app.ai_provider import AIProviderError, AIResponse
 from app.collection.adapter import CollectionAdapter
-from app.collection.contracts import CollectionResult, RawCollectedOffer
+from app.collection.contracts import (
+    CollectionResult,
+    MarketplacePartyKind,
+    OfferCondition,
+    RawCollectedOffer,
+)
 from app.collection.errors import (
     CollectionContractError,
     CollectionNormalizationError,
@@ -27,20 +34,23 @@ from app.collection.errors import (
     ProviderCircuitOpenError,
     ProviderNavigationError,
 )
-from app.collection.normalization import PriceNormalizer
+from app.collection.normalization import Availability, PriceNormalizer
 from app.collection.orchestration import (
-    _GENERIC_SEARCH_CANDIDATE_LIMIT,
+    _PRELIST_INTERMEDIATE_CANDIDATE_LIMIT,
     CollectionOrchestrator,
     _failure_code,
     _filter_deterministic_candidates,
     _is_confirmed_external_block,
-    _limit_generic_candidates,
+    _limit_intermediate_candidates,
+    _PrelistCandidate,
     _raw_evidence,
     _safe_source,
-    _select_amazon_lowest_price,
+    _select_final_candidates,
     _title_looks_like_bundle,
     _title_matches_model,
+    rank_prelist_candidates,
 )
+from app.collection.relevance import OfferRelevance
 
 NOW = datetime(2026, 8, 9, 12, 0, tzinfo=UTC)
 
@@ -237,41 +247,45 @@ def test_filter_deterministic_candidates_ambiguous_without_model_survives() -> N
     assert [item.raw_offer.external_id for item in survivors] == ["1"]
 
 
-def test_select_amazon_lowest_price_keeps_only_cheapest() -> None:
+def test_amazon_specific_search_preserves_multiple_commercial_options() -> None:
     offers = _normalized_offers(
         _raw(external_id="B01", title="Processador X", raw_price="R$ 4.500,00"),
         _raw(external_id="B02", title="Processador X", raw_price="R$ 4.000,00"),
         _raw(external_id="B03", title="Processador X", raw_price="R$ 4.500,00"),
     )
 
-    survivors = _select_amazon_lowest_price(offers)
-
-    assert len(survivors) == 1
-    assert survivors[0].raw_offer.external_id == "B02"
-    assert survivors[0].amount == Decimal("4000.00")
-
-
-def test_select_amazon_lowest_price_tie_break_by_external_id() -> None:
-    offers = _normalized_offers(
-        _raw(external_id="B999", title="Processador X", raw_price="R$ 4.000,00"),
-        _raw(external_id="B001", title="Processador X", raw_price="R$ 4.000,00"),
-        _raw(external_id="B500", title="Processador X", raw_price="R$ 4.000,00"),
+    survivors = _select_final_candidates(
+        search_query="Processador X",
+        model="X",
+        source_code="amazon",
+        offers=offers,
     )
 
-    survivors = _select_amazon_lowest_price(offers)
-
-    assert len(survivors) == 1
-    assert survivors[0].raw_offer.external_id == "B001"
+    assert [item.raw_offer.external_id for item in survivors] == ["B02", "B01", "B03"]
 
 
-def test_select_amazon_lowest_price_empty_input() -> None:
-    assert _select_amazon_lowest_price(()) == ()
+def test_intermediate_candidates_rank_condition_seller_availability_then_price() -> None:
+    offers = _normalized_offers(
+        RawCollectedOffer(
+            source_code="amazon", url="https://example.invalid/used", title="Produto X",
+            collected_at=NOW, external_id="used", raw_price="R$ 100,00",
+            raw_currency="BRL", raw_availability="Disponível", raw_condition="Usado",
+            seller_kind=MarketplacePartyKind.MARKETPLACE_PARTNER,
+        ),
+        RawCollectedOffer(
+            source_code="amazon", url="https://example.invalid/new", title="Produto X",
+            collected_at=NOW, external_id="new", raw_price="R$ 200,00",
+            raw_currency="BRL", raw_availability="Disponível", raw_condition="Novo",
+            seller_kind=MarketplacePartyKind.PLATFORM,
+        ),
+    )
+
+    survivors = _limit_intermediate_candidates(offers, limit=2)
+
+    assert [item.condition for item in survivors] == [OfferCondition.NEW, OfferCondition.USED]
 
 
-# --- TASK-082: limitação de candidatos em busca genérica ---
-
-
-def test_limit_generic_candidates_keeps_only_cheapest_up_to_limit() -> None:
+def test_intermediate_candidates_keep_only_configured_limit() -> None:
     offers = _normalized_offers(
         _raw(external_id="1", title="Cadeira A", raw_price="R$ 900,00"),
         _raw(external_id="2", title="Cadeira B", raw_price="R$ 500,00"),
@@ -280,35 +294,129 @@ def test_limit_generic_candidates_keeps_only_cheapest_up_to_limit() -> None:
         _raw(external_id="5", title="Cadeira E", raw_price="R$ 1.000,00"),
     )
 
-    survivors = _limit_generic_candidates(offers, limit=3)
+    survivors = _limit_intermediate_candidates(offers, limit=3)
 
     assert [item.raw_offer.external_id for item in survivors] == ["4", "2", "3"]
 
 
-def test_limit_generic_candidates_tie_break_by_external_id() -> None:
+def test_intermediate_candidates_tie_break_by_external_id() -> None:
     offers = _normalized_offers(
         _raw(external_id="9", title="Mouse A", raw_price="R$ 200,00"),
         _raw(external_id="1", title="Mouse B", raw_price="R$ 200,00"),
         _raw(external_id="5", title="Mouse C", raw_price="R$ 200,00"),
     )
 
-    survivors = _limit_generic_candidates(offers, limit=2)
+    survivors = _limit_intermediate_candidates(offers, limit=2)
 
     assert [item.raw_offer.external_id for item in survivors] == ["1", "5"]
 
 
-def test_limit_generic_candidates_fewer_than_limit_keeps_all() -> None:
+def test_intermediate_candidates_fewer_than_limit_keeps_all() -> None:
     offers = _normalized_offers(
         _raw(external_id="1", title="Teclado A", raw_price="R$ 200,00"),
     )
 
-    survivors = _limit_generic_candidates(offers, limit=_GENERIC_SEARCH_CANDIDATE_LIMIT)
+    survivors = _limit_intermediate_candidates(
+        offers, limit=_PRELIST_INTERMEDIATE_CANDIDATE_LIMIT
+    )
 
     assert len(survivors) == 1
 
 
-def test_limit_generic_candidates_empty_input() -> None:
-    assert _limit_generic_candidates((), limit=3) == ()
+def test_intermediate_candidates_empty_input() -> None:
+    assert _limit_intermediate_candidates((), limit=3) == ()
+
+
+def _rank_candidate(
+    *,
+    relevance: OfferRelevance = OfferRelevance.MATCH,
+    condition: OfferCondition = OfferCondition.NEW,
+    seller_kind: MarketplacePartyKind | None = MarketplacePartyKind.PLATFORM,
+    availability: Availability = Availability.AVAILABLE,
+    amount: str = "100.00",
+    store=None,
+) -> _PrelistCandidate:
+    store = store or SimpleNamespace(id=uuid4(), code="amazon")
+    offer = SimpleNamespace(id=uuid4(), store_id=store.id)
+    observation = SimpleNamespace(
+        id=uuid4(),
+        offer_id=offer.id,
+        amount=Decimal(amount),
+        total_amount=Decimal(amount),
+        currency="BRL",
+        condition=condition,
+        seller_kind=seller_kind,
+        availability=availability,
+    )
+    return _PrelistCandidate(relevance, observation, offer, store)
+
+
+def test_prelist_ranking_applies_all_commercial_priorities_and_excludes_no_match() -> None:
+    store = SimpleNamespace(id=uuid4(), code="amazon")
+    possible = _rank_candidate(
+        relevance=OfferRelevance.POSSIBLE_MATCH, amount="1.00", store=store
+    )
+    used = _rank_candidate(
+        condition=OfferCondition.USED, amount="10.00", store=store
+    )
+    refurbished = _rank_candidate(
+        condition=OfferCondition.REFURBISHED, amount="20.00", store=store
+    )
+    unknown = _rank_candidate(
+        condition=OfferCondition.UNKNOWN, amount="1.00", store=store
+    )
+    marketplace = _rank_candidate(
+        seller_kind=MarketplacePartyKind.MARKETPLACE_PARTNER,
+        amount="50.00",
+        store=store,
+    )
+    unknown_seller = _rank_candidate(seller_kind=None, amount="25.00", store=store)
+    platform = _rank_candidate(amount="200.00", store=store)
+    no_match = _rank_candidate(
+        relevance=OfferRelevance.NO_MATCH, amount="0.01", store=store
+    )
+
+    ranked = rank_prelist_candidates(
+        [
+            possible,
+            used,
+            refurbished,
+            unknown,
+            marketplace,
+            unknown_seller,
+            platform,
+            no_match,
+        ],
+        limit=10,
+    )
+
+    assert ranked == (
+        platform,
+        marketplace,
+        unknown_seller,
+        refurbished,
+        used,
+        unknown,
+        possible,
+    )
+
+
+def test_prelist_ranking_limits_five_per_store_and_uses_price_after_commerce() -> None:
+    store = SimpleNamespace(id=uuid4(), code="amazon")
+    candidates = [
+        _rank_candidate(amount=str(amount), store=store)
+        for amount in (600, 100, 500, 200, 400, 300)
+    ]
+
+    ranked = rank_prelist_candidates(candidates)
+
+    assert [item.observation.amount for item in ranked] == [
+        Decimal("100"),
+        Decimal("200"),
+        Decimal("300"),
+        Decimal("400"),
+        Decimal("500"),
+    ]
 
 
 @pytest.mark.parametrize(

@@ -1,5 +1,39 @@
 # Decision Log
 
+## DEC-076 — TASK-094: pré-lista seleciona até cinco ofertas relevantes por loja com ranking comercial determinístico
+
+- **Data:** 2026-08-22.
+- **Decisão:** a pré-lista deixa de representar cada loja por seu menor preço
+  absoluto e passa a carregar até cinco ofertas por loja. A ordem final é
+  relevância persistida (`MATCH` antes de `POSSIBLE_MATCH`), condição
+  (`new` > `refurbished` > `used` > `unknown`), vendedor
+  (`platform` > `marketplace_partner` > desconhecido), disponibilidade,
+  preço/valor total e identificador estável. `NO_MATCH` nunca entra e
+  relevância pendente continua bloqueando a primeira publicação.
+- **Pool intermediário:** todos os providers usam a mesma pré-seleção de até
+  oito candidatos por loja. Foi removido o colapso exclusivo da Amazon para o
+  menor preço; oito preserva diversidade suficiente para o top 5 sem enviar os
+  até 20 cards de uma loja para a classificação já existente.
+- **Condição histórica:** `OfferCondition` percorre
+  `RawCollectedOffer` → `NormalizedCollectedOffer` → `PriceObservation`.
+  Só evidência explícita do provider classifica recondicionado/usado. Na Amazon,
+  a validação real confirmou a regra da plataforma: ausência desses marcadores
+  na oferta principal significa `new`; demais providers continuam `unknown`
+  sem evidência. A migration `20260822_0002` adiciona o
+  campo não nulo com backfill conservador, e a equivalência comercial da
+  TASK-093 passa a considerar condição.
+- **Eventos e entrega:** novas publicações usam
+  `mission.prelist_ready.v2`/`mission.prelist_errata.v2`, com coleção ordenada
+  de snapshots reais. V1 permanece aceito. O Telegram agrupa normalmente uma
+  mensagem por loja, repartindo apenas pelo limite técnico; a errata reutiliza
+  exatamente o mesmo ranking comercial e não considera uma oferta usada mais
+  barata uma melhora sobre uma nova.
+- **Roadmap:** esta melhoria torna-se o item 4 da V1.2, antes da página rica de
+  produto/oferta. O escopo passa de 16 para 17 itens. A ausência do arquivo
+  formal da TASK-093 foi apenas registrada, sem reconstrução retroativa.
+- **Classificação:** evolução funcional da V1.2, com migration e eventos V2;
+  sem nova tabela paralela, nova decisão por IA ou mudança em produção.
+
 ## DEC-075 — TASK-092: gerenciamento de missões pela web reaproveita `app.missions` sem nenhuma regra nova; sessão assíncrona própria; correção de `actor_type` na auditoria
 
 - **Data:** 2026-08-22.

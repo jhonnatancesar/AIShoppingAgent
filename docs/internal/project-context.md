@@ -1,5 +1,21 @@
 # Project Context
 
+**Atualização 2026-08-22 (TASK-094, item 4 da V1.2, aguardando revisão):**
+a pré-lista agora preserva um pool comum de até 8 candidatos e seleciona até 5
+ofertas por loja por relevância persistida, condição, vendedor,
+disponibilidade, preço/total e ID estável — não mais pelo menor preço absoluto.
+O colapso específico da Amazon foi removido. Condição explícita percorre a
+coleta até `PriceObservation`; a migration `20260822_0002` adiciona o campo
+histórico com `unknown` conservador e a deduplicação da TASK-093 passa a
+considerá-lo. Novos eventos são `mission.prelist_ready.v2` e
+`mission.prelist_errata.v2`; V1 continua renderizável. O Telegram agrupa até
+cinco ofertas em uma mensagem por loja, salvo limite técnico. Foram aprovados
+16 testes focados e Ruff nos arquivos alterados; pipeline completo, banco real,
+scraping real, commit, push, deploy e produção não foram executados. A TASK-094
+aguarda revisão do usuário; a página rica de produto/oferta passa a ser o item
+5 e próxima atividade, ainda sem TASK formal. O arquivo formal da TASK-093 não
+existe no repositório e não foi reconstruído nesta rodada.
+
 **Atualização 2026-08-22 (TASK-091/TASK-092/TASK-093, itens 1-3 da
 V1.2):** os três primeiros itens da V1.2 reorganizada (`docs/internal/v1.2-scope.md`)
 estão concluídos, aprovados e publicados em `origin/main`, commit `cf666fa`,
@@ -30,8 +46,8 @@ vista mesmo sem observação nova, sem tocar no histórico append-only.
 **A produção real (Windows Server, `C:\App\AIShoppingAgent`) ainda não foi
 atualizada com nenhum destes três itens** — segue no estado descrito na
 seção "Continuidade no servidor" de `CLAUDE.md` (`v1.0.10`/`df7609b`);
-nenhum deploy foi solicitado ainda. O próximo item pendente da V1.2 é o 4
-("página rica de produto/oferta"), sem TASK aberta.
+nenhum deploy foi solicitado ainda. Esse era o estado anterior à abertura da
+TASK-094 descrita acima.
 
 **Atualização 2026-08-21 (reorganização de roadmap, `DEC-072`, só
 documentação):** a V1.2 foi reorganizada para ter como objetivo central

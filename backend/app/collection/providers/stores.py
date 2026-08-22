@@ -194,6 +194,39 @@ class TerabyteProvider(PlaywrightStoreProvider):
     # -- não é um "desligamento" condicional, é a ausência estrutural do hook.
 
 
+def _amazon_card_condition(value: object, title: object) -> str | None:
+    """Aceita só declaração explícita isolada ou sufixo explícito do título."""
+    for line in str(value or "").splitlines():
+        normalized = line.strip()
+        if re.fullmatch(
+            r"novo|usado|recondicionado|renewed|"
+            r"seminovo(?:\s*-\s*(?:excelente|bom|aceitável))?",
+            normalized,
+            re.I,
+        ):
+            return normalized
+    title_match = re.search(
+        r"\((novo|usado|seminovo|recondicionado|renewed)\)\s*$",
+        str(title or "").strip(),
+        re.I,
+    )
+    if title_match is not None:
+        return title_match.group(1)
+    # Regra comercial confirmada na validação real da Amazon: a oferta
+    # principal é nova salvo marcador explícito de usado/seminovo/renewed.
+    return "Novo"
+
+
+def _amazon_card_seller_kind(value: object) -> str | None:
+    """Classifica somente quando o próprio card declara o vendedor."""
+    seller = re.sub(r"^Vendido por\s*", "", str(value or "").strip(), flags=re.I)
+    if not seller:
+        return None
+    if seller.casefold() in {"amazon", "amazon.com.br"}:
+        return MarketplacePartyKind.PLATFORM.value
+    return MarketplacePartyKind.MARKETPLACE_PARTNER.value
+
+
 class AmazonProvider(PlaywrightStoreProvider):
     source_code, result_selector = (
         "amazon",
@@ -209,6 +242,11 @@ class AmazonProvider(PlaywrightStoreProvider):
         rows = await page.locator(self.result_selector).evaluate_all(
             """cards => cards.map(card => { const link = card.querySelector('h2 a, a.a-link-normal.s-no-outline'); const text = card.innerText || ''; const unavailable = /temporariamente fora de estoque|indisponível/i.test(text); const freeShipping = /(?:frete|entrega)\\s+gr[aá]tis/i.test(text) && !/primeiro pedido|com (?:o )?prime|assine (?:o )?prime/i.test(text); const image = card.querySelector('img.s-image'); const installmentBlock = card.querySelector('.a-row.a-size-base.a-color-base'); return {url: link?.href, title: card.querySelector('h2')?.textContent, price: card.querySelector('.a-price .a-offscreen')?.textContent, external_id: card.dataset.asin, seller: card.querySelector('[aria-label^="Vendido por"]')?.textContent, image: image?.currentSrc || image?.src, shipping: freeShipping ? 'Frete grátis' : null, availability: unavailable ? 'Temporariamente fora de estoque' : /adicionar ao carrinho/i.test(text) ? 'Disponível' : null, fulfillment: /prime/i.test(text) ? 'Prime' : null, evidence: text, installmentText: installmentBlock?.textContent}; })"""
         )
+        for row in rows:
+            row["condition"] = _amazon_card_condition(
+                row.get("evidence"), row.get("title")
+            )
+            row["seller_kind"] = _amazon_card_seller_kind(row.get("seller"))
         rows = _apply_installment_summary(rows, text_key="installmentText")
         return self.offers_from_rows(rows, collected_at)
 
@@ -228,6 +266,20 @@ class AmazonProvider(PlaywrightStoreProvider):
             else MarketplacePartyKind.MARKETPLACE_PARTNER
         )
         return (kind, kind)
+
+    async def resolve_offer_condition(self, page: Page) -> str | None:
+        """Prioriza o campo explícito `Condição` da página já aberta."""
+        text = await page.locator("body").inner_text()
+        field = re.search(
+            r"(?im)^\s*Condição\s*:?\s*(?:\r?\n\s*)?([^\r\n]+)", text
+        )
+        if field is not None:
+            return field.group(1).strip()
+        label = re.search(
+            r"(?im)^\s*(Renewed|Seminovo(?:\s*-\s*(?:Excelente|Bom|Aceitável))?)\s*$",
+            text,
+        )
+        return label.group(1).strip() if label is not None else None
 
 
 class KabumProvider(PlaywrightStoreProvider):

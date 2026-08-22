@@ -9,7 +9,9 @@ from app.collection import (
     CollectionRequest,
     KabumProvider,
     MarketplacePartyKind,
+    OfferCondition,
     PichauProvider,
+    PriceNormalizer,
     ProviderBlockedError,
     ProviderNavigationError,
     RawCollectedOffer,
@@ -88,6 +90,111 @@ def test_amazon_uses_only_explicit_shipping_and_availability_evidence() -> None:
 
     assert offer.raw_shipping == "Frete grátis"
     assert offer.raw_availability == "Disponível"
+
+
+def test_amazon_collects_only_explicit_card_condition_and_seller_kind() -> None:
+    html = (
+        '<div data-component-type="s-search-result" data-asin="B0USED">'
+        '<h2><a href="https://www.amazon.com.br/dp/B0USED">Produto</a></h2>'
+        '<span class="a-price"><span class="a-offscreen">R$ 99,90</span></span>'
+        '<div>Usado</div><span aria-label="Vendido por Amazon.com.br">'
+        "Vendido por Amazon.com.br</span></div>"
+    )
+
+    async def scenario():
+        async with BrowserSession() as session:
+            page = await session.new_page()
+            await page.set_content(html)
+            return await AmazonProvider().extract(page, NOW)
+
+    offer = asyncio.run(scenario())[0]
+    normalized = PriceNormalizer().normalize_offer(offer)
+
+    assert normalized.condition is OfferCondition.USED
+    assert offer.seller_kind is MarketplacePartyKind.PLATFORM
+
+
+def test_amazon_maps_explicit_seminovo_title_suffix_to_used() -> None:
+    html = (
+        '<div data-component-type="s-search-result" data-asin="B0SEMI">'
+        '<h2><a href="https://www.amazon.com.br/dp/B0SEMI">'
+        "Samsung Galaxy S24 Ultra (Seminovo)</a></h2>"
+        '<span class="a-price"><span class="a-offscreen">R$ 4.255,05</span></span>'
+        "<div>Mais opções de compra: produtos novos e usados</div></div>"
+    )
+
+    async def scenario():
+        async with BrowserSession() as session:
+            page = await session.new_page()
+            await page.set_content(html)
+            return await AmazonProvider().extract(page, NOW)
+
+    offer = asyncio.run(scenario())[0]
+    normalized = PriceNormalizer().normalize_offer(offer)
+
+    assert normalized.condition is OfferCondition.USED
+
+
+def test_amazon_without_selected_used_marker_defaults_to_new() -> None:
+    html = (
+        '<div data-component-type="s-search-result" data-asin="B0UNKNOWN">'
+        '<h2><a href="https://www.amazon.com.br/dp/B0UNKNOWN">Produto</a></h2>'
+        '<span class="a-price"><span class="a-offscreen">R$ 99,90</span></span>'
+        "<div>Mais opções de compra: produtos novos e usados</div></div>"
+    )
+
+    async def scenario():
+        async with BrowserSession() as session:
+            page = await session.new_page()
+            await page.set_content(html)
+            return await AmazonProvider().extract(page, NOW)
+
+    offer = asyncio.run(scenario())[0]
+    normalized = PriceNormalizer().normalize_offer(offer)
+
+    assert normalized.condition is OfferCondition.NEW
+
+
+@pytest.mark.parametrize(
+    ("explicit_label", "expected"),
+    [
+        ("Renewed", OfferCondition.REFURBISHED),
+        ("Seminovo - Excelente", OfferCondition.USED),
+    ],
+)
+def test_amazon_maps_explicit_renewed_and_seminovo_grade_labels(
+    explicit_label: str, expected: OfferCondition
+) -> None:
+    html = (
+        '<div data-component-type="s-search-result" data-asin="B0GRADE">'
+        '<h2><a href="https://www.amazon.com.br/dp/B0GRADE">Produto</a></h2>'
+        f"<div>{explicit_label}</div>"
+        '<span class="a-price"><span class="a-offscreen">R$ 99,90</span></span>'
+        "</div>"
+    )
+
+    async def scenario():
+        async with BrowserSession() as session:
+            page = await session.new_page()
+            await page.set_content(html)
+            return await AmazonProvider().extract(page, NOW)
+
+    offer = asyncio.run(scenario())[0]
+    normalized = PriceNormalizer().normalize_offer(offer)
+
+    assert normalized.condition is expected
+
+
+def test_amazon_reads_explicit_condition_field_from_existing_detail_page() -> None:
+    html = "<body><div>Vendido por Amazon.com.br</div><div>Condição</div><div>Renewed</div></body>"
+
+    async def scenario():
+        async with BrowserSession() as session:
+            page = await session.new_page()
+            await page.set_content(html)
+            return await AmazonProvider().resolve_offer_condition(page)
+
+    assert asyncio.run(scenario()) == "Renewed"
 
 
 def test_amazon_does_not_flatten_login_or_first_order_shipping_condition() -> None:

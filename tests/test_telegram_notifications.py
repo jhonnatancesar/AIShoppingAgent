@@ -7,8 +7,14 @@ from uuid import UUID, uuid4
 
 import pytest
 from app.authentication.models import CredentialAction, UserAuthSession
-from app.collection.contracts import InstallmentInterestKind, MarketplacePartyKind
+from app.collection.contracts import (
+    InstallmentInterestKind,
+    MarketplacePartyKind,
+    OfferCondition,
+)
 from app.collection.models import OfferInstallmentOption, PriceObservation
+from app.collection.normalization import Availability
+from app.collection.relevance import OfferRelevance
 from app.events import ConsumptionOutcome, Event
 from app.missions.models import Mission, MissionStatus
 from app.offers.models import Offer
@@ -23,6 +29,7 @@ from app.telegram.notifications import (
     TelegramNotificationError,
     _installment_line,
     _marketplace_party_line,
+    _render_prelist_v2_async,
     _select_installment_summary_option,
     _telegram_link,
     process_telegram_authentication_notifications,
@@ -675,6 +682,103 @@ def _errata_event(
         occurred_at=NOW,
         recorded_at=NOW,
     )
+
+
+@pytest.mark.anyio
+async def test_prelist_v2_renderer_groups_one_message_per_store(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mission = _mission(_user())
+    stores = [
+        Store(id=uuid4(), code="amazon", name="Amazon", base_url="https://amazon.com.br"),
+        Store(id=uuid4(), code="kabum", name="KaBuM!", base_url="https://kabum.com.br"),
+    ]
+    contexts = []
+    payload_offers = []
+    for index, store in enumerate((stores[0], stores[0], stores[1])):
+        product = Product(id=uuid4(), name=f"Produto {index + 1}")
+        offer = Offer(
+            id=uuid4(),
+            product_id=product.id,
+            store_id=store.id,
+            url=f"https://example.invalid/{index}",
+        )
+        observation = PriceObservation(
+            id=uuid4(),
+            offer_id=offer.id,
+            collection_run_id=uuid4(),
+            amount=Decimal(str(100 + index)),
+            total_amount=Decimal(str(100 + index)),
+            currency="BRL",
+            condition=(OfferCondition.NEW if index != 1 else OfferCondition.USED),
+            seller_kind=(
+                MarketplacePartyKind.PLATFORM
+                if index == 0
+                else MarketplacePartyKind.MARKETPLACE_PARTNER
+            ),
+            fulfillment_kind=None,
+            availability=Availability.AVAILABLE,
+            observed_at=NOW,
+        )
+        contexts.append((offer, product, store, observation))
+        payload_offers.append(
+            {
+                "offer_id": str(offer.id),
+                "observation_id": str(observation.id),
+                "store_id": str(store.id),
+                "amount": str(observation.amount),
+                "total_amount": str(observation.total_amount),
+                "currency": "BRL",
+                "relevance": OfferRelevance.MATCH.value,
+                "condition": observation.condition.value,
+                "seller_kind": observation.seller_kind.value,
+                "availability": observation.availability.value,
+            }
+        )
+    objects = {
+        (Offer, context[0].id): context[0]
+        for context in contexts
+    } | {
+        (Product, context[1].id): context[1]
+        for context in contexts
+    } | {
+        (Store, store.id): store
+        for store in stores
+    } | {
+        (PriceObservation, context[3].id): context[3]
+        for context in contexts
+    }
+    session = MagicMock()
+    session.get = AsyncMock(side_effect=lambda model, key: objects.get((model, key)))
+    session.scalars = AsyncMock(return_value=[])
+    monkeypatch.setattr(
+        "app.telegram.notifications.get_or_create_offer_short_link",
+        AsyncMock(return_value=MagicMock(token="token")),
+    )
+    event = Event(
+        id=uuid4(),
+        event_type="mission.prelist_ready.v2",
+        aggregate_type="mission",
+        aggregate_id=mission.id,
+        mission_id=mission.id,
+        payload={"mission_id": str(mission.id), "offers": payload_offers},
+        occurred_at=NOW,
+        recorded_at=NOW,
+    )
+
+    parts = await _render_prelist_v2_async(
+        session,
+        event,
+        mission.title,
+        public_base_url="https://agent.example",
+        errata=False,
+    )
+
+    assert len(parts) == 2
+    assert "Amazon — opções encontradas" in parts[0].text
+    assert "Produto 1" in parts[0].text and "Produto 2" in parts[0].text
+    assert "Usado" in parts[0].text
+    assert "KaBuM! — opções encontradas" in parts[1].text
 
 
 @pytest.mark.anyio

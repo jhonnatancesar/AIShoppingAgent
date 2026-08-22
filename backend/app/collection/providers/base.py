@@ -126,6 +126,10 @@ class PlaywrightStoreProvider:
         """Classifica vendedor e entrega numa página individual válida."""
         return (MarketplacePartyKind.UNKNOWN, MarketplacePartyKind.UNKNOWN)
 
+    async def resolve_offer_condition(self, page: Page) -> str | None:
+        """Lê condição explícita na mesma página já aberta para marketplace."""
+        return None
+
     async def enrich_marketplace_parties(
         self, offers: tuple[RawCollectedOffer, ...]
     ) -> tuple[RawCollectedOffer, ...]:
@@ -145,7 +149,9 @@ class PlaywrightStoreProvider:
         candidates = self._rank_offers(offers)[: self._marketplace_party_max_candidates]
         if not candidates:
             return offers
-        resolved: dict[str, tuple[MarketplacePartyKind, MarketplacePartyKind]] = {}
+        resolved: dict[
+            str, tuple[MarketplacePartyKind, MarketplacePartyKind, str | None]
+        ] = {}
         async with BrowserSession(self.settings) as session:
             page = await session.new_page()
             for offer in candidates:
@@ -160,17 +166,39 @@ class PlaywrightStoreProvider:
                 if response.status == 408 or response.status >= 500:
                     continue
                 try:
-                    resolved[offer.url] = await self.resolve_marketplace_parties(page)
+                    seller_kind, fulfillment_kind = (
+                        await self.resolve_marketplace_parties(page)
+                    )
                 except Exception:
-                    resolved[offer.url] = (
+                    seller_kind, fulfillment_kind = (
                         MarketplacePartyKind.UNKNOWN,
                         MarketplacePartyKind.UNKNOWN,
                     )
+                try:
+                    raw_condition = await self.resolve_offer_condition(page)
+                except Exception:
+                    raw_condition = None
+                resolved[offer.url] = (
+                    seller_kind,
+                    fulfillment_kind,
+                    raw_condition,
+                )
         return tuple(
             replace(
                 offer,
-                seller_kind=resolved[offer.url][0],
-                fulfillment_kind=resolved[offer.url][1],
+                seller_kind=(
+                    offer.seller_kind
+                    if resolved[offer.url][0] is MarketplacePartyKind.UNKNOWN
+                    and offer.seller_kind is not None
+                    else resolved[offer.url][0]
+                ),
+                fulfillment_kind=(
+                    offer.fulfillment_kind
+                    if resolved[offer.url][1] is MarketplacePartyKind.UNKNOWN
+                    and offer.fulfillment_kind is not None
+                    else resolved[offer.url][1]
+                ),
+                raw_condition=resolved[offer.url][2] or offer.raw_condition,
             )
             if offer.url in resolved
             else offer
@@ -486,6 +514,8 @@ class PlaywrightStoreProvider:
                     raw_shipping=_optional(row.get("shipping")),
                     raw_availability=_optional(row.get("availability")),
                     raw_fulfillment=_optional(row.get("fulfillment")),
+                    raw_condition=_optional(row.get("condition")),
+                    seller_kind=_party_kind(row.get("seller_kind")),
                     image_url=normalize_http_url(row.get("image")),
                     evidence={"card_text": str(row.get("evidence") or "")[:1000]},
                     installment_options=_installment_options_from_row(row),
@@ -497,6 +527,13 @@ class PlaywrightStoreProvider:
 def _optional(value: object) -> str | None:
     text = str(value or "").strip()
     return text or None
+
+
+def _party_kind(value: object) -> MarketplacePartyKind | None:
+    try:
+        return MarketplacePartyKind(str(value)) if value is not None else None
+    except ValueError:
+        return None
 
 
 def _installment_options_from_row(

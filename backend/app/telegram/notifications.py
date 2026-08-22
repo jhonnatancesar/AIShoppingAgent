@@ -16,8 +16,14 @@ from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.authentication.models import CredentialAction, UserAuthSession
-from app.collection.contracts import InstallmentInterestKind, MarketplacePartyKind
+from app.collection.contracts import (
+    InstallmentInterestKind,
+    MarketplacePartyKind,
+    OfferCondition,
+)
 from app.collection.models import OfferInstallmentOption, PriceObservation
+from app.collection.normalization import Availability
+from app.collection.relevance import OfferRelevance
 from app.database.time import utc_now
 from app.events import ConsumptionOutcome, Event, EventType
 from app.events.consumption import (
@@ -65,6 +71,8 @@ _AUTHENTICATION_EVENT_TYPES = (
 _PRELIST_EVENT_TYPES = (
     EventType.MISSION_PRELIST_READY_V1.value,
     EventType.MISSION_PRELIST_ERRATA_V1.value,
+    EventType.MISSION_PRELIST_READY_V2.value,
+    EventType.MISSION_PRELIST_ERRATA_V2.value,
 )
 _BRAZIL_TIMEZONE = ZoneInfo("America/Sao_Paulo")
 
@@ -538,6 +546,8 @@ async def _prepare_notification_async(
     if event_type in {
         EventType.MISSION_PRELIST_READY_V1,
         EventType.MISSION_PRELIST_ERRATA_V1,
+        EventType.MISSION_PRELIST_READY_V2,
+        EventType.MISSION_PRELIST_ERRATA_V2,
     }:
         return await _prepare_prelist_notification_async(
             session, event, event_type, public_base_url=public_base_url
@@ -670,9 +680,17 @@ async def _prepare_prelist_notification_async(
         parts = await _render_prelist_ready_async(
             session, event, mission.title, public_base_url=public_base_url
         )
-    else:
+    elif event_type is EventType.MISSION_PRELIST_ERRATA_V1:
         parts = await _render_prelist_errata_async(
             session, event, mission.title, public_base_url=public_base_url
+        )
+    else:
+        parts = await _render_prelist_v2_async(
+            session,
+            event,
+            mission.title,
+            public_base_url=public_base_url,
+            errata=event_type is EventType.MISSION_PRELIST_ERRATA_V2,
         )
     return user.telegram_chat_id, parts
 
@@ -1118,6 +1136,119 @@ async def _render_prelist_errata_async(
         f"{_telegram_link(short_url)}"
     )
     return (_PreparedMessagePart(offer.id, 0, text, offer.image_url),)
+
+
+_CONDITION_LABELS = {
+    OfferCondition.NEW: "Novo",
+    OfferCondition.REFURBISHED: "Recondicionado",
+    OfferCondition.USED: "Usado",
+    OfferCondition.UNKNOWN: "Condição não identificada",
+}
+_AVAILABILITY_LABELS = {
+    Availability.AVAILABLE: "✅ Disponível",
+    Availability.UNKNOWN: "⚪ Disponibilidade não confirmada",
+    Availability.UNAVAILABLE: "❌ Indisponível",
+}
+_TELEGRAM_TEXT_SAFE_LIMIT = 4000
+
+
+async def _render_prelist_v2_async(
+    session: AsyncSession,
+    event: Event,
+    mission_title: str,
+    *,
+    public_base_url: str,
+    errata: bool,
+) -> tuple[_PreparedMessagePart, ...]:
+    """TASK-094: uma mensagem textual por loja, dividida só pelo limite técnico."""
+    payload = event.payload
+    if not isinstance(payload, dict) or not isinstance(payload.get("offers"), list):
+        raise TelegramNotificationError("notification_payload_invalid")
+    groups: dict[UUID, tuple[Store, list[tuple[UUID, str]]]] = {}
+    for raw in payload["offers"]:
+        if not isinstance(raw, dict):
+            raise TelegramNotificationError("notification_payload_invalid")
+        try:
+            offer_id = _required_uuid(raw, "offer_id")
+            observation_id = _required_uuid(raw, "observation_id")
+            store_id = _required_uuid(raw, "store_id")
+            amount = _money(raw, "amount")
+            total_amount = _money(raw, "total_amount")
+            currency = _currency(raw)
+            relevance = OfferRelevance(_required_text(raw, "relevance"))
+            condition = OfferCondition(_required_text(raw, "condition"))
+            availability = Availability(_required_text(raw, "availability"))
+            seller_value = raw.get("seller_kind")
+            seller_kind = (
+                MarketplacePartyKind(_required_text(raw, "seller_kind"))
+                if seller_value is not None
+                else None
+            )
+        except (InvalidOperation, TypeError, ValueError):
+            raise TelegramNotificationError("notification_payload_invalid") from None
+        if relevance is OfferRelevance.NO_MATCH:
+            raise TelegramNotificationError("notification_payload_invalid")
+        offer, product, store, observation, installments = (
+            await _load_offer_context_async(session, offer_id, observation_id)
+        )
+        if (
+            store.id != store_id
+            or observation.amount != amount
+            or observation.total_amount != total_amount
+            or observation.currency != currency
+            or observation.condition is not condition
+            or observation.availability is not availability
+            or observation.seller_kind is not seller_kind
+        ):
+            raise TelegramNotificationError("notification_payload_invalid")
+        link = await get_or_create_offer_short_link(session, offer.id)
+        short_url = build_offer_short_url(public_base_url, link.token)
+        entries = groups.setdefault(store.id, (store, []))[1]
+        position = len(entries) + 1
+        block = (
+            f"{position}. {html.escape(product.display_name or product.name)}\n"
+            f"📋 {_CONDITION_LABELS[condition]}\n"
+            f"{_marketplace_party_line(store, observation)}"
+            f"{_AVAILABILITY_LABELS[availability]}\n"
+            f"💰 À vista: {format_money(amount, currency)}\n"
+            f"{_installment_line(installments, currency)}"
+            "🔗 Ver anúncio\n"
+            f"{_telegram_link(short_url)}"
+        )
+        entries.append((offer.id, block))
+
+    parts: list[_PreparedMessagePart] = []
+    for store, entries in groups.values():
+        heading = (
+            "🔄 CORREÇÃO DA PRÉ-LISTA"
+            if errata
+            else f"🧾 {html.escape(store.name)} — opções encontradas"
+        )
+        if errata:
+            heading += f"\n\n🏪 {html.escape(store.name)} — seleção atualizada"
+        base = f"{heading}\n🔎 Missão: {html.escape(mission_title)}\n\n"
+        current = base
+        current_offer = entries[0][0]
+        for offer_id, block in entries:
+            addition = block + "\n\n"
+            if len(current) + len(addition) + len(_PRELIST_SHIPPING_DISCLAIMER) > (
+                _TELEGRAM_TEXT_SAFE_LIMIT
+            ):
+                text = current.rstrip() + f"\n\n{_PRELIST_SHIPPING_DISCLAIMER}"
+                parts.append(
+                    _PreparedMessagePart(current_offer, len(parts), text)
+                )
+                current = (
+                    f"{heading} — continuação\n"
+                    f"🔎 Missão: {html.escape(mission_title)}\n\n"
+                )
+                current_offer = offer_id
+            current += addition
+        text = current.rstrip() + f"\n\n{_PRELIST_SHIPPING_DISCLAIMER}"
+        parts.append(_PreparedMessagePart(current_offer, len(parts), text))
+    if not parts:
+        raise TelegramNotificationError("notification_payload_invalid")
+    return tuple(parts)
 
 
 def _required_text(payload: dict[str, object], field: str) -> str:

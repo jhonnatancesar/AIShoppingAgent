@@ -5,7 +5,9 @@ from uuid import uuid4
 
 import pytest
 from app.authentication.models import CredentialAction
+from app.collection.contracts import MarketplacePartyKind, OfferCondition
 from app.collection.normalization import Availability
+from app.collection.relevance import OfferRelevance
 from app.events import (
     EVENT_CATALOG,
     AggregateType,
@@ -17,8 +19,11 @@ from app.events import (
     EventCatalogError,
     EventType,
     MissionPrelistErrataPayload,
+    MissionPrelistErrataV2Payload,
     MissionPrelistReadyPayload,
+    MissionPrelistReadyV2Payload,
     MissionStatusChangedPayload,
+    PrelistOfferPayload,
     PriceDecreasedPayload,
     PriceTargetReachedPayload,
     resolve_event_spec,
@@ -30,7 +35,7 @@ from app.missions.models import MissionStatus
 def test_catalog_is_closed_versioned_and_has_expected_aggregates() -> None:
     assert isinstance(EVENT_CATALOG, MappingProxyType)
     assert set(EVENT_CATALOG) == set(EventType)
-    assert all(event_type.value.endswith(".v1") for event_type in EventType)
+    assert all(event_type.value.endswith((".v1", ".v2")) for event_type in EventType)
     assert (
         resolve_event_spec("price.target_reached.v1").aggregate_type
         is AggregateType.MISSION
@@ -235,3 +240,35 @@ def test_prelist_errata_contract_requires_strictly_cheaper() -> None:
             "BRL",
             Decimal("100.00"),
         )
+
+
+def test_prelist_v2_contract_carries_ordered_offer_collection() -> None:
+    mission_id, store_id = uuid4(), uuid4()
+    offers = tuple(
+        PrelistOfferPayload(
+            offer_id=uuid4(),
+            observation_id=uuid4(),
+            store_id=store_id,
+            amount=Decimal(str(100 + index)),
+            total_amount=Decimal(str(100 + index)),
+            currency="BRL",
+            relevance=(
+                OfferRelevance.MATCH if index < 4 else OfferRelevance.POSSIBLE_MATCH
+            ),
+            condition=OfferCondition.NEW,
+            seller_kind=MarketplacePartyKind.PLATFORM,
+            availability=Availability.AVAILABLE,
+        )
+        for index in range(5)
+    )
+
+    ready = MissionPrelistReadyV2Payload(mission_id, offers)
+    errata = MissionPrelistErrataV2Payload(
+        mission_id, uuid4(), store_id, offers
+    )
+
+    assert ready.offers == offers
+    assert errata.offers == offers
+    assert resolve_event_spec(EventType.MISSION_PRELIST_READY_V2).payload_type is (
+        MissionPrelistReadyV2Payload
+    )

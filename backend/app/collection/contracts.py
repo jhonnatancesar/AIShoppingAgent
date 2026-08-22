@@ -20,6 +20,15 @@ class MarketplacePartyKind(StrEnum):
     UNKNOWN = "unknown"
 
 
+class OfferCondition(StrEnum):
+    """Condição comercial comprovada pela fonte, nunca inferida por IA."""
+
+    NEW = "new"
+    REFURBISHED = "refurbished"
+    USED = "used"
+    UNKNOWN = "unknown"
+
+
 class InstallmentInterestKind(StrEnum):
     """TASK-089: só marca `INTEREST_FREE`/`WITH_INTEREST` quando a própria
     loja afirma isso explicitamente no texto (ex.: "sem juros"/"com juros")
@@ -122,6 +131,7 @@ class RawCollectedOffer:
     raw_shipping: str | None = None
     raw_availability: str | None = None
     raw_fulfillment: str | None = None
+    raw_condition: str | None = None
     seller_kind: MarketplacePartyKind | None = None
     fulfillment_kind: MarketplacePartyKind | None = None
     image_url: str | None = None

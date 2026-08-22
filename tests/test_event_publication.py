@@ -6,6 +6,9 @@ from unittest.mock import MagicMock
 from uuid import uuid4
 
 import pytest
+from app.collection.contracts import MarketplacePartyKind, OfferCondition
+from app.collection.normalization import Availability
+from app.collection.relevance import OfferRelevance
 from app.database.base import Base
 from app.database.model_registry import REGISTERED_MODELS
 from app.events import (
@@ -16,7 +19,9 @@ from app.events import (
     EventCatalogError,
     EventPublicationError,
     EventType,
+    MissionPrelistReadyV2Payload,
     MissionStatusChangedPayload,
+    PrelistOfferPayload,
     PriceDecreasedPayload,
     PriceTargetReachedPayload,
     publish_event,
@@ -114,6 +119,47 @@ def test_publish_event_serializes_optional_none_field() -> None:
     )
 
     assert event.payload["mission_id"] is None
+
+
+def test_publish_event_serializes_nested_prelist_v2_collection() -> None:
+    mission_id = uuid4()
+    item = PrelistOfferPayload(
+        uuid4(),
+        uuid4(),
+        uuid4(),
+        Decimal("100.00"),
+        Decimal("100.00"),
+        "BRL",
+        OfferRelevance.MATCH,
+        OfferCondition.NEW,
+        MarketplacePartyKind.PLATFORM,
+        Availability.AVAILABLE,
+    )
+
+    event = publish_event(
+        _session(),
+        event_type=EventType.MISSION_PRELIST_READY_V2,
+        aggregate_type=AggregateType.MISSION,
+        aggregate_id=mission_id,
+        payload=MissionPrelistReadyV2Payload(mission_id, (item,)),
+        occurred_at=NOW,
+        mission_id=mission_id,
+    )
+
+    assert event.payload["offers"] == [
+        {
+            "offer_id": str(item.offer_id),
+            "observation_id": str(item.observation_id),
+            "store_id": str(item.store_id),
+            "amount": "100.00",
+            "total_amount": "100.00",
+            "currency": "BRL",
+            "relevance": "match",
+            "condition": "new",
+            "seller_kind": "platform",
+            "availability": "available",
+        }
+    ]
 
 
 def test_publish_event_serializes_aware_payload_datetime() -> None:

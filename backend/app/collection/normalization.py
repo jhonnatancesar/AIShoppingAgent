@@ -10,6 +10,7 @@ from app.collection.contracts import (
     CollectionResult,
     InstallmentInterestKind,
     MarketplacePartyKind,
+    OfferCondition,
     RawCollectedOffer,
     RawInstallmentOption,
 )
@@ -56,6 +57,7 @@ class NormalizedCollectedOffer:
     shipping_amount: Decimal | None
     total_amount: Decimal
     availability: Availability
+    condition: OfferCondition
 
     @property
     def seller_external_id(self) -> str | None:
@@ -110,6 +112,7 @@ class PriceNormalizer:
         amount = self._amount(offer.raw_price, currency, field="price")
         shipping = self._shipping(offer.raw_shipping, currency)
         availability = self._availability(offer.raw_availability)
+        condition = self._condition(offer.raw_condition)
         total = amount + (shipping if shipping is not None else Decimal(0))
         _require_numeric_19_4(total, "total")
         return NormalizedCollectedOffer(
@@ -119,6 +122,7 @@ class PriceNormalizer:
             shipping_amount=shipping,
             total_amount=total,
             availability=availability,
+            condition=condition,
         )
 
     @staticmethod
@@ -197,6 +201,23 @@ class PriceNormalizer:
             if _AVAILABLE.search(raw_availability):
                 return Availability.AVAILABLE
         return Availability.UNKNOWN
+
+    @staticmethod
+    def _condition(raw_condition: str | None) -> OfferCondition:
+        if raw_condition is None:
+            return OfferCondition.UNKNOWN
+        normalized = re.sub(r"\s+", " ", raw_condition.strip().casefold())
+        if re.fullmatch(r"(?:recondicionado|refurbished|renewed)", normalized):
+            return OfferCondition.REFURBISHED
+        if re.fullmatch(
+            r"(?:usado|seminovo|used|pre-owned)"
+            r"(?:\s*-\s*(?:excelente|bom|aceitável|excellent|good|acceptable))?",
+            normalized,
+        ):
+            return OfferCondition.USED
+        if re.fullmatch(r"(?:novo|new)", normalized):
+            return OfferCondition.NEW
+        return OfferCondition.UNKNOWN
 
     @staticmethod
     def _detected_currency(raw: str | None) -> str | None:

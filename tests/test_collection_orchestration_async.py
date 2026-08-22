@@ -22,6 +22,7 @@ from app.collection.adapter import CollectionAdapter
 from app.collection.contracts import (
     CollectionResult,
     MarketplacePartyKind,
+    OfferCondition,
     RawCollectedOffer,
     ResolvedProductIdentity,
 )
@@ -48,6 +49,8 @@ from app.collection.orchestration import (
     _persist_phase_a,
     _persist_phase_c,
     _PhaseAOutcome,
+    _prelist_commercial_key,
+    _PrelistCandidate,
     _record_failure,
     _reset_source_backoff,
     _resolve_offer,
@@ -976,21 +979,35 @@ def test_evaluate_mission_prelist_dispatches_ready_then_errata(monkeypatch) -> N
     errata.assert_awaited_once_with(session, sent, NOW)
 
 
-def test_maybe_publish_prelist_ready_picks_two_cheapest_of_three_stores(
+def _prelist_candidate(
+    amount: str = "100.00",
+    *,
+    condition: OfferCondition = OfferCondition.NEW,
+    store=None,
+) -> _PrelistCandidate:
+    store = store or SimpleNamespace(id=uuid4(), code="amazon")
+    offer = SimpleNamespace(id=uuid4(), store_id=store.id)
+    observation = SimpleNamespace(
+        id=uuid4(),
+        offer_id=offer.id,
+        amount=Decimal(amount),
+        total_amount=Decimal(amount),
+        currency="BRL",
+        condition=condition,
+        seller_kind=MarketplacePartyKind.PLATFORM,
+        availability=Availability.AVAILABLE,
+    )
+    return _PrelistCandidate(OfferRelevance.MATCH, observation, offer, store)
+
+
+def test_maybe_publish_prelist_ready_publishes_v2_collection(
     monkeypatch,
 ) -> None:
     mission = SimpleNamespace(
         id=uuid4(), prelist_sent=False, prelist_lowest_amount=None
     )
-    cheap = SimpleNamespace(
-        offer_id=uuid4(), id=uuid4(), amount=Decimal("100.00"), currency="BRL"
-    )
-    mid = SimpleNamespace(
-        offer_id=uuid4(), id=uuid4(), amount=Decimal("150.00"), currency="BRL"
-    )
-    expensive = SimpleNamespace(
-        offer_id=uuid4(), id=uuid4(), amount=Decimal("999.00"), currency="BRL"
-    )
+    cheap = _prelist_candidate("100.00")
+    mid = _prelist_candidate("150.00")
     monkeypatch.setattr(
         "app.collection.orchestration._mission_prelist_round_complete",
         AsyncMock(return_value=True),
@@ -1000,8 +1017,8 @@ def test_maybe_publish_prelist_ready_picks_two_cheapest_of_three_stores(
         AsyncMock(return_value=False),
     )
     monkeypatch.setattr(
-        "app.collection.orchestration._latest_match_observations_by_store",
-        AsyncMock(return_value=[expensive, cheap, mid]),
+        "app.collection.orchestration._current_prelist_candidates",
+        AsyncMock(return_value=(cheap, mid)),
     )
     publish = AsyncMock()
     monkeypatch.setattr("app.collection.orchestration.publish_event_async", publish)
@@ -1011,8 +1028,8 @@ def test_maybe_publish_prelist_ready_picks_two_cheapest_of_three_stores(
     assert mission.prelist_sent is True
     assert mission.prelist_lowest_amount == Decimal("100.00")
     payload = publish.call_args.kwargs["payload"]
-    assert payload.first_offer_id == cheap.offer_id
-    assert payload.second_offer_id == mid.offer_id
+    assert [item.offer_id for item in payload.offers] == [cheap.offer.id, mid.offer.id]
+    assert publish.call_args.kwargs["event_type"].value == "mission.prelist_ready.v2"
 
 
 def test_maybe_publish_prelist_ready_waits_for_the_full_round(monkeypatch) -> None:
@@ -1054,7 +1071,7 @@ def test_maybe_publish_prelist_ready_defers_when_relevance_pending(
     )
     candidates = AsyncMock()
     monkeypatch.setattr(
-        "app.collection.orchestration._latest_match_observations_by_store",
+        "app.collection.orchestration._current_prelist_candidates",
         candidates,
     )
     publish = AsyncMock()
@@ -1078,9 +1095,7 @@ def test_maybe_publish_prelist_ready_sends_after_pending_relevance_resolves(
     mission = SimpleNamespace(
         id=uuid4(), prelist_sent=False, prelist_lowest_amount=None
     )
-    match = SimpleNamespace(
-        offer_id=uuid4(), id=uuid4(), amount=Decimal("4255.05"), currency="BRL"
-    )
+    match = _prelist_candidate("4255.05")
     monkeypatch.setattr(
         "app.collection.orchestration._mission_prelist_round_complete",
         AsyncMock(return_value=True),
@@ -1098,21 +1113,21 @@ def test_maybe_publish_prelist_ready_sends_after_pending_relevance_resolves(
     publish.assert_not_awaited()
 
     # Coleta seguinte: classificação resolvida como MATCH -- pré-lista
-    # normal (mission.prelist_ready.v1), não errata.
+    # normal (mission.prelist_ready.v2), não errata.
     monkeypatch.setattr(
         "app.collection.orchestration._mission_relevance_pending",
         AsyncMock(return_value=False),
     )
     monkeypatch.setattr(
-        "app.collection.orchestration._latest_match_observations_by_store",
-        AsyncMock(return_value=[match]),
+        "app.collection.orchestration._current_prelist_candidates",
+        AsyncMock(return_value=(match,)),
     )
     asyncio.run(_maybe_publish_prelist_ready(_mock_async_session(), mission, NOW))
 
     assert mission.prelist_sent is True
     assert mission.prelist_lowest_amount == Decimal("4255.05")
     publish.assert_awaited_once()
-    assert publish.call_args.kwargs["event_type"].value == "mission.prelist_ready.v1"
+    assert publish.call_args.kwargs["event_type"].value == "mission.prelist_ready.v2"
 
 
 def _fake_execute_result(rows: list[tuple]) -> MagicMock:
@@ -1181,32 +1196,75 @@ def test_mission_relevance_pending_ignores_offer_superseded_by_newer_same_store(
     assert pending is False
 
 
-def test_maybe_publish_prelist_errata_publishes_once_when_cheaper_found() -> None:
+def test_maybe_publish_prelist_errata_uses_commercial_ranking(monkeypatch) -> None:
     mission = SimpleNamespace(
         id=uuid4(),
         prelist_errata_sent=False,
         prelist_lowest_amount=Decimal("100.00"),
         prelist_lowest_currency="BRL",
     )
-    cheaper = SimpleNamespace(
-        offer_id=uuid4(), id=uuid4(), amount=Decimal("80.00"), currency="BRL"
+    store = SimpleNamespace(id=uuid4(), code="amazon")
+    improved = _prelist_candidate("180.00", store=store)
+    previous = _prelist_candidate(
+        "100.00", condition=OfferCondition.USED, store=store
     )
+    previous_event = SimpleNamespace(id=uuid4())
     session = _mock_async_session()
-    session.scalar.return_value = cheaper
+    session.scalar.return_value = previous_event
+    monkeypatch.setattr(
+        "app.collection.orchestration._current_prelist_candidates",
+        AsyncMock(return_value=(improved,)),
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration._previous_prelist_best_by_store",
+        AsyncMock(
+            return_value={
+                improved.store.id: _prelist_commercial_key(previous),
+            }
+        ),
+    )
+    publish = AsyncMock()
+    monkeypatch.setattr("app.collection.orchestration.publish_event_async", publish)
 
-    async def _run():
-        import app.collection.orchestration as module
-
-        publish = AsyncMock()
-        module.publish_event_async = publish
-        await _maybe_publish_prelist_errata(session, mission, NOW)
-        return publish
-
-    publish = asyncio.run(_run())
+    asyncio.run(_maybe_publish_prelist_errata(session, mission, NOW))
 
     assert mission.prelist_errata_sent is True
     payload = publish.call_args.kwargs["payload"]
-    assert payload.offer_id == cheaper.offer_id
+    assert payload.offers[0].offer_id == improved.offer.id
+    assert publish.call_args.kwargs["event_type"].value == "mission.prelist_errata.v2"
+
+
+def test_prelist_errata_does_not_replace_new_with_cheaper_used(monkeypatch) -> None:
+    mission = SimpleNamespace(
+        id=uuid4(),
+        prelist_errata_sent=False,
+        prelist_lowest_amount=Decimal("200.00"),
+        prelist_lowest_currency="BRL",
+    )
+    store = SimpleNamespace(id=uuid4(), code="amazon")
+    previous = _prelist_candidate("200.00", store=store)
+    cheaper_used = _prelist_candidate(
+        "100.00", condition=OfferCondition.USED, store=store
+    )
+    session = _mock_async_session()
+    session.scalar.return_value = SimpleNamespace(id=uuid4())
+    monkeypatch.setattr(
+        "app.collection.orchestration._current_prelist_candidates",
+        AsyncMock(return_value=(cheaper_used,)),
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration._previous_prelist_best_by_store",
+        AsyncMock(
+            return_value={store.id: _prelist_commercial_key(previous)}
+        ),
+    )
+    publish = AsyncMock()
+    monkeypatch.setattr("app.collection.orchestration.publish_event_async", publish)
+
+    asyncio.run(_maybe_publish_prelist_errata(session, mission, NOW))
+
+    assert mission.prelist_errata_sent is False
+    publish.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------
@@ -2137,6 +2195,7 @@ def _observation(**overrides):
         fulfillment="loja",
         seller_kind=None,
         fulfillment_kind=None,
+        condition=OfferCondition.NEW,
         availability=Availability.AVAILABLE,
     )
     base.update(overrides)
@@ -2160,6 +2219,13 @@ def test_same_commercial_state_false_when_price_differs() -> None:
 def test_same_commercial_state_false_when_availability_differs() -> None:
     latest = _observation()
     item = _observation(availability=Availability.UNAVAILABLE)
+
+    assert _same_commercial_state(latest, item) is False
+
+
+def test_same_commercial_state_false_when_condition_differs() -> None:
+    latest = _observation(condition=OfferCondition.NEW)
+    item = _observation(condition=OfferCondition.USED)
 
     assert _same_commercial_state(latest, item) is False
 

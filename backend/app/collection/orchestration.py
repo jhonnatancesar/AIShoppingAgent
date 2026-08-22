@@ -28,6 +28,8 @@ from app.alerts import evaluate_price_alerts
 from app.collection.adapter import CollectionAdapter
 from app.collection.contracts import (
     CollectionRequest,
+    MarketplacePartyKind,
+    OfferCondition,
     ProductIdentityResolver,
     ResolvedProductIdentity,
 )
@@ -67,9 +69,11 @@ from app.events import (
     AvailabilityChangedPayload,
     CollectionCompletedPayload,
     CollectionFailedPayload,
+    Event,
     EventType,
-    MissionPrelistErrataPayload,
-    MissionPrelistReadyPayload,
+    MissionPrelistErrataV2Payload,
+    MissionPrelistReadyV2Payload,
+    PrelistOfferPayload,
 )
 from app.events.service import publish_event_async
 from app.missions.models import (
@@ -655,73 +659,62 @@ def _filter_deterministic_candidates(
 def _select_final_candidates(
     *, search_query: str, model: str | None, source_code: str, offers: tuple
 ) -> tuple:
-    """Seleciona candidatos finais antes de qualquer navegação de detalhe."""
+    """Seleciona um pool intermediário comum antes da IA e do detalhe.
+
+    `source_code` permanece no contrato do helper para compatibilidade dos
+    chamadores, mas nenhuma loja recebe regra comercial exclusiva aqui.
+    """
     survivors = tuple(
         item
         for item in offers
         if (model is None or _title_matches_model(model, item.raw_offer.title))
         and not _title_looks_like_bundle(search_query, item.raw_offer.title)
     )
-    if model is None:
-        survivors = _limit_generic_candidates(
-            survivors, limit=_GENERIC_SEARCH_CANDIDATE_LIMIT
-        )
-    if source_code == "amazon" and model is not None:
-        return _select_amazon_lowest_price(survivors)
-    return survivors
+    return _limit_intermediate_candidates(
+        survivors, limit=_PRELIST_INTERMEDIATE_CANDIDATE_LIMIT
+    )
 
 
-_GENERIC_SEARCH_CANDIDATE_LIMIT = 3
-"""TASK-082: nenhum número foi fixado durante a auditoria original --
-derivado por analogia do único precedente já existente no pipeline de
-coleta para "quantos candidatos merecem atenção determinística extra por
-loja": `availability_fallback_max_candidates` (default 3,
-`Settings`/`PlaywrightStoreProvider`, TASK-075). Mesma ordem de grandeza,
-mesmo espírito -- poucos candidatos, por loja, antes de qualquer chamada
-de IA."""
+_PRELIST_INTERMEDIATE_CANDIDATE_LIMIT = 8
+"""TASK-094: cinco saídas por loja mais três posições de diversidade.
+
+Evita voltar aos até 20 cards brutos/classificações por loja, mas não corta
+exatamente no top 5 antes de relevância e enriquecimento comercial.
+"""
+
+_CONDITION_RANK = {
+    OfferCondition.NEW: 0,
+    OfferCondition.REFURBISHED: 1,
+    OfferCondition.USED: 2,
+    OfferCondition.UNKNOWN: 3,
+}
+_SELLER_RANK = {
+    MarketplacePartyKind.PLATFORM: 0,
+    MarketplacePartyKind.MARKETPLACE_PARTNER: 1,
+    MarketplacePartyKind.UNKNOWN: 2,
+    None: 2,
+}
+_AVAILABILITY_RANK = {
+    Availability.AVAILABLE: 0,
+    Availability.UNKNOWN: 1,
+    Availability.UNAVAILABLE: 2,
+}
 
 
-def _limit_generic_candidates(offers: tuple, *, limit: int) -> tuple:
-    """TASK-082: reduz candidatos de uma busca GENÉRICA (`criteria.model
-    is None`) a, no máximo, `limit` por loja -- nunca chamada quando
-    `criteria.model` está preenchido (busca específica já reduzida pelo
-    filtro de modelo da TASK-075, comportamento preservado). Reaproveita
-    o mesmo princípio já comprovado por `_select_amazon_lowest_price`
-    (menor preço, desempate determinístico por external_id/URL),
-    generalizado para manter mais de um candidato -- aqui não há
-    identidade confirmada que justifique colapsar para um só vencedor."""
-    if len(offers) <= limit:
-        return offers
+def _limit_intermediate_candidates(offers: tuple, *, limit: int) -> tuple:
+    """Limita cedo sem reduzir o conjunto a preço absoluto."""
     ordered = sorted(
         offers,
         key=lambda item: (
+            _CONDITION_RANK[item.condition],
+            _SELLER_RANK[item.seller_kind],
+            _AVAILABILITY_RANK[item.availability],
             item.amount,
+            item.total_amount,
             item.raw_offer.external_id or item.raw_offer.url,
         ),
     )
     return tuple(ordered[:limit])
-
-
-def _select_amazon_lowest_price(offers: tuple) -> tuple:
-    """TASK-075: exclusivo da Amazon: só é chamada pelo chamador quando
-    `criteria.model` já confirmou identidade forte (gate obrigatório --
-    ver `_persist_phase_a`). Mantém só as ofertas no menor `amount`;
-    entre as empatadas, persiste/classifica só a vencedora do desempate
-    determinístico por `external_id` (ASIN) crescente -- as demais
-    empatadas não geram Offer/PriceObservation/relevância, para não
-    multiplicar chamada de IA por vendedores redundantes no mesmo preço."""
-    if not offers:
-        return offers
-    lowest = min(item.amount for item in offers)
-    tied = [item for item in offers if item.amount == lowest]
-    if len(tied) == 1:
-        return tuple(tied)
-    winner = min(
-        tied, key=lambda item: item.raw_offer.external_id or item.raw_offer.url
-    )
-    return (winner,)
-
-
 @dataclass(frozen=True, slots=True)
 class _PendingOffer:
     """Uma oferta já persistida na Fase A; o que falta decidir na Fase B."""
@@ -882,6 +875,7 @@ async def _persist_phase_a(
                     fulfillment=item.fulfillment,
                     seller_kind=item.seller_kind,
                     fulfillment_kind=item.fulfillment_kind,
+                    condition=item.condition,
                     availability=item.availability,
                     observed_at=item.raw_offer.collected_at,
                     raw_evidence=_raw_evidence(item.raw_offer),
@@ -1429,29 +1423,101 @@ async def _mission_relevance_pending(session: AsyncSession, mission_id: UUID) ->
     return bool(current_offer_ids - resolved_offer_ids)
 
 
-async def _latest_match_observations_by_store(
+_PRELIST_PER_STORE_LIMIT = 5
+_RELEVANCE_RANK = {
+    OfferRelevance.MATCH: 0,
+    OfferRelevance.POSSIBLE_MATCH: 1,
+    OfferRelevance.NO_MATCH: 2,
+}
+
+
+@dataclass(frozen=True, slots=True)
+class _PrelistCandidate:
+    relevance: OfferRelevance
+    observation: PriceObservation
+    offer: Offer
+    store: Store
+
+
+def _prelist_commercial_key(candidate: _PrelistCandidate) -> tuple[Any, ...]:
+    observation = candidate.observation
+    return (
+        _RELEVANCE_RANK[candidate.relevance],
+        _CONDITION_RANK[observation.condition],
+        _SELLER_RANK[observation.seller_kind],
+        _AVAILABILITY_RANK[observation.availability],
+        observation.amount,
+        observation.total_amount,
+        str(candidate.offer.id),
+    )
+
+
+def rank_prelist_candidates(
+    candidates: Sequence[_PrelistCandidate], *, limit: int = _PRELIST_PER_STORE_LIMIT
+) -> tuple[_PrelistCandidate, ...]:
+    """Ordenação comercial única, determinística e limitada por loja."""
+    ordered = sorted(
+        (item for item in candidates if item.relevance is not OfferRelevance.NO_MATCH),
+        key=lambda item: (item.store.code, *_prelist_commercial_key(item)),
+    )
+    counts: dict[UUID, int] = {}
+    selected: list[_PrelistCandidate] = []
+    for item in ordered:
+        count = counts.get(item.store.id, 0)
+        if count >= limit:
+            continue
+        counts[item.store.id] = count + 1
+        selected.append(item)
+    return tuple(selected)
+
+
+async def _current_prelist_candidates(
     session: AsyncSession, mission_id: UUID
-) -> list[PriceObservation]:
+) -> tuple[_PrelistCandidate, ...]:
+    """Última observação real de cada oferta confirmada na coleta atual da loja."""
     rows = (
         await session.execute(
-            select(PriceObservation, CollectionRun.store_id)
-            .join(CollectionRun, CollectionRun.id == PriceObservation.collection_run_id)
-            .join(
-                MissionOfferRelevance,
-                (MissionOfferRelevance.mission_id == CollectionRun.mission_id)
-                & (MissionOfferRelevance.offer_id == PriceObservation.offer_id),
-            )
-            .where(
-                CollectionRun.mission_id == mission_id,
-                MissionOfferRelevance.classification == OfferRelevance.MATCH,
-            )
+            select(MissionOfferRelevance, PriceObservation, Offer, Store)
+            .join(Offer, Offer.id == MissionOfferRelevance.offer_id)
+            .join(Store, Store.id == Offer.store_id)
+            .join(PriceObservation, PriceObservation.offer_id == Offer.id)
+            .where(MissionOfferRelevance.mission_id == mission_id)
             .order_by(PriceObservation.observed_at.desc(), PriceObservation.id.desc())
         )
     ).all()
-    best_per_store: dict[UUID, PriceObservation] = {}
-    for observation, store_id in rows:
-        best_per_store.setdefault(store_id, observation)
-    return list(best_per_store.values())
+    latest_by_offer: dict[UUID, _PrelistCandidate] = {}
+    for relevance, observation, offer, store in rows:
+        latest_by_offer.setdefault(
+            offer.id,
+            _PrelistCandidate(relevance.classification, observation, offer, store),
+        )
+    latest_seen_by_store: dict[UUID, datetime] = {}
+    for item in latest_by_offer.values():
+        current = latest_seen_by_store.get(item.store.id)
+        if current is None or item.offer.last_seen_at > current:
+            latest_seen_by_store[item.store.id] = item.offer.last_seen_at
+    current = [
+        item
+        for item in latest_by_offer.values()
+        if item.offer.last_seen_at == latest_seen_by_store[item.store.id]
+    ]
+    return rank_prelist_candidates(current)
+
+
+def _prelist_payload(item: _PrelistCandidate) -> PrelistOfferPayload:
+    observation = item.observation
+    return PrelistOfferPayload(
+        offer_id=item.offer.id,
+        observation_id=observation.id,
+        store_id=item.store.id,
+        amount=observation.amount,
+        total_amount=observation.total_amount,
+        currency=observation.currency,
+        relevance=item.relevance,
+        condition=observation.condition,
+        seller_kind=observation.seller_kind,
+        availability=observation.availability,
+    )
 
 
 async def _maybe_publish_prelist_ready(
@@ -1467,33 +1533,21 @@ async def _maybe_publish_prelist_ready(
     # coleta tenta de novo.
     if await _mission_relevance_pending(session, mission.id):
         return
-    candidates = sorted(
-        await _latest_match_observations_by_store(session, mission.id),
-        key=lambda observation: observation.amount,
-    )
+    candidates = await _current_prelist_candidates(session, mission.id)
     mission.prelist_sent = True
     if not candidates:
         return
-    top = candidates[:2]
-    first = top[0]
-    second = top[1] if len(top) > 1 else None
-    mission.prelist_lowest_amount = first.amount
-    mission.prelist_lowest_currency = first.currency
+    lowest = min(candidates, key=lambda item: item.observation.amount)
+    mission.prelist_lowest_amount = lowest.observation.amount
+    mission.prelist_lowest_currency = lowest.observation.currency
     await publish_event_async(
         session,
-        event_type=EventType.MISSION_PRELIST_READY_V1,
+        event_type=EventType.MISSION_PRELIST_READY_V2,
         aggregate_type=AggregateType.MISSION,
         aggregate_id=mission.id,
-        payload=MissionPrelistReadyPayload(
+        payload=MissionPrelistReadyV2Payload(
             mission_id=mission.id,
-            first_offer_id=first.offer_id,
-            first_observation_id=first.id,
-            first_amount=first.amount,
-            first_currency=first.currency,
-            second_offer_id=second.offer_id if second else None,
-            second_observation_id=second.id if second else None,
-            second_amount=second.amount if second else None,
-            second_currency=second.currency if second else None,
+            offers=tuple(_prelist_payload(item) for item in candidates),
         ),
         occurred_at=occurred_at,
         mission_id=mission.id,
@@ -1503,48 +1557,103 @@ async def _maybe_publish_prelist_ready(
 async def _maybe_publish_prelist_errata(
     session: AsyncSession, mission: Mission, occurred_at: datetime
 ) -> None:
-    query = (
-        select(PriceObservation)
-        .join(CollectionRun, CollectionRun.id == PriceObservation.collection_run_id)
-        .join(
-            MissionOfferRelevance,
-            (MissionOfferRelevance.mission_id == CollectionRun.mission_id)
-            & (MissionOfferRelevance.offer_id == PriceObservation.offer_id),
-        )
+    previous_event = await session.scalar(
+        select(Event)
         .where(
-            CollectionRun.mission_id == mission.id,
-            MissionOfferRelevance.classification == OfferRelevance.MATCH,
+            Event.mission_id == mission.id,
+            Event.event_type.in_(
+                {
+                    EventType.MISSION_PRELIST_READY_V1.value,
+                    EventType.MISSION_PRELIST_READY_V2.value,
+                }
+            ),
         )
+        .order_by(Event.occurred_at.desc(), Event.id.desc())
+        .limit(1)
     )
-    if mission.prelist_lowest_amount is not None:
-        query = query.where(
-            PriceObservation.currency == mission.prelist_lowest_currency,
-            PriceObservation.amount < mission.prelist_lowest_amount,
-        )
-    observation = await session.scalar(
-        query.order_by(
-            PriceObservation.amount.asc(), PriceObservation.observed_at.desc()
-        ).limit(1)
-    )
-    if observation is None:
+    if previous_event is None:
         return
+    candidates = await _current_prelist_candidates(session, mission.id)
+    by_store: dict[UUID, list[_PrelistCandidate]] = {}
+    for candidate in candidates:
+        by_store.setdefault(candidate.store.id, []).append(candidate)
+    previous = await _previous_prelist_best_by_store(session, previous_event)
+    improved = [
+        group
+        for store_id, group in by_store.items()
+        if store_id not in previous
+        or _prelist_commercial_key(group[0]) < previous[store_id]
+    ]
+    if not improved:
+        return
+    selected_group = min(
+        improved, key=lambda group: (group[0].store.code, _prelist_commercial_key(group[0]))
+    )
     mission.prelist_errata_sent = True
     await publish_event_async(
         session,
-        event_type=EventType.MISSION_PRELIST_ERRATA_V1,
+        event_type=EventType.MISSION_PRELIST_ERRATA_V2,
         aggregate_type=AggregateType.MISSION,
         aggregate_id=mission.id,
-        payload=MissionPrelistErrataPayload(
+        payload=MissionPrelistErrataV2Payload(
             mission_id=mission.id,
-            offer_id=observation.offer_id,
-            observation_id=observation.id,
-            current_amount=observation.amount,
-            currency=observation.currency,
-            previous_lowest_amount=mission.prelist_lowest_amount,
+            previous_event_id=previous_event.id,
+            corrected_store_id=selected_group[0].store.id,
+            offers=tuple(_prelist_payload(item) for item in selected_group),
         ),
         occurred_at=occurred_at,
         mission_id=mission.id,
     )
+
+
+async def _previous_prelist_best_by_store(
+    session: AsyncSession, event: Event
+) -> dict[UUID, tuple[Any, ...]]:
+    payload = event.payload
+    if not isinstance(payload, dict):
+        return {}
+    references: list[tuple[UUID, UUID]] = []
+    if event.event_type == EventType.MISSION_PRELIST_READY_V2.value:
+        items = payload.get("offers")
+        if not isinstance(items, list):
+            return {}
+        for item in items:
+            if isinstance(item, dict):
+                try:
+                    references.append(
+                        (UUID(str(item["offer_id"])), UUID(str(item["observation_id"])))
+                    )
+                except (KeyError, ValueError):
+                    continue
+    else:
+        for prefix in ("first", "second"):
+            if payload.get(f"{prefix}_offer_id") is None:
+                continue
+            try:
+                references.append(
+                    (
+                        UUID(str(payload[f"{prefix}_offer_id"])),
+                        UUID(str(payload[f"{prefix}_observation_id"])),
+                    )
+                )
+            except (KeyError, ValueError):
+                continue
+    result: dict[UUID, tuple[Any, ...]] = {}
+    for offer_id, observation_id in references:
+        offer = await session.get(Offer, offer_id)
+        observation = await session.get(PriceObservation, observation_id)
+        relevance = await session.get(MissionOfferRelevance, (event.mission_id, offer_id))
+        if offer is None or observation is None or relevance is None:
+            continue
+        store = await session.get(Store, offer.store_id)
+        if store is None:
+            continue
+        candidate = _PrelistCandidate(relevance.classification, observation, offer, store)
+        key = _prelist_commercial_key(candidate)
+        current = result.get(store.id)
+        if current is None or key < current:
+            result[store.id] = key
+    return result
 
 
 def _failure_code(error: Exception) -> str:
@@ -1632,6 +1741,7 @@ def _same_commercial_state(latest: PriceObservation, item: Any) -> bool:
         and latest.fulfillment == item.fulfillment
         and latest.seller_kind == item.seller_kind
         and latest.fulfillment_kind == item.fulfillment_kind
+        and latest.condition == item.condition
         and latest.availability == item.availability
     )
 
@@ -1668,6 +1778,7 @@ def _raw_evidence(raw_offer: Any) -> dict[str, Any]:
         "raw_shipping": _bounded(raw_offer.raw_shipping, 120),
         "raw_availability": _bounded(raw_offer.raw_availability, 120),
         "raw_fulfillment": _bounded(raw_offer.raw_fulfillment, 120),
+        "raw_condition": _bounded(raw_offer.raw_condition, 32),
         "provider_evidence": _sanitize_json(raw_offer.evidence),
     }
 

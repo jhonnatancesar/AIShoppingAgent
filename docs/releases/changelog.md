@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-08-22 — TASK-094: pré-lista com múltiplas ofertas relevantes por loja (DEV, aguardando revisão)
+
+- Removido o colapso da Amazon e adotado pool intermediário comum de até oito
+  candidatos por loja; seleção final de até cinco por relevância, condição,
+  vendedor, disponibilidade, preço/total e desempate estável.
+- Condição explícita passa da coleta ao histórico de `PriceObservation` pela
+  migration `20260822_0002`; ausência de evidência permanece `unknown` e a
+  deduplicação da TASK-093 considera o novo campo.
+- Novos eventos V2 carregam a coleção ordenada; renderização V1 foi preservada.
+  Telegram agrupa normalmente uma mensagem por loja e a errata usa a mesma
+  regra comercial da pré-lista inicial.
+- 16 testes focados aprovados; expectativas de integração atualizadas para V2,
+  mas não executadas. Sem pipeline completo, banco/scraping real,
+  commit, push, deploy ou acesso à produção nesta rodada.
+
 ## 2026-08-21 — Incidente: webhook do Telegram inacessível (Funnel "on" mas não registrado publicamente); healthcheck recriado para Windows
 
 - Usuário reportou bot sem responder, links não abrindo (erro de DNS no

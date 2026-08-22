@@ -9,7 +9,9 @@ from types import MappingProxyType
 from uuid import UUID
 
 from app.authentication.models import CredentialAction
+from app.collection.contracts import MarketplacePartyKind, OfferCondition
 from app.collection.normalization import Availability
+from app.collection.relevance import OfferRelevance
 from app.missions.models import MissionStatus
 
 
@@ -37,6 +39,8 @@ class EventType(StrEnum):
     AUTHENTICATION_SESSION_EXPIRED_V1 = "authentication.session_expired.v1"
     MISSION_PRELIST_READY_V1 = "mission.prelist_ready.v1"
     MISSION_PRELIST_ERRATA_V1 = "mission.prelist_errata.v1"
+    MISSION_PRELIST_READY_V2 = "mission.prelist_ready.v2"
+    MISSION_PRELIST_ERRATA_V2 = "mission.prelist_errata.v2"
 
 
 @dataclass(frozen=True, slots=True)
@@ -219,6 +223,79 @@ class MissionPrelistErrataPayload:
                 )
 
 
+@dataclass(frozen=True, slots=True)
+class PrelistOfferPayload:
+    """Snapshot mínimo e imutável de uma opção selecionada pela TASK-094."""
+
+    offer_id: UUID
+    observation_id: UUID
+    store_id: UUID
+    amount: Decimal
+    total_amount: Decimal
+    currency: str
+    relevance: OfferRelevance
+    condition: OfferCondition
+    seller_kind: MarketplacePartyKind | None
+    availability: Availability
+
+    def __post_init__(self) -> None:
+        _validate_money(self.amount, self.currency)
+        _validate_money(self.total_amount, self.currency)
+        if self.total_amount < self.amount:
+            raise EventCatalogError("total_amount must not be lower than amount")
+        if self.relevance not in {
+            OfferRelevance.MATCH,
+            OfferRelevance.POSSIBLE_MATCH,
+        }:
+            raise EventCatalogError("prelist offer must be relevant")
+        if not isinstance(self.condition, OfferCondition):
+            raise EventCatalogError("condition must use OfferCondition")
+        if self.seller_kind is not None and not isinstance(
+            self.seller_kind, MarketplacePartyKind
+        ):
+            raise EventCatalogError("seller_kind must use MarketplacePartyKind")
+        if not isinstance(self.availability, Availability):
+            raise EventCatalogError("availability must use Availability")
+
+
+def _validate_prelist_offers(
+    offers: tuple[PrelistOfferPayload, ...], *, one_store: UUID | None = None
+) -> None:
+    if not isinstance(offers, tuple) or not 1 <= len(offers) <= 20:
+        raise EventCatalogError("prelist must contain between 1 and 20 offers")
+    if any(not isinstance(item, PrelistOfferPayload) for item in offers):
+        raise EventCatalogError("prelist offers must use PrelistOfferPayload")
+    if len({item.offer_id for item in offers}) != len(offers):
+        raise EventCatalogError("prelist offers must be unique")
+    counts: dict[UUID, int] = {}
+    for item in offers:
+        counts[item.store_id] = counts.get(item.store_id, 0) + 1
+        if counts[item.store_id] > 5:
+            raise EventCatalogError("prelist allows at most five offers per store")
+        if one_store is not None and item.store_id != one_store:
+            raise EventCatalogError("errata offers must belong to corrected_store_id")
+
+
+@dataclass(frozen=True, slots=True)
+class MissionPrelistReadyV2Payload:
+    mission_id: UUID
+    offers: tuple[PrelistOfferPayload, ...]
+
+    def __post_init__(self) -> None:
+        _validate_prelist_offers(self.offers)
+
+
+@dataclass(frozen=True, slots=True)
+class MissionPrelistErrataV2Payload:
+    mission_id: UUID
+    previous_event_id: UUID
+    corrected_store_id: UUID
+    offers: tuple[PrelistOfferPayload, ...]
+
+    def __post_init__(self) -> None:
+        _validate_prelist_offers(self.offers, one_store=self.corrected_store_id)
+
+
 type EventPayload = (
     MissionStatusChangedPayload
     | CollectionCompletedPayload
@@ -230,6 +307,8 @@ type EventPayload = (
     | AuthenticationSessionPayload
     | MissionPrelistReadyPayload
     | MissionPrelistErrataPayload
+    | MissionPrelistReadyV2Payload
+    | MissionPrelistErrataV2Payload
 )
 
 
@@ -296,6 +375,16 @@ EVENT_CATALOG = MappingProxyType(
             EventType.MISSION_PRELIST_ERRATA_V1,
             AggregateType.MISSION,
             MissionPrelistErrataPayload,
+        ),
+        EventType.MISSION_PRELIST_READY_V2: EventSpec(
+            EventType.MISSION_PRELIST_READY_V2,
+            AggregateType.MISSION,
+            MissionPrelistReadyV2Payload,
+        ),
+        EventType.MISSION_PRELIST_ERRATA_V2: EventSpec(
+            EventType.MISSION_PRELIST_ERRATA_V2,
+            AggregateType.MISSION,
+            MissionPrelistErrataV2Payload,
         ),
     }
 )

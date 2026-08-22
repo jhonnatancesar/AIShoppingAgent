@@ -24,7 +24,11 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PostgreSQLUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.collection.contracts import InstallmentInterestKind, MarketplacePartyKind
+from app.collection.contracts import (
+    InstallmentInterestKind,
+    MarketplacePartyKind,
+    OfferCondition,
+)
 from app.collection.normalization import Availability
 from app.collection.relevance import OfferRelevance
 from app.database.base import Base
@@ -128,6 +132,10 @@ class PriceObservation(Base):
             "('platform', 'marketplace_partner', 'unknown')",
             name="ck_price_observations_fulfillment_kind_values",
         ),
+        CheckConstraint(
+            "condition IN ('new', 'refurbished', 'used', 'unknown')",
+            name="ck_price_observations_condition_values",
+        ),
         Index(
             "ix_price_observations_offer_observed",
             "offer_id",
@@ -183,6 +191,19 @@ class PriceObservation(Base):
             length=32,
         ),
         nullable=True,
+    )
+    condition: Mapped[OfferCondition] = mapped_column(
+        Enum(
+            OfferCondition,
+            name="offer_condition",
+            values_callable=lambda values: [value.value for value in values],
+            native_enum=False,
+            create_constraint=False,
+            length=16,
+        ),
+        nullable=False,
+        default=OfferCondition.UNKNOWN,
+        server_default=OfferCondition.UNKNOWN.value,
     )
     availability: Mapped[Availability] = mapped_column(
         Enum(

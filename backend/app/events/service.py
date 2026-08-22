@@ -137,6 +137,13 @@ def _serialize_payload(payload: EventPayload) -> dict[str, Any]:
 
 
 def _serialize_value(value: Any) -> Any:
+    if is_dataclass(value):
+        return {
+            field.name: _serialize_value(getattr(value, field.name))
+            for field in fields(value)
+        }
+    if isinstance(value, (tuple, list)):
+        return [_serialize_value(item) for item in value]
     if isinstance(value, UUID):
         return str(value)
     if isinstance(value, Decimal):

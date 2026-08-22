@@ -210,7 +210,7 @@ def test_orchestrator_isolates_source_failure_and_publishes_real_events(
             EventType.PRICE_TARGET_REACHED_V1.value,
             # TASK-068: os dois sources ficaram terminais nesta mesma rodada
             # (pichau sucesso, kabum bloqueado) -- a pré-lista dispara junto.
-            EventType.MISSION_PRELIST_READY_V1.value,
+            EventType.MISSION_PRELIST_READY_V2.value,
         }
         failed = session.scalar(
             select(Event).where(
@@ -683,17 +683,19 @@ def test_prelist_ready_fires_once_then_errata_corrects_a_cheaper_late_offer(
         ready_event = session.scalar(
             select(Event).where(
                 Event.mission_id == mission_id,
-                Event.event_type == EventType.MISSION_PRELIST_READY_V1.value,
+                Event.event_type == EventType.MISSION_PRELIST_READY_V2.value,
             )
         )
         assert ready_event is not None
-        assert Decimal(ready_event.payload["first_amount"]) == Decimal("1900.00")
-        # kabum falhou -- nenhuma segunda oferta para mostrar ainda.
-        assert ready_event.payload["second_offer_id"] is None
+        assert len(ready_event.payload["offers"]) == 1
+        assert Decimal(ready_event.payload["offers"][0]["amount"]) == Decimal(
+            "1900.00"
+        )
+        # kabum falhou -- nenhuma segunda loja para mostrar ainda.
         errata_before = session.scalar(
             select(func.count(Event.id)).where(
                 Event.mission_id == mission_id,
-                Event.event_type == EventType.MISSION_PRELIST_ERRATA_V1.value,
+                Event.event_type == EventType.MISSION_PRELIST_ERRATA_V2.value,
             )
         )
         assert errata_before == 0
@@ -729,14 +731,14 @@ def test_prelist_ready_fires_once_then_errata_corrects_a_cheaper_late_offer(
             session.scalars(
                 select(Event).where(
                     Event.mission_id == mission_id,
-                    Event.event_type == EventType.MISSION_PRELIST_ERRATA_V1.value,
+                    Event.event_type == EventType.MISSION_PRELIST_ERRATA_V2.value,
                 )
             )
         )
         assert len(errata_events) == 1
-        assert Decimal(errata_events[0].payload["current_amount"]) == Decimal("1500.00")
-        assert Decimal(errata_events[0].payload["previous_lowest_amount"]) == Decimal(
-            "1900.00"
+        assert len(errata_events[0].payload["offers"]) == 1
+        assert Decimal(errata_events[0].payload["offers"][0]["amount"]) == Decimal(
+            "1500.00"
         )
         assert errata_events[0].aggregate_id == mission_id
 
@@ -763,7 +765,7 @@ def test_prelist_ready_fires_once_then_errata_corrects_a_cheaper_late_offer(
         errata_count = session.scalar(
             select(func.count(Event.id)).where(
                 Event.mission_id == mission_id,
-                Event.event_type == EventType.MISSION_PRELIST_ERRATA_V1.value,
+                Event.event_type == EventType.MISSION_PRELIST_ERRATA_V2.value,
             )
         )
         assert errata_count == 1  # continua uma única correção, nunca duas
@@ -843,16 +845,24 @@ def test_prelist_ranks_by_product_amount_ignoring_shipping(
         ready_event = session.scalar(
             select(Event).where(
                 Event.mission_id == mission_id,
-                Event.event_type == EventType.MISSION_PRELIST_READY_V1.value,
+                Event.event_type == EventType.MISSION_PRELIST_READY_V2.value,
             )
         )
         assert ready_event is not None
-        assert Decimal(ready_event.payload["first_amount"]) == Decimal("1000.00")
-        assert Decimal(ready_event.payload["second_amount"]) == Decimal("1100.00")
+        offers_by_store = {
+            item["store_id"]: item for item in ready_event.payload["offers"]
+        }
+        assert {Decimal(item["amount"]) for item in offers_by_store.values()} == {
+            Decimal("1000.00"),
+            Decimal("1100.00"),
+        }
         pichau_offer_id = session.scalar(
             select(Offer.id).where(Offer.store_id == pichau_id)
         )
-        assert ready_event.payload["first_offer_id"] == str(pichau_offer_id)
+        assert any(
+            item["offer_id"] == str(pichau_offer_id)
+            for item in offers_by_store.values()
+        )
 
 
 def test_backfill_runs_old_active_mission_but_ignores_paused(
