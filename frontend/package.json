@@ -9,6 +9,7 @@
     "lint": "oxlint",
     "test:offer": "node tests/offer-detail-page.mjs",
     "test:search": "node tests/product-search-page.mjs",
+    "test:offers": "node tests/offers-list-page.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

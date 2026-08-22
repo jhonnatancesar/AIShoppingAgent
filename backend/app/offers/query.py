@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import exists, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.collection.models import (
@@ -45,6 +45,115 @@ class MissionOfferLink:
     offer: Offer
     product: Product
     store: Store
+
+
+@dataclass(frozen=True, slots=True)
+class UserOfferSummary:
+    offer: Offer
+    product: Product
+    store: Store
+    seller: Seller | None
+    observation: PriceObservation | None
+
+
+def _accessible_offer_exists(*, user_id: UUID):
+    return exists(
+        select(MissionOfferRelevance.offer_id)
+        .join(Mission, Mission.id == MissionOfferRelevance.mission_id)
+        .where(
+            MissionOfferRelevance.offer_id == Offer.id,
+            Mission.user_id == user_id,
+            MissionOfferRelevance.classification.in_(_ACCESSIBLE_RELEVANCE),
+        )
+    )
+
+
+def user_offers_statement(
+    *,
+    user_id: UUID,
+    search: str | None = None,
+    store_code: str | None = None,
+    condition: str | None = None,
+    availability: str | None = None,
+    sort: str = "recent",
+):
+    """Lista Offers únicas acessíveis; NO_MATCH/missão alheia falham fechados."""
+    latest_observation_id = (
+        select(PriceObservation.id)
+        .where(PriceObservation.offer_id == Offer.id)
+        .order_by(PriceObservation.observed_at.desc(), PriceObservation.id.desc())
+        .limit(1)
+        .correlate(Offer)
+        .scalar_subquery()
+    )
+    statement = (
+        select(Offer, Product, Store, Seller, PriceObservation)
+        .join(Product, Product.id == Offer.product_id)
+        .join(Store, Store.id == Offer.store_id)
+        .outerjoin(Seller, Seller.id == Offer.seller_id)
+        .outerjoin(PriceObservation, PriceObservation.id == latest_observation_id)
+        .where(_accessible_offer_exists(user_id=user_id))
+    )
+    if search:
+        statement = statement.where(
+            func.lower(func.coalesce(Product.display_name, Product.name)).contains(
+                search.strip().lower()
+            )
+        )
+    if store_code:
+        statement = statement.where(Store.code == store_code)
+    if condition:
+        statement = statement.where(PriceObservation.condition == condition)
+    if availability:
+        statement = statement.where(PriceObservation.availability == availability)
+    if sort == "price_asc":
+        statement = statement.order_by(
+            PriceObservation.total_amount.asc().nulls_last(), Offer.id
+        )
+    elif sort == "price_desc":
+        statement = statement.order_by(
+            PriceObservation.total_amount.desc().nulls_last(), Offer.id
+        )
+    else:
+        statement = statement.order_by(Offer.last_seen_at.desc(), Offer.id)
+    return statement
+
+
+async def list_user_offers(
+    session: AsyncSession,
+    *,
+    user_id: UUID,
+    search: str | None,
+    store_code: str | None,
+    condition: str | None,
+    availability: str | None,
+    sort: str,
+    limit: int,
+    offset: int,
+) -> tuple[tuple[UserOfferSummary, ...], int]:
+    base = user_offers_statement(
+        user_id=user_id,
+        search=search,
+        store_code=store_code,
+        condition=condition,
+        availability=availability,
+        sort=sort,
+    )
+    total = await session.scalar(select(func.count()).select_from(base.order_by(None).subquery()))
+    rows = (await session.execute(base.limit(limit).offset(offset))).all()
+    return (
+        tuple(
+            UserOfferSummary(
+                offer=offer,
+                product=product,
+                store=store,
+                seller=seller,
+                observation=observation,
+            )
+            for offer, product, store, seller, observation in rows
+        ),
+        int(total or 0),
+    )
 
 
 def offer_for_user_statement(*, offer_id: UUID, user_id: UUID):

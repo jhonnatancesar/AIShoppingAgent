@@ -148,6 +148,35 @@ export interface OfferDetail {
   latest_observation: LatestOfferObservation | null
 }
 
+export interface OfferSummary {
+  id: string
+  title: string
+  image_url: string | null
+  last_seen_at: string
+  store: { code: string; name: string }
+  seller: { name: string } | null
+  rating: {
+    average: string
+    review_count: number
+    observed_at: string
+  } | null
+  latest_observation: {
+    amount: string
+    total_amount: string
+    currency: string
+    condition: OfferCondition
+    availability: OfferAvailability
+    observed_at: string
+  } | null
+}
+
+export interface OfferListResponse {
+  items: OfferSummary[]
+  limit: number
+  offset: number
+  total: number
+}
+
 export interface ProductSearchOffer {
   offer_id: string
   product_id: string

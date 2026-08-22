@@ -1,6 +1,13 @@
 # Project Context
 
-**Atualização 2026-08-22 (TASK-099 implementada no DEV, aguardando revisão):**
+**Atualização 2026-08-22 (TASK-100 implementada no DEV, aguardando revisão):**
+`/app/offers` lista Offers únicas acessíveis por relevância ligada às missões do
+USER. O endpoint usa `EXISTS` fail-closed, aceita somente `MATCH`/
+`POSSIBLE_MATCH`, pagina e filtra sobre a última PriceObservation. Sem
+migration, coleta, IA, tabela paralela ou mistura de produtos. TASK-099 foi
+aprovada e publicada em `origin/main` (`e9610c3`), sem deploy.
+
+**Atualização 2026-08-22 (TASK-099 concluída, aprovada e publicada):**
 pesquisa autenticada em `/app/search` é read-only sobre ofertas persistidas e
 nunca cria missão/coleta. `SPECIFIC_PRODUCT`, `PRODUCT_FAMILY` e
 `GENERIC_CATEGORY` seguem a TASK-097; somente “Monitorar” reutiliza a criação de

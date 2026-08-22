@@ -110,11 +110,16 @@ Nunca iniciar automaticamente a próxima TASK. Encerrar apresentando resumo da i
 
 ## Estado atual
 
+**Atualização DEV 2026-08-22:** a TASK-100 implementa `/app/offers`, listagem
+USER paginada e fail-closed por relevância das próprias missões. Usa a última
+observação, deduplica Offer com `EXISTS` e aguarda revisão, sem deploy. A
+TASK-099 foi aprovada e publicada em `origin/main` (`e9610c3`).
+
 **Atualização DEV 2026-08-22:** a TASK-099 implementa a pesquisa de produtos
 pela Web como consulta read-only do catálogo persistido. Pesquisar nunca cria
 missão ou coleta; somente “Monitorar” reutiliza o endpoint/service de criação.
-Os três fluxos da TASK-097 são preservados, sem migration ou scraper. Aguarda
-revisão, sem deploy.
+Os três fluxos da TASK-097 são preservados, sem migration ou scraper. Foi
+aprovada e publicada em `origin/main` (`e9610c3`), sem deploy.
 
 **Atualização DEV 2026-08-22:** a TASK-097 está concluída, aprovada e publicada
 em `origin/main` (`eeb2f4a`), sem deploy. A TASK-098 permanece reservada para o

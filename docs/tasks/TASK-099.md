@@ -1,6 +1,7 @@
 # TASK-099 — Pesquisa de produtos pela Web
 
-Status: **Implementada no DEV, aguardando revisão.**
+Status: **Concluída, aprovada e publicada em `origin/main` em 2026-08-22
+(`e9610c3`).**
 
 ## Objetivo
 

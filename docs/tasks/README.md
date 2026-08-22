@@ -1,8 +1,12 @@
 # Tarefas
 
-**TASK-099 implementada no DEV e aguardando revisão:** pesquisa autenticada em
+**TASK-100 implementada no DEV e aguardando revisão:** listagem geral USER de
+Offers acessíveis, paginada, filtrável e deduplicada entre missões. Ver
+`docs/tasks/TASK-100.md` e `DEC-084`.
+
+**TASK-099 concluída, aprovada e publicada:** pesquisa autenticada em
 `/app/search`, read-only até a ação explícita “Monitorar”, preservando os três
-fluxos de identidade da TASK-097. Ver `docs/tasks/TASK-099.md` e
+fluxos de identidade da TASK-097, commit `e9610c3`. Ver `docs/tasks/TASK-099.md` e
 `DEC-083`.
 
 **TASK-098 formalizada e reservada:** histórico e gráficos exclusivamente por

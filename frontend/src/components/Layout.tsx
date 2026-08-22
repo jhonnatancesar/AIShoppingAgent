@@ -1,6 +1,6 @@
 import { useState, type ComponentType } from 'react'
 import { motion } from 'motion/react'
-import { Bot, Home, LogOut, Menu, Search, ShieldCheck, Target, X } from 'lucide-react'
+import { Bot, Home, LogOut, Menu, Search, ShieldCheck, ShoppingBag, Target, X } from 'lucide-react'
 import { NavLink, Outlet } from 'react-router-dom'
 import { useAuth } from '@/auth/AuthContext'
 import { Badge } from '@/components/ui/badge'
@@ -13,6 +13,7 @@ interface NavItem { to: string; label: string; icon: ComponentType<{ className?:
 const USER_NAV: NavItem[] = [
   { to: '/app', label: 'Início', icon: Home, end: true },
   { to: '/app/search', label: 'Pesquisar', icon: Search },
+  { to: '/app/offers', label: 'Ofertas', icon: ShoppingBag },
   { to: '/app/missions', label: 'Missões', icon: Target },
 ]
 

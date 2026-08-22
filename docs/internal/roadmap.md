@@ -35,7 +35,8 @@
 | Avaliações por oferta/loja | TASK-096 | Concluída, aprovada e publicada em `origin/main` (`fd5a6f9`); snapshot explícito na Offer, página USER e Telegram (`DEC-078`) |
 | Identidade global de produto/variante | TASK-097 | Concluída, aprovada e publicada em `origin/main` (`eeb2f4a`); equivalência fail-closed e escolha determinística de variantes (`DEC-079`) |
 | Pesquisa de produtos pela Web | TASK-099 | Implementada no DEV; pesquisa read-only, três fluxos da TASK-097 e missão somente após “Monitorar” (`DEC-083`) |
-| Área USER restante | Tarefas a definir | Ofertas e minha conta, itens 9 e 10 (`DEC-082`) |
+| Área USER — ofertas | TASK-100 | Implementada no DEV; listagem paginada, fail-closed e sem duplicação entre missões (`DEC-084`) |
+| Área USER — minha conta | Próxima TASK a formalizar | Item 10 da V1.2 (`DEC-082`) |
 | Área DEV/ADMIN | Tarefas a definir | Dashboard, administração de dados e controles, itens 11 a 13 (`DEC-082`) |
 | Comparação entre lojas | Tarefa a definir | Adiada para depois do bloco Web, item 14 (`DEC-082`) |
 | Histórico e gráficos por produto/variante | TASK-098 | Formalizada e reservada como último item da V1.2 (`DEC-081`/`DEC-082`) |
@@ -347,7 +348,8 @@ frete/parcelamento autenticado e ofertas em lives foram movidos para a V2;
 os itens de e-mail
 (opt-in no cadastro e notificações por e-mail) saíram da V1.2 e foram
 movidos para a V2 (`docs/internal/backlog.md`). Estado atual: itens 1 a 7
-concluídos e publicados no DEV; item 8 foi implementado como TASK-099 e
-aguarda revisão; a área geral USER de ofertas é o próximo item. Comparação ficou no item 14 e
+concluídos e publicados no DEV; TASK-099 foi aprovada/publicada e o item 9 foi
+implementado como TASK-100, aguardando revisão. Minha conta é o próximo item.
+Comparação ficou no item 14 e
 TASK-098 permanece reservada como item 18.)
 → V2.

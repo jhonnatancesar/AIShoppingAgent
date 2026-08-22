@@ -1,10 +1,10 @@
 """Detalhe de oferta da área USER (TASK-095)."""
 
 from decimal import Decimal
-from typing import NoReturn
+from typing import Annotated, Literal, NoReturn
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -22,7 +22,12 @@ from app.collection.contracts import (
 from app.collection.normalization import Availability
 from app.core.errors import ApiError
 from app.database.dependency import get_web_async_session
-from app.offers.query import UserOfferDetail, get_offer_detail_for_user
+from app.offers.query import (
+    UserOfferDetail,
+    UserOfferSummary,
+    get_offer_detail_for_user,
+    list_user_offers,
+)
 from app.users.models import User
 from app.webapp.dependency import require_web_session
 
@@ -77,6 +82,33 @@ class OfferDetailResponse(BaseModel):
     seller: SellerOut | None
     rating: OfferRatingOut | None
     latest_observation: LatestOfferObservationOut | None
+
+
+class OfferSummaryObservationOut(BaseModel):
+    amount: Decimal
+    total_amount: Decimal
+    currency: str
+    condition: OfferCondition
+    availability: Availability
+    observed_at: str
+
+
+class OfferSummaryOut(BaseModel):
+    id: UUID
+    title: str
+    image_url: str | None
+    last_seen_at: str
+    store: StoreOut
+    seller: SellerOut | None
+    rating: OfferRatingOut | None
+    latest_observation: OfferSummaryObservationOut | None
+
+
+class OfferListResponse(BaseModel):
+    items: list[OfferSummaryOut]
+    limit: int
+    offset: int
+    total: int
 
 
 async def _deny_offer_unavailable(
@@ -148,6 +180,85 @@ def _as_response(detail: UserOfferDetail) -> OfferDetailResponse:
             if observation is not None
             else None
         ),
+    )
+
+
+def _as_summary(detail: UserOfferSummary) -> OfferSummaryOut:
+    observation = detail.observation
+    return OfferSummaryOut(
+        id=detail.offer.id,
+        title=detail.product.display_name or detail.product.name,
+        image_url=detail.offer.image_url,
+        last_seen_at=detail.offer.last_seen_at.isoformat(),
+        store=StoreOut(code=detail.store.code, name=detail.store.name),
+        seller=SellerOut(name=detail.seller.name) if detail.seller else None,
+        rating=(
+            OfferRatingOut(
+                average=detail.offer.rating_average,
+                review_count=detail.offer.review_count,
+                observed_at=detail.offer.rating_observed_at.isoformat(),
+            )
+            if detail.offer.rating_average is not None
+            and detail.offer.review_count is not None
+            and detail.offer.rating_observed_at is not None
+            else None
+        ),
+        latest_observation=(
+            OfferSummaryObservationOut(
+                amount=observation.amount,
+                total_amount=observation.total_amount,
+                currency=observation.currency,
+                condition=observation.condition,
+                availability=observation.availability,
+                observed_at=observation.observed_at.isoformat(),
+            )
+            if observation is not None
+            else None
+        ),
+    )
+
+
+@router.get(
+    "",
+    operation_id="list_user_offers",
+    summary="Listar ofertas relevantes acessíveis ao usuário",
+)
+async def list_offers(
+    q: Annotated[str | None, Query(min_length=1, max_length=200)] = None,
+    store: Annotated[str | None, Query(min_length=1, max_length=64)] = None,
+    condition: OfferCondition | None = None,
+    availability: Availability | None = None,
+    sort: Literal["recent", "price_asc", "price_desc"] = "recent",
+    limit: Annotated[int, Query(ge=1, le=100)] = 24,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    user: User = Depends(require_web_session),
+    session: AsyncSession = Depends(get_web_async_session),
+) -> OfferListResponse:
+    try:
+        authorize(session, user, Permission.MISSION_READ)
+    except AuthorizationDenied as error:
+        await session.commit()
+        raise ApiError(
+            status_code=status.HTTP_403_FORBIDDEN,
+            code="offer_list_access_denied",
+            message="Você não tem acesso às ofertas.",
+        ) from error
+    items, total = await list_user_offers(
+        session,
+        user_id=user.id,
+        search=q,
+        store_code=store,
+        condition=condition.value if condition else None,
+        availability=availability.value if availability else None,
+        sort=sort,
+        limit=limit,
+        offset=offset,
+    )
+    return OfferListResponse(
+        items=[_as_summary(item) for item in items],
+        limit=limit,
+        offset=offset,
+        total=total,
     )
 
 

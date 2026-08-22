@@ -1,5 +1,18 @@
 # Decision Log
 
+## DEC-084 — Área USER de ofertas usa EXISTS sobre relevância do proprietário
+
+- **Data:** 2026-08-22.
+- **Classificação:** implementar agora, como TASK-100 e item 9 da V1.2.
+- **Decisão:** `/app/offers` lista Offers já acessíveis ao USER por
+  `MissionOfferRelevance → Mission.user_id`, aceitando somente `MATCH` e
+  `POSSIBLE_MATCH`. A consulta usa `EXISTS`, não join de saída, para uma Offer
+  ligada a várias missões aparecer uma única vez.
+- **Estado comercial:** filtros e cards usam somente a última
+  `PriceObservation` da própria Offer. Ordenação/paginação são determinísticas.
+- **Sem expansão:** nenhuma coleta, tabela, migration, IA, comparação ou
+  agregação global de produto. O detalhe continua sendo a TASK-095.
+
 ## DEC-083 — Pesquisa Web read-only; missão somente após “Monitorar”
 
 - **Data:** 2026-08-22.

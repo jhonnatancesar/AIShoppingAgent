@@ -1,6 +1,15 @@
 # Changelog
 
-## 2026-08-22 — TASK-099: pesquisa de produtos pela Web (DEV, aguardando revisão)
+## 2026-08-22 — TASK-100: área USER de ofertas (DEV, aguardando revisão)
+
+- Nova rota `/app/offers` e endpoint USER paginado com filtros de texto, loja,
+  condição, disponibilidade e ordenação.
+- Ownership fail-closed por relevância da missão do próprio usuário; `EXISTS`
+  evita duplicar uma Offer entre missões e `NO_MATCH` nunca entra.
+- Cards usam a última observação e levam ao detalhe da TASK-095, sem migration,
+  coleta, IA ou tabela paralela.
+
+## 2026-08-22 — TASK-099: pesquisa de produtos pela Web (concluída e aprovada)
 
 - Nova pesquisa autenticada em `/app/search`, com seleção de lojas, resultado
   assíncrono, escolha de variantes e cards que levam ao detalhe da oferta.
@@ -10,6 +19,7 @@
 - Fundação Web comum adicionada antes da TASK: Tailwind, primitives shadcn/
   Radix, Motion, Lucide e Recharts preparado, com tokens light/dark e AppShell
   responsivo.
+- Publicada em `origin/main` no commit `e9610c3`, sem deploy.
 
 ## 2026-08-22 — TASK-097: identidade global de produto/variante (concluída e aprovada)
 

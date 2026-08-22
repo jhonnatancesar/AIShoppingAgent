@@ -1,6 +1,23 @@
 import { api } from './client'
-import type { OfferDetail } from './types'
+import type { OfferDetail, OfferListResponse } from './types'
+
+export interface OfferListFilters {
+  q?: string
+  store?: string
+  condition?: string
+  availability?: string
+  sort?: 'recent' | 'price_asc' | 'price_desc'
+  limit?: number
+  offset?: number
+}
 
 export const offersApi = {
+  list: (filters: OfferListFilters = {}) => {
+    const params = new URLSearchParams()
+    Object.entries(filters).forEach(([key, value]) => {
+      if (value !== undefined && value !== '') params.set(key, String(value))
+    })
+    return api.get<OfferListResponse>(`/offers?${params.toString()}`)
+  },
   get: (offerId: string) => api.get<OfferDetail>(`/offers/${offerId}`),
 }
