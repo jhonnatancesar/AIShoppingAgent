@@ -13,6 +13,7 @@ from .observability.metrics import metrics_router
 from .observability.tracing import configure_tracing
 from .offers.router import router as offers_router
 from .telegram.router import router as telegram_router
+from .webapp.missions_router import router as webapp_missions_router
 from .webapp.router import router as webapp_router
 from .webapp.spa import register_spa
 
@@ -38,6 +39,7 @@ app.include_router(authentication_router)
 app.include_router(offers_router)
 app.include_router(telegram_router)
 app.include_router(webapp_router)
+app.include_router(webapp_missions_router)
 # TASK-091: catch-all client-side de /app e /admin -- deve ser o último
 # registrado, para nunca sombrear nenhuma rota de API acima.
 register_spa(app, settings)

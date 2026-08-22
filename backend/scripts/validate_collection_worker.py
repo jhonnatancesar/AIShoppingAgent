@@ -35,6 +35,7 @@ def seed() -> None:
                 target_currency=None,
                 source_codes=(),
                 requested_at=datetime.now(UTC),
+                actor_type="task_validation",
             )
             print(f"seeded mission with {len(sources)} sources")
             if len(sources) != 4 or mission.status.value != "active":

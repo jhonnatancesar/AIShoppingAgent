@@ -149,3 +149,188 @@ a {
   max-width: 60rem;
   margin: 0 auto;
 }
+
+/* Missões (TASK-092) */
+
+.page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.button {
+  display: inline-block;
+  padding: 0.6rem 1rem;
+  border-radius: 0.5rem;
+  border: 1px solid var(--border);
+  background: var(--accent);
+  color: #07101e;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.button-secondary {
+  background: transparent;
+  color: inherit;
+}
+
+.button-danger {
+  background: var(--danger);
+  color: #1a0505;
+}
+
+.button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  margin-bottom: 1rem;
+}
+
+.field input,
+.field select,
+.field textarea {
+  padding: 0.6rem;
+  border-radius: 0.5rem;
+  border: 1px solid var(--border);
+  background: #0f1629;
+  color: inherit;
+}
+
+.field-hint {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.field-row {
+  display: flex;
+  gap: 1rem;
+}
+
+.field-row .field {
+  flex: 1;
+}
+
+.checkbox-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.8rem;
+}
+
+.checkbox-group label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.mission-filter {
+  margin-bottom: 1rem;
+}
+
+.mission-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.mission-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 0.6rem;
+  background: var(--panel);
+  text-decoration: none;
+  color: inherit;
+}
+
+.mission-card:hover {
+  border-color: var(--accent);
+}
+
+.status-badge {
+  font-size: 0.75rem;
+  padding: 0.2rem 0.6rem;
+  border-radius: 999px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.status-active {
+  background: #1f4d2e;
+  color: #7bf0a0;
+}
+
+.status-paused {
+  background: #4d3f1f;
+  color: #f0c97b;
+}
+
+.status-cancelled,
+.status-expired {
+  background: #4d1f1f;
+  color: #f07b7b;
+}
+
+.status-completed {
+  background: #1f2f4d;
+  color: #7bb0f0;
+}
+
+.status-draft {
+  background: #2c2c2c;
+  color: #bbb;
+}
+
+.mission-actions {
+  display: flex;
+  gap: 0.6rem;
+  margin-top: 1.5rem;
+  flex-wrap: wrap;
+}
+
+.mission-section {
+  margin-top: 1.5rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--border);
+}
+
+.mission-section h2 {
+  font-size: 1rem;
+  margin-bottom: 0.8rem;
+}
+
+.transition-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 0.9rem;
+  color: var(--muted);
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.form-error {
+  color: var(--danger);
+  margin: 0.4rem 0;
+}
+
+.empty-state {
+  padding: 2rem;
+  text-align: center;
+  color: var(--muted);
+  border: 1px dashed var(--border);
+  border-radius: 0.6rem;
+}

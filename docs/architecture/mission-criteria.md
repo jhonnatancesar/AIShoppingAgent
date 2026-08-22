@@ -30,9 +30,20 @@ criada são editáveis de verdade via `edit_mission_criteria`
 automaticamente ao receber um pedido de edição); depois de editada, a missão
 permanece `PAUSED` e só volta a coletar quando o usuário a retomar. A edição
 pode limpar o preço-alvo (par `NULL`/`NULL`) ou trocar as fontes, mas nunca
-`search_query`/`title`, nunca `status`/`state_version`, e nunca a agenda
-(`MissionSchedule`). `updated_at` é tocado a cada edição e não substitui a
-auditoria das ações relevantes.
+`search_query`/`title`, nunca `status`, e nunca a agenda (`MissionSchedule`).
+`updated_at` é tocado a cada edição e não substitui a auditoria das ações
+relevantes.
+
+**`state_version` (corrigido por `DEC-075`, TASK-092):** toda edição
+bem-sucedida também incrementa `state_version`, exatamente como uma
+transição de `transition_mission(_async)` -- este documento antes afirmava
+o oposto ("nunca `state_version`"), o que descrevia uma proteção
+incompleta: a função já exigia e conferia `expected_state_version` como
+pré-condição, mas nunca avançava o contador em caso de sucesso, então duas
+edições concorrentes baseadas na mesma versão passavam as duas pela
+checagem e a segunda sobrescrevia a primeira em silêncio sempre que
+tocassem o mesmo campo. `state_version` representa a versão concorrente da
+missão inteira (lifecycle **e** critérios), não só do lifecycle.
 
 As fontes de busca são relações tipadas em `mission_sources`, não filtros JSONB.
 Uma missão pode selecionar Pichau, Terabyte, Amazon e/ou Kabum; ativação e

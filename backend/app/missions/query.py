@@ -1,14 +1,25 @@
 """Consultas somente leitura de missões por proprietário.
 
-Assíncrono desde a extensão da TASK-079 (webhook Telegram) -- único
-chamador é `app.telegram.router`, então não há versão síncrona a manter."""
+Assíncrono desde a extensão da TASK-079 (webhook Telegram) -- chamadores
+são `app.telegram.router` e, desde a TASK-092, `app.webapp.missions_router`,
+então não há versão síncrona a manter."""
 
+from collections.abc import Collection
+from dataclasses import dataclass
 from uuid import UUID
 
-from sqlalchemy import case, select
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.missions.models import Mission, MissionCriteria, MissionStatus
+from app.missions.models import (
+    Mission,
+    MissionCriteria,
+    MissionSchedule,
+    MissionSource,
+    MissionStatus,
+    MissionTransition,
+)
+from app.stores.models import Store
 
 _TERMINAL_STATUSES = frozenset(
     {MissionStatus.COMPLETED, MissionStatus.CANCELLED, MissionStatus.EXPIRED}
@@ -147,3 +158,129 @@ async def list_mission_command_candidates(
     sem levantar erro de ambiguidade -- usado quando o chamador oferece
     seleção numerada em vez do erro "seja mais específico"."""
     return await _candidates_for_command(session, user_id=user_id, reference=reference)
+
+
+async def list_missions_for_user_by_status(
+    session: AsyncSession,
+    *,
+    user_id: UUID,
+    statuses: Collection[MissionStatus] | None,
+    limit: int,
+    offset: int,
+) -> list[Mission]:
+    """Lista missões do usuário por conjunto de status (TASK-092, tela web
+    de missões). `statuses=None` lista todas, sem filtro -- distinto de
+    `list_visible_missions_for_user` (Telegram), que sempre exclui
+    `completed`/`expired` e usa uma ordem de prioridade por status; aqui a
+    ordenação é `updated_at` decrescente (mais recentemente alterada
+    primeiro -- pausar/retomar/editar/cancelar sobem a missão na lista, não
+    só criar), com `id` decrescente como desempate determinístico (mesmo
+    `updated_at` é possível em timestamps colididos), estável sob
+    paginação por `offset` (DEC-075, correção de 2026-08-22)."""
+    statement = select(Mission).where(Mission.user_id == user_id)
+    if statuses is not None:
+        statement = statement.where(Mission.status.in_(statuses))
+    statement = (
+        statement.order_by(Mission.updated_at.desc(), Mission.id.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    return list(await session.scalars(statement))
+
+
+async def count_missions_for_user_by_status(
+    session: AsyncSession,
+    *,
+    user_id: UUID,
+    statuses: Collection[MissionStatus] | None,
+) -> int:
+    """Total de missões do usuário sob o mesmo filtro de
+    `list_missions_for_user_by_status`, para o `total` do envelope de
+    coleção (`docs/development/api-conventions.md`)."""
+    statement = select(func.count(Mission.id)).where(Mission.user_id == user_id)
+    if statuses is not None:
+        statement = statement.where(Mission.status.in_(statuses))
+    return await session.scalar(statement) or 0
+
+
+@dataclass(frozen=True)
+class MissionDetail:
+    """Composição somente leitura de missão + critério + fontes + agenda +
+    histórico de transições (TASK-092) -- `app.missions.models` não
+    declara `relationship()` nenhum (todo acesso é via `select` explícito,
+    convenção já estabelecida no domínio), então esta função monta a
+    mesma composição que `app.telegram.router` já monta em memória, só que
+    num único lugar reutilizável pela tela de detalhe da web."""
+
+    mission: Mission
+    criteria: MissionCriteria | None
+    sources: list[tuple[MissionSource, Store]]
+    schedule: MissionSchedule | None
+    transitions: list[MissionTransition]
+
+
+async def get_mission_for_user(
+    session: AsyncSession, *, user_id: UUID, mission_id: UUID
+) -> Mission | None:
+    """Primitivo de posse reutilizável por qualquer canal (TASK-092,
+    auditoria de 2026-08-22, `DEC-075`) -- `None` se a missão não existir
+    ou não pertencer a `user_id`, nunca distingue os dois casos (evita
+    enumeração de recurso). Antes desta função, cada chamador (Telegram,
+    e o próprio router web) repetia `session.get(Mission, id)` +
+    `mission.user_id == user_id` -- centralizado aqui para que a regra de
+    posse tenha uma única fonte de verdade, reutilizável por Web,
+    Telegram e futuros clientes. Os call sites já existentes do Telegram
+    não foram migrados nesta TASK (fora de escopo -- código já validado
+    em produção, sem necessidade funcional de tocar); a função existe
+    para uso imediato pela web e para migração futura sem duplicar a
+    regra de novo."""
+    mission = await session.get(Mission, mission_id)
+    if mission is None or mission.user_id != user_id:
+        return None
+    return mission
+
+
+async def get_mission_detail_for_user(
+    session: AsyncSession,
+    *,
+    user_id: UUID,
+    mission_id: UUID,
+    transitions_limit: int = 20,
+) -> MissionDetail | None:
+    """`None` se a missão não existir ou não pertencer a `user_id` --
+    nunca distingue os dois casos (mesma convenção de posse já usada em
+    todo o domínio, evita enumeração)."""
+    mission = await session.scalar(
+        select(Mission).where(Mission.id == mission_id, Mission.user_id == user_id)
+    )
+    if mission is None:
+        return None
+    criteria = await session.scalar(
+        select(MissionCriteria).where(MissionCriteria.mission_id == mission_id)
+    )
+    sources_result = await session.execute(
+        select(MissionSource, Store)
+        .join(Store, Store.id == MissionSource.store_id)
+        .where(MissionSource.mission_id == mission_id)
+        .order_by(Store.code)
+    )
+    schedule = await session.scalar(
+        select(MissionSchedule).where(MissionSchedule.mission_id == mission_id)
+    )
+    transitions = list(
+        await session.scalars(
+            select(MissionTransition)
+            .where(MissionTransition.mission_id == mission_id)
+            .order_by(
+                MissionTransition.transitioned_at.desc(), MissionTransition.id.desc()
+            )
+            .limit(transitions_limit)
+        )
+    )
+    return MissionDetail(
+        mission=mission,
+        criteria=criteria,
+        sources=[(source, store) for source, store in sources_result.all()],
+        schedule=schedule,
+        transitions=transitions,
+    )

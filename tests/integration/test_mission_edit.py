@@ -78,7 +78,9 @@ def test_edit_updates_target_and_sources_together_and_preserves_history(
         edited_at=datetime.now(UTC),
     )
     assert mission.status is MissionStatus.PAUSED  # nunca muda status
-    assert mission.state_version == version  # edição não é transição
+    # DEC-075 (TASK-092): edição bem-sucedida incrementa state_version --
+    # não é uma transição de lifecycle, mas é uma mudança concorrente real.
+    assert mission.state_version == version + 1
 
     assert set(effective_codes) == {"pichau", "terabyte"}
     with integration_database.sessions.begin() as session:
@@ -99,7 +101,7 @@ def test_edit_updates_target_and_sources_together_and_preserves_history(
 
         mission = session.get(Mission, mission_id)
         assert mission.status is MissionStatus.PAUSED
-        assert mission.state_version == version
+        assert mission.state_version == version + 1
 
 
 def test_edit_clears_target_price(integration_database) -> None:

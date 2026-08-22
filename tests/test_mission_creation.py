@@ -57,6 +57,7 @@ def test_create_mission_with_explicit_sources_activates_with_exactly_those() -> 
         target_currency="BRL",
         source_codes=("pichau", "kabum"),
         requested_at=NOW,
+        actor_type="telegram",
     )
 
     assert sources == ("pichau", "kabum")
@@ -81,6 +82,7 @@ def test_create_mission_with_explicit_title_uses_it_instead_of_search_query() ->
         target_currency=None,
         source_codes=("kabum",),
         requested_at=NOW,
+        actor_type="telegram",
     )
 
     assert mission.title == "AMD Ryzen 9 9950X3D"
@@ -115,6 +117,7 @@ def test_create_mission_persists_structured_model_on_criteria() -> None:
         target_currency=None,
         source_codes=("pichau", "kabum"),
         requested_at=NOW,
+        actor_type="telegram",
     )
 
     criteria = next(
@@ -138,6 +141,7 @@ def test_create_mission_without_model_leaves_criteria_model_none() -> None:
         target_currency=None,
         source_codes=("pichau", "kabum"),
         requested_at=NOW,
+        actor_type="telegram",
     )
 
     criteria = next(
@@ -161,6 +165,7 @@ def test_create_mission_applies_schedule_stagger_when_configured() -> None:
         target_currency=None,
         source_codes=("pichau", "kabum"),
         requested_at=NOW,
+        actor_type="telegram",
         schedule_stagger_seconds=300,
     )
 
@@ -190,6 +195,7 @@ def test_create_mission_without_sources_uses_all_four_v1_sources() -> None:
         target_currency=None,
         source_codes=(),
         requested_at=NOW,
+        actor_type="telegram",
     )
 
     assert set(sources) == {"pichau", "terabyte", "amazon", "kabum"}
@@ -208,4 +214,5 @@ def test_create_mission_raises_when_a_source_store_is_not_seeded() -> None:
             target_currency=None,
             source_codes=("pichau",),
             requested_at=NOW,
+            actor_type="telegram",
         )

@@ -6,7 +6,10 @@ interface NavItem {
   label: string
 }
 
-const USER_NAV: NavItem[] = [{ to: '/app', label: 'Início' }]
+const USER_NAV: NavItem[] = [
+  { to: '/app', label: 'Início' },
+  { to: '/app/missions', label: 'Missões' },
+]
 
 const ADMIN_NAV: NavItem[] = [
   { to: '/admin', label: 'Dashboard' },

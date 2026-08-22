@@ -184,6 +184,7 @@ def test_create_mission_from_criteria_async_activates_with_explicit_sources() ->
             target_currency="BRL",
             source_codes=("pichau", "kabum"),
             requested_at=NOW,
+            actor_type="telegram",
         )
     )
 

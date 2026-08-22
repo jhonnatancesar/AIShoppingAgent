@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext'
 
 export function AppHome() {
@@ -7,9 +8,13 @@ export function AppHome() {
     <section>
       <h1>Olá, {user?.display_name}</h1>
       <p>
-        Esta é a fundação da aplicação web (TASK-091, item 1 da V1.2).
-        Gerenciamento de missões, ofertas, histórico e comparação entre
-        lojas chegam nos próximos itens da V1.2.
+        Acompanhe suas missões de monitoramento de preço pela web -- as
+        mesmas que você já controla pelo Telegram.
+      </p>
+      <p>
+        <Link className="button" to="/app/missions">
+          Ver minhas missões
+        </Link>
       </p>
     </section>
   )

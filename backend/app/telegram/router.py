@@ -1429,6 +1429,7 @@ async def _execute_create_mission(
         requested_at=datetime.now(UTC),
         schedule_interval_minutes=get_settings().collection_schedule_interval_minutes,
         schedule_stagger_seconds=get_settings().collection_schedule_stagger_seconds,
+        actor_type="telegram",
     )
     lines = ["✅ Missão criada!", "", f"🔎 Produto: {mission.title}"]
     if target_amount is not None and payload["target_currency"] is not None:

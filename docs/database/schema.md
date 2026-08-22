@@ -93,7 +93,7 @@ Intenção persistente de compra e fonte de verdade para seu estado atual.
 | `title` | `varchar(200)` | Obrigatório. |
 | `status` | `mission_status` | Obrigatório, padrão `draft`; enum com os seis estados definidos. |
 | `expires_at` | `timestamptz` | Nulo para missão permanente. |
-| `state_version` | `bigint` | Obrigatório, padrão `0`; incrementado em cada transição para controle concorrente. |
+| `state_version` | `bigint` | Obrigatório, padrão `0`; incrementado em cada transição de estado **e** em cada edição de critérios (`edit_mission_criteria`, corrigido por `DEC-075`/TASK-092) — controle concorrente da missão inteira, não só do lifecycle. |
 | `created_at` | `timestamptz` | Obrigatório. |
 | `updated_at` | `timestamptz` | Obrigatório. |
 | `prelist_sent` | `boolean` | Obrigatório, padrão `false` (TASK-068). |

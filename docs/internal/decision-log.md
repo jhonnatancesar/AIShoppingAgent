@@ -1,5 +1,152 @@
 # Decision Log
 
+## DEC-075 — TASK-092: gerenciamento de missões pela web reaproveita `app.missions` sem nenhuma regra nova; sessão assíncrona própria; correção de `actor_type` na auditoria
+
+- **Data:** 2026-08-22.
+- **Ideia:** item 2 da V1.2 -- levar criar/listar/detalhar/editar/pausar/
+  retomar/cancelar missão para `/app`, reaproveitando inteiramente o
+  domínio já existente (`app.missions.service`/`app.missions.query`),
+  nunca um segundo sistema de missões. Preflight com o usuário decidiu
+  dois pontos: cancelamento exige confirmação no cliente (React), sem
+  mudança de backend/domínio; listagem padrão mostra ativas + pausadas,
+  com filtro de status cobrindo todos os estados + "todas".
+- **Endpoints chamam só o serviço existente:** `backend/app/webapp/missions_router.py`
+  (7 endpoints sob `/api/v1/missions`) não implementa nenhuma regra de
+  negócio própria -- só monta request/response em torno de
+  `create_mission_from_criteria_async`/`transition_mission_async`/
+  `edit_mission_criteria` (já existentes, usados pelo webhook Telegram
+  desde a TASK-079/TASK-069) e de 3 funções novas em `app.missions.query`
+  (`list_missions_for_user_by_status`, `count_missions_for_user_by_status`,
+  `get_mission_detail_for_user` -- leitura pura, mesma camada). Toda
+  autenticação/CSRF vem de `Depends(require_web_session)` (TASK-091/
+  DEC-074) -- nenhuma configuração extra por endpoint.
+- **`get_web_async_session` (novo, `app.database.dependency`):** os
+  endpoints web chamam funções assíncronas de missão, mas `webapp/router.py`
+  (TASK-091) só tinha sessão síncrona. Em vez de reaproveitar
+  `get_telegram_async_session` (que propositalmente NÃO comita automático,
+  porque o webhook Telegram precisa controlar a fronteira de transação
+  em torno de `await`s de IA/Telegram -- TASK-079), a nova dependência
+  reaproveita o mesmo engine assíncrono de processo
+  (`get_telegram_async_engine`, sem pool novo) mas comita automaticamente
+  no sucesso, como `get_session`: os endpoints de missão não têm nenhum
+  `await` de I/O externo no meio da transação, então uma única transação
+  por requisição é segura e mais simples.
+- **Correção de auditoria encontrada na validação real:** `create_mission_from_criteria(_async)`
+  sempre gravava a transição inicial `draft→active` com
+  `actor_type="telegram"` hardcoded -- uma missão criada pela web
+  aparecia com auditoria incorreta. Corrigido com um parâmetro
+  `actor_type: str = "telegram"` (default preserva os dois chamadores
+  existentes -- Telegram e `scripts/validate_collection_worker.py`); o
+  endpoint web passa `actor_type="web"`. Confirmado no container real
+  antes e depois da correção.
+- **Classificação:** Segunda interface sobre o domínio de missões já
+  existente (TASK-092, item 2 da V1.2) -- nenhuma feature de negócio nova
+  além do que o Telegram já faz, nenhuma migration.
+- **Justificativa:** o princípio já registrado em `DEC-072`/`v1.2-scope.md`
+  ("nunca um segundo sistema de missões") só se sustenta se toda regra de
+  negócio ficar de fato numa única camada -- daí a resistência em
+  duplicar validação/transição/edição no router web, mesmo quando isso
+  significou adicionar pequenas funções de leitura em `app.missions.query`
+  em vez de compor queries ad hoc dentro do router.
+- **Próxima ação:** nenhuma além da implementação já feita. TASK-092
+  aguardando revisão/aprovação do usuário antes do commit.
+
+- **Ideia (rodada 2 — auditoria arquitetural de 21 pontos, 2026-08-22):** o
+  usuário revisou a primeira entrega e não aprovou o commit, pedindo uma
+  auditoria formal de concorrência, posse, contrato de listagem, UX de
+  conflito, agnosticismo de canal e cobertura de teste real (PostgreSQL +
+  container). A auditoria confirmou dois bugs reais (não hipotéticos) e
+  formalizou quatro pontos que já estavam corretos na prática mas nunca
+  tinham sido decididos explicitamente:
+  1. **`state_version` -- semântica definitiva corrigida (bug real):**
+     `edit_mission_criteria` checava `expected_state_version` mas nunca
+     incrementava `mission.state_version` no sucesso -- uma segunda edição
+     concorrente na mesma versão nunca era rejeitada (perda silenciosa de
+     escrita). A semântica documentada em `docs/architecture/mission-criteria.md`
+     ("edição nunca mexe em `status`/`state_version`") descrevia essa lacuna
+     como desenho intencional; era proteção incompleta, não escolha. Corrigido:
+     `edit_mission_criteria` agora incrementa `state_version` como qualquer
+     transição de ciclo de vida -- o campo controla a missão inteira (edição
+     de critério + transições), não só o lifecycle. Provado com teste de
+     integração real (`test_lost_update_is_prevented_by_state_version`,
+     `tests/integration/test_webapp_missions.py`): cliente A edita
+     `target_amount` na versão N, cliente B tenta editar `sources` na mesma
+     versão N -- B recebe `409`, o valor de A persiste sozinho.
+     `docs/architecture/mission-criteria.md` e `docs/database/schema.md`
+     atualizados para descrever a semântica corrigida (histórico anterior
+     preservado, não apagado).
+  2. **`InvalidMissionTransitionError` não tratado no router (bug real,
+     introduzido nesta própria TASK):** `_run_command` só capturava
+     `MissionNotFoundError`/`MissionVersionConflictError`/
+     `MissionTransitionConditionError` -- um comando inválido para o estado
+     atual (ex.: `resume` numa missão `cancelled`) levantava
+     `InvalidMissionTransitionError`, não capturada, produzindo `500` sem
+     detalhe. Corrigido (import + inclusão no tupla de exceções). Só foi
+     encontrado porque o usuário pediu explicitamente um teste direto contra
+     o endpoint (não só a UI) para `CANCELLED→RESUME`/`CANCELLED→PAUSE` --
+     confirma o valor de testar a transição terminal no nível HTTP, não só
+     no domínio.
+  3. **Posse centralizada:** nova função `get_mission_for_user(session, *,
+     user_id, mission_id) -> Mission | None` em `app.missions.query`,
+     reaproveitada pelo router web (`_require_owned_mission`) -- ausência e
+     posse de outro usuário retornam o mesmo `None`, nunca distinguidos.
+     Decisão explícita: **não** migrar os pontos de chamada já existentes do
+     Telegram para esta função nesta TASK (código já validado em produção,
+     sem necessidade funcional de mexer) -- só o caminho novo (web) usa a
+     função nova.
+  4. **`actor_type` passa a ser obrigatório (sem default):** o default
+     `"telegram"` em `create_mission_from_criteria(_async)` (adicionado na
+     primeira rodada desta TASK) foi reavaliado -- um default mascarava
+     silenciosamente qualquer chamador futuro que esquecesse de passar o
+     valor certo. Todo o código-base já segue essa convenção em toda outra
+     função equivalente (`transition_mission_async`, autenticação,
+     autorização, privacidade) -- os três chamadores reais (Telegram,
+     endpoint web, `scripts/validate_collection_worker.py`) já passavam o
+     valor explicitamente, então a correção certa era remover o default, não
+     trocar seu valor.
+  5. **Contrato de listagem/paginação formalizado:** `limit`/`offset`
+     (padrão 20, máximo 100, `422` acima disso), ordenação estável por
+     `updated_at DESC` -- já implementado na primeira rodada, agora coberto
+     por teste de integração real para cada um dos 6 filtros de status
+     (incluindo `expired`, alcançado via transição real `EXPIRE`, nunca
+     seed direto).
+  6. **UX real de `409` no frontend:** a SPA nunca força a mudança nem
+     ignora o conflito -- mostra uma mensagem explicando que a missão mudou,
+     recarrega os dados automaticamente e obriga o usuário a revisar antes
+     de tentar de novo (`MissionDetailPage.tsx`; formulário de edição
+     remonta via `key={mission.state_version}` para não reter estado local
+     obsoleto).
+- **Validação real (container, 2026-08-22, pós-correções):** imagem
+  reconstruída (`docker compose build api`), stack subida com Postgres
+  descartável, migrações aplicadas até `20260821_0001` (sem migration nova),
+  dois usuários descartáveis criados só para o teste. Confirmado via HTTP
+  direto: ciclo completo criar→pausar→editar (`state_version` avança
+  2→3)→retomar→cancelar; edição em `ACTIVE` rejeitada (`409`); `resume`/`pause`
+  em missão `CANCELLED` rejeitados (`409`, não `500` -- confirma a correção
+  do ponto 2 acima); posse indistinguível entre "não existe" e "não é sua"
+  (`403 mission_access_denied`, corpo byte-a-byte idêntico); `409` de versão
+  obsoleta reproduzido de propósito; filtro padrão exclui cancelada,
+  `?status=cancelled`/`?status=all` incluem. Confirmado em navegador real
+  (não só `curl`): tela de login, estado vazio ("nenhuma missão encontrada
+  para este filtro" -- não é erro), redirecionamento para login quando
+  não autenticado, lista populada e troca de filtro pela interface.
+  Container e volume descartáveis removidos ao final (`docker compose down
+  -v`); nenhum dado de teste ficou para trás.
+- **Ajuste final antes do commit (2026-08-22, aprovação do usuário):** a
+  ordenação de `list_missions_for_user_by_status` estava em `created_at`
+  decrescente (implementação original, nunca formalizada como decisão --
+  o ponto 8 da auditoria só pedia "o domínio deve decidir o campo
+  correto"). O usuário pediu explicitamente `updated_at DESC, id DESC`:
+  pausar/retomar/editar/cancelar devem subir a missão na lista, não só
+  criá-la; `id DESC` é o desempate determinístico para `updated_at`
+  colidido, necessário para paginação estável por `offset`. Ajustado em
+  `app.missions.query.list_missions_for_user_by_status`; teste dedicado
+  adicionado (`tests/test_mission_query.py`, assert no SQL compilado).
+  Pipeline completo (1414 unitários/90,42%, 73 integração PostgreSQL)
+  reexecutado e aprovado após o ajuste.
+- **Próxima ação (atualizada):** nenhuma. TASK-092 aprovada pelo usuário
+  para commit.
+
 ## DEC-074 — Endurecimento da TASK-091: CSRF acoplado a `require_web_session` (não a nenhum router), frontend em TypeScript, whitelist de rotas da SPA, catch-all por qualquer método, empacotamento Docker multi-stage
 
 - **Data:** 2026-08-21/22 (quatro rodadas de revisão do usuário antes do

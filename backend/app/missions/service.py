@@ -277,6 +277,7 @@ def create_mission_from_criteria(
     requested_at: datetime,
     schedule_interval_minutes: int = _DEFAULT_SCHEDULE_INTERVAL_MINUTES,
     schedule_stagger_seconds: int = _DEFAULT_SCHEDULE_STAGGER_SECONDS,
+    actor_type: str,
 ) -> tuple[Mission, tuple[str, ...]]:
     """Cria uma missão a partir de critérios e a ativa imediatamente.
 
@@ -290,6 +291,16 @@ def create_mission_from_criteria(
     título de apresentação mais rico (`display_query` do
     `IntentInterpreter`) sem afetar `MissionCriteria.search_query`, que
     continua sendo a identidade operacional usada nas lojas.
+
+    `actor_type` (TASK-092, auditoria de 2026-08-22, `DEC-075`) rotula a
+    transição `draft` -> `active` automática desta função na auditoria
+    (`MissionTransition.actor_type`) -- **obrigatório**, sem valor
+    padrão, para bater com a convenção já usada por todo o resto do
+    projeto (`transition_mission(_async)`, `app.privacy.service`,
+    `scripts/validate_limits_resilience.py` -- nenhum desses tem
+    `actor_type` opcional). Um valor implícito já mascarou uma vez a
+    origem real de uma missão criada pela web como `"telegram"`; a
+    correção certa não é trocar o valor padrão, é não ter um.
     """
     effective_codes = tuple(source_codes) or _DEFAULT_V1_SOURCE_CODES
     if schedule_interval_minutes <= 0:
@@ -341,7 +352,7 @@ def create_mission_from_criteria(
         mission_id=mission.id,
         command=MissionCommand.ACTIVATE,
         expected_state_version=mission.state_version,
-        actor_type="telegram",
+        actor_type=actor_type,
         actor_id=user_id,
         transitioned_at=requested_at,
     )
@@ -374,11 +385,14 @@ async def create_mission_from_criteria_async(
     requested_at: datetime,
     schedule_interval_minutes: int = _DEFAULT_SCHEDULE_INTERVAL_MINUTES,
     schedule_stagger_seconds: int = _DEFAULT_SCHEDULE_STAGGER_SECONDS,
+    actor_type: str,
 ) -> tuple[Mission, tuple[str, ...]]:
     """Equivalente assíncrono de `create_mission_from_criteria` (extensão
-    da TASK-079). Usado pelo webhook Telegram; `scripts/validate_collection_worker.py`
-    continua na versão síncrona. `title` -- ver docstring da versão síncrona
-    (TASK-083, correção de regressão)."""
+    da TASK-079). Usado pelo webhook Telegram (`actor_type="telegram"`) e,
+    desde a TASK-092, pelo endpoint web `POST /api/v1/missions`
+    (`actor_type="web"`); `scripts/validate_collection_worker.py` continua
+    na versão síncrona. `title`/`actor_type` -- ver docstring da versão
+    síncrona (TASK-083, TASK-092)."""
     effective_codes = tuple(source_codes) or _DEFAULT_V1_SOURCE_CODES
     if schedule_interval_minutes <= 0:
         raise ValueError("schedule_interval_minutes deve ser positivo.")
@@ -429,7 +443,7 @@ async def create_mission_from_criteria_async(
         mission_id=mission.id,
         command=MissionCommand.ACTIVATE,
         expected_state_version=mission.state_version,
-        actor_type="telegram",
+        actor_type=actor_type,
         actor_id=user_id,
         transitioned_at=requested_at,
     )
@@ -460,11 +474,21 @@ async def edit_mission_criteria(
 ) -> tuple[Mission, tuple[str, ...]]:
     """Edita preço-alvo e/ou lojas de uma missão `PAUSED` já criada (TASK-069).
 
-    Nunca cria uma `Mission` nova nem toca `status`/`state_version`/
-    `MissionTransition`/`MissionSchedule` -- edição de critérios é
-    conceitualmente distinta de transição de ciclo de vida. Histórico já
-    coletado (`CollectionRun`/`PriceObservation`) nunca é tocado, mesmo
-    para lojas removidas.
+    Nunca cria uma `Mission` nova nem toca `status`/`MissionTransition`/
+    `MissionSchedule` -- edição de critérios é conceitualmente distinta de
+    transição de ciclo de vida. Histórico já coletado (`CollectionRun`/
+    `PriceObservation`) nunca é tocado, mesmo para lojas removidas.
+
+    **`state_version` (correção da auditoria de TASK-092/DEC-075):**
+    representa a versão concorrente da missão inteira, não só do
+    lifecycle -- toda edição bem-sucedida incrementa `state_version`, do
+    mesmo jeito que toda transição de `transition_mission(_async)`. Sem
+    isso, dois `expected_state_version` iguais e concorrentes passariam
+    ambos pela checagem abaixo e a segunda escrita apagaria a primeira em
+    silêncio (last-write-wins) sempre que tocassem o mesmo campo -- exatamente
+    o que a checagem de `expected_state_version` deveria impedir. Manter
+    a checagem sem o incremento correspondente era uma proteção
+    incompleta, não uma escolha de desenho.
 
     `target_update=None` deixa o preço-alvo intocado; um par
     `(amount, currency)` -- incluindo `(None, None)` para limpar o alvo --
@@ -548,6 +572,7 @@ async def edit_mission_criteria(
         await session.flush()
         effective_codes = codes
 
+    mission.state_version += 1
     mission.updated_at = accepted_at
     await session.flush()
     return mission, effective_codes

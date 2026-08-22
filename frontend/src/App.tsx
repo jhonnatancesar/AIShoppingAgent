@@ -5,6 +5,9 @@ import { RequireAdmin, RequireAuth } from './components/ProtectedRoute'
 import { AdminHome } from './pages/AdminHome'
 import { AppHome } from './pages/AppHome'
 import { LoginPage } from './pages/LoginPage'
+import { MissionCreatePage } from './pages/missions/MissionCreatePage'
+import { MissionDetailPage } from './pages/missions/MissionDetailPage'
+import { MissionsListPage } from './pages/missions/MissionsListPage'
 import { NotFound } from './pages/NotFound'
 
 export default function App() {
@@ -17,6 +20,9 @@ export default function App() {
         <Route element={<RequireAuth />}>
           <Route element={<AppLayout />}>
             <Route path="/app" element={<AppHome />} />
+            <Route path="/app/missions" element={<MissionsListPage />} />
+            <Route path="/app/missions/new" element={<MissionCreatePage />} />
+            <Route path="/app/missions/:missionId" element={<MissionDetailPage />} />
           </Route>
         </Route>
 

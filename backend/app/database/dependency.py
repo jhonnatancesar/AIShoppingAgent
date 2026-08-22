@@ -65,3 +65,30 @@ async def get_telegram_async_session() -> AsyncIterator[AsyncSession]:
     finally:
         await session.rollback()
         await session.close()
+
+
+@lru_cache
+def _get_web_async_session_factory() -> async_sessionmaker[AsyncSession]:
+    # Reaproveita o mesmo engine assíncrono de processo do webhook Telegram
+    # (`get_telegram_async_engine`, já com os timeouts de banco aplicados)
+    # -- não cria um pool de conexões novo só para a aplicação web.
+    return create_async_session_factory(get_telegram_async_engine())
+
+
+async def get_web_async_session() -> AsyncIterator[AsyncSession]:
+    """Abre uma `AsyncSession` para rotas assíncronas da aplicação web
+    (TASK-092) -- comita automaticamente no sucesso e desfaz em qualquer
+    exceção, como `get_session` (a versão síncrona). Diferente do webhook
+    Telegram, os endpoints da aplicação web não têm nenhum `await` de I/O
+    externo (IA, Telegram) no meio da transação -- não existe aqui o
+    autodeadlock que `get_telegram_async_session` evita com controle
+    manual de fase, então uma única transação por requisição é segura."""
+    session = _get_web_async_session_factory()()
+    try:
+        yield session
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        raise
+    finally:
+        await session.close()
