@@ -1342,6 +1342,53 @@ async def _mission_prelist_round_complete(
     return (completed_sources or 0) >= total_sources
 
 
+async def _mission_relevance_pending(session: AsyncSession, mission_id: UUID) -> bool:
+    """TASK-091: True quando alguma oferta do `CollectionRun` mais recente
+    com sucesso de cada loja selecionada ainda não tem
+    `MissionOfferRelevance` persistida para esta missão.
+
+    Ausência de linha significa "classificação ainda não resolvida"
+    (falhou ou nunca terminou) -- nunca "não é match" (`NO_MATCH`/
+    `POSSIBLE_MATCH` já são uma linha persistida, portanto nunca contam
+    como pendente aqui). Escopado ao run mais recente por loja (via
+    `ROW_NUMBER`), não ao histórico inteiro da missão -- uma oferta de um
+    run antigo já substituído por um mais novo da mesma loja nunca deve
+    travar a pré-lista para sempre.
+    """
+    latest_runs = (
+        select(
+            CollectionRun.id,
+            func.row_number()
+            .over(
+                partition_by=CollectionRun.store_id,
+                order_by=(CollectionRun.started_at.desc(), CollectionRun.id.desc()),
+            )
+            .label("rn"),
+        )
+        .where(
+            CollectionRun.mission_id == mission_id,
+            CollectionRun.status == CollectionRunStatus.SUCCEEDED,
+        )
+        .subquery()
+    )
+    latest_run_ids = select(latest_runs.c.id).where(latest_runs.c.rn == 1)
+
+    pending_offer_id = await session.scalar(
+        select(PriceObservation.offer_id)
+        .outerjoin(
+            MissionOfferRelevance,
+            (MissionOfferRelevance.mission_id == mission_id)
+            & (MissionOfferRelevance.offer_id == PriceObservation.offer_id),
+        )
+        .where(
+            PriceObservation.collection_run_id.in_(latest_run_ids),
+            MissionOfferRelevance.offer_id.is_(None),
+        )
+        .limit(1)
+    )
+    return pending_offer_id is not None
+
+
 async def _latest_match_observations_by_store(
     session: AsyncSession, mission_id: UUID
 ) -> list[PriceObservation]:
@@ -1371,6 +1418,13 @@ async def _maybe_publish_prelist_ready(
     session: AsyncSession, mission: Mission, occurred_at: datetime
 ) -> None:
     if not await _mission_prelist_round_complete(session, mission.id):
+        return
+    # TASK-091: round completo (todas as lojas com tentativa terminal) não
+    # é o mesmo que "toda oferta atual já foi classificada" -- se a
+    # classificação de relevância de alguma oferta corrente ainda não foi
+    # resolvida (falhou/não terminou), a pré-lista não pode ser marcada
+    # como enviada com uma lista vazia; a próxima coleta tenta de novo.
+    if await _mission_relevance_pending(session, mission.id):
         return
     candidates = sorted(
         await _latest_match_observations_by_store(session, mission.id),

@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
+import httpx
 from google import genai
 from google.genai import errors, types
 from pydantic import SecretStr
@@ -66,7 +67,7 @@ class GeminiProvider:
             content = result.text
         except errors.APIError as error:
             raise _translate_api_error(error) from None
-        except TimeoutError:
+        except httpx.TimeoutException:
             raise AIProviderUnavailable("provider_timeout") from None
         finally:
             if client is not None:

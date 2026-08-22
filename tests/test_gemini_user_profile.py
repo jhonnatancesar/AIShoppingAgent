@@ -2,6 +2,7 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from uuid import uuid4
 
+import httpx
 import pytest
 from app.ai_provider import (
     AdminDevAIProviderManager,
@@ -186,6 +187,38 @@ async def test_admin_dev_falls_back_to_groq_when_gemini_fails(
     manager = AdminDevAIProviderManager(gemini, groq=groq)
 
     response = await manager.generate(_request(profile))
+
+    assert response.provider == "groq"
+    assert response.content == "Groq"
+
+
+@pytest.mark.anyio
+async def test_gemini_converts_read_timeout_to_provider_unavailable() -> None:
+    """TASK-091: `httpx.ReadTimeout` é o que o SDK `google-genai` realmente
+    levanta quando o Gemini demora (confirmado ao vivo em produção, causa
+    raiz de duas falhas reais: criação de missão travando e classificação
+    de relevância nunca resolvendo). Antes desta correção, `gemini.py` só
+    capturava `TimeoutError` (nunca acontece na prática) e a exceção crua
+    escapava sem nunca virar `AIProviderUnavailable` -- o único tipo que
+    `AIProviderManager` reconhece para acionar o fallback."""
+    gemini, _ = _provider(_FakeModels(error=httpx.ReadTimeout("timed out")))
+    manager = AdminDevAIProviderManager(gemini)
+
+    with pytest.raises(AIProviderUnavailable):
+        await manager.generate(_request(UserRole.ADMIN))
+
+
+@pytest.mark.anyio
+async def test_gemini_read_timeout_falls_back_to_groq() -> None:
+    """Prova de ponta a ponta: com a conversão correta, um timeout do
+    Gemini não derruba a requisição -- o Groq responde no lugar dele,
+    exatamente como a cascata gratuita Gemini -> Groq -> OpenRouter
+    prevê."""
+    gemini, _ = _provider(_FakeModels(error=httpx.ReadTimeout("timed out")))
+    groq = _StaticProvider("groq", "openai/gpt-oss-120b", response_text="Groq")
+    manager = AdminDevAIProviderManager(gemini, groq=groq)
+
+    response = await manager.generate(_request(UserRole.ADMIN))
 
     assert response.provider == "groq"
     assert response.content == "Groq"
