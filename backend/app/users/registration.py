@@ -36,8 +36,9 @@ _NUMBERED_STORES = {
     "2": "pichau",
     "3": "terabyte",
     "4": "amazon",
+    "5": "magalu",
 }
-_ALL_STORES = frozenset({"5", "todo", "todos", "toda", "todas"})
+_ALL_STORES = frozenset({"6", "todo", "todos", "toda", "todas"})
 
 # TASK-067: taxonomia real consolidada de Kabum, Pichau, Terabyte e
 # Amazon.com.br (docs/tasks/TASK-067.md) — categoria entra na lista só se
@@ -74,9 +75,10 @@ _PROMPTS: Final[dict[str, str]] = {
     ),
     "favorite_stores": (
         "🏪 Quais lojas você prefere?\n\n"
-        "1 — Kabum\n2 — Pichau\n3 — Terabyte\n4 — Amazon\n5 — Todas\n\n"
+        "1 — Kabum\n2 — Pichau\n3 — Terabyte\n4 — Amazon\n5 — Magalu\n"
+        "6 — Todas\n\n"
         "Digite os números separados por vírgula.\nExemplo: 1,2\n\n"
-        "Para escolher todas, envie 5.\n"
+        "Para escolher todas, envie 6.\n"
         'Se não quiser definir agora, responda "pular".'
     ),
     "preferred_categories": (
@@ -196,8 +198,8 @@ def _parse_stores(raw: str) -> list[str]:
     ]
     if not stores:
         raise RegistrationError(
-            "Não entendi as lojas escolhidas.\n\nUse os números de 1 a 4 "
-            'separados por vírgula, 5 para todas ou responda "pular".'
+            "Não entendi as lojas escolhidas.\n\nUse os números de 1 a 5 "
+            'separados por vírgula, 6 para todas ou responda "pular".'
         )
     return sorted(set(stores))
 

@@ -121,12 +121,13 @@ _CREATE_MISSION_SOURCE_OPTIONS: dict[str, str] = {
     "2": "terabyte",
     "3": "amazon",
     "4": "kabum",
+    "5": "magalu",
 }
 """TASK-070: ordem própria deste fluxo -- diferente da usada pelo
 `/cadastro` (`app/users/registration.py`), que não é alterada por esta
 TASK. Cada fluxo numerado define o próprio mapa."""
 
-_CREATE_MISSION_SOURCE_ALL_TOKENS = frozenset({"5", "todo", "todos", "toda", "todas"})
+_CREATE_MISSION_SOURCE_ALL_TOKENS = frozenset({"6", "todo", "todos", "toda", "todas"})
 
 _CREATE_MISSION_SOURCES_PROMPT = (
     "🏪 Em quais lojas você quer que eu procure?\n\n"
@@ -134,15 +135,16 @@ _CREATE_MISSION_SOURCES_PROMPT = (
     "2 — Terabyte\n"
     "3 — Amazon\n"
     "4 — Kabum\n"
-    "5 — Todas\n\n"
+    "5 — Magalu\n"
+    "6 — Todas\n\n"
     "Digite os números separados por vírgula.\n"
     "Exemplo: 1,3\n\n"
-    "Para escolher todas, envie 5."
+    "Para escolher todas, envie 6."
 )
 
 _CREATE_MISSION_SOURCES_RETRY = (
     "Não entendi essa opção.\n\n"
-    "Use os números de 1 a 4 separados por vírgula ou 5 para todas."
+    "Use os números de 1 a 5 separados por vírgula ou 6 para todas."
 )
 
 

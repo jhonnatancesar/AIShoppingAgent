@@ -13,7 +13,12 @@ from app.collection.adapter import CollectionAdapter
 from app.collection.browser import BrowserSettings
 from app.collection.identity_resolution import StoreProductIdentityResolver
 from app.collection.orchestration import CollectionOrchestrator
-from app.collection.providers import V1_PROVIDER_TYPES
+from app.collection.providers import V1_PROVIDER_TYPES, MagaluProvider
+from app.collection.providers.magalu_edge_supervisor import (
+    MagaluEdgeSupervisor,
+    MagaluEdgeSupervisorError,
+)
+from app.collection.providers.magalu_transport import build_magalu_search_transport
 from app.core.config import Settings
 from app.core.logging import configure_logging
 from app.core.resilience import RetryPolicy
@@ -36,7 +41,31 @@ logger = logging.getLogger("app.collection.worker")
 # bloqueadas por proteção anti-bot; Amazon e Kabum toleram headless.
 # Mesma distinção de backend/scripts/validate_store_providers.py e
 # docs/architecture/playwright.md (TASK-055) — o worker de produção não a herdava.
-_HEADED_SOURCES = frozenset({"pichau", "terabyte"})
+_HEADED_SOURCES = frozenset({"pichau", "terabyte", "magalu"})
+
+
+async def start_magalu_edge_supervisor(
+    settings: Settings,
+) -> MagaluEdgeSupervisor | None:
+    """Falha do runtime Magalu nunca impede o worker das outras origens."""
+    if settings.magalu_cdp_url is None:
+        return None
+    try:
+        supervisor = MagaluEdgeSupervisor(
+            settings.magalu_cdp_url,
+            executable=settings.magalu_edge_executable,
+            profile_dir=settings.magalu_edge_profile_dir,
+            startup_timeout_seconds=settings.magalu_edge_startup_timeout_seconds,
+            probe_interval_seconds=settings.magalu_edge_probe_interval_seconds,
+        )
+        await supervisor.start()
+    except MagaluEdgeSupervisorError as error:
+        logger.warning(
+            "magalu_edge_unavailable",
+            extra={"supervisor_failure": type(error).__name__},
+        )
+        return None
+    return supervisor
 
 
 def build_collection_adapter(settings: Settings) -> CollectionAdapter:
@@ -61,18 +90,37 @@ def build_collection_adapter(settings: Settings) -> CollectionAdapter:
             navigation_timeout_ms=navigation_timeout_ms,
         )
 
-    return CollectionAdapter(
-        provider_type(
-            _browser_settings(provider_type.source_code not in _HEADED_SOURCES),
-            retry_policy=retry_policy,
-            circuit_failure_threshold=settings.circuit_failure_threshold,
-            circuit_open_seconds=settings.circuit_open_seconds,
-            availability_fallback_max_candidates=(
+    providers = []
+    for provider_type in V1_PROVIDER_TYPES:
+        provider_kwargs = {
+            "retry_policy": retry_policy,
+            "circuit_failure_threshold": settings.circuit_failure_threshold,
+            "circuit_open_seconds": settings.circuit_open_seconds,
+            "availability_fallback_max_candidates": (
                 settings.availability_fallback_max_candidates
             ),
+        }
+        if provider_type is MagaluProvider:
+            provider_kwargs["search_transport"] = build_magalu_search_transport(
+                cdp_endpoint=settings.magalu_cdp_url,
+                connect_timeout_ms=int(
+                    settings.magalu_cdp_connect_timeout_seconds * 1000
+                ),
+                navigation_timeout_ms=int(
+                    settings.magalu_cdp_navigation_timeout_seconds * 1000
+                ),
+                document_timeout_ms=int(
+                    settings.magalu_cdp_document_timeout_seconds * 1000
+                ),
+                html_timeout_ms=int(settings.magalu_cdp_html_timeout_seconds * 1000),
+            )
+        providers.append(
+            provider_type(
+                _browser_settings(provider_type.source_code not in _HEADED_SOURCES),
+                **provider_kwargs,
+            )
         )
-        for provider_type in V1_PROVIDER_TYPES
-    )
+    return CollectionAdapter(providers)
 
 
 async def run_worker(
@@ -90,6 +138,8 @@ async def run_worker(
         raise ValueError("poll_seconds must be positive")
     if not 1 <= limit <= 1000:
         raise ValueError("batch_size must be between 1 and 1000")
+    edge_supervisor = await start_magalu_edge_supervisor(settings)
+
     # TASK-079: engine assíncrono dedicado -- nenhuma chamada bloqueante do
     # SQLAlchemy/psycopg roda direto na thread do event loop neste
     # caminho (causa raiz comprovada do autodeadlock; ver docs/tasks/TASK-079.md).
@@ -165,6 +215,8 @@ async def run_worker(
             await asyncio.sleep(interval)
     finally:
         await engine.dispose()
+        if edge_supervisor is not None:
+            await edge_supervisor.stop()
 
 
 def main() -> None:

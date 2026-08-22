@@ -49,6 +49,7 @@ def test_schema_head_metadata_and_store_seeds(integration_database) -> None:
         assert set(session.scalars(select(Store.code))) == {
             "amazon",
             "kabum",
+            "magalu",
             "pichau",
             "terabyte",
         }

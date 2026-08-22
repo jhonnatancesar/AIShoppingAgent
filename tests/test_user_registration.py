@@ -166,7 +166,8 @@ def test_registration_prompt_offers_numbered_stores_and_all_option() -> None:
 
     assert "1 — Kabum" in prompt
     assert "4 — Amazon" in prompt
-    assert "5 — Todas" in prompt
+    assert "5 — Magalu" in prompt
+    assert "6 — Todas" in prompt
 
 
 @pytest.mark.parametrize(
@@ -174,8 +175,9 @@ def test_registration_prompt_offers_numbered_stores_and_all_option() -> None:
     [
         ("1,2", ["kabum", "pichau"]),
         ("2, 4", ["amazon", "pichau"]),
-        ("5", ["amazon", "kabum", "pichau", "terabyte"]),
-        ("todas", ["amazon", "kabum", "pichau", "terabyte"]),
+        ("5", ["magalu"]),
+        ("6", ["amazon", "kabum", "magalu", "pichau", "terabyte"]),
+        ("todas", ["amazon", "kabum", "magalu", "pichau", "terabyte"]),
     ],
 )
 def test_advance_registration_parses_numbered_stores(

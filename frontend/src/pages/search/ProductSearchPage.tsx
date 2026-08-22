@@ -16,6 +16,7 @@ import { Input } from '@/components/ui/input'
 const STORES = [
   { code: 'amazon', label: 'Amazon' },
   { code: 'kabum', label: 'KaBuM!' },
+  { code: 'magalu', label: 'Magalu' },
   { code: 'pichau', label: 'Pichau' },
   { code: 'terabyte', label: 'Terabyte' },
 ] as const

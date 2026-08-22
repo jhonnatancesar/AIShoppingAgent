@@ -1371,7 +1371,7 @@ def test_orchestrator_processes_one_source_successfully(monkeypatch) -> None:
 
 def test_orchestrator_isolates_provider_failure(monkeypatch) -> None:
     class Provider:
-        source_code = "kabum"
+        source_code = "magalu"
 
         async def collect(self, request):
             raise ProviderBlockedError(request.source_code, 403)
@@ -1382,7 +1382,7 @@ def test_orchestrator_isolates_provider_failure(monkeypatch) -> None:
     orchestrator = CollectionOrchestrator(
         session_factory, CollectionAdapter((Provider(),)), ai_manager=_StubAIManager()
     )
-    claim = ClaimedCollection(uuid4(), uuid4(), uuid4(), "kabum", "GPU", NOW)
+    claim = ClaimedCollection(uuid4(), uuid4(), uuid4(), "magalu", "GPU", NOW)
 
     assert asyncio.run(orchestrator._process(claim)) is False
     assert record.call_args.args[2] == "provider_blocked"

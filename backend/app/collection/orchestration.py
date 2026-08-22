@@ -106,7 +106,7 @@ from app.users.models import UserRole
 
 logger = logging.getLogger("app.collection.orchestration")
 
-V1_SOURCE_CODES = frozenset({"pichau", "terabyte", "amazon", "kabum"})
+V1_SOURCE_CODES = frozenset({"pichau", "terabyte", "amazon", "kabum", "magalu"})
 _RUNNING_INDEX = "uq_collection_runs_running_mission_store"
 _MISSION_OFFER_RELEVANCE_PK = (
     MissionOfferRelevance.mission_id,
@@ -1703,22 +1703,22 @@ async def _available_family_variants(
 ) -> tuple[Product, ...]:
     statement = (
         select(Product)
-            .join(Offer, Offer.product_id == Product.id)
-            .join(
-                MissionOfferRelevance,
-                MissionOfferRelevance.offer_id == Offer.id,
-            )
-            .where(
-                MissionOfferRelevance.mission_id == mission_id,
-                MissionOfferRelevance.classification.in_(
-                    {OfferRelevance.MATCH, OfferRelevance.POSSIBLE_MATCH}
-                ),
-                Product.family_key == family_key,
-                Product.identity_key.is_not(None),
-            )
-            .distinct()
-            .order_by(Product.display_name, Product.name, Product.id)
-            .limit(20)
+        .join(Offer, Offer.product_id == Product.id)
+        .join(
+            MissionOfferRelevance,
+            MissionOfferRelevance.offer_id == Offer.id,
+        )
+        .where(
+            MissionOfferRelevance.mission_id == mission_id,
+            MissionOfferRelevance.classification.in_(
+                {OfferRelevance.MATCH, OfferRelevance.POSSIBLE_MATCH}
+            ),
+            Product.family_key == family_key,
+            Product.identity_key.is_not(None),
+        )
+        .distinct()
+        .order_by(Product.display_name, Product.name, Product.id)
+        .limit(20)
     )
     if requested_variant is not None:
         statement = statement.where(Product.variant == requested_variant)

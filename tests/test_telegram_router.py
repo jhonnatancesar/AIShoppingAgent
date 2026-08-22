@@ -990,7 +990,8 @@ async def test_create_mission_without_sources_stages_source_selection_and_preser
     assert "2 — Terabyte" in reply
     assert "3 — Amazon" in reply
     assert "4 — Kabum" in reply
-    assert "5 — Todas" in reply
+    assert "5 — Magalu" in reply
+    assert "6 — Todas" in reply
 
 
 @pytest.mark.anyio
@@ -2637,13 +2638,19 @@ async def test_lojas_choice_add_shows_missing_stores(
         "mission_title": "teclado mecanico",
         "expected_state_version": 2,
         "current_sources": ["pichau"],
-        "option_map": {"1": "terabyte", "2": "amazon", "3": "kabum"},
+        "option_map": {
+            "1": "terabyte",
+            "2": "amazon",
+            "3": "kabum",
+            "4": "magalu",
+        },
         "auto_paused": False,
     }
     reply = send_calls[0][1]
     assert "1 — Terabyte" in reply
     assert "2 — Amazon" in reply
     assert "3 — Kabum" in reply
+    assert "4 — Magalu" in reply
     assert "Pichau" not in reply
 
 
@@ -2726,7 +2733,13 @@ async def test_lojas_choice_add_blocked_when_all_stores_already_linked(
             "mission_id": str(uuid4()),
             "mission_title": "teclado mecanico",
             "expected_state_version": 2,
-            "current_sources": ["pichau", "terabyte", "amazon", "kabum"],
+            "current_sources": [
+                "pichau",
+                "terabyte",
+                "amazon",
+                "kabum",
+                "magalu",
+            ],
         }
     )
     _patch_user(monkeypatch, fake_user)

@@ -1,19 +1,27 @@
-"""Providers independentes das quatro lojas selecionáveis na V1."""
+"""Providers independentes das lojas selecionáveis na V1."""
 
+import json
 import re
 from datetime import datetime
 from decimal import Decimal
-from urllib.parse import quote, quote_plus
+from html.parser import HTMLParser
+from urllib.parse import parse_qs, quote, quote_plus, urlencode, urljoin, urlparse
 
 from playwright.async_api import Locator, Page
 
 from app.collection.contracts import (
+    CollectionRequest,
+    CollectionResult,
     InstallmentInterestKind,
     MarketplacePartyKind,
     RawCollectedOffer,
     RawInstallmentOption,
 )
 from app.collection.providers.base import PlaywrightStoreProvider
+from app.collection.providers.magalu_transport import (
+    MagaluSearchTransport,
+    UnavailableMagaluSearchTransport,
+)
 
 _NEGATIVE_STOCK_TEXT = re.compile(r"esgotad[oa]|indispon[ií]vel|sem\s+estoque", re.I)
 _BUY_BUTTON_TEXT = (
@@ -270,9 +278,7 @@ class AmazonProvider(PlaywrightStoreProvider):
     async def resolve_offer_condition(self, page: Page) -> str | None:
         """Prioriza o campo explícito `Condição` da página já aberta."""
         text = await page.locator("body").inner_text()
-        field = re.search(
-            r"(?im)^\s*Condição\s*:?\s*(?:\r?\n\s*)?([^\r\n]+)", text
-        )
+        field = re.search(r"(?im)^\s*Condição\s*:?\s*(?:\r?\n\s*)?([^\r\n]+)", text)
         if field is not None:
             return field.group(1).strip()
         label = re.search(
@@ -339,3 +345,310 @@ class KabumProvider(PlaywrightStoreProvider):
             else MarketplacePartyKind.MARKETPLACE_PARTNER
         )
         return (kind, kind)
+
+
+_MAGALU_PLATFORM_NAMES = frozenset({"magalu", "magazine luiza", "magazineluiza"})
+_MAGALU_PARTIES = re.compile(
+    r"^Vendido\s+(?:(?:e\s+entregue\s+por\s+(?P<same>.+))|"
+    r"(?:por\s+(?P<seller>.+?)\s+e\s+entregue\s+por\s+(?P<fulfillment>.+)))$",
+    re.I,
+)
+
+
+class _MagaluNextDataParser(HTMLParser):
+    """Extrai somente o JSON SSR oficial, sem executar scripts da página."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=False)
+        self._inside_next_data = False
+        self._parts: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag.casefold() != "script":
+            return
+        attributes = dict(attrs)
+        self._inside_next_data = attributes.get("id") == "__NEXT_DATA__"
+
+    def handle_data(self, data: str) -> None:
+        if self._inside_next_data:
+            self._parts.append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag.casefold() == "script":
+            self._inside_next_data = False
+
+    @property
+    def payload(self) -> str | None:
+        value = "".join(self._parts).strip()
+        return value or None
+
+
+def _magalu_money(value: object) -> str | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        amount = Decimal(str(value))
+    except Exception:
+        return None
+    if not amount.is_finite() or amount < 0:
+        return None
+    return f"R$ {amount:.2f}".replace(".", ",")
+
+
+def _magalu_rows_from_next_data(html: str) -> list[dict[str, object]]:
+    parser = _MagaluNextDataParser()
+    parser.feed(html)
+    if parser.payload is None:
+        return []
+    try:
+        document = json.loads(parser.payload)
+        items = document["props"]["pageProps"]["data"]["search"]["items"]
+    except KeyError, TypeError, ValueError:
+        return []
+    if not isinstance(items, list):
+        return []
+
+    rows: list[dict[str, object]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        offers = item.get("offers")
+        offer = offers[0] if isinstance(offers, list) and offers else None
+        if not isinstance(offer, dict):
+            continue
+        seller = offer.get("seller")
+        seller_id = seller.get("id") if isinstance(seller, dict) else None
+        path = item.get("path")
+        url = urljoin("https://www.magazineluiza.com.br", str(path or ""))
+        if seller_id:
+            separator = "&" if "?" in url else "?"
+            url = f"{url}{separator}{urlencode({'seller_id': str(seller_id)})}"
+        plan = offer.get("bestInstallmentPlan")
+        plan = plan if isinstance(plan, dict) else {}
+        best_price = offer.get("bestPrice")
+        best_price = best_price if isinstance(best_price, dict) else {}
+        shipping = item.get("shippingTag")
+        shipping = shipping if isinstance(shipping, dict) else {}
+        rating = item.get("reviewRating")
+        review_count = item.get("reviewCount")
+        has_rating = rating is not None and review_count is not None
+        installment = plan.get("installment")
+        installment_amount = _magalu_money(plan.get("installmentAmount"))
+        installment_text = None
+        if installment and installment_amount:
+            description = str(plan.get("paymentMethodDescription") or "").strip()
+            installment_text = (
+                f"{installment}x de {installment_amount} {description}".strip()
+            )
+        image = str(item.get("image") or "").replace("{w}x{h}", "144x137")
+        available = item.get("available")
+        rows.append(
+            {
+                "url": url,
+                "title": item.get("title"),
+                "price": _magalu_money(best_price.get("totalAmount")),
+                "external_id": item.get("offerId") or item.get("id"),
+                "seller_external_id": seller_id,
+                "seller": "Magalu" if seller_id == "magazineluiza" else seller_id,
+                "image": image or None,
+                "shipping": "Frete grátis" if shipping.get("cost") == 0 else None,
+                "availability": (
+                    "Disponível"
+                    if available is True
+                    else "Indisponível"
+                    if available is False
+                    else None
+                ),
+                "evidence": json.dumps(
+                    {
+                        "available": available,
+                        "seller": seller_id,
+                        "shipping": shipping,
+                        "badges": offer.get("badges"),
+                    },
+                    ensure_ascii=False,
+                )[:1000],
+                "rating_average": str(rating) if has_rating else None,
+                "review_count": str(review_count) if has_rating else None,
+                "installmentText": installment_text,
+                "installmentTotal": _magalu_money(plan.get("totalAmount")),
+            }
+        )
+    return rows
+
+
+def _magalu_party_kind(value: str | None) -> MarketplacePartyKind:
+    if not value or not value.strip():
+        return MarketplacePartyKind.UNKNOWN
+    return (
+        MarketplacePartyKind.PLATFORM
+        if value.strip().rstrip(".").casefold() in _MAGALU_PLATFORM_NAMES
+        else MarketplacePartyKind.MARKETPLACE_PARTNER
+    )
+
+
+def _magalu_card_condition(title: object) -> str:
+    text = str(title or "").strip()
+    if re.search(
+        r"(?:^|[\s:(-])(?:recondicionado|refurbished|renewed)(?:$|[\s:)-])",
+        text,
+        re.I,
+    ):
+        return "Recondicionado"
+    if re.search(r"(?:^|[\s:(-])(?:usado|seminovo)(?:$|[\s:)-])", text, re.I):
+        return "Usado"
+    return "Novo"
+
+
+def _magalu_seller_id(url: object) -> str | None:
+    values = parse_qs(urlparse(str(url or "")).query).get("seller_id", [])
+    return values[0].strip() if values and values[0].strip() else None
+
+
+def _magalu_parties_from_text(text: str) -> tuple[str | None, str | None]:
+    for line in text.splitlines():
+        match = _MAGALU_PARTIES.fullmatch(line.strip())
+        if match is None:
+            continue
+        same = match.group("same")
+        if same:
+            party = same.strip().rstrip(".")
+            return party, party
+        return (
+            match.group("seller").strip().rstrip("."),
+            match.group("fulfillment").strip().rstrip("."),
+        )
+    return None, None
+
+
+class MagaluProvider(PlaywrightStoreProvider):
+    """Provider público da Magalu; marketplace e varejo no mesmo catálogo."""
+
+    source_code = "magalu"
+    result_selector = (
+        'script#__NEXT_DATA__, a[data-testid="product-card-link"][href*="/p/"]'
+    )
+    result_wait_uses_navigation_timeout = True
+
+    def __init__(
+        self,
+        *args,
+        search_transport: MagaluSearchTransport | None = None,
+        **kwargs,
+    ) -> None:
+        # Nesta versão todo dado operacional Magalu vem do documento SSR obtido
+        # pelo Edge/CDP dedicado. Não abrir Chromium gerenciado nem página de
+        # produto como fallback/enriquecimento paralelo.
+        kwargs.pop("availability_fallback_max_candidates", None)
+        kwargs.pop("marketplace_party_max_candidates", None)
+        kwargs.pop("installment_option_max_candidates", None)
+        super().__init__(
+            *args,
+            availability_fallback_max_candidates=0,
+            marketplace_party_max_candidates=0,
+            installment_option_max_candidates=0,
+            **kwargs,
+        )
+        self._search_transport = search_transport or UnavailableMagaluSearchTransport()
+
+    def build_url(self, query: str) -> str:
+        slug = re.sub(r"[^a-z0-9]+", "-", query.strip().casefold()).strip("-")
+        return f"https://www.magazineluiza.com.br/busca/{quote(slug)}/"
+
+    def _offers_from_magalu_rows(
+        self, rows: list[dict[str, object]], collected_at: datetime
+    ) -> tuple[RawCollectedOffer, ...]:
+        for row in rows:
+            seller_id = _magalu_seller_id(row.get("url"))
+            row["seller_external_id"] = seller_id
+            row["seller_kind"] = (
+                _magalu_party_kind(seller_id).value if seller_id else None
+            )
+            row["condition"] = _magalu_card_condition(row.get("title"))
+        prepared = _apply_installment_summary(
+            rows, text_key="installmentText", total_key="installmentTotal"
+        )
+        return self.offers_from_rows(prepared, collected_at)
+
+    async def _collect_once(self, request: CollectionRequest) -> CollectionResult:
+        """Adquire via CDP e entrega ao parser SSR, sem fallback operacional."""
+        started_at = self._clock()
+        html = await self._search_transport.fetch_html(
+            self.build_url(request.search_query)
+        )
+        rows = _magalu_rows_from_next_data(html)
+        offers = self._offers_from_magalu_rows(rows, self._clock())
+        return CollectionResult(self.source_code, started_at, self._clock(), offers)
+
+    async def extract(
+        self, page: Page, collected_at: datetime
+    ) -> tuple[RawCollectedOffer, ...]:
+        next_data = page.locator("script#__NEXT_DATA__").first
+        rows: list[dict[str, object]] = []
+        if await next_data.count():
+            payload = await next_data.text_content()
+            if payload:
+                rows = _magalu_rows_from_next_data(
+                    f'<script id="__NEXT_DATA__">{payload}</script>'
+                )
+        if not rows:
+            rows = await page.locator("body").evaluate(
+                """body => { const cards = [...body.querySelectorAll('a[data-testid="product-card-link"][href*="/p/"]')]; return cards.map(card => { const url = new URL(card.href); const text = card.innerText || ''; const currency = card.querySelector('[data-testid="price-value-currency"]')?.textContent?.trim(); const integer = card.querySelector('[data-testid="price-value-integer"]')?.textContent?.trim(); const fraction = card.querySelector('[data-testid="price-value-split-cents-fraction"]')?.textContent?.trim(); const price = currency && integer && fraction ? `${currency} ${integer},${fraction}` : card.querySelector('[data-testid="product-card-price-final"]')?.textContent; const match = url.pathname.match(/\\/p\\/([^/]+)/); const sellerId = url.searchParams.get('seller_id'); const tags = card.querySelector('[data-testid="product-card-tags"]')?.textContent || ''; const rating = card.querySelector('[data-testid="rating-score"]')?.textContent; const reviewCount = card.querySelector('[data-testid="rating-label"]')?.textContent?.replace(/[()]/g, '').trim(); const hasRating = !!rating && !!reviewCount; return {url: card.href, title: card.querySelector('[data-testid="product-card-title"]')?.textContent, price, external_id: match?.[1], seller_external_id: sellerId, seller: sellerId === 'magazineluiza' ? 'Magalu' : sellerId, image: card.querySelector('[data-testid="product-card-media"]')?.currentSrc || card.querySelector('[data-testid="product-card-media"]')?.src, shipping: /frete gr[aá]tis/i.test(tags) ? 'Frete grátis' : null, availability: null, evidence: text, rating_average: hasRating ? rating : null, review_count: hasRating ? reviewCount : null, installmentText: card.querySelector('[data-testid="product-card-price-installment"]')?.textContent}; }); }"""
+            )
+        return self._offers_from_magalu_rows(rows, collected_at)
+
+    async def resolve_marketplace_parties(
+        self, page: Page
+    ) -> tuple[MarketplacePartyKind, MarketplacePartyKind]:
+        seller, fulfillment = _magalu_parties_from_text(
+            await page.locator("body").inner_text()
+        )
+        return _magalu_party_kind(seller), _magalu_party_kind(fulfillment)
+
+    async def resolve_seller_name(self, page: Page) -> str | None:
+        seller, _fulfillment = _magalu_parties_from_text(
+            await page.locator("body").inner_text()
+        )
+        return seller
+
+    async def resolve_offer_condition(self, page: Page) -> str | None:
+        documents = await page.locator(
+            'script[type="application/ld+json"]'
+        ).all_text_contents()
+        mapping = {
+            "newcondition": "Novo",
+            "usedcondition": "Usado",
+            "refurbishedcondition": "Recondicionado",
+        }
+        for raw_json in documents:
+            try:
+                document = json.loads(raw_json)
+            except TypeError, ValueError:
+                continue
+            if not isinstance(document, dict):
+                continue
+            value = str(document.get("itemCondition") or "").rsplit("/", 1)[-1]
+            if value.casefold() in mapping:
+                return mapping[value.casefold()]
+        return None
+
+    async def resolve_offer_availability(self, page: Page) -> str | None:
+        documents = await page.locator(
+            'script[type="application/ld+json"]'
+        ).all_text_contents()
+        for raw_json in documents:
+            try:
+                document = json.loads(raw_json)
+            except TypeError, ValueError:
+                continue
+            if not isinstance(document, dict):
+                continue
+            offers = document.get("offers")
+            if not isinstance(offers, dict):
+                continue
+            value = str(offers.get("availability") or "").rsplit("/", 1)[-1]
+            if value.casefold() in {"instock", "limitedavailability"}:
+                return "Disponível"
+            if value.casefold() in {"outofstock", "soldout", "discontinued"}:
+                return "Indisponível"
+        return None

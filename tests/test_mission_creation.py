@@ -233,12 +233,13 @@ def test_create_mission_applies_schedule_stagger_when_configured() -> None:
     assert NOW <= schedule.next_run_at <= NOW + timedelta(seconds=300)
 
 
-def test_create_mission_without_sources_uses_all_four_v1_sources() -> None:
+def test_create_mission_without_sources_uses_all_available_sources() -> None:
     stores = [
         _FakeStore("pichau"),
         _FakeStore("terabyte"),
         _FakeStore("amazon"),
         _FakeStore("kabum"),
+        _FakeStore("magalu"),
     ]
     session = _session(stores)
 
@@ -253,7 +254,7 @@ def test_create_mission_without_sources_uses_all_four_v1_sources() -> None:
         actor_type="telegram",
     )
 
-    assert set(sources) == {"pichau", "terabyte", "amazon", "kabum"}
+    assert set(sources) == {"pichau", "terabyte", "amazon", "kabum", "magalu"}
     assert mission.status is MissionStatus.ACTIVE
 
 

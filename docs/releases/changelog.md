@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-08-22 — TASK-104A: provider Magalu (DEV, pronta para revisão)
+
+- busca Magalu exclusivamente por Edge/CDP supervisionado, sem fallback HTTP
+  ou Playwright;
+- múltiplas ofertas, vendedor, condição, parcelamento e avaliação por origem;
+- busca básica sobrevive a falha de detalhe e a fonte falha isoladamente;
+- transporte desacoplado do parser; Edge normal via CDP é supervisionado, substituível
+  e restrito a loopback, sem headers especiais, stealth ou evasão;
+- busca real HTTP 200 encontrou 39 itens SSR e retornou múltiplas ofertas com
+  dados completos; falha da Magalu continua isolada das outras lojas.
+- supervisor real recuperou o Edge após queda dos 8 processos do perfil
+  dedicado; a busca pós-recuperação retornou 20 ofertas.
+- migration/seed Magalu aprovada no PostgreSQL 18.4 descartável, head
+  `20260822_0007`.
+
 ## 2026-08-22 — TASK-103: comparação entre lojas (DEV, aguardando revisão)
 
 - comparação fail-closed por Product específico resolvido e ownership;

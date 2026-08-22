@@ -7,18 +7,29 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from app.collection.identity_resolution import StoreProductIdentityResolver
-from app.collection.worker import build_collection_adapter, run_worker
+from app.collection.providers.magalu_transport import CdpMagaluSearchTransport
+from app.collection.worker import (
+    build_collection_adapter,
+    run_worker,
+    start_magalu_edge_supervisor,
+)
 from app.core.config import Settings
 from app.observability.metrics import mark_worker_started, observe_worker_failure
 
 
 def test_build_adapter_registers_exactly_v1_sources() -> None:
     adapter = build_collection_adapter(Settings(_env_file=None))
-    assert adapter.supported_sources == ("amazon", "kabum", "pichau", "terabyte")
+    assert adapter.supported_sources == (
+        "amazon",
+        "kabum",
+        "magalu",
+        "pichau",
+        "terabyte",
+    )
 
 
-def test_build_adapter_uses_headed_only_for_pichau_and_terabyte() -> None:
-    """Pichau/Terabyte exigem headed (Xvfb) para não serem bloqueadas; ver
+def test_build_adapter_uses_headed_only_for_configured_sources() -> None:
+    """Pichau/Terabyte/Magalu exigem headed (Xvfb) na coleta real; ver
     docs/architecture/playwright.md e backend/scripts/validate_store_providers.py."""
     adapter = build_collection_adapter(Settings(_env_file=None))
 
@@ -26,6 +37,7 @@ def test_build_adapter_uses_headed_only_for_pichau_and_terabyte() -> None:
     assert adapter._providers["terabyte"].settings.headless is False
     assert adapter._providers["amazon"].settings.headless is True
     assert adapter._providers["kabum"].settings.headless is True
+    assert adapter._providers["magalu"].settings.headless is False
 
 
 def test_build_adapter_decouples_navigation_timeout_from_action_timeout() -> None:
@@ -43,6 +55,34 @@ def test_build_adapter_decouples_navigation_timeout_from_action_timeout() -> Non
         )
     assert settings.external_http_timeout_seconds == 10.0
     assert settings.browser_navigation_timeout_seconds == 45.0
+
+
+def test_build_adapter_uses_configured_loopback_cdp_only_for_magalu() -> None:
+    adapter = build_collection_adapter(
+        Settings(magalu_cdp_url="http://127.0.0.1:9223", _env_file=None)
+    )
+
+    transport = adapter._providers["magalu"]._search_transport
+
+    assert isinstance(transport, CdpMagaluSearchTransport)
+    assert transport.endpoint == "http://127.0.0.1:9223"
+
+
+def test_unavailable_magalu_edge_does_not_block_worker_setup(monkeypatch) -> None:
+    class UnavailableSupervisor:
+        def __init__(self, *args, **kwargs):
+            from app.collection.providers.magalu_edge_supervisor import (
+                MagaluEdgeSupervisorError,
+            )
+
+            raise MagaluEdgeSupervisorError("Edge unavailable")
+
+    monkeypatch.setattr(
+        "app.collection.worker.MagaluEdgeSupervisor", UnavailableSupervisor
+    )
+    settings = Settings(magalu_cdp_url="http://127.0.0.1:9223", _env_file=None)
+
+    assert asyncio.run(start_magalu_edge_supervisor(settings)) is None
 
 
 def test_collection_worker_is_an_allowlisted_metric_dimension() -> None:

@@ -54,3 +54,32 @@ docker compose run --rm api python -m scripts.validate_store_providers terabyte
 Pichau e Terabyte usam headed por padrão no validador; Amazon e Kabum usam
 headless. `--headed` e `--headless` permitem diagnóstico explícito. Bloqueio ou
 mudança de markup produz erro e não autoriza stealth, CAPTCHA solver ou evasão.
+
+## Magalu: transporte CDP substituível
+
+A TASK-104A não acopla o provider ao Edge. `MagaluProvider` recebe a porta
+`MagaluSearchTransport`, que apenas devolve o HTML da busca; o parser SSR,
+normalização, ranking, Web e Telegram não conhecem o transporte.
+
+Quando `AISHOPPING_MAGALU_CDP_URL` é configurada, o worker inicia e mantém um
+Edge normal dedicado por supervisor, aguarda o `#__NEXT_DATA__` final e se
+desconecta sem encerrar o navegador. A URL aceita exclusivamente HTTP loopback
+(`127.0.0.1`, `localhost` ou `::1`) com porta explícita. `0.0.0.0`, IP de rede,
+credenciais e porta pública falham no startup. O worker e o Edge precisam rodar
+no mesmo host/network namespace; Docker não recebe socket ou privilégio novo.
+
+Exemplo de validação local; o supervisor inicia o Edge com endereço loopback,
+porta escolhida e perfil dedicado:
+
+```powershell
+python -m scripts.validate_store_providers magalu `
+  --query "Samsung Galaxy S24 Ultra" `
+  --magalu-cdp-url http://127.0.0.1:9223
+```
+
+Nesta versão não existe fallback HTTP ou Playwright para a busca Magalu: sem
+CDP, com Edge indisponível ou após timeout, somente essa origem falha rápido.
+Conexão, navegação, documento e leitura do HTML têm limites independentes. Um
+futuro serviço Windows/supervisor troca somente o adapter de transporte; não
+refaz regras de negócio. Não usar perfil pessoal, stealth, alteração de
+fingerprint, CAPTCHA solver, proxy ou cópia de cookies.

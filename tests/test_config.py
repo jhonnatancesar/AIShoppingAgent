@@ -30,6 +30,7 @@ def test_settings_use_safe_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.trace_sample_ratio == 1.0
     assert settings.readiness_timeout_seconds == 1.0
     assert settings.worker_metrics_port == 9464
+    assert settings.magalu_cdp_url is None
 
 
 def test_settings_read_prefixed_environment(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -70,6 +71,27 @@ def test_settings_reject_invalid_database_port(
 
     with pytest.raises(ValidationError):
         Settings(_env_file=None)
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    (
+        "http://0.0.0.0:9223",
+        "http://192.168.1.10:9223",
+        "https://127.0.0.1:9223",
+        "http://127.0.0.1",
+        "http://user:pass@127.0.0.1:9223",
+    ),
+)
+def test_settings_reject_non_loopback_or_unsafe_magalu_cdp(endpoint: str) -> None:
+    with pytest.raises(ValidationError, match="loopback HTTP"):
+        Settings(magalu_cdp_url=endpoint, _env_file=None)
+
+
+def test_settings_accept_loopback_magalu_cdp() -> None:
+    settings = Settings(magalu_cdp_url="http://localhost:9223/", _env_file=None)
+
+    assert settings.magalu_cdp_url == "http://localhost:9223"
 
 
 def test_settings_load_secret_from_file(tmp_path) -> None:

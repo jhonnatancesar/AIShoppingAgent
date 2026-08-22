@@ -4,8 +4,10 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, SecretStr, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from app.core.urls import normalize_loopback_http_endpoint
 
 BACKEND_DIRECTORY = Path(__file__).resolve().parents[2]
 
@@ -131,6 +133,15 @@ class Settings(BaseSettings):
     # falha real (ProviderNavigationError) em lojas cuja página demora mais
     # que 10s para atingir domcontentloaded.
     browser_navigation_timeout_seconds: float = Field(default=45.0, gt=0, le=120)
+    magalu_cdp_url: str | None = None
+    magalu_edge_executable: Path | None = None
+    magalu_edge_profile_dir: Path | None = None
+    magalu_edge_startup_timeout_seconds: float = Field(default=30.0, gt=0, le=120)
+    magalu_edge_probe_interval_seconds: float = Field(default=1.0, gt=0, le=30)
+    magalu_cdp_connect_timeout_seconds: float = Field(default=5.0, gt=0, le=30)
+    magalu_cdp_navigation_timeout_seconds: float = Field(default=20.0, gt=0, le=60)
+    magalu_cdp_document_timeout_seconds: float = Field(default=10.0, gt=0, le=30)
+    magalu_cdp_html_timeout_seconds: float = Field(default=3.0, gt=0, le=15)
     safe_retry_max_attempts: int = Field(default=3, ge=1, le=5)
     retry_base_delay_seconds: float = Field(default=0.25, gt=0, le=10)
     retry_max_delay_seconds: float = Field(default=5.0, gt=0, le=60)
@@ -159,6 +170,16 @@ class Settings(BaseSettings):
     # frontend). Empacotamento Docker do build ainda não implementado --
     # ver docs/tasks/TASK-091.md.
     spa_dist_dir: Path | None = None
+
+    @field_validator("magalu_cdp_url")
+    @classmethod
+    def validate_magalu_cdp_url(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = normalize_loopback_http_endpoint(value)
+        if normalized is None:
+            raise ValueError("magalu_cdp_url must be loopback HTTP with explicit port")
+        return normalized
 
     @model_validator(mode="after")
     def resolve_secret_files(self) -> Settings:

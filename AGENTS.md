@@ -110,6 +110,13 @@ Nunca iniciar automaticamente a próxima TASK. Encerrar apresentando resumo da i
 
 ## Estado atual
 
+**Atualização DEV 2026-08-22:** a TASK-104A integra Magalu ao contrato comum.
+Aquisição usa `MagaluSearchTransport`; Edge normal/CDP supervisionado e somente
+loopback é o único transporte operacional, enquanto parser SSR, domínio e
+ranking permanecem neutros ao runtime. Busca real retornou HTTP 200, 39 itens SSR e múltiplas ofertas
+completas; testes focados e PostgreSQL passaram. Pronta para revisão/commit,
+sem deploy. TASK-103 foi publicada em `origin/main` (`610a997`).
+
 **Atualização DEV 2026-08-22:** a TASK-101 implementa `/app/account` com perfil,
 lojas/categorias preferidas e notificações do próprio USER. Reutiliza o modelo
 `User`, WebSession, CSRF e permissões existentes. Telegram é opcional: challenge

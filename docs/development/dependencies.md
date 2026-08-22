@@ -132,6 +132,15 @@ Python e o navegador são instalações distintas; após instalar os requisitos,
 `python -m playwright install chromium`. No Docker, o build instala Chromium e suas
 dependências Linux automaticamente.
 
+Para a TASK-104A, Microsoft Edge é a dependência do único transporte
+operacional Magalu no runtime Windows. O Edge não é biblioteca Python nem entra
+na imagem. O worker o inicia e recupera por supervisor local, com perfil
+dedicado e CDP restrito a loopback; configure
+`AISHOPPING_MAGALU_CDP_URL=http://127.0.0.1:<porta>` no processo do
+`collection_worker`. Sem essa variável, a Magalu falha rápido e isoladamente.
+Nunca publique a porta, use `0.0.0.0`, perfil pessoal,
+cookies copiados ou flags de stealth/fingerprint.
+
 Para comparar e instalar em uma nova máquina, após autorização:
 
 ```powershell

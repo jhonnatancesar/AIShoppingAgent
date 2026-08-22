@@ -39,6 +39,7 @@
 | Área USER — minha conta | TASK-101 | Concluída, aprovada e publicada em `origin/main` (`c57f5ab`); perfil, preferências e vínculo Telegram opcional (`DEC-085`) |
 | Área DEV/ADMIN | TASK-102 | Concluída, aprovada e publicada em `origin/main` (`b93bcfa`); dashboard, dados e operações runtime-neutral (`DEC-086`) |
 | Comparação entre lojas | TASK-103 | Implementada no DEV, aguardando revisão; mesma identidade específica e ownership por Offer (`DEC-087`) |
+| Store Provider Magalu | TASK-104A | Implementada no DEV; Edge/CDP supervisionado é o único transporte operacional, parser SSR comum e falha rápida isolada (`DEC-090`) |
 | Histórico e gráficos por produto/variante | TASK-098 | Formalizada e reservada como último item da V1.2 (`DEC-081`/`DEC-082`) |
 | Estado operacional no Windows Server | manutenção 2026-08-16 | HEAD `0e90cf0` implantado; 7 serviços saudáveis; WSL2 limitado a 4 GB; somente schedules de missões ativas habilitados |
 | Expansão de fontes na V1.2 | Tarefas a definir | Magalu, Mercado Livre e Shopee; AliExpress permanece futuro (`DEC-080`) |

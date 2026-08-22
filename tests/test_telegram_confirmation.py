@@ -193,9 +193,17 @@ def test_parse_numbered_store_selection_deduplicates_repeated_option() -> None:
 
 
 def test_resolve_create_mission_sources_uses_the_task_070_order() -> None:
-    # 1 Pichau/2 Terabyte/3 Amazon/4 Kabum -- ordem própria deste fluxo,
+    # Ordem própria deste fluxo, diferente da usada pelo /cadastro.
     # diferente da usada pelo /cadastro.
     assert resolve_create_mission_sources("1,4") == ("pichau", "kabum")
+    assert resolve_create_mission_sources("5") == ("magalu",)
+    assert resolve_create_mission_sources("6") == (
+        "amazon",
+        "kabum",
+        "magalu",
+        "pichau",
+        "terabyte",
+    )
     assert resolve_create_mission_sources("9") is None
 
 
@@ -232,7 +240,8 @@ def test_describe_create_mission_sources_prompt_lists_task_070_order() -> None:
     assert "2 — Terabyte" in prompt
     assert "3 — Amazon" in prompt
     assert "4 — Kabum" in prompt
-    assert "5 — Todas" in prompt
+    assert "5 — Magalu" in prompt
+    assert "6 — Todas" in prompt
 
 
 def test_describe_create_mission_sources_retry_asks_again() -> None:
@@ -527,14 +536,18 @@ def test_missing_store_options_excludes_current_and_uses_task_070_order() -> Non
         "1": "terabyte",
         "2": "amazon",
         "3": "kabum",
+        "4": "magalu",
     }
     assert missing_store_options(()) == {
         "1": "pichau",
         "2": "terabyte",
         "3": "amazon",
         "4": "kabum",
+        "5": "magalu",
     }
-    assert missing_store_options(("pichau", "terabyte", "amazon", "kabum")) == {}
+    assert (
+        missing_store_options(("pichau", "terabyte", "amazon", "kabum", "magalu")) == {}
+    )
 
 
 def test_current_store_options_includes_only_linked_in_canonical_order() -> None:

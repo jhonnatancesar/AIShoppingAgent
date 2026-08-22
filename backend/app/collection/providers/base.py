@@ -56,6 +56,7 @@ class PlaywrightStoreProvider:
     # "commit" e implementar `empty_result_locator` para diferenciar
     # "sem resultados" de bloqueio/erro após a navegação.
     navigation_wait_until: str = "domcontentloaded"
+    result_wait_uses_navigation_timeout: bool = False
 
     def __init__(
         self,
@@ -132,6 +133,14 @@ class PlaywrightStoreProvider:
         """Lê condição explícita na mesma página já aberta para marketplace."""
         return None
 
+    async def resolve_offer_availability(self, page: Page) -> str | None:
+        """Lê disponibilidade durante o enriquecimento único de detalhe."""
+        return None
+
+    async def resolve_seller_name(self, page: Page) -> str | None:
+        """Lê o nome exibido do Seller durante o mesmo enriquecimento."""
+        return None
+
     async def resolve_offer_rating(self, page: Page) -> tuple[str, str] | None:
         """Lê nota+contagem estruturadas na página já aberta por outro motivo."""
 
@@ -152,7 +161,7 @@ class PlaywrightStoreProvider:
         for raw_json in scripts:
             try:
                 document = json.loads(raw_json)
-            except (TypeError, ValueError):
+            except TypeError, ValueError:
                 continue
             for aggregate in aggregate_ratings(document):
                 average = aggregate.get("ratingValue")
@@ -231,9 +240,10 @@ class PlaywrightStoreProvider:
                 if response.status == 408 or response.status >= 500:
                     continue
                 try:
-                    seller_kind, fulfillment_kind = (
-                        await self.resolve_marketplace_parties(page)
-                    )
+                    (
+                        seller_kind,
+                        fulfillment_kind,
+                    ) = await self.resolve_marketplace_parties(page)
                 except Exception:
                     seller_kind, fulfillment_kind = (
                         MarketplacePartyKind.UNKNOWN,
@@ -357,9 +367,21 @@ class PlaywrightStoreProvider:
             is not PlaywrightStoreProvider.resolve_offer_condition
             and self._marketplace_party_max_candidates > 0
         )
+        availability_enabled = (
+            type(self).resolve_offer_availability
+            is not PlaywrightStoreProvider.resolve_offer_availability
+            and self._marketplace_party_max_candidates > 0
+        )
+        seller_name_enabled = (
+            type(self).resolve_seller_name
+            is not PlaywrightStoreProvider.resolve_seller_name
+            and self._marketplace_party_max_candidates > 0
+        )
         if not (
             parties_enabled
             or condition_enabled
+            or availability_enabled
+            or seller_name_enabled
             or installments_enabled
             or self.rating_detail_enabled
         ):
@@ -368,6 +390,10 @@ class PlaywrightStoreProvider:
         if parties_enabled:
             limits.append(self._marketplace_party_max_candidates)
         if condition_enabled:
+            limits.append(self._marketplace_party_max_candidates)
+        if availability_enabled:
+            limits.append(self._marketplace_party_max_candidates)
+        if seller_name_enabled:
             limits.append(self._marketplace_party_max_candidates)
         if installments_enabled:
             limits.append(self._installment_option_max_candidates)
@@ -382,6 +408,8 @@ class PlaywrightStoreProvider:
                 str | None,
                 tuple[RawInstallmentOption, ...] | None,
                 tuple[str, str] | None,
+                str | None,
+                str | None,
             ],
         ] = {}
         async with BrowserSession(self.settings) as session:
@@ -400,19 +428,44 @@ class PlaywrightStoreProvider:
                 seller_kind: MarketplacePartyKind | None = None
                 fulfillment_kind: MarketplacePartyKind | None = None
                 raw_condition: str | None = None
+                raw_availability: str | None = None
+                seller_name: str | None = None
                 options: tuple[RawInstallmentOption, ...] | None = None
-                if parties_enabled and position < self._marketplace_party_max_candidates:
+                if (
+                    parties_enabled
+                    and position < self._marketplace_party_max_candidates
+                ):
                     try:
-                        seller_kind, fulfillment_kind = (
-                            await self.resolve_marketplace_parties(page)
-                        )
+                        (
+                            seller_kind,
+                            fulfillment_kind,
+                        ) = await self.resolve_marketplace_parties(page)
                     except Exception:
                         seller_kind = fulfillment_kind = MarketplacePartyKind.UNKNOWN
-                if condition_enabled and position < self._marketplace_party_max_candidates:
+                if (
+                    condition_enabled
+                    and position < self._marketplace_party_max_candidates
+                ):
                     try:
                         raw_condition = await self.resolve_offer_condition(page)
                     except Exception:
                         raw_condition = None
+                if (
+                    availability_enabled
+                    and position < self._marketplace_party_max_candidates
+                ):
+                    try:
+                        raw_availability = await self.resolve_offer_availability(page)
+                    except Exception:
+                        raw_availability = None
+                if (
+                    seller_name_enabled
+                    and position < self._marketplace_party_max_candidates
+                ):
+                    try:
+                        seller_name = await self.resolve_seller_name(page)
+                    except Exception:
+                        seller_name = None
                 if (
                     installments_enabled
                     and position < self._installment_option_max_candidates
@@ -431,12 +484,22 @@ class PlaywrightStoreProvider:
                     raw_condition,
                     options,
                     rating,
+                    raw_availability,
+                    seller_name,
                 )
 
         def enriched(offer: RawCollectedOffer) -> RawCollectedOffer:
             if offer.url not in resolved:
                 return offer
-            seller, fulfillment, condition, options, rating = resolved[offer.url]
+            (
+                seller,
+                fulfillment,
+                condition,
+                options,
+                rating,
+                availability,
+                seller_name,
+            ) = resolved[offer.url]
             return replace(
                 offer,
                 seller_kind=(
@@ -452,6 +515,8 @@ class PlaywrightStoreProvider:
                     else fulfillment or offer.fulfillment_kind
                 ),
                 raw_condition=condition or offer.raw_condition,
+                raw_availability=availability or offer.raw_availability,
+                seller_name=seller_name or offer.seller_name,
                 installment_options=(
                     _merge_installment_options(offer.installment_options, options)
                     if options is not None
@@ -545,7 +610,12 @@ class PlaywrightStoreProvider:
             if empty_locator is None:
                 try:
                     await page.locator(self.result_selector).first.wait_for(
-                        state="attached"
+                        state="attached",
+                        timeout=(
+                            self.settings.navigation_timeout_ms
+                            if self.result_wait_uses_navigation_timeout
+                            else self.settings.action_timeout_ms
+                        ),
                     )
                 except Exception as error:
                     raise ProviderBlockedError(
@@ -707,6 +777,7 @@ class PlaywrightStoreProvider:
                     title=title,
                     collected_at=collected_at,
                     external_id=_optional(row.get("external_id")),
+                    seller_external_id=_optional(row.get("seller_external_id")),
                     seller_name=_optional(row.get("seller")),
                     raw_price=price,
                     raw_currency="BRL" if price and "R$" in price else None,

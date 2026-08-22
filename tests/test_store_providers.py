@@ -1,4 +1,5 @@
 import asyncio
+import json
 from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import uuid4
@@ -9,6 +10,7 @@ from app.collection import (
     BrowserSession,
     CollectionRequest,
     KabumProvider,
+    MagaluProvider,
     MarketplacePartyKind,
     OfferCondition,
     PichauProvider,
@@ -19,6 +21,7 @@ from app.collection import (
     TerabyteProvider,
 )
 from app.collection.providers.base import PlaywrightStoreProvider
+from app.collection.providers.magalu_transport import MagaluSearchTransportError
 from app.core.resilience import RetryPolicy
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 from scripts.validate_store_providers import should_use_headed
@@ -49,6 +52,22 @@ CASES = (
         '<main><a href="https://www.kabum.com.br/produto/456/gpu"><img src="https://images.kabum.com.br/produtos/fotos/456/gpu.jpg"><span class="line-clamp-2">GPU Kabum</span><span class="text-base font-semibold">R$</span><span class="text-base font-semibold">2.299,90</span><span>Vendido por Kabum</span></a></main>',
         "456",
         "https://images.kabum.com.br/produtos/fotos/456/gpu.jpg",
+    ),
+    (
+        MagaluProvider,
+        '<a data-testid="product-card-link" href="https://www.magazineluiza.com.br/gpu-magalu/p/abc123/in/gpu/?seller_id=magazineluiza">'
+        '<img data-testid="product-card-media" src="https://a-static.mlcdn.com.br/gpu.jpg">'
+        '<h3 data-testid="product-card-title">GPU Magalu</h3>'
+        '<div data-testid="product-card-price-final">'
+        '<span data-testid="price-value-currency">R$</span>'
+        '<span data-testid="price-value-integer">2.499</span>'
+        '<span data-testid="price-value-split-cents-fraction">90</span></div>'
+        '<span data-testid="rating-score">4.8</span>'
+        '<span data-testid="rating-label">(123)</span>'
+        '<div data-testid="product-card-price-installment">10x de R$ 249,99 sem juros</div>'
+        '<div data-testid="product-card-tags">Frete Grátis</div></a>',
+        "abc123",
+        "https://a-static.mlcdn.com.br/gpu.jpg",
     ),
 )
 
@@ -91,6 +110,239 @@ def test_amazon_uses_only_explicit_shipping_and_availability_evidence() -> None:
 
     assert offer.raw_shipping == "Frete grátis"
     assert offer.raw_availability == "Disponível"
+
+
+def test_magalu_card_preserves_explicit_seller_condition_rating_and_installment() -> (
+    None
+):
+    html = (
+        '<a data-testid="product-card-link" '
+        'href="https://www.magazineluiza.com.br/usado-celular/p/used123/te/ce/?seller_id=ecophone">'
+        '<h3 data-testid="product-card-title">Usado: Celular - Excelente</h3>'
+        '<span data-testid="price-value-currency">R$</span>'
+        '<span data-testid="price-value-integer">3.314</span>'
+        '<span data-testid="price-value-split-cents-fraction">15</span>'
+        '<span data-testid="rating-score">4.6</span>'
+        '<span data-testid="rating-label">(38)</span>'
+        '<div data-testid="product-card-price-installment">'
+        "10x de R$ 389,90 sem juros</div></a>"
+    )
+
+    async def scenario():
+        async with BrowserSession() as session:
+            page = await session.new_page()
+            await page.set_content(html)
+            return await MagaluProvider().extract(page, NOW)
+
+    offer = asyncio.run(scenario())[0]
+    normalized = PriceNormalizer().normalize_offer(offer)
+
+    assert offer.seller_external_id == "ecophone"
+    assert offer.seller_kind is MarketplacePartyKind.MARKETPLACE_PARTNER
+    assert normalized.condition is OfferCondition.USED
+    assert normalized.rating_average == Decimal("4.6")
+    assert normalized.review_count == 38
+    assert offer.installment_options[0].installment_count == 10
+
+
+def test_magalu_card_without_rating_preserves_unknown_instead_of_zero() -> None:
+    html = (
+        '<a data-testid="product-card-link" '
+        'href="https://www.magazineluiza.com.br/celular/p/new123/te/ce/?seller_id=magazineluiza">'
+        '<h3 data-testid="product-card-title">Celular novo</h3>'
+        '<span data-testid="price-value-currency">R$</span>'
+        '<span data-testid="price-value-integer">2.499</span>'
+        '<span data-testid="price-value-split-cents-fraction">90</span></a>'
+    )
+
+    async def scenario():
+        async with BrowserSession() as session:
+            page = await session.new_page()
+            await page.set_content(html)
+            return await MagaluProvider().extract(page, NOW)
+
+    offer = asyncio.run(scenario())[0]
+    normalized = PriceNormalizer().normalize_offer(offer)
+
+    assert normalized.rating_average is None
+    assert normalized.review_count is None
+
+
+def test_magalu_search_uses_ssr_json_and_returns_multiple_without_playwright(
+    monkeypatch,
+) -> None:
+    items = [
+        {
+            "id": f"product-{position}",
+            "offerId": f"offer-{position}",
+            "path": f"/produto-{position}/p/product-{position}/",
+            "title": f"Galaxy S24 Ultra 512GB oferta {position}",
+            "image": f"https://a-static.mlcdn.com.br/{{w}}x{{h}}/item-{position}.jpg",
+            "available": True,
+            "reviewRating": 4.8 if position == 1 else None,
+            "reviewCount": 12 if position == 1 else None,
+            "offers": [
+                {
+                    "seller": {"id": "magazineluiza" if position == 1 else "parceiro"},
+                    "bestPrice": {"totalAmount": 5000 + position},
+                    "bestInstallmentPlan": {
+                        "installment": 10,
+                        "installmentAmount": 500 + position,
+                        "totalAmount": 5000 + position,
+                        "paymentMethodDescription": "sem juros",
+                    },
+                    "badges": [],
+                }
+            ],
+        }
+        for position in range(1, 4)
+    ]
+    html = (
+        '<script id="__NEXT_DATA__" type="application/json">'
+        + json.dumps({"props": {"pageProps": {"data": {"search": {"items": items}}}}})
+        + "</script>"
+    )
+
+    class StaticTransport:
+        async def fetch_html(self, url: str) -> str:
+            assert url.startswith("https://www.magazineluiza.com.br/busca/")
+            return html
+
+    class ForbiddenSession:
+        def __init__(self, settings):
+            raise AssertionError("Playwright must not run when SSR JSON is valid")
+
+    monkeypatch.setattr(
+        "app.collection.providers.base.BrowserSession", ForbiddenSession
+    )
+    provider = MagaluProvider(
+        clock=lambda: NOW,
+        search_transport=StaticTransport(),
+        availability_fallback_max_candidates=0,
+    )
+    request = CollectionRequest(uuid4(), "magalu", "Galaxy S24 Ultra", NOW)
+
+    result = asyncio.run(provider.collect(request))
+
+    assert len(result.offers) == 3
+    assert result.offers[0].seller_kind is MarketplacePartyKind.PLATFORM
+    assert result.offers[0].raw_rating_average == "4.8"
+    assert result.offers[1].seller_kind is MarketplacePartyKind.MARKETPLACE_PARTNER
+    assert result.offers[1].raw_rating_average is None
+    assert result.offers[1].raw_review_count is None
+
+
+def test_magalu_transport_failure_does_not_use_playwright_fallback(monkeypatch) -> None:
+    calls = 0
+
+    class FailedTransport:
+        async def fetch_html(self, url: str) -> str:
+            nonlocal calls
+            calls += 1
+            raise MagaluSearchTransportError("CDP unavailable")
+
+    async def forbidden_fallback(self, request):
+        raise AssertionError("Magalu must not use the common Playwright fallback")
+
+    monkeypatch.setattr(
+        "app.collection.providers.base.PlaywrightStoreProvider._collect_once",
+        forbidden_fallback,
+    )
+    provider = MagaluProvider(clock=lambda: NOW, search_transport=FailedTransport())
+
+    with pytest.raises(MagaluSearchTransportError, match="CDP unavailable"):
+        asyncio.run(
+            provider.collect(CollectionRequest(uuid4(), "magalu", "Produto", NOW))
+        )
+    assert calls == 1
+
+
+def test_magalu_does_not_open_managed_browser_for_detail_enrichment(monkeypatch) -> None:
+    class Session:
+        def __init__(self, settings):
+            raise AssertionError("Magalu detail must remain on the CDP SSR result")
+
+    monkeypatch.setattr("app.collection.providers.base.BrowserSession", Session)
+    offer = RawCollectedOffer(
+        source_code="magalu",
+        url="https://www.magazineluiza.com.br/produto/p/basic/",
+        title="Resultado básico",
+        collected_at=NOW,
+        raw_price="R$ 100,00",
+    )
+
+    assert asyncio.run(MagaluProvider().enrich_offer_details((offer,))) == (offer,)
+
+
+@pytest.mark.parametrize(
+    ("text", "seller", "fulfillment"),
+    (
+        (
+            "Vendido e entregue por Magalu",
+            MarketplacePartyKind.PLATFORM,
+            MarketplacePartyKind.PLATFORM,
+        ),
+        (
+            "Vendido por Shop Next e entregue por Magalu",
+            MarketplacePartyKind.MARKETPLACE_PARTNER,
+            MarketplacePartyKind.PLATFORM,
+        ),
+        (
+            "Vendido por Loja Parceira e entregue por Loja Parceira",
+            MarketplacePartyKind.MARKETPLACE_PARTNER,
+            MarketplacePartyKind.MARKETPLACE_PARTNER,
+        ),
+        (
+            "Sem informação comercial",
+            MarketplacePartyKind.UNKNOWN,
+            MarketplacePartyKind.UNKNOWN,
+        ),
+    ),
+)
+def test_magalu_detail_classifies_only_explicit_marketplace_parties(
+    text: str,
+    seller: MarketplacePartyKind,
+    fulfillment: MarketplacePartyKind,
+) -> None:
+    async def scenario():
+        async with BrowserSession() as session:
+            page = await session.new_page()
+            await page.set_content(f"<body>{text}</body>")
+            parties = await MagaluProvider().resolve_marketplace_parties(page)
+            seller_name = await MagaluProvider().resolve_seller_name(page)
+            return parties, seller_name
+
+    parties, seller_name = asyncio.run(scenario())
+
+    assert parties == (seller, fulfillment)
+    assert seller_name == (
+        text.split(" e entregue", 1)[0].removeprefix("Vendido por ")
+        if text.startswith("Vendido por ")
+        else "Magalu"
+        if text.startswith("Vendido e entregue")
+        else None
+    )
+
+
+def test_magalu_detail_reuses_structured_condition_and_availability() -> None:
+    html = (
+        '<script type="application/ld+json">'
+        '{"@type":"Product","itemCondition":"https://schema.org/NewCondition",'
+        '"offers":{"availability":"https://schema.org/InStock"}}'
+        "</script>"
+    )
+
+    async def scenario():
+        async with BrowserSession() as session:
+            page = await session.new_page()
+            await page.set_content(html)
+            provider = MagaluProvider()
+            return (
+                await provider.resolve_offer_condition(page),
+                await provider.resolve_offer_availability(page),
+            )
+
+    assert asyncio.run(scenario()) == ("Novo", "Disponível")
 
 
 def test_amazon_collects_exact_rating_evidence_from_card_accessibility() -> None:
@@ -1168,6 +1420,12 @@ def test_unified_detail_enrichment_opens_each_offer_only_once(monkeypatch) -> No
                 ),
             )
 
+        async def resolve_offer_availability(self, page):
+            return "Disponível"
+
+        async def resolve_seller_name(self, page):
+            return "Loja oficial"
+
         async def resolve_offer_rating(self, page):
             return ("4.7", "82")
 
@@ -1188,6 +1446,8 @@ def test_unified_detail_enrichment_opens_each_offer_only_once(monkeypatch) -> No
     assert len(enriched.installment_options) == 1
     assert enriched.raw_rating_average == "4.7"
     assert enriched.raw_review_count == "82"
+    assert enriched.raw_availability == "Disponível"
+    assert enriched.seller_name == "Loja oficial"
 
 
 def test_terabyte_unified_detail_enrichment_never_opens_page(monkeypatch) -> None:
@@ -1490,6 +1750,7 @@ def test_fallback_treats_resolve_product_availability_exception_as_unresolved(
 def test_uses_headed_only_for_protected_sources_by_default() -> None:
     assert should_use_headed("pichau") is True
     assert should_use_headed("terabyte") is True
+    assert should_use_headed("magalu") is True
     assert should_use_headed("amazon") is False
     assert should_use_headed("kabum") is False
     assert should_use_headed("pichau", force_headless=True) is False

@@ -36,7 +36,7 @@ from app.products.identity import ProductRequestKind, classify_product_request
 from app.products.models import Product
 from app.stores.models import Store
 
-_DEFAULT_V1_SOURCE_CODES = ("pichau", "terabyte", "amazon", "kabum")
+_DEFAULT_V1_SOURCE_CODES = ("pichau", "terabyte", "amazon", "kabum", "magalu")
 _DEFAULT_SCHEDULE_INTERVAL_MINUTES = 60
 _DEFAULT_SCHEDULE_STAGGER_SECONDS = 0
 """Fontes selecionáveis da V1 usadas quando o Intent não especifica nenhuma."""
@@ -449,14 +449,14 @@ def create_mission_from_criteria(
     session.add(mission)
 
     criteria = MissionCriteria(
-            mission_id=mission.id,
-            search_query=search_query,
-            model=model,
-            target_amount=target_amount,
-            target_currency=target_currency,
-            created_at=requested_at,
-            updated_at=requested_at,
-        )
+        mission_id=mission.id,
+        search_query=search_query,
+        model=model,
+        target_amount=target_amount,
+        target_currency=target_currency,
+        created_at=requested_at,
+        updated_at=requested_at,
+    )
     _apply_product_request_identity(
         criteria, f"{search_query} {model}" if model else search_query
     )
@@ -542,14 +542,14 @@ async def create_mission_from_criteria_async(
     session.add(mission)
 
     criteria = MissionCriteria(
-            mission_id=mission.id,
-            search_query=search_query,
-            model=model,
-            target_amount=target_amount,
-            target_currency=target_currency,
-            created_at=requested_at,
-            updated_at=requested_at,
-        )
+        mission_id=mission.id,
+        search_query=search_query,
+        model=model,
+        target_amount=target_amount,
+        target_currency=target_currency,
+        created_at=requested_at,
+        updated_at=requested_at,
+    )
     _apply_product_request_identity(
         criteria, f"{search_query} {model}" if model else search_query
     )

@@ -41,6 +41,7 @@ from app.collection.normalization import (
 from app.collection.providers import (
     AmazonProvider,
     KabumProvider,
+    MagaluProvider,
     PichauProvider,
     TerabyteProvider,
 )
@@ -75,6 +76,7 @@ __all__ = [
     "ResolvedProductIdentity",
     "AmazonProvider",
     "KabumProvider",
+    "MagaluProvider",
     "PichauProvider",
     "StoreProductIdentityResolver",
     "TerabyteProvider",

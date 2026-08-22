@@ -10,19 +10,22 @@ from app.collection import (
     BrowserSettings,
     CollectionRequest,
     KabumProvider,
+    MagaluProvider,
     PichauProvider,
     PriceNormalizer,
     TerabyteProvider,
 )
+from app.collection.providers.magalu_transport import build_magalu_search_transport
 
 PROVIDERS = {
     "amazon": AmazonProvider,
     "kabum": KabumProvider,
+    "magalu": MagaluProvider,
     "pichau": PichauProvider,
     "terabyte": TerabyteProvider,
 }
 
-HEADED_SOURCES = {"pichau", "terabyte"}
+HEADED_SOURCES = {"pichau", "terabyte", "magalu"}
 
 
 def should_use_headed(
@@ -34,11 +37,26 @@ def should_use_headed(
 
 
 async def validate(
-    source: str, query: str, headed: bool, *, show_evidence: bool = False
+    source: str,
+    query: str,
+    headed: bool,
+    *,
+    show_evidence: bool = False,
+    magalu_cdp_url: str | None = None,
 ) -> None:
+    provider_kwargs = {}
+    if source == "magalu":
+        provider_kwargs["search_transport"] = build_magalu_search_transport(
+            cdp_endpoint=magalu_cdp_url,
+            connect_timeout_ms=5_000,
+            navigation_timeout_ms=20_000,
+            document_timeout_ms=10_000,
+            html_timeout_ms=3_000,
+        )
     provider = PROVIDERS[source](
         BrowserSettings(headless=not headed, navigation_timeout_ms=60_000),
         max_offers=3,
+        **provider_kwargs,
     )
     request = CollectionRequest(uuid4(), source, query, datetime.now(UTC))
     result = await provider.collect(request)
@@ -66,12 +84,22 @@ def main() -> None:
     mode.add_argument("--headed", action="store_true")
     mode.add_argument("--headless", action="store_true")
     parser.add_argument("--show-evidence", action="store_true")
+    parser.add_argument(
+        "--magalu-cdp-url",
+        help="Endpoint CDP HTTP loopback de um Edge normal já iniciado.",
+    )
     args = parser.parse_args()
     headed = should_use_headed(
         args.source, force_headed=args.headed, force_headless=args.headless
     )
     asyncio.run(
-        validate(args.source, args.query, headed, show_evidence=args.show_evidence)
+        validate(
+            args.source,
+            args.query,
+            headed,
+            show_evidence=args.show_evidence,
+            magalu_cdp_url=args.magalu_cdp_url,
+        )
     )
 
 

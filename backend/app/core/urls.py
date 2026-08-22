@@ -24,6 +24,30 @@ def normalize_http_url(value: object) -> str | None:
     return text
 
 
+def normalize_loopback_http_endpoint(value: object) -> str | None:
+    """Aceita somente endpoint HTTP loopback com porta explícita."""
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = urlsplit(text)
+        port = parsed.port
+    except ValueError:
+        return None
+    if (
+        parsed.scheme.lower() != "http"
+        or parsed.hostname not in {"127.0.0.1", "localhost", "::1"}
+        or port is None
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path not in {"", "/"}
+        or parsed.query
+        or parsed.fragment
+    ):
+        return None
+    return text.rstrip("/")
+
+
 def is_url_compatible_with_store(url: str, store_base_url: str) -> bool:
     """Aceita somente o host da loja ou um subdomínio desse host."""
     target = normalize_http_url(url)

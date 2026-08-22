@@ -14,7 +14,7 @@ from uuid import UUID
 
 from app.missions.models import MissionCommand
 
-MISSION_SOURCE_CODES = frozenset({"pichau", "terabyte", "amazon", "kabum"})
+MISSION_SOURCE_CODES = frozenset({"pichau", "terabyte", "amazon", "kabum", "magalu"})
 """Fontes selecionáveis na V1, conforme `docs/architecture/telegram.md` e a TASK-055."""
 
 MODEL_CONFIDENCE_VALUES = frozenset({"alta", "baixa"})

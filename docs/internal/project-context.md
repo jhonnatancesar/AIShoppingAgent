@@ -1,5 +1,15 @@
 # Project Context
 
+**Atualização 2026-08-22 (TASK-104A implementada e validada no DEV):** aquisição
+Magalu usa a porta substituível `MagaluSearchTransport`; quando configurado, o
+adapter Edge/CDP conecta somente em loopback e entrega o HTML final ao parser
+SSR existente. Edge 151 normal retornou HTTP 200, 39 itens SSR e múltiplas
+ofertas reais completas. Edge/CDP é o único transporte operacional, iniciado e
+recuperado por supervisor; falha/timeout é rápido e isolado. Busca,
+enriquecimento, domínio e ranking não conhecem CDP. Ausência de avaliação
+permanece `NULL` e falha Magalu segue isolada por claim (`DEC-090`). A
+migration/seed foi aprovada no PostgreSQL 18.4 descartável, head `20260822_0007`.
+
 **Atualização 2026-08-22 (TASK-103 implementada no DEV, aguardando revisão):**
 a página de Offer compara opções autorizadas entre lojas somente quando a
 identidade específica da TASK-097 está resolvida. Mesma variante significa o

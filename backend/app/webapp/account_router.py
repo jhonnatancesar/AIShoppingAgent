@@ -30,6 +30,7 @@ _EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 _STORE_LABELS = {
     "amazon": "Amazon",
     "kabum": "KaBuM!",
+    "magalu": "Magalu",
     "pichau": "Pichau",
     "terabyte": "Terabyte",
 }

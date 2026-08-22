@@ -1,5 +1,34 @@
 # Decision Log
 
+## DEC-090 — Magalu separa transporte do parser SSR e admite Edge/CDP loopback
+
+- **Data:** 2026-08-22.
+- **Decisão:** TASK-104A separa aquisição, parser e enriquecimento. O provider
+  recebe uma porta `MagaluSearchTransport`; quando configurado, o adapter atual
+  conecta a um Edge normal via CDP loopback e entrega o HTML final ao mesmo
+  parser `#__NEXT_DATA__`. Edge/CDP é o único transporte operacional desta
+  versão; HTTP e Playwright foram removidos do fluxo Magalu.
+- **Auditoria:** a carga inicial observada não chamou API pública separada de
+  catálogo. O endpoint Next derivável do `assetPrefix` também respondeu 403 no
+  runtime do backend; não será tratado como contrato estável.
+- **Falha segura:** erro no enriquecimento preserva os resultados básicos e a
+  falha da fonte continua isolada por claim no orquestrador. Ausência de nota e
+  quantidade permanece `NULL`.
+- **Segurança:** configuração rejeita CDP remoto, público, HTTPS, sem porta ou
+  com credenciais; somente `127.0.0.1`, `localhost` e `::1` são aceitos. Não há
+  headers especiais, stealth, fingerprint, CAPTCHA, proxy ou evasão.
+- **Validação real:** Edge 151 normal/CDP loopback retornou HTTP 200; parser SSR
+  encontrou 39 itens e o provider real devolveu múltiplas ofertas completas.
+  HTTP direto/Playwright gerenciado seguem bloqueados, mas já não são requisito
+  quando o transporte CDP está configurado.
+- **Operação:** o worker mantém um supervisor dedicado, perfil próprio e CDP
+  loopback; reinicia o Edge após queda. Timeouts separados limitam conexão,
+  navegação, documento SSR e leitura. Erros não são classificados como
+  navegação transitória, evitando retry agressivo e preservando isolamento.
+- **Smoke real:** Edge ausente iniciou automaticamente; após encerrar os 8
+  processos do perfil dedicado, o supervisor recuperou com novo PID e a busca
+  posterior retornou 20 ofertas.
+
 ## DEC-087 — Comparação exige Product específico resolvido e ownership por Offer
 
 - **Data:** 2026-08-22.
