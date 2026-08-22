@@ -43,6 +43,7 @@ from app.collection.orchestration import (
     _installment_snapshot,
     _maybe_publish_prelist_errata,
     _maybe_publish_prelist_ready,
+    _mission_relevance_pending,
     _PendingOffer,
     _persist_phase_a,
     _persist_phase_c,
@@ -995,6 +996,10 @@ def test_maybe_publish_prelist_ready_picks_two_cheapest_of_three_stores(
         AsyncMock(return_value=True),
     )
     monkeypatch.setattr(
+        "app.collection.orchestration._mission_relevance_pending",
+        AsyncMock(return_value=False),
+    )
+    monkeypatch.setattr(
         "app.collection.orchestration._latest_match_observations_by_store",
         AsyncMock(return_value=[expensive, cheap, mid]),
     )
@@ -1025,6 +1030,118 @@ def test_maybe_publish_prelist_ready_waits_for_the_full_round(monkeypatch) -> No
 
     assert mission.prelist_sent is False
     publish.assert_not_awaited()
+
+
+def test_maybe_publish_prelist_ready_defers_when_relevance_pending(
+    monkeypatch,
+) -> None:
+    """TASK-091: causa real do bug de produção -- classificação de
+    relevância falhou (IA indisponível) para uma oferta atual, então a
+    rodada está "completa" por lojas mas ainda tem classificação
+    pendente. `prelist_sent` NUNCA pode virar `True` nesse caso -- a
+    pré-lista precisa continuar elegível para a próxima coleta, nunca
+    "queimada" com uma lista vazia."""
+    mission = SimpleNamespace(
+        id=uuid4(), prelist_sent=False, prelist_lowest_amount=None
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration._mission_prelist_round_complete",
+        AsyncMock(return_value=True),
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration._mission_relevance_pending",
+        AsyncMock(return_value=True),
+    )
+    candidates = AsyncMock()
+    monkeypatch.setattr(
+        "app.collection.orchestration._latest_match_observations_by_store",
+        candidates,
+    )
+    publish = AsyncMock()
+    monkeypatch.setattr("app.collection.orchestration.publish_event_async", publish)
+
+    asyncio.run(_maybe_publish_prelist_ready(_mock_async_session(), mission, NOW))
+
+    assert mission.prelist_sent is False
+    candidates.assert_not_awaited()  # nem chega a montar a lista de MATCH
+    publish.assert_not_awaited()
+
+
+def test_maybe_publish_prelist_ready_sends_after_pending_relevance_resolves(
+    monkeypatch,
+) -> None:
+    """Continuação do cenário acima: na coleta seguinte, a classificação
+    que tinha falhado agora resolve como MATCH (fallback pro Groq
+    funcionando, ou nova tentativa bem-sucedida do Gemini) -- a mesma
+    missão, agora sem nada pendente, publica a pré-lista normal (não uma
+    errata) na primeira vez que isso acontece."""
+    mission = SimpleNamespace(
+        id=uuid4(), prelist_sent=False, prelist_lowest_amount=None
+    )
+    match = SimpleNamespace(
+        offer_id=uuid4(), id=uuid4(), amount=Decimal("4255.05"), currency="BRL"
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration._mission_prelist_round_complete",
+        AsyncMock(return_value=True),
+    )
+    publish = AsyncMock()
+    monkeypatch.setattr("app.collection.orchestration.publish_event_async", publish)
+
+    # Primeira coleta: classificação ainda pendente -- nada é enviado.
+    monkeypatch.setattr(
+        "app.collection.orchestration._mission_relevance_pending",
+        AsyncMock(return_value=True),
+    )
+    asyncio.run(_maybe_publish_prelist_ready(_mock_async_session(), mission, NOW))
+    assert mission.prelist_sent is False
+    publish.assert_not_awaited()
+
+    # Coleta seguinte: classificação resolvida como MATCH -- pré-lista
+    # normal (mission.prelist_ready.v1), não errata.
+    monkeypatch.setattr(
+        "app.collection.orchestration._mission_relevance_pending",
+        AsyncMock(return_value=False),
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration._latest_match_observations_by_store",
+        AsyncMock(return_value=[match]),
+    )
+    asyncio.run(_maybe_publish_prelist_ready(_mock_async_session(), mission, NOW))
+
+    assert mission.prelist_sent is True
+    assert mission.prelist_lowest_amount == Decimal("4255.05")
+    publish.assert_awaited_once()
+    assert publish.call_args.kwargs["event_type"].value == "mission.prelist_ready.v1"
+
+
+def test_mission_relevance_pending_false_when_every_current_offer_is_resolved(
+    monkeypatch,
+) -> None:
+    """Unidade direta de `_mission_relevance_pending`: a consulta real usa
+    LEFT JOIN + `MissionOfferRelevance.offer_id IS NULL` -- qualquer linha
+    já persistida (`MATCH`, `POSSIBLE_MATCH` ou `NO_MATCH`) satisfaz o
+    JOIN e nunca aparece como pendente, então uma classificação resolvida
+    como não-match (ausência de match, não ausência de linha) não trava a
+    pré-lista para sempre; só a ausência completa da linha conta como
+    pendente. `session.scalar` devolvendo `None` é exatamente o que a
+    consulta real devolve quando toda oferta atual já tem uma linha,
+    disponibilizada por qualquer classificação."""
+    session = _mock_async_session()
+    session.scalar.return_value = None
+
+    pending = asyncio.run(_mission_relevance_pending(session, uuid4()))
+
+    assert pending is False
+
+
+def test_mission_relevance_pending_true_when_query_finds_a_gap(monkeypatch) -> None:
+    session = _mock_async_session()
+    session.scalar.return_value = uuid4()  # offer_id sem MissionOfferRelevance
+
+    pending = asyncio.run(_mission_relevance_pending(session, uuid4()))
+
+    assert pending is True
 
 
 def test_maybe_publish_prelist_errata_publishes_once_when_cheaper_found() -> None:
