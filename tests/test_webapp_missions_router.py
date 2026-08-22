@@ -305,6 +305,55 @@ def test_get_mission_exposes_links_to_relevant_offers(
     ]
 
 
+def test_select_multiple_family_variants_uses_owned_mission(
+    client: TestClient,
+    async_session: MagicMock,
+    owner: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mission = _mission(user_id=owner.id)
+    product_ids = [uuid4(), uuid4()]
+    async_session.get = AsyncMock(return_value=mission)
+    selection = AsyncMock(return_value=())
+    monkeypatch.setattr(
+        "app.webapp.missions_router.set_mission_product_selection_async", selection
+    )
+
+    response = client.put(
+        f"/api/v1/missions/{mission.id}/variants",
+        json={
+            "expected_state_version": mission.state_version,
+            "product_ids": [str(item) for item in product_ids],
+        },
+        cookies=_cookies(),
+        headers=_csrf_headers(),
+    )
+
+    assert response.status_code == 200
+    selection.assert_awaited_once()
+    call = selection.await_args.kwargs
+    assert call["user_id"] == owner.id
+    assert call["mission_id"] == mission.id
+    assert call["product_ids"] == tuple(product_ids)
+    assert call["select_all"] is False
+
+
+def test_select_family_variants_of_another_user_is_denied(
+    client: TestClient, async_session: MagicMock
+) -> None:
+    mission = _mission(user_id=uuid4())
+    async_session.get = AsyncMock(return_value=mission)
+
+    response = client.put(
+        f"/api/v1/missions/{mission.id}/variants",
+        json={"expected_state_version": 3, "select_all": True},
+        cookies=_cookies(),
+        headers=_csrf_headers(),
+    )
+
+    assert response.status_code == 403
+
+
 def test_pause_mission_owned_by_another_user_is_403(
     client: TestClient, async_session: MagicMock
 ) -> None:

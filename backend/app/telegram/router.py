@@ -72,9 +72,11 @@ from app.missions.service import (
     MissionEditConditionError,
     MissionNotFoundError,
     MissionTransitionConditionError,
+    MissionVariantSelectionError,
     MissionVersionConflictError,
     create_mission_from_criteria_async,
     edit_mission_criteria,
+    set_mission_product_selection_async,
     transition_mission_async,
 )
 from app.observability.metrics import observe_resilience_event
@@ -322,6 +324,7 @@ _PENDING_INTENT_PERMISSIONS: dict[str, Permission] = {
     # TASK-070: mesma permissão de criar -- ainda não existe missão, só
     # falta escolher as lojas antes de seguir para a confirmação normal.
     "await_create_mission_sources": Permission.MISSION_CREATE,
+    "await_mission_variants": Permission.MISSION_EDIT,
     "edit_mission": Permission.MISSION_EDIT,
     # TASK-069: "pause_for_edit" executa um PAUSE de verdade -- mesma
     # permissão de qualquer outro comando de ciclo de vida.
@@ -759,6 +762,10 @@ async def _resolve_pending_intent(
         )
     if kind == "await_create_mission_sources":
         return _apply_create_mission_sources_answer(message.text, user=user)
+    if kind == "await_mission_variants":
+        return await _apply_mission_variant_choice(
+            message.text, session=session, user=user
+        )
     if kind in ("await_edit_paused_choice", "await_edit_active_choice"):
         return _apply_edit_mission_choice(message.text, user=user)
     if kind == "await_edit_menu_choice":
@@ -878,6 +885,57 @@ def _apply_create_mission_sources_answer(text: str, *, user: User) -> str:
     )
     user.pending_intent = create_payload
     return describe_create_mission(create_payload)
+
+
+async def _apply_mission_variant_choice(
+    text: str, *, session: AsyncSession, user: User
+) -> str:
+    """Resolve a lista fixa enviada pelo notifier, sem IA nem nova ordenação."""
+    payload = user.pending_intent
+    entries = payload.get("variants") if isinstance(payload, dict) else None
+    if not isinstance(entries, list) or not entries:
+        user.pending_intent = None
+        return "Essa seleção expirou. Consulte a missão na aplicação web."
+    all_index = len(entries) + 1
+    normalized = text.strip().casefold()
+    select_all = normalized in {str(all_index), "todas", "todos"}
+    indices = None if select_all else parse_multi_numbered_choice(text, count=len(entries))
+    if not select_all and indices is None:
+        return (
+            "Não entendi. Digite um ou mais números da lista separados por vírgula "
+            f"ou {all_index} para todas."
+        )
+    try:
+        selected = await set_mission_product_selection_async(
+            session,
+            user_id=user.id,
+            mission_id=UUID(payload["mission_id"]),
+            expected_state_version=int(payload["expected_state_version"]),
+            product_ids=(
+                ()
+                if select_all
+                else tuple(UUID(entries[index]["product_id"]) for index in indices or ())
+            ),
+            select_all=select_all,
+            selected_at=datetime.now(UTC),
+        )
+    except (
+        KeyError,
+        TypeError,
+        ValueError,
+        MissionNotFoundError,
+        MissionVariantSelectionError,
+    ):
+        user.pending_intent = None
+        return "Essa seleção não está mais disponível. Consulte a missão na aplicação web."
+    except MissionVersionConflictError:
+        user.pending_intent = None
+        return "A missão mudou desde esta lista. Consulte as variantes atuais na aplicação web."
+    user.pending_intent = None
+    if select_all:
+        return "✅ Todas as variantes encontradas desta família serão monitoradas."
+    labels = [product.display_name or product.name for product in selected]
+    return "✅ Variantes selecionadas: " + ", ".join(labels) + "."
 
 
 async def _dispatch_intent(intent: Intent, *, session: AsyncSession, user: User) -> str:

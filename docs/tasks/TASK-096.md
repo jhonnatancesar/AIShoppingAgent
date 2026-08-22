@@ -1,6 +1,7 @@
 # TASK-096 — Avaliações por oferta/loja na página USER e no Telegram
 
-Status: **Implementada no DEV e aguardando revisão.**
+Status: **Concluída, aprovada e publicada em `origin/main` em 2026-08-22
+(`fd5a6f9`).**
 
 ## Origem e objetivo
 
@@ -57,4 +58,4 @@ loja, gráficos/histórico de avaliação, agregação entre lojas e IA.
 - Runner oficial aprovou migration e teste focado no PostgreSQL 18.4
   descartável, head `20260822_0003`.
 
-Sem produção, deploy, commit ou push nesta implementação.
+Sem produção ou deploy nesta implementação.

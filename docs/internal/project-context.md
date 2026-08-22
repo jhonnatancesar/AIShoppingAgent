@@ -1,6 +1,14 @@
 # Project Context
 
-**Atualização 2026-08-22 (TASK-096, item 6 da V1.2, aguardando revisão):**
+**Atualização 2026-08-22 (TASK-097 implementada no DEV, aguardando revisão):**
+identidade global determinística e fail-closed de produto/variante, com distinção
+persistida entre `specific_product`, `product_family` e `generic_category`.
+Famílias oferecem escolha de uma, várias ou todas na Web e no Telegram;
+categorias genéricas continuam operacionais sem seleção. A migration
+`20260822_0004` foi aprovada em PostgreSQL descartável. TASK-098 permanece
+somente reservada para histórico e gráficos. Ver `DEC-079`.
+
+**Atualização 2026-08-22 (TASK-096, item 6 da V1.2, concluída):**
 avaliações passam a ser snapshot atual da própria `Offer`/`Store`, nunca nota
 global de Product. Card é a primeira fonte; detalhe estruturado só é lido numa
 abertura já necessária e compartilhada com vendedor/condição/parcelamento.
@@ -8,6 +16,7 @@ Terabyte não ganha navegação individual sob o bloqueio atual. Página USER e
 Telegram exibem o par nota/contagem quando completo; sem texto de reviews.
 PostgreSQL 18.4 descartável aprovou migration/check e o teste de snapshot no
 head `20260822_0003`; testes focados, Ruff e frontend foram aprovados.
+A TASK foi aprovada e publicada em `origin/main` no commit `fd5a6f9`, sem deploy.
 
 **Atualização 2026-08-22 (TASK-095, item 5 da V1.2, concluída):**
 a primeira página rica USER é centrada em `Offer`, em

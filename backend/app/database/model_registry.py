@@ -16,6 +16,7 @@ from app.events.models import Event, EventConsumptionAttempt, EventDeliveryCheck
 from app.missions.models import (
     Mission,
     MissionCriteria,
+    MissionProductSelection,
     MissionSchedule,
     MissionSource,
     MissionTransition,
@@ -40,6 +41,7 @@ REGISTERED_MODELS = (
     AuditEntry,
     Mission,
     MissionCriteria,
+    MissionProductSelection,
     MissionTransition,
     MissionSource,
     MissionSchedule,

@@ -41,6 +41,7 @@ class EventType(StrEnum):
     MISSION_PRELIST_ERRATA_V1 = "mission.prelist_errata.v1"
     MISSION_PRELIST_READY_V2 = "mission.prelist_ready.v2"
     MISSION_PRELIST_ERRATA_V2 = "mission.prelist_errata.v2"
+    MISSION_VARIANTS_READY_V1 = "mission.variants_ready.v1"
 
 
 @dataclass(frozen=True, slots=True)
@@ -296,6 +297,33 @@ class MissionPrelistErrataV2Payload:
         _validate_prelist_offers(self.offers, one_store=self.corrected_store_id)
 
 
+@dataclass(frozen=True, slots=True)
+class ProductVariantOptionPayload:
+    product_id: UUID
+    label: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.label, str) or not self.label.strip():
+            raise EventCatalogError("variant label must not be blank")
+
+
+@dataclass(frozen=True, slots=True)
+class MissionVariantsReadyPayload:
+    mission_id: UUID
+    variants: tuple[ProductVariantOptionPayload, ...]
+    state_version: int
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.variants, tuple) or not 1 <= len(self.variants) <= 20:
+            raise EventCatalogError("variants must contain between 1 and 20 items")
+        if any(not isinstance(item, ProductVariantOptionPayload) for item in self.variants):
+            raise EventCatalogError("variants must use ProductVariantOptionPayload")
+        if len({item.product_id for item in self.variants}) != len(self.variants):
+            raise EventCatalogError("variants must be unique")
+        if type(self.state_version) is not int or self.state_version < 0:
+            raise EventCatalogError("state_version must be non-negative")
+
+
 type EventPayload = (
     MissionStatusChangedPayload
     | CollectionCompletedPayload
@@ -309,6 +337,7 @@ type EventPayload = (
     | MissionPrelistErrataPayload
     | MissionPrelistReadyV2Payload
     | MissionPrelistErrataV2Payload
+    | MissionVariantsReadyPayload
 )
 
 
@@ -385,6 +414,11 @@ EVENT_CATALOG = MappingProxyType(
             EventType.MISSION_PRELIST_ERRATA_V2,
             AggregateType.MISSION,
             MissionPrelistErrataV2Payload,
+        ),
+        EventType.MISSION_VARIANTS_READY_V1: EventSpec(
+            EventType.MISSION_VARIANTS_READY_V1,
+            AggregateType.MISSION,
+            MissionVariantsReadyPayload,
         ),
     }
 )

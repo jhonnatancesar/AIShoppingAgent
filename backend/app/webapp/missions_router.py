@@ -30,7 +30,12 @@ from app.core.errors import ApiError
 from app.database.dependency import get_web_async_session
 from app.database.time import utc_now
 from app.intent.contracts import MISSION_SOURCE_CODES
-from app.missions.models import Mission, MissionCommand, MissionStatus
+from app.missions.models import (
+    Mission,
+    MissionCommand,
+    MissionStatus,
+    VariantSelectionMode,
+)
 from app.missions.query import (
     MissionDetail,
     count_missions_for_user_by_status,
@@ -44,9 +49,11 @@ from app.missions.service import (
     MissionEditConditionError,
     MissionNotFoundError,
     MissionTransitionConditionError,
+    MissionVariantSelectionError,
     MissionVersionConflictError,
     create_mission_from_criteria_async,
     edit_mission_criteria,
+    set_mission_product_selection_async,
     transition_mission_async,
 )
 from app.offers.query import MissionOfferLink, list_current_offer_links_for_mission
@@ -99,6 +106,15 @@ class MissionCriteriaOut(BaseModel):
     model: str | None
     target_amount: Decimal | None
     target_currency: str | None
+    request_kind: str
+    variant_selection_mode: str
+
+
+class ProductVariantOut(BaseModel):
+    product_id: UUID
+    label: str
+    attributes: dict[str, str]
+    selected: bool
 
 
 class MissionSourceOut(BaseModel):
@@ -143,6 +159,7 @@ class MissionDetailResponse(BaseModel):
     schedule: MissionScheduleOut | None
     transitions: list[MissionTransitionOut]
     offers: list[MissionOfferLinkOut]
+    available_variants: list[ProductVariantOut]
 
 
 # --- Modelos de requisição ----------------------------------------------
@@ -179,6 +196,22 @@ class MissionCommandRequest(BaseModel):
 
     expected_state_version: Annotated[int, Field(ge=0)]
     reason: Annotated[str | None, Field(default=None, min_length=1, max_length=500)]
+
+
+class SelectMissionVariantsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    expected_state_version: Annotated[int, Field(ge=0)]
+    product_ids: list[UUID] = Field(default_factory=list, max_length=20)
+    select_all: bool = False
+
+    @model_validator(mode="after")
+    def _validate(self) -> SelectMissionVariantsRequest:
+        if self.select_all == bool(self.product_ids):
+            raise ValueError("Escolha todas as variantes ou informe uma lista.")
+        if len(set(self.product_ids)) != len(self.product_ids):
+            raise ValueError("product_ids não pode repetir variantes.")
+        return self
 
 
 class EditMissionRequest(BaseModel):
@@ -313,6 +346,11 @@ def _as_detail(
                 model=detail.criteria.model,
                 target_amount=detail.criteria.target_amount,
                 target_currency=detail.criteria.target_currency,
+                request_kind=detail.criteria.request_kind or "generic_category",
+                variant_selection_mode=(
+                    detail.criteria.variant_selection_mode
+                    or VariantSelectionMode.NOT_REQUIRED
+                ).value,
             )
             if detail.criteria
             else None
@@ -355,6 +393,23 @@ def _as_detail(
                 last_seen_at=item.offer.last_seen_at.isoformat(),
             )
             for item in offer_links
+        ],
+        available_variants=[
+            ProductVariantOut(
+                product_id=product.id,
+                label=product.display_name or product.name,
+                attributes=product.attributes or {},
+                selected=(
+                    detail.criteria is not None
+                    and (
+                        detail.criteria.variant_selection_mode
+                        or VariantSelectionMode.NOT_REQUIRED
+                    )
+                    is VariantSelectionMode.ALL
+                )
+                or product.id in detail.selected_product_ids,
+            )
+            for product in detail.available_variants
         ],
     )
 
@@ -422,6 +477,54 @@ async def create_mission(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             code="mission_creation_failed",
             message="Não foi possível criar a missão. Tente novamente mais tarde.",
+        ) from error
+    return _as_summary(mission)
+
+
+@router.put(
+    "/{mission_id}/variants",
+    operation_id="select_mission_variants",
+    summary="Selecionar variantes de uma missão por família",
+)
+async def select_mission_variants(
+    mission_id: UUID,
+    payload: SelectMissionVariantsRequest,
+    user: User = Depends(require_web_session),
+    session: AsyncSession = Depends(get_web_async_session),
+) -> MissionSummary:
+    try:
+        authorize(
+            session,
+            user,
+            Permission.MISSION_EDIT,
+            resource_type="mission",
+            resource_id=mission_id,
+        )
+    except AuthorizationDenied as error:
+        await _deny_and_commit(session, error)
+    mission = await _require_owned_mission(
+        session,
+        mission_id=mission_id,
+        user=user,
+        permission=Permission.MISSION_EDIT,
+    )
+    try:
+        await set_mission_product_selection_async(
+            session,
+            user_id=user.id,
+            mission_id=mission.id,
+            expected_state_version=payload.expected_state_version,
+            product_ids=tuple(payload.product_ids),
+            select_all=payload.select_all,
+            selected_at=utc_now(),
+        )
+    except MissionVersionConflictError as error:
+        _raise_for_transition_error(error)
+    except MissionVariantSelectionError as error:
+        raise ApiError(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            code="mission_variant_selection_invalid",
+            message=str(error),
         ) from error
     return _as_summary(mission)
 

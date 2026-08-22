@@ -128,6 +128,51 @@ def _awaiting_mission_description() -> dict[str, str]:
     }
 
 
+@pytest.mark.anyio
+async def test_family_variant_numbers_select_multiple_without_ai(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    product_ids = (uuid4(), uuid4())
+    products = tuple(
+        SimpleNamespace(id=product_id, display_name=label, name=label)
+        for product_id, label in zip(product_ids, ("iPhone 17", "iPhone 17 Pro"))
+    )
+    user = _fake_user(
+        pending_intent={
+            "kind": "await_mission_variants",
+            "event_id": str(uuid4()),
+            "mission_id": str(uuid4()),
+            "mission_title": "iPhone 17",
+            "expected_state_version": 2,
+            "variants": [
+                {"product_id": str(product.id), "label": product.display_name}
+                for product in products
+            ],
+        }
+    )
+    select_variants = AsyncMock(return_value=products)
+    monkeypatch.setattr(
+        "app.telegram.router.set_mission_product_selection_async", select_variants
+    )
+
+    response = await _resolve_pending_intent(
+        TelegramMessage(
+            chat_id=222,
+            chat_type=TelegramChatType.PRIVATE,
+            user_id=222,
+            text="1,2",
+            received_at=datetime.now(UTC),
+        ),
+        adapters={},
+        session=_async_session(),
+        user=user,
+    )
+
+    assert response == "✅ Variantes selecionadas: iPhone 17, iPhone 17 Pro."
+    assert select_variants.await_args.kwargs["product_ids"] == product_ids
+    assert user.pending_intent is None
+
+
 def _adapters(adapter: _FakeAdapter, *, role: UserRole = UserRole.USER) -> dict:
     return {role: adapter}
 

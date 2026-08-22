@@ -32,7 +32,7 @@ from app.events.consumption import (
     record_consumption_attempt_async,
 )
 from app.events.models import EventDeliveryCheckpoint
-from app.missions.models import Mission
+from app.missions.models import Mission, MissionCriteria, VariantSelectionMode
 from app.observability.metrics import observe_resilience_event
 from app.offers.models import Offer
 from app.offers.short_links import build_offer_short_url, get_or_create_offer_short_link
@@ -73,6 +73,7 @@ _PRELIST_EVENT_TYPES = (
     EventType.MISSION_PRELIST_ERRATA_V1.value,
     EventType.MISSION_PRELIST_READY_V2.value,
     EventType.MISSION_PRELIST_ERRATA_V2.value,
+    EventType.MISSION_VARIANTS_READY_V1.value,
 )
 _BRAZIL_TIMEZONE = ZoneInfo("America/Sao_Paulo")
 
@@ -552,6 +553,8 @@ async def _prepare_notification_async(
         return await _prepare_prelist_notification_async(
             session, event, event_type, public_base_url=public_base_url
         )
+    if event_type is EventType.MISSION_VARIANTS_READY_V1:
+        return await _prepare_variant_notification_async(session, event)
     if event.mission_id is None:
         raise TelegramNotificationError("notification_mission_missing")
     mission = await session.get(Mission, event.mission_id)
@@ -693,6 +696,85 @@ async def _prepare_prelist_notification_async(
             errata=event_type is EventType.MISSION_PRELIST_ERRATA_V2,
         )
     return user.telegram_chat_id, parts
+
+
+async def _prepare_variant_notification_async(
+    session: AsyncSession, event: Event
+) -> tuple[int, tuple[_PreparedMessagePart, ...]]:
+    if event.mission_id is None:
+        raise TelegramNotificationError("notification_mission_missing")
+    mission = await session.get(Mission, event.mission_id)
+    criteria = await session.scalar(
+        select(MissionCriteria).where(MissionCriteria.mission_id == event.mission_id)
+    )
+    if (
+        mission is None
+        or criteria is None
+        or criteria.variant_selection_mode is not VariantSelectionMode.PENDING
+    ):
+        raise TelegramNotificationSkipped
+    user = await session.scalar(
+        select(User).where(User.id == mission.user_id).with_for_update()
+    )
+    if user is None or not user.is_active:
+        raise TelegramNotificationError("notification_recipient_missing")
+    if user.telegram_chat_id is None:
+        raise TelegramNotificationError(
+            "notification_recipient_missing", permanent=False
+        )
+    payload = event.payload
+    variants = payload.get("variants") if isinstance(payload, dict) else None
+    state_version = payload.get("state_version") if isinstance(payload, dict) else None
+    if not isinstance(variants, list) or not variants or type(state_version) is not int:
+        raise TelegramNotificationError("notification_payload_invalid")
+    entries: list[dict[str, str]] = []
+    for raw in variants:
+        if not isinstance(raw, dict):
+            raise TelegramNotificationError("notification_payload_invalid")
+        try:
+            product_id = UUID(str(raw["product_id"]))
+        except (KeyError, ValueError):
+            raise TelegramNotificationError("notification_payload_invalid") from None
+        label = raw.get("label")
+        product = await session.get(Product, product_id)
+        if (
+            product is None
+            or product.family_key != criteria.requested_family_key
+            or (
+                criteria.requested_variant is not None
+                and product.variant != criteria.requested_variant
+            )
+            or product.identity_key is None
+            or not isinstance(label, str)
+            or not label.strip()
+        ):
+            raise TelegramNotificationError("notification_payload_invalid")
+        entries.append({"product_id": str(product_id), "label": label.strip()})
+    pending = user.pending_intent
+    if pending is not None and not (
+        pending.get("kind") == "await_mission_variants"
+        and pending.get("event_id") == str(event.id)
+    ):
+        raise TelegramNotificationError("notification_user_busy", permanent=False)
+    user.pending_intent = {
+        "kind": "await_mission_variants",
+        "event_id": str(event.id),
+        "mission_id": str(mission.id),
+        "mission_title": mission.title,
+        "expected_state_version": state_version,
+        "variants": entries,
+    }
+    lines = [
+        f'Encontrei variantes para a missão "{mission.title}":',
+        "",
+        *(f"{index} — {entry['label']}" for index, entry in enumerate(entries, 1)),
+        f"{len(entries) + 1} — Todas",
+        "",
+        "Escolha uma ou mais opções. Exemplo: 1 ou 1,3.",
+    ]
+    return user.telegram_chat_id, (
+        _PreparedMessagePart(None, 0, "\n".join(lines)),
+    )
 
 
 async def _prepare_authentication_notification_async(

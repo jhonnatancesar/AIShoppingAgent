@@ -28,6 +28,12 @@ export interface EditMissionInput {
   source_codes?: string[] | null
 }
 
+export interface SelectMissionVariantsInput {
+  expected_state_version: number
+  product_ids?: string[]
+  select_all?: boolean
+}
+
 export const missionsApi = {
   list: (status: MissionStatusFilter | null, limit = 20, offset = 0) => {
     const params = new URLSearchParams()
@@ -41,6 +47,8 @@ export const missionsApi = {
     api.post<MissionSummary>('/missions', input),
   edit: (missionId: string, input: EditMissionInput) =>
     api.patch<MissionSummary>(`/missions/${missionId}`, input),
+  selectVariants: (missionId: string, input: SelectMissionVariantsInput) =>
+    api.put<MissionSummary>(`/missions/${missionId}/variants`, input),
   pause: (missionId: string, expectedStateVersion: number) =>
     api.post<MissionSummary>(`/missions/${missionId}/pause`, {
       expected_state_version: expectedStateVersion,

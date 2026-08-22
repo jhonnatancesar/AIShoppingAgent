@@ -73,15 +73,19 @@ from app.events import (
     EventType,
     MissionPrelistErrataV2Payload,
     MissionPrelistReadyV2Payload,
+    MissionVariantsReadyPayload,
     PrelistOfferPayload,
+    ProductVariantOptionPayload,
 )
 from app.events.service import publish_event_async
 from app.missions.models import (
     Mission,
     MissionCriteria,
+    MissionProductSelection,
     MissionSchedule,
     MissionSource,
     MissionStatus,
+    VariantSelectionMode,
 )
 from app.missions.schedule import (
     advance_schedule,
@@ -91,6 +95,11 @@ from app.missions.schedule import (
 )
 from app.missions.service import promote_confirmed_product_identity_async
 from app.offers.models import Offer
+from app.products.identity import (
+    IDENTITY_VERSION,
+    ProductRequestKind,
+    resolve_product_variant,
+)
 from app.products.models import Product
 from app.stores.models import Seller, Store
 from app.users.models import UserRole
@@ -124,6 +133,7 @@ _OFFER_IDENTITY_INDEXES = frozenset(
     }
 )
 _SELLER_IDENTITY_INDEX = "uq_sellers_store_external_id"
+_PRODUCT_IDENTITY_INDEX = "uq_products_identity_key"
 
 # Palavras-sinal de sistema completo/kit -- ausentes no search_query da
 # missão mas presentes no título do candidato indicam um resultado que não
@@ -722,6 +732,7 @@ class _PendingOffer:
     previous_currency: str | None
     previous_availability: Availability | None
     previous_observed_at: datetime | None
+    forced_relevance: OfferRelevance | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -745,6 +756,56 @@ class _AIOutcome:
     offer_id: UUID
     relevance: OfferRelevance | None
     display_title: str | None
+
+
+def _deterministic_product_relevance(
+    criteria: MissionCriteria, product: Product
+) -> OfferRelevance | None:
+    """Rejeita diferenças comprovadas antes da IA; desconhecido segue fail-soft."""
+    request_kind = getattr(
+        criteria, "request_kind", ProductRequestKind.GENERIC_CATEGORY.value
+    )
+    if request_kind == ProductRequestKind.SPECIFIC_PRODUCT.value:
+        if (
+            getattr(product, "identity_key", None) is None
+            or product.identity_key != criteria.requested_identity_key
+        ):
+            return OfferRelevance.NO_MATCH
+    elif request_kind == ProductRequestKind.PRODUCT_FAMILY.value:
+        if (
+            getattr(product, "family_key", None) is not None
+            and product.family_key != criteria.requested_family_key
+        ):
+            return OfferRelevance.NO_MATCH
+        if (
+            getattr(criteria, "requested_variant", None) is not None
+            and getattr(product, "variant", None) is not None
+            and product.variant != criteria.requested_variant
+        ):
+            return OfferRelevance.NO_MATCH
+    return None
+
+
+async def _product_selected_for_mission(
+    session: AsyncSession,
+    *,
+    mission_id: UUID,
+    product_id: UUID,
+    request_kind: str,
+    selection_mode: VariantSelectionMode,
+) -> bool:
+    if request_kind != ProductRequestKind.PRODUCT_FAMILY.value:
+        return True
+    product = await session.get(Product, product_id)
+    if product is None or product.identity_key is None:
+        return False
+    if selection_mode is VariantSelectionMode.ALL:
+        return True
+    if selection_mode is not VariantSelectionMode.SELECTED:
+        return False
+    return (
+        await session.get(MissionProductSelection, (mission_id, product_id)) is not None
+    )
 
 
 async def _persist_phase_a(
@@ -914,6 +975,7 @@ async def _persist_phase_a(
             product = await session.get(Product, offer.product_id)
             if product is None:
                 raise RuntimeError("offer references a missing product")
+            forced_relevance = _deterministic_product_relevance(criteria, product)
 
             pending.append(
                 _PendingOffer(
@@ -925,8 +987,11 @@ async def _persist_phase_a(
                     availability=observation.availability,
                     observed_at=observation.observed_at,
                     raw_title=item.raw_offer.title,
-                    needs_relevance=existing_relevance is None,
+                    needs_relevance=(
+                        existing_relevance is None and forced_relevance is None
+                    ),
                     needs_display_name=product.display_name is None,
+                    forced_relevance=forced_relevance,
                     previous_observation_id=previous.id
                     if previous is not None
                     else None,
@@ -1022,11 +1087,33 @@ async def _persist_phase_c(
             # recover_stale_runs (ou outro worker) já finalizou este run
             # enquanto a Fase B rodava -- nada a fazer, sem duplicar.
             return False
+        current_criteria = await session.scalar(
+            select(MissionCriteria).where(MissionCriteria.mission_id == mission.id)
+        )
+        if current_criteria is None:
+            return False
 
         for pending in outcome.offers:
             ai_outcome = ai_by_offer.get(pending.offer_id)
-            relevance: OfferRelevance | None = None
-            if pending.needs_relevance:
+            relevance: OfferRelevance | None = pending.forced_relevance
+            if pending.forced_relevance is not None:
+                await session.execute(
+                    postgresql_insert(MissionOfferRelevance)
+                    .values(
+                        mission_id=mission.id,
+                        offer_id=pending.offer_id,
+                        classification=pending.forced_relevance,
+                        classified_at=utc_now(),
+                    )
+                    .on_conflict_do_update(
+                        index_elements=list(_MISSION_OFFER_RELEVANCE_PK),
+                        set_={
+                            "classification": pending.forced_relevance,
+                            "classified_at": utc_now(),
+                        },
+                    )
+                )
+            elif pending.needs_relevance:
                 if ai_outcome is not None and ai_outcome.relevance is not None:
                     relevance = ai_outcome.relevance
                     await session.execute(
@@ -1056,7 +1143,13 @@ async def _persist_phase_c(
                 if product is not None and product.display_name is None:
                     product.display_name = ai_outcome.display_title
 
-            if relevance is OfferRelevance.MATCH:
+            if relevance is OfferRelevance.MATCH and await _product_selected_for_mission(
+                session,
+                mission_id=mission.id,
+                product_id=pending.product_id,
+                request_kind=current_criteria.request_kind,
+                selection_mode=current_criteria.variant_selection_mode,
+            ):
                 current = PriceObservation(
                     id=pending.observation_id,
                     offer_id=pending.offer_id,
@@ -1127,11 +1220,21 @@ async def _resolve_offer(session: AsyncSession, store_id: UUID, item: Any) -> Of
         item.raw_offer.url,
     )
     if offer is not None:
+        resolved_product = await _resolve_global_product(
+            session, item.raw_offer.title
+        )
+        if resolved_product is not None:
+            current_product = await session.get(Product, offer.product_id)
+            if current_product is not None and current_product.identity_key is None:
+                offer.product_id = resolved_product.id
         if item.raw_offer.image_url is not None:
             offer.image_url = item.raw_offer.image_url
         _apply_rating_snapshot(offer, item)
         return offer
-    product = Product(id=uuid4(), name=item.raw_offer.title[:300])
+    product = await _resolve_global_product(session, item.raw_offer.title)
+    unresolved_product = product is None
+    if product is None:
+        product = Product(id=uuid4(), name=item.raw_offer.title[:300])
     offer = Offer(
         product_id=product.id,
         store_id=store_id,
@@ -1143,8 +1246,9 @@ async def _resolve_offer(session: AsyncSession, store_id: UUID, item: Any) -> Of
     _apply_rating_snapshot(offer, item)
     try:
         async with session.begin_nested():
-            session.add(product)
-            await session.flush()
+            if unresolved_product:
+                session.add(product)
+                await session.flush()
             session.add(offer)
             await session.flush()
     except IntegrityError as error:
@@ -1164,6 +1268,47 @@ async def _resolve_offer(session: AsyncSession, store_id: UUID, item: Any) -> Of
         _apply_rating_snapshot(winner, item)
         return winner
     return offer
+
+
+async def _resolve_global_product(
+    session: AsyncSession, raw_title: str
+) -> Product | None:
+    identity = resolve_product_variant(raw_title)
+    if identity is None:
+        return None
+    existing = await session.scalar(
+        select(Product).where(Product.identity_key == identity.identity_key)
+    )
+    if existing is not None:
+        return existing
+    product = Product(
+        id=uuid4(),
+        name=identity.label[:300],
+        brand=identity.brand,
+        model=identity.model,
+        display_name=identity.label[:300],
+        category=identity.category,
+        family=identity.family,
+        variant=identity.variant,
+        attributes=dict(identity.attributes),
+        family_key=identity.family_key,
+        identity_key=identity.identity_key,
+        identity_version=IDENTITY_VERSION,
+    )
+    try:
+        async with session.begin_nested():
+            session.add(product)
+            await session.flush()
+    except IntegrityError as error:
+        if _constraint_name(error) != _PRODUCT_IDENTITY_INDEX:
+            raise
+        winner = await session.scalar(
+            select(Product).where(Product.identity_key == identity.identity_key)
+        )
+        if winner is None:
+            raise
+        return winner
+    return product
 
 
 def _apply_rating_snapshot(offer: Offer, item: Any) -> None:
@@ -1341,6 +1486,21 @@ async def _evaluate_mission_prelist(
     )
     if mission is None or mission.status is not MissionStatus.ACTIVE:
         return
+    criteria = await session.scalar(
+        select(MissionCriteria).where(MissionCriteria.mission_id == mission_id)
+    )
+    if criteria is None:
+        return
+    if (
+        getattr(criteria, "request_kind", ProductRequestKind.GENERIC_CATEGORY.value)
+        == ProductRequestKind.PRODUCT_FAMILY.value
+        and getattr(
+            criteria, "variant_selection_mode", VariantSelectionMode.NOT_REQUIRED
+        )
+        is VariantSelectionMode.PENDING
+    ):
+        await _maybe_publish_variant_choices(session, mission, criteria, occurred_at)
+        return
     if not mission.prelist_sent:
         await _maybe_publish_prelist_ready(session, mission, occurred_at)
         return
@@ -1501,7 +1661,112 @@ async def _current_prelist_candidates(
         for item in latest_by_offer.values()
         if item.offer.last_seen_at == latest_seen_by_store[item.store.id]
     ]
+    criteria = await session.scalar(
+        select(MissionCriteria).where(MissionCriteria.mission_id == mission_id)
+    )
+    if (
+        criteria is not None
+        and criteria.request_kind == ProductRequestKind.PRODUCT_FAMILY.value
+    ):
+        if criteria.variant_selection_mode is VariantSelectionMode.PENDING:
+            return ()
+        eligible_statement = select(Product.id).where(
+            Product.family_key == criteria.requested_family_key,
+            Product.identity_key.is_not(None),
+        )
+        if criteria.requested_variant is not None:
+            eligible_statement = eligible_statement.where(
+                Product.variant == criteria.requested_variant
+            )
+        eligible_product_ids = set(await session.scalars(eligible_statement))
+        current = [
+            item for item in current if item.offer.product_id in eligible_product_ids
+        ]
+        if criteria.variant_selection_mode is VariantSelectionMode.SELECTED:
+            selected_ids = set(
+                await session.scalars(
+                    select(MissionProductSelection.product_id).where(
+                        MissionProductSelection.mission_id == mission_id
+                    )
+                )
+            )
+            current = [item for item in current if item.offer.product_id in selected_ids]
     return rank_prelist_candidates(current)
+
+
+async def _available_family_variants(
+    session: AsyncSession,
+    *,
+    mission_id: UUID,
+    family_key: str,
+    requested_variant: str | None,
+) -> tuple[Product, ...]:
+    statement = (
+        select(Product)
+            .join(Offer, Offer.product_id == Product.id)
+            .join(
+                MissionOfferRelevance,
+                MissionOfferRelevance.offer_id == Offer.id,
+            )
+            .where(
+                MissionOfferRelevance.mission_id == mission_id,
+                MissionOfferRelevance.classification.in_(
+                    {OfferRelevance.MATCH, OfferRelevance.POSSIBLE_MATCH}
+                ),
+                Product.family_key == family_key,
+                Product.identity_key.is_not(None),
+            )
+            .distinct()
+            .order_by(Product.display_name, Product.name, Product.id)
+            .limit(20)
+    )
+    if requested_variant is not None:
+        statement = statement.where(Product.variant == requested_variant)
+    return tuple(await session.scalars(statement))
+
+
+async def _maybe_publish_variant_choices(
+    session: AsyncSession,
+    mission: Mission,
+    criteria: MissionCriteria,
+    occurred_at: datetime,
+) -> None:
+    if criteria.variant_prompted_at is not None:
+        return
+    if not await _mission_prelist_round_complete(session, mission.id):
+        return
+    if await _mission_relevance_pending(session, mission.id):
+        return
+    if criteria.requested_family_key is None:
+        return
+    variants = await _available_family_variants(
+        session,
+        mission_id=mission.id,
+        family_key=criteria.requested_family_key,
+        requested_variant=criteria.requested_variant,
+    )
+    if not variants:
+        return
+    await publish_event_async(
+        session,
+        event_type=EventType.MISSION_VARIANTS_READY_V1,
+        aggregate_type=AggregateType.MISSION,
+        aggregate_id=mission.id,
+        payload=MissionVariantsReadyPayload(
+            mission_id=mission.id,
+            variants=tuple(
+                ProductVariantOptionPayload(
+                    product_id=product.id,
+                    label=product.display_name or product.name,
+                )
+                for product in variants
+            ),
+            state_version=mission.state_version,
+        ),
+        occurred_at=occurred_at,
+        mission_id=mission.id,
+    )
+    criteria.variant_prompted_at = occurred_at
 
 
 def _prelist_payload(item: _PrelistCandidate) -> PrelistOfferPayload:

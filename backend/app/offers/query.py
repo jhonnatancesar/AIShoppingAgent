@@ -13,8 +13,14 @@ from app.collection.models import (
     PriceObservation,
 )
 from app.collection.relevance import OfferRelevance
-from app.missions.models import Mission
+from app.missions.models import (
+    Mission,
+    MissionCriteria,
+    MissionProductSelection,
+    VariantSelectionMode,
+)
 from app.offers.models import Offer
+from app.products.identity import ProductRequestKind
 from app.products.models import Product
 from app.stores.models import Seller, Store
 
@@ -109,6 +115,28 @@ async def list_current_offer_links_for_mission(
     session: AsyncSession, *, mission_id: UUID, user_id: UUID
 ) -> tuple[MissionOfferLink, ...]:
     """Ofertas relevantes da coleta mais recente de cada loja da missão."""
+    criteria = await session.scalar(
+        select(MissionCriteria).where(MissionCriteria.mission_id == mission_id)
+    )
+    if (
+        criteria is not None
+        and criteria.request_kind == ProductRequestKind.PRODUCT_FAMILY.value
+        and criteria.variant_selection_mode is VariantSelectionMode.PENDING
+    ):
+        return ()
+    selected_ids: set[UUID] | None = None
+    if (
+        criteria is not None
+        and criteria.request_kind == ProductRequestKind.PRODUCT_FAMILY.value
+        and criteria.variant_selection_mode is VariantSelectionMode.SELECTED
+    ):
+        selected_ids = set(
+            await session.scalars(
+                select(MissionProductSelection.product_id).where(
+                    MissionProductSelection.mission_id == mission_id
+                )
+            )
+        )
     rows = (
         await session.execute(
             select(Offer, Product, Store)
@@ -127,11 +155,26 @@ async def list_current_offer_links_for_mission(
             .order_by(Store.code, Offer.last_seen_at.desc(), Offer.id)
         )
     ).all()
+    eligible_rows = tuple(
+        (offer, product, store)
+        for offer, product, store in rows
+        if criteria is None
+        or criteria.request_kind != ProductRequestKind.PRODUCT_FAMILY.value
+        or (
+            product.identity_key is not None
+            and product.family_key == criteria.requested_family_key
+            and (
+                criteria.requested_variant is None
+                or product.variant == criteria.requested_variant
+            )
+            and (selected_ids is None or product.id in selected_ids)
+        )
+    )
     latest_seen_by_store: dict[UUID, datetime] = {}
-    for offer, _product, store in rows:
+    for offer, _product, store in eligible_rows:
         latest_seen_by_store.setdefault(store.id, offer.last_seen_at)
     return tuple(
         MissionOfferLink(offer=offer, product=product, store=store)
-        for offer, product, store in rows
+        for offer, product, store in eligible_rows
         if offer.last_seen_at == latest_seen_by_store[store.id]
     )

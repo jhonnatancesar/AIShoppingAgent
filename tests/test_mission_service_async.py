@@ -16,14 +16,18 @@ from app.missions.models import (
     MissionCriteria,
     MissionSchedule,
     MissionStatus,
+    VariantSelectionMode,
 )
 from app.missions.service import (
     MissionNotFoundError,
     MissionVersionConflictError,
     create_mission_from_criteria_async,
     promote_confirmed_product_identity_async,
+    set_mission_product_selection_async,
     transition_mission_async,
 )
+from app.products.identity import classify_product_request
+from app.products.models import Product
 
 NOW = datetime(2026, 8, 2, 15, 0, tzinfo=UTC)
 
@@ -48,6 +52,7 @@ def _mission(
 def _session(*scalar_results: object) -> MagicMock:
     session = MagicMock()
     session.scalar = AsyncMock(side_effect=scalar_results)
+    session.execute = AsyncMock()
     session.flush = AsyncMock()
     return session
 
@@ -199,6 +204,47 @@ def test_create_mission_from_criteria_async_activates_with_explicit_sources() ->
     assert schedule.mission_id == mission.id
     assert schedule.next_run_at == NOW
     assert schedule.interval_minutes == 60
+
+
+def test_select_multiple_discovered_variants_persists_explicit_policy() -> None:
+    mission = _mission(MissionStatus.ACTIVE)
+    mission.state_version = 4
+    request = classify_product_request("iPhone 17")
+    criteria = MissionCriteria(
+        mission_id=mission.id,
+        search_query="iPhone 17",
+        request_kind=request.kind.value,
+        requested_family_key=request.family_key,
+        variant_selection_mode=VariantSelectionMode.PENDING,
+    )
+    products = tuple(
+        Product(
+            id=uuid4(),
+            name=label,
+            display_name=label,
+            family_key=request.family_key,
+            identity_key=f"v1:{index}",
+        )
+        for index, label in enumerate(("iPhone 17 256 GB", "iPhone 17 Pro 256 GB"))
+    )
+    session = _session(mission, criteria)
+    session.scalars = AsyncMock(return_value=products)
+
+    selected = asyncio.run(
+        set_mission_product_selection_async(
+            session,
+            user_id=mission.user_id,
+            mission_id=mission.id,
+            expected_state_version=4,
+            product_ids=tuple(product.id for product in products),
+            selected_at=NOW,
+        )
+    )
+
+    assert selected == products
+    assert criteria.variant_selection_mode is VariantSelectionMode.SELECTED
+    assert mission.state_version == 5
+    assert len(tuple(session.add_all.call_args.args[0])) == 2
 
 
 # ---------------------------------------------------------------------------

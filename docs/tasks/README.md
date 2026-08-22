@@ -1,8 +1,15 @@
 # Tarefas
 
-**TASK-096 implementada e aguardando revisão:** avaliações explícitas por Offer/Store na
-página USER e no Telegram, com snapshot atual, coleta extensível e no máximo
-uma abertura de detalhe por oferta. Ver `docs/tasks/TASK-096.md` e `DEC-078`.
+**TASK-098 formalizada e reservada:** histórico e gráficos exclusivamente por
+identidade global de produto/variante, depois da TASK-097; sem implementação.
+
+**TASK-097 implementada no DEV e aguardando revisão:** identidade global
+determinística de produto/variante e escolha de variantes para pedidos genéricos
+na Web e no Telegram. Ver `docs/tasks/TASK-097.md` e `DEC-079`.
+
+**TASK-096 concluída, aprovada e publicada:** avaliações explícitas por
+Offer/Store na página USER e no Telegram, commit `fd5a6f9`. Ver
+`docs/tasks/TASK-096.md` e `DEC-078`.
 
 **TASK-095 concluída, aprovada e publicada:** página USER centrada em Offer,
 com ownership por missão/relevância, último estado comercial e links no detalhe

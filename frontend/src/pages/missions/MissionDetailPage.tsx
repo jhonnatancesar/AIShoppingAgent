@@ -99,6 +99,14 @@ export function MissionDetailPage() {
           <h2>Critério</h2>
           <p>Busca: {mission.criteria.search_query}</p>
           {mission.criteria.model ? <p>Modelo: {mission.criteria.model}</p> : null}
+          <p>
+            Tipo:{' '}
+            {mission.criteria.request_kind === 'specific_product'
+              ? 'produto específico'
+              : mission.criteria.request_kind === 'product_family'
+                ? 'família de produtos'
+                : 'categoria genérica'}
+          </p>
           {mission.criteria.target_amount ? (
             <p>
               Alvo: {mission.criteria.target_amount} {mission.criteria.target_currency}
@@ -106,6 +114,24 @@ export function MissionDetailPage() {
           ) : (
             <p>Sem preço-alvo definido.</p>
           )}
+        </div>
+      ) : null}
+
+      {mission.criteria?.request_kind === 'product_family' ? (
+        <VariantSelection
+          key={`${mission.state_version}-${mission.criteria.variant_selection_mode}`}
+          mission={mission}
+          onSaved={load}
+        />
+      ) : null}
+
+      {mission.criteria?.request_kind === 'generic_category' ? (
+        <div className="mission-section">
+          <h2>Refinamento opcional</h2>
+          <p className="field-hint">
+            Esta é uma missão de categoria. Ela continua ativa sem escolher um produto;
+            use a edição da busca em uma evolução futura se quiser restringir os resultados.
+          </p>
         </div>
       ) : null}
 
@@ -214,6 +240,93 @@ export function MissionDetailPage() {
         </Link>
       </div>
     </section>
+  )
+}
+
+function VariantSelection({
+  mission,
+  onSaved,
+}: {
+  mission: MissionDetail
+  onSaved: () => void
+}) {
+  const [selected, setSelected] = useState<string[]>(
+    mission.available_variants.filter((item) => item.selected).map((item) => item.product_id),
+  )
+  const [selectAll, setSelectAll] = useState(
+    mission.criteria?.variant_selection_mode === 'all',
+  )
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function save() {
+    setSaving(true)
+    setError(null)
+    try {
+      await missionsApi.selectVariants(mission.id, {
+        expected_state_version: mission.state_version,
+        product_ids: selectAll ? [] : selected,
+        select_all: selectAll,
+      })
+      onSaved()
+    } catch (saveError) {
+      setError(
+        saveError instanceof ApiError
+          ? saveError.message
+          : 'Não foi possível salvar as variantes.',
+      )
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="mission-section">
+      <h2>Variantes encontradas</h2>
+      {mission.available_variants.length === 0 ? (
+        <p className="field-hint">Aguardando variantes identificadas com segurança.</p>
+      ) : (
+        <>
+          <label>
+            <input
+              type="checkbox"
+              checked={selectAll}
+              onChange={(event) => setSelectAll(event.target.checked)}
+            />
+            Todas as variantes desta família
+          </label>
+          {!selectAll ? (
+            <div className="checkbox-group">
+              {mission.available_variants.map((variant) => (
+                <label key={variant.product_id}>
+                  <input
+                    type="checkbox"
+                    checked={selected.includes(variant.product_id)}
+                    onChange={() =>
+                      setSelected((current) =>
+                        current.includes(variant.product_id)
+                          ? current.filter((item) => item !== variant.product_id)
+                          : [...current, variant.product_id],
+                      )
+                    }
+                  />
+                  {variant.label}
+                </label>
+              ))}
+            </div>
+          ) : null}
+          {error ? <p className="form-error">{error}</p> : null}
+          <button
+            className="button"
+            type="button"
+            disabled={saving || (!selectAll && selected.length === 0)}
+            onClick={save}
+          >
+            {saving ? 'Salvando…' : 'Salvar variantes'}
+          </button>
+        </>
+      )}
+    </div>
   )
 }
 

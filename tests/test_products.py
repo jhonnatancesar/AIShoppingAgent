@@ -17,6 +17,13 @@ def test_product_table_matches_data_contract() -> None:
         table.c.brand,
         table.c.model,
         table.c.display_name,
+        table.c.category,
+        table.c.family,
+        table.c.variant,
+        table.c.attributes,
+        table.c.family_key,
+        table.c.identity_key,
+        table.c.identity_version,
         table.c.created_at,
         table.c.updated_at,
     ]
@@ -46,6 +53,8 @@ def test_product_table_rejects_blank_text_by_constraint() -> None:
         "ck_products_brand_not_blank",
         "ck_products_model_not_blank",
         "ck_products_display_name_not_blank",
+        "ck_products_identity_complete",
+        "ck_products_identity_version_positive",
     }
 
 

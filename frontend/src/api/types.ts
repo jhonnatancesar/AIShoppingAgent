@@ -55,6 +55,15 @@ export interface MissionCriteria {
   model: string | null
   target_amount: string | null
   target_currency: string | null
+  request_kind: 'specific_product' | 'product_family' | 'generic_category'
+  variant_selection_mode: 'not_required' | 'pending' | 'selected' | 'all'
+}
+
+export interface ProductVariantOption {
+  product_id: string
+  label: string
+  attributes: Record<string, string>
+  selected: boolean
 }
 
 export interface MissionSourceOut {
@@ -92,6 +101,7 @@ export interface MissionDetail extends MissionSummary {
   schedule: MissionSchedule | null
   transitions: MissionTransitionOut[]
   offers: MissionOfferLink[]
+  available_variants: ProductVariantOption[]
 }
 
 export type OfferCondition = 'new' | 'refurbished' | 'used' | 'unknown'

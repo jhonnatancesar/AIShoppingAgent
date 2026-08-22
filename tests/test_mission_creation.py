@@ -6,8 +6,15 @@ from unittest.mock import MagicMock
 from uuid import uuid4
 
 import pytest
-from app.missions.models import Mission, MissionCriteria, MissionSchedule, MissionStatus
+from app.missions.models import (
+    Mission,
+    MissionCriteria,
+    MissionSchedule,
+    MissionStatus,
+    VariantSelectionMode,
+)
 from app.missions.service import MissionCreationError, create_mission_from_criteria
+from app.products.identity import ProductRequestKind
 
 NOW = datetime(2026, 8, 7, 12, 0, tzinfo=UTC)
 
@@ -151,6 +158,54 @@ def test_create_mission_without_model_leaves_criteria_model_none() -> None:
     )
     assert criteria.mission_id == mission.id
     assert criteria.model is None
+
+
+@pytest.mark.parametrize(
+    ("query", "kind", "mode"),
+    [
+        (
+            "iPhone 17 Pro 256GB",
+            ProductRequestKind.SPECIFIC_PRODUCT,
+            VariantSelectionMode.NOT_REQUIRED,
+        ),
+        (
+            "iPhone 17",
+            ProductRequestKind.PRODUCT_FAMILY,
+            VariantSelectionMode.PENDING,
+        ),
+        (
+            "cadeira gamer",
+            ProductRequestKind.GENERIC_CATEGORY,
+            VariantSelectionMode.NOT_REQUIRED,
+        ),
+    ],
+)
+def test_create_mission_classifies_product_scope_deterministically(
+    query: str, kind: ProductRequestKind, mode: VariantSelectionMode
+) -> None:
+    session = _session([_FakeStore("amazon")])
+
+    create_mission_from_criteria(
+        session,
+        user_id=uuid4(),
+        search_query=query,
+        target_amount=None,
+        target_currency=None,
+        source_codes=("amazon",),
+        requested_at=NOW,
+        actor_type="web",
+    )
+
+    criteria = next(
+        call.args[0]
+        for call in session.add.call_args_list
+        if isinstance(call.args[0], MissionCriteria)
+    )
+    assert criteria.request_kind == kind.value
+    assert criteria.variant_selection_mode is mode
+    assert (criteria.requested_identity_key is not None) == (
+        kind is ProductRequestKind.SPECIFIC_PRODUCT
+    )
 
 
 def test_create_mission_applies_schedule_stagger_when_configured() -> None:

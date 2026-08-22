@@ -16,7 +16,12 @@ from app.collection.models import OfferInstallmentOption, PriceObservation
 from app.collection.normalization import Availability
 from app.collection.relevance import OfferRelevance
 from app.events import ConsumptionOutcome, Event
-from app.missions.models import Mission, MissionStatus
+from app.missions.models import (
+    Mission,
+    MissionCriteria,
+    MissionStatus,
+    VariantSelectionMode,
+)
 from app.offers.models import Offer
 from app.products.models import Product
 from app.stores.models import Store
@@ -29,6 +34,7 @@ from app.telegram.notifications import (
     TelegramNotificationError,
     _installment_line,
     _marketplace_party_line,
+    _prepare_variant_notification_async,
     _rating_line,
     _render_prelist_v2_async,
     _select_installment_summary_option,
@@ -699,6 +705,73 @@ def _errata_event(
         occurred_at=NOW,
         recorded_at=NOW,
     )
+
+
+@pytest.mark.anyio
+async def test_family_variant_notification_stages_stable_numbered_choices() -> None:
+    user = _user()
+    mission = _mission(user)
+    family_key = "v1:family"
+    criteria = MissionCriteria(
+        mission_id=mission.id,
+        search_query="iPhone 17",
+        request_kind="product_family",
+        requested_family_key=family_key,
+        variant_selection_mode=VariantSelectionMode.PENDING,
+    )
+    products = (
+        Product(
+            id=uuid4(),
+            name="Apple iPhone 17 256 GB",
+            display_name="Apple iPhone 17 256 GB",
+            family_key=family_key,
+            identity_key="v1:base",
+        ),
+        Product(
+            id=uuid4(),
+            name="Apple iPhone 17 Pro 256 GB",
+            display_name="Apple iPhone 17 Pro 256 GB",
+            family_key=family_key,
+            identity_key="v1:pro",
+        ),
+    )
+    event = Event(
+        id=uuid4(),
+        event_type="mission.variants_ready.v1",
+        aggregate_type="mission",
+        aggregate_id=mission.id,
+        mission_id=mission.id,
+        payload={
+            "mission_id": str(mission.id),
+            "state_version": mission.state_version,
+            "variants": [
+                {"product_id": str(product.id), "label": product.display_name}
+                for product in products
+            ],
+        },
+        occurred_at=NOW,
+        recorded_at=NOW,
+    )
+    session = MagicMock()
+    session.get = AsyncMock(side_effect=(mission, *products))
+    session.scalar = AsyncMock(side_effect=(criteria, user))
+
+    chat_id, parts = await _prepare_variant_notification_async(session, event)
+
+    assert chat_id == user.telegram_chat_id
+    assert "1 — Apple iPhone 17 256 GB" in parts[0].text
+    assert "3 — Todas" in parts[0].text
+    assert user.pending_intent == {
+        "kind": "await_mission_variants",
+        "event_id": str(event.id),
+        "mission_id": str(mission.id),
+        "mission_title": mission.title,
+        "expected_state_version": mission.state_version,
+        "variants": [
+            {"product_id": str(product.id), "label": product.display_name}
+            for product in products
+        ],
+    }
 
 
 @pytest.mark.anyio

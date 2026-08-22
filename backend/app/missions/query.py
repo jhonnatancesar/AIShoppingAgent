@@ -5,20 +5,25 @@ são `app.telegram.router` e, desde a TASK-092, `app.webapp.missions_router`,
 então não há versão síncrona a manter."""
 
 from collections.abc import Collection
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from uuid import UUID
 
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.collection.models import MissionOfferRelevance
+from app.collection.relevance import OfferRelevance
 from app.missions.models import (
     Mission,
     MissionCriteria,
+    MissionProductSelection,
     MissionSchedule,
     MissionSource,
     MissionStatus,
     MissionTransition,
 )
+from app.offers.models import Offer
+from app.products.models import Product
 from app.stores.models import Store
 
 _TERMINAL_STATUSES = frozenset(
@@ -217,6 +222,8 @@ class MissionDetail:
     sources: list[tuple[MissionSource, Store]]
     schedule: MissionSchedule | None
     transitions: list[MissionTransition]
+    available_variants: list[Product] = field(default_factory=list)
+    selected_product_ids: tuple[UUID, ...] = ()
 
 
 async def get_mission_for_user(
@@ -277,10 +284,45 @@ async def get_mission_detail_for_user(
             .limit(transitions_limit)
         )
     )
+    available_variants: list[Product] = []
+    selected_product_ids: tuple[UUID, ...] = ()
+    if criteria is not None and criteria.requested_family_key is not None:
+        variants_statement = (
+            select(Product)
+                .join(Offer, Offer.product_id == Product.id)
+                .join(
+                    MissionOfferRelevance,
+                    MissionOfferRelevance.offer_id == Offer.id,
+                )
+                .where(
+                    MissionOfferRelevance.mission_id == mission_id,
+                    MissionOfferRelevance.classification.in_(
+                        {OfferRelevance.MATCH, OfferRelevance.POSSIBLE_MATCH}
+                    ),
+                    Product.family_key == criteria.requested_family_key,
+                    Product.identity_key.is_not(None),
+                )
+                .distinct()
+                .order_by(Product.display_name, Product.name, Product.id)
+        )
+        if criteria.requested_variant is not None:
+            variants_statement = variants_statement.where(
+                Product.variant == criteria.requested_variant
+            )
+        available_variants = list(await session.scalars(variants_statement))
+        selected_product_ids = tuple(
+            await session.scalars(
+                select(MissionProductSelection.product_id)
+                .where(MissionProductSelection.mission_id == mission_id)
+                .order_by(MissionProductSelection.product_id)
+            )
+        )
     return MissionDetail(
         mission=mission,
         criteria=criteria,
         sources=[(source, store) for source, store in sources_result.all()],
         schedule=schedule,
         transitions=transitions,
+        available_variants=available_variants,
+        selected_product_ids=selected_product_ids,
     )

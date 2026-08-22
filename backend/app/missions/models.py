@@ -50,6 +50,13 @@ class MissionCommand(StrEnum):
     EXPIRE = "expire"
 
 
+class VariantSelectionMode(StrEnum):
+    NOT_REQUIRED = "not_required"
+    PENDING = "pending"
+    SELECTED = "selected"
+    ALL = "all"
+
+
 class Mission(Base):
     """Intenção de compra e fonte de verdade para seu estado atual."""
 
@@ -195,6 +202,26 @@ class MissionCriteria(Base):
             "target_currency IS NULL OR target_currency ~ '^[A-Z]{3}$'",
             name="ck_mission_criteria_currency_iso4217",
         ),
+        CheckConstraint(
+            "request_kind IN ('specific_product', 'product_family', 'generic_category')",
+            name="ck_mission_criteria_request_kind_values",
+        ),
+        CheckConstraint(
+            "variant_selection_mode IN ('not_required', 'pending', 'selected', 'all')",
+            name="ck_mission_criteria_variant_selection_mode_values",
+        ),
+        CheckConstraint(
+            "(request_kind = 'specific_product' AND requested_identity_key IS NOT NULL "
+            "AND requested_family_key IS NOT NULL AND requested_variant IS NOT NULL "
+            "AND variant_selection_mode = 'not_required') "
+            "OR (request_kind = 'product_family' AND requested_identity_key IS NULL "
+            "AND requested_family_key IS NOT NULL AND variant_selection_mode IN "
+            "('pending', 'selected', 'all')) OR (request_kind = 'generic_category' "
+            "AND requested_identity_key IS NULL AND requested_family_key IS NULL "
+            "AND requested_variant IS NULL "
+            "AND variant_selection_mode = 'not_required')",
+            name="ck_mission_criteria_product_request_shape",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(
@@ -221,6 +248,29 @@ class MissionCriteria(Base):
         nullable=True,
     )
     target_currency: Mapped[str | None] = mapped_column(CHAR(3), nullable=True)
+    request_kind: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="generic_category", server_default="generic_category"
+    )
+    requested_family_key: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    requested_identity_key: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    requested_variant: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    variant_selection_mode: Mapped[VariantSelectionMode] = mapped_column(
+        Enum(
+            VariantSelectionMode,
+            name="variant_selection_mode_values",
+            values_callable=lambda values: [value.value for value in values],
+            validate_strings=True,
+            native_enum=False,
+            create_constraint=False,
+            length=32,
+        ),
+        nullable=False,
+        default=VariantSelectionMode.NOT_REQUIRED,
+        server_default=VariantSelectionMode.NOT_REQUIRED.value,
+    )
+    variant_prompted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -359,6 +409,26 @@ class MissionSource(Base):
         nullable=False,
         default=utc_now,
         server_default=func.now(),
+    )
+
+
+class MissionProductSelection(Base):
+    """Variante global explicitamente escolhida para uma missão de família."""
+
+    __tablename__ = "mission_product_selections"
+
+    mission_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("missions.id", ondelete="RESTRICT"),
+        primary_key=True,
+    )
+    product_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("products.id", ondelete="RESTRICT"),
+        primary_key=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now, server_default=func.now()
     )
 
 

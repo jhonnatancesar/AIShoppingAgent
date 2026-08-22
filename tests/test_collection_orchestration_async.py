@@ -39,6 +39,7 @@ from app.collection.orchestration import (
     CollectionOrchestrator,
     _AIOutcome,
     _apply_source_backoff,
+    _deterministic_product_relevance,
     _evaluate_mission_prelist,
     _find_offer,
     _installment_snapshot,
@@ -62,10 +63,41 @@ from app.collection.orchestration import (
     recover_stale_runs,
 )
 from app.collection.relevance import OfferRelevance
-from app.missions.models import MissionStatus
+from app.missions.models import MissionStatus, VariantSelectionMode
+from app.products.identity import classify_product_request
+from app.products.models import Product
 from app.users.models import UserRole
 
 NOW = datetime(2026, 8, 12, 12, 0, tzinfo=UTC)
+
+
+@pytest.mark.parametrize(
+    "other_title", ("iPhone 17 Pro Max 256GB", "iPhone 17 Pro 128GB")
+)
+def test_specific_product_rejects_other_variant_before_ai(other_title: str) -> None:
+    request = classify_product_request("iPhone 17 Pro 256GB")
+    criteria = SimpleNamespace(
+        request_kind=request.kind.value,
+        requested_identity_key=request.identity_key,
+        requested_family_key=request.family_key,
+        requested_variant=request.variant,
+    )
+    other = classify_product_request(other_title)
+    product = Product(
+        name=other_title,
+        identity_key=other.identity_key,
+        family_key=other.family_key,
+        variant=other.variant,
+    )
+
+    assert _deterministic_product_relevance(criteria, product) is OfferRelevance.NO_MATCH
+
+
+def test_generic_category_does_not_force_product_relevance() -> None:
+    criteria = SimpleNamespace(request_kind="generic_category")
+    product = Product(name="Cadeira gamer qualquer")
+
+    assert _deterministic_product_relevance(criteria, product) is None
 
 
 def _async_cm(value=None):
@@ -570,11 +602,11 @@ def test_persist_phase_a_limits_generic_search_candidates_per_source(
     )
     session = _mock_async_session()
     # scalar: run, criteria, depois previous+latest (TASK-093) por
-    # sobrevivente (3, pós-limite)
-    session.scalar.side_effect = [run, criteria, None, None, None, None, None, None]
+    # sobrevivente (5, dentro do pool intermediário de 8 da TASK-094)
+    session.scalar.side_effect = [run, criteria] + [None] * 10
     product = SimpleNamespace(display_name="Cadeira")
-    # get: Mission, depois (relevance_cache, product) por sobrevivente (3, pós-limite)
-    session.get.side_effect = [mission] + [None, product] * 3
+    # get: Mission, depois (relevance_cache, product) por sobrevivente.
+    session.get.side_effect = [mission] + [None, product] * 5
     offer_stub = SimpleNamespace(id=uuid4(), product_id=uuid4())
     monkeypatch.setattr(
         "app.collection.orchestration._resolve_offer",
@@ -626,13 +658,14 @@ def test_persist_phase_a_limits_generic_search_candidates_per_source(
         _persist_phase_a(_session_factory(session), claim, normalized)
     )
 
-    # Só os 3 mais baratos (TASK-082) chegam a persistir/precisar de IA --
-    # nenhuma chamada extra a provider/IA acontece para os outros 2.
-    assert len(outcome.offers) == 3
+    # TASK-094 substituiu o corte antigo de 3 por pool comum de até 8.
+    assert len(outcome.offers) == 5
     assert [pending.raw_title for pending in outcome.offers] == [
         "Cadeira D",
         "Cadeira B",
         "Cadeira C",
+        "Cadeira A",
+        "Cadeira E",
     ]
 
 
@@ -795,7 +828,11 @@ def test_persist_phase_c_persists_relevance_and_finishes_run(monkeypatch) -> Non
         status=CollectionRunStatus.RUNNING,
     )
     session = _mock_async_session()
-    session.scalar.side_effect = [mission, run]
+    current_criteria = SimpleNamespace(
+        request_kind="generic_category",
+        variant_selection_mode=VariantSelectionMode.NOT_REQUIRED,
+    )
+    session.scalar.side_effect = [mission, run, current_criteria]
     product = SimpleNamespace(display_name=None)
     session.get.return_value = product
     finish = AsyncMock()
@@ -961,7 +998,11 @@ def test_evaluate_mission_prelist_dispatches_ready_then_errata(monkeypatch) -> N
     pending = SimpleNamespace(
         id=uuid4(), status=MissionStatus.ACTIVE, prelist_sent=False
     )
-    session.scalar.return_value = pending
+    generic = SimpleNamespace(
+        request_kind="generic_category",
+        variant_selection_mode=VariantSelectionMode.NOT_REQUIRED,
+    )
+    session.scalar.side_effect = [pending, generic]
     asyncio.run(_evaluate_mission_prelist(session, pending.id, NOW))
     ready.assert_awaited_once_with(session, pending, NOW)
     errata.assert_not_awaited()
@@ -973,7 +1014,7 @@ def test_evaluate_mission_prelist_dispatches_ready_then_errata(monkeypatch) -> N
         prelist_sent=True,
         prelist_errata_sent=False,
     )
-    session.scalar.return_value = sent
+    session.scalar.side_effect = [sent, generic]
     asyncio.run(_evaluate_mission_prelist(session, sent.id, NOW))
     ready.assert_not_awaited()
     errata.assert_awaited_once_with(session, sent, NOW)

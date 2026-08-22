@@ -1,5 +1,29 @@
 # Decision Log
 
+## DEC-079 — Separar identidade global (TASK-097) de histórico e gráficos (TASK-098)
+
+- **Data:** 2026-08-22.
+- **Decisão:** a TASK-097 passa a tratar exclusivamente identidade global de
+  produto/variante e resolução determinística de pedidos específicos/genéricos.
+  A TASK-098 fica formalmente reservada para histórico e gráficos e depende da
+  identidade concluída pela TASK-097.
+- **Identidade:** evoluir `Product` para variante global referenciada pelas
+  `Offer`, com chave versionada formada por categoria, marca, família, modelo,
+  variante e atributos normalizados relevantes. Cada categoria declara os
+  atributos obrigatórios; ausência não é wildcard e impede união entre lojas.
+- **Interação:** pedido específico rejeita chave diferente. Pedido genérico
+  é distinguido entre `PRODUCT_FAMILY`, que apresenta variantes deduplicadas
+  para escolha única, múltipla ou todas na Web e no Telegram, e
+  `GENERIC_CATEGORY`, que continua válida sem escolha obrigatória e nunca une
+  produtos distintos. IA pode interpretar a entrada inicial, nunca equivalência,
+  ordenação ou seleção final. A TASK-098 só compara `SPECIFIC_PRODUCT` resolvido.
+- **Compatibilidade:** nenhum `Product` antigo é unido somente pelo título.
+  Backfill ocorre apenas com identidade completa determinística; ambiguidades
+  permanecem não resolvidas e missões/ofertas/histórico existentes são
+  preservados.
+- **Próxima ação:** implementar somente a TASK-097. Não antecipar endpoints,
+  consultas, métricas ou gráficos da TASK-098.
+
 ## DEC-078 — TASK-096: avaliações pertencem à Offer/Store e compartilham a abertura de detalhe
 
 - **Data:** 2026-08-22.

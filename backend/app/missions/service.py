@@ -16,17 +16,24 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
+from app.collection.models import MissionOfferRelevance
+from app.collection.relevance import OfferRelevance
 from app.database.time import utc_now
 from app.missions.models import (
     Mission,
     MissionCommand,
     MissionCriteria,
+    MissionProductSelection,
     MissionSchedule,
     MissionSource,
     MissionStatus,
     MissionTransition,
+    VariantSelectionMode,
 )
 from app.missions.schedule import staggered_next_run_at
+from app.offers.models import Offer
+from app.products.identity import ProductRequestKind, classify_product_request
+from app.products.models import Product
 from app.stores.models import Store
 
 _DEFAULT_V1_SOURCE_CODES = ("pichau", "terabyte", "amazon", "kabum")
@@ -41,6 +48,121 @@ class MissionCreationError(RuntimeError):
 
 class MissionTransitionError(RuntimeError):
     """Erro de domínio ao tentar mudar o estado de uma missão."""
+
+
+class MissionVariantSelectionError(RuntimeError):
+    """Escolha de variante incompatível com a missão ou com suas descobertas."""
+
+
+def _apply_product_request_identity(criteria: MissionCriteria, text: str) -> None:
+    """Mantém o contrato persistido sincronizado com o texto operacional."""
+    request_identity = classify_product_request(text)
+    criteria.request_kind = request_identity.kind.value
+    criteria.requested_family_key = request_identity.family_key
+    criteria.requested_identity_key = request_identity.identity_key
+    criteria.requested_variant = request_identity.variant
+    criteria.variant_selection_mode = (
+        VariantSelectionMode.PENDING
+        if request_identity.kind is ProductRequestKind.PRODUCT_FAMILY
+        else VariantSelectionMode.NOT_REQUIRED
+    )
+    criteria.variant_prompted_at = None
+
+
+async def set_mission_product_selection_async(
+    session: AsyncSession,
+    *,
+    user_id: UUID,
+    mission_id: UUID,
+    expected_state_version: int,
+    product_ids: Sequence[UUID] = (),
+    select_all: bool = False,
+    selected_at: datetime,
+) -> tuple[Product, ...]:
+    """Persiste escolha explícita de variantes de uma `PRODUCT_FAMILY`."""
+    mission = await session.scalar(
+        select(Mission).where(Mission.id == mission_id).with_for_update()
+    )
+    if mission is None or mission.user_id != user_id:
+        raise MissionNotFoundError("Missão não encontrada.")
+    if mission.state_version != expected_state_version:
+        raise MissionVersionConflictError("A missão mudou desde a última leitura.")
+    criteria = await session.scalar(
+        select(MissionCriteria).where(MissionCriteria.mission_id == mission_id)
+    )
+    if (
+        criteria is None
+        or criteria.request_kind != ProductRequestKind.PRODUCT_FAMILY.value
+        or criteria.requested_family_key is None
+    ):
+        raise MissionVariantSelectionError(
+            "Esta missão não exige seleção de variantes."
+        )
+    requested_ids = tuple(dict.fromkeys(product_ids))
+    if select_all and requested_ids:
+        raise MissionVariantSelectionError(
+            "Escolha todas as variantes ou uma lista específica, não ambas."
+        )
+    if not select_all and not requested_ids:
+        raise MissionVariantSelectionError("Escolha ao menos uma variante.")
+
+    available_statement = (
+        select(Product)
+            .join(Offer, Offer.product_id == Product.id)
+            .join(
+                MissionOfferRelevance,
+                MissionOfferRelevance.offer_id == Offer.id,
+            )
+            .where(
+                MissionOfferRelevance.mission_id == mission_id,
+                MissionOfferRelevance.classification.in_(
+                    {OfferRelevance.MATCH, OfferRelevance.POSSIBLE_MATCH}
+                ),
+                Product.family_key == criteria.requested_family_key,
+                Product.identity_key.is_not(None),
+            )
+            .distinct()
+            .order_by(Product.display_name, Product.name, Product.id)
+    )
+    if criteria.requested_variant is not None:
+        available_statement = available_statement.where(
+            Product.variant == criteria.requested_variant
+        )
+    available = tuple(await session.scalars(available_statement))
+    available_by_id = {product.id: product for product in available}
+    if not available:
+        raise MissionVariantSelectionError(
+            "Ainda não há variantes identificadas com segurança para esta missão."
+        )
+    if not select_all and any(item not in available_by_id for item in requested_ids):
+        raise MissionVariantSelectionError(
+            "Uma das variantes não pertence às opções desta missão."
+        )
+
+    await session.execute(
+        delete(MissionProductSelection).where(
+            MissionProductSelection.mission_id == mission_id
+        )
+    )
+    selected = available if select_all else tuple(available_by_id[item] for item in requested_ids)
+    if not select_all:
+        session.add_all(
+            MissionProductSelection(
+                mission_id=mission_id, product_id=product.id, created_at=selected_at
+            )
+            for product in selected
+        )
+    criteria.variant_selection_mode = (
+        VariantSelectionMode.ALL if select_all else VariantSelectionMode.SELECTED
+    )
+    mission.state_version += 1
+    mission.updated_at = selected_at
+    mission.prelist_sent = False
+    mission.prelist_errata_sent = False
+    mission.prelist_lowest_amount = None
+    mission.prelist_lowest_currency = None
+    await session.flush()
+    return selected
 
 
 class MissionNotFoundError(MissionTransitionError):
@@ -317,8 +439,7 @@ def create_mission_from_criteria(
     )
     session.add(mission)
 
-    session.add(
-        MissionCriteria(
+    criteria = MissionCriteria(
             mission_id=mission.id,
             search_query=search_query,
             model=model,
@@ -327,7 +448,10 @@ def create_mission_from_criteria(
             created_at=requested_at,
             updated_at=requested_at,
         )
+    _apply_product_request_identity(
+        criteria, f"{search_query} {model}" if model else search_query
     )
+    session.add(criteria)
 
     stores_by_code = {
         store.code: store
@@ -408,8 +532,7 @@ async def create_mission_from_criteria_async(
     )
     session.add(mission)
 
-    session.add(
-        MissionCriteria(
+    criteria = MissionCriteria(
             mission_id=mission.id,
             search_query=search_query,
             model=model,
@@ -418,7 +541,10 @@ async def create_mission_from_criteria_async(
             created_at=requested_at,
             updated_at=requested_at,
         )
+    _apply_product_request_identity(
+        criteria, f"{search_query} {model}" if model else search_query
     )
+    session.add(criteria)
 
     stores_by_code = {
         store.code: store
@@ -622,8 +748,26 @@ async def promote_confirmed_product_identity_async(
         return False
 
     criteria.search_query = confirmed_search_query
+    _apply_product_request_identity(
+        criteria,
+        (
+            f"{confirmed_search_query} {criteria.model}"
+            if criteria.model
+            else confirmed_search_query
+        ),
+    )
+    await session.execute(
+        delete(MissionProductSelection).where(
+            MissionProductSelection.mission_id == mission_id
+        )
+    )
     criteria.updated_at = accepted_at
     mission.title = confirmed_search_query[:200]
+    mission.state_version += 1
     mission.updated_at = accepted_at
+    mission.prelist_sent = False
+    mission.prelist_errata_sent = False
+    mission.prelist_lowest_amount = None
+    mission.prelist_lowest_currency = None
     await session.flush()
     return True
