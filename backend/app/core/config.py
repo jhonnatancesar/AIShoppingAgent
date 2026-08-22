@@ -17,6 +17,7 @@ _SECRET_FILE_FIELDS = {
     "openrouter_api_key": "openrouter_api_key_file",
     "firecrawl_api_key": "firecrawl_api_key_file",
     "telegram_bot_token": "telegram_bot_token_file",
+    "ops_controller_secret": "ops_controller_secret_file",
     "telegram_webhook_secret": "telegram_webhook_secret_file",
 }
 _MAX_SECRET_FILE_BYTES = 16 * 1024
@@ -65,6 +66,9 @@ class Settings(BaseSettings):
     telegram_bot_token_file: Path | None = None
     telegram_webhook_secret: SecretStr | None = None
     telegram_webhook_secret_file: Path | None = None
+    ops_controller_url: str | None = None
+    ops_controller_secret: SecretStr | None = None
+    ops_controller_secret_file: Path | None = None
     telegram_notification_poll_seconds: float = Field(default=5.0, gt=0, le=3600)
     telegram_notification_batch_size: int = Field(default=50, ge=1, le=1000)
     collection_poll_seconds: float = Field(default=15.0, gt=0, le=3600)

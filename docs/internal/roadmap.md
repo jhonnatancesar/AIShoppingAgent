@@ -36,8 +36,8 @@
 | Identidade global de produto/variante | TASK-097 | Concluída, aprovada e publicada em `origin/main` (`eeb2f4a`); equivalência fail-closed e escolha determinística de variantes (`DEC-079`) |
 | Pesquisa de produtos pela Web | TASK-099 | Concluída, aprovada e publicada em `origin/main` (`e9610c3`); pesquisa read-only e missão somente após “Monitorar” (`DEC-083`) |
 | Área USER — ofertas | TASK-100 | Concluída, aprovada e publicada em `origin/main` (`b4e61c5`); listagem paginada, fail-closed e sem duplicação (`DEC-084`) |
-| Área USER — minha conta | TASK-101 | Implementada no DEV; perfil, preferências e vínculo Telegram opcional com prova privada (`DEC-085`) |
-| Área DEV/ADMIN | Tarefas a definir | Dashboard, administração de dados e controles, itens 11 a 13 (`DEC-082`) |
+| Área USER — minha conta | TASK-101 | Concluída, aprovada e publicada em `origin/main` (`c57f5ab`); perfil, preferências e vínculo Telegram opcional (`DEC-085`) |
+| Área DEV/ADMIN | TASK-102 | Implementada no DEV, aguardando revisão; dashboard, dados e operações runtime-neutral (`DEC-086`) |
 | Comparação entre lojas | Tarefa a definir | Adiada para depois do bloco Web, item 14 (`DEC-082`) |
 | Histórico e gráficos por produto/variante | TASK-098 | Formalizada e reservada como último item da V1.2 (`DEC-081`/`DEC-082`) |
 | Estado operacional no Windows Server | manutenção 2026-08-16 | HEAD `0e90cf0` implantado; 7 serviços saudáveis; WSL2 limitado a 4 GB; somente schedules de missões ativas habilitados |

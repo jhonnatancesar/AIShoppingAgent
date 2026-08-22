@@ -16,6 +16,7 @@ para o diretório e `0600` para cada arquivo.
 | Chave Groq | `groq_api_key` | sim | sim (TASK-063) | não | não |
 | Token do bot Telegram | `telegram_bot_token` | sim | não | sim | não |
 | Segredo do webhook | `telegram_webhook_secret` | sim | não | não | não |
+| Assinatura do controlador operacional | `ops_controller_secret` | sim | não | não | não |
 
 O `collection_worker` (TASK-063) usa a chave Gemini ADMIN/DEV — a mesma
 cascata premium/Groq/gratuito já usada pela `api` (nunca a chave/cota do
@@ -55,8 +56,8 @@ python -m backend.scripts.manage_secrets migrate
 python -m backend.scripts.manage_secrets check
 ```
 
-Em uma instalação nova, o modo interativo gera a senha do banco e o segredo do
-webhook, e lê as credenciais externas com entrada oculta:
+Em uma instalação nova, o modo interativo gera a senha do banco e os segredos
+internos de webhook/controlador, e lê as credenciais externas com entrada oculta:
 
 ```powershell
 python -m backend.scripts.manage_secrets init

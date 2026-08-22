@@ -1,6 +1,6 @@
 # TASK-101 — Área USER: Minha conta
 
-Status: **Implementada no DEV, aguardando revisão.**
+Status: **Concluída, aprovada e publicada em `origin/main` (`c57f5ab`).**
 
 ## Objetivo
 

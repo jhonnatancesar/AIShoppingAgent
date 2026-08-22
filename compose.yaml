@@ -34,6 +34,8 @@ services:
       AISHOPPING_FIRECRAWL_API_KEY_FILE: /run/secrets/firecrawl_api_key
       AISHOPPING_TELEGRAM_BOT_TOKEN_FILE: /run/secrets/telegram_bot_token
       AISHOPPING_TELEGRAM_WEBHOOK_SECRET_FILE: /run/secrets/telegram_webhook_secret
+      AISHOPPING_OPS_CONTROLLER_URL: http://ops_controller:8010
+      AISHOPPING_OPS_CONTROLLER_SECRET_FILE: /run/secrets/ops_controller_secret
       AISHOPPING_OBSERVABILITY_ENABLED: "true"
       AISHOPPING_OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://otel-collector:4318/v1/traces
       AISHOPPING_TRACE_SAMPLE_RATIO: ${AISHOPPING_TRACE_SAMPLE_RATIO:-1.0}
@@ -71,6 +73,7 @@ services:
       - firecrawl_api_key
       - telegram_bot_token
       - telegram_webhook_secret
+      - ops_controller_secret
     depends_on:
       database:
         condition: service_healthy
@@ -146,6 +149,35 @@ services:
       timeout: 3s
       retries: 5
       start_period: 5s
+
+  ops_controller:
+    logging: *bounded-logging
+    image: aishoppingagent-app:local
+    command: ["uvicorn", "app.ops_controller:app", "--host", "0.0.0.0", "--port", "8010"]
+    environment:
+      DOCKER_HOST: http://docker-socket-proxy:2375
+      OPS_CONTROLLER_SECRET_FILE: /run/secrets/ops_controller_secret
+    expose: ["8010"]
+    secrets: [ops_controller_secret]
+    networks: [default, docker_ops]
+    depends_on: [docker-socket-proxy]
+    restart: unless-stopped
+
+  docker-socket-proxy:
+    image: tecnativa/docker-socket-proxy:0.3.0
+    environment:
+      CONTAINERS: 1
+      POST: 1
+      INFO: 0
+      IMAGES: 0
+      NETWORKS: 0
+      SERVICES: 0
+      SYSTEM: 0
+      VOLUMES: 0
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks: [docker_ops]
+    restart: unless-stopped
 
   collection_worker:
     logging: *bounded-logging
@@ -309,6 +341,10 @@ volumes:
   postgres_data:
   prometheus_data:
 
+networks:
+  docker_ops:
+    internal: true
+
 secrets:
   postgres_password:
     file: ${AISHOPPING_SECRETS_DIR:-./.secrets}/postgres_password
@@ -326,3 +362,5 @@ secrets:
     file: ${AISHOPPING_SECRETS_DIR:-./.secrets}/telegram_bot_token
   telegram_webhook_secret:
     file: ${AISHOPPING_SECRETS_DIR:-./.secrets}/telegram_webhook_secret
+  ops_controller_secret:
+    file: ${AISHOPPING_SECRETS_DIR:-./.secrets}/ops_controller_secret

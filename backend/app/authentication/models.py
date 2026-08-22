@@ -16,6 +16,7 @@ from sqlalchemy import (
     String,
     func,
 )
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.dialects.postgresql import UUID as PostgreSQLUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -298,8 +299,12 @@ class TelegramLinkToken(Base):
         ForeignKey("users.id", ondelete="RESTRICT"),
         nullable=False,
     )
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
     consumed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
@@ -312,3 +317,37 @@ class TelegramLinkToken(Base):
         default=utc_now,
         server_default=func.now(),
     )
+
+
+class AdminApiKey(Base):
+    """Estrutura reservada; autenticação e emissão permanecem desabilitadas."""
+
+    __tablename__ = "admin_api_keys"
+    __table_args__ = (
+        CheckConstraint("btrim(name) <> ''", name="ck_admin_api_keys_name_not_blank"),
+        Index("ix_admin_api_keys_owner", "owner_user_id", "created_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4
+    )
+    owner_user_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    description: Mapped[str | None] = mapped_column(String(500))
+    scopes: Mapped[list[str]] = mapped_column(
+        ARRAY(String(80)), nullable=False, default=list, server_default="{}"
+    )
+    token_prefix: Mapped[str] = mapped_column(String(16), nullable=False, unique=True)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+        server_default=func.now(),
+    )
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

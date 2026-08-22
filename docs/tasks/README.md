@@ -1,6 +1,10 @@
 # Tarefas
 
-**TASK-101 implementada no DEV e aguardando revisão:** área Minha conta para
+**TASK-102 implementada no DEV e aguardando revisão:** painel DEV/ADMIN,
+administração e operações de serviços lógicos. Ver `docs/tasks/TASK-102.md` e
+`DEC-086`.
+
+**TASK-101 concluída, aprovada e publicada (`c57f5ab`):** área Minha conta para
 perfil e preferências persistidas do próprio USER. Ver `docs/tasks/TASK-101.md`
 e `DEC-085`.
 

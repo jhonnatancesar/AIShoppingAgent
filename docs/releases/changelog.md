@@ -1,6 +1,12 @@
 # Changelog
 
-## 2026-08-22 — TASK-101: Minha conta (DEV, aguardando revisão)
+## 2026-08-22 — TASK-102: painel DEV/ADMIN (DEV, aguardando revisão)
+
+- dashboard, usuários, missões, providers, coleta e operações allowlisted;
+- remoção por tombstone e auditoria; API keys continuam desabilitadas;
+- controlador independente e contrato operacional desacoplado do Docker.
+
+## 2026-08-22 — TASK-101: Minha conta (concluída, `c57f5ab`)
 
 - adicionados endpoints USER de leitura, perfil e preferências de notificação;
 - criada `/app/account`, com dados pessoais, preferências e resumo do vínculo;

@@ -1,19 +1,39 @@
-import { useAuth } from '../auth/AuthContext'
+import { useCallback, useEffect, useState } from 'react'
+import { Activity, Database, HelpCircle, Play, RefreshCw, Users, Workflow } from 'lucide-react'
+import { adminApi, type AdminMission, type AdminUser, type Dashboard } from '@/api/admin'
 import { PageHeader } from '@/components/PageHeader'
 import { Badge } from '@/components/ui/badge'
-import { Card, CardContent } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { ErrorState, LoadingState } from '@/components/StatePanel'
+
+const Tip=({text}:{text:string})=><span title={text} aria-label={text} className="inline-flex cursor-help text-muted-foreground"><HelpCircle className="size-3.5"/></span>
+const Status=({value}:{value:string})=><Badge variant={['healthy','running','active'].includes(value)?'default':['failed','blocked'].includes(value)?'destructive':'secondary'}>{value}</Badge>
 
 export function AdminHome() {
-  const { user } = useAuth()
-
-  return (
-    <section>
-      <PageHeader eyebrow="Ambiente DEV" title="Painel administrativo" description="Fundação visual pronta para receber os módulos administrativos da V1.2." actions={<Badge variant="destructive">ADMIN</Badge>} />
-      <Card><CardContent className="pt-6 text-sm leading-relaxed text-muted-foreground">
-        Acesso exclusivo de <strong>{user?.display_name}</strong> (papel{' '}
-        <code>{user?.role}</code>). Dashboard técnico, administração de dados e
-        controles operacionais chegam nos próximos itens da V1.2 (9-11).
-      </CardContent></Card>
-    </section>
-  )
+ const [data,setData]=useState<Dashboard|null>(null),[users,setUsers]=useState<AdminUser[]>([]),[error,setError]=useState(''),[loading,setLoading]=useState(true),[query,setQuery]=useState('')
+ const load=useCallback(async()=>{setLoading(true);setError('');try{const [d,u]=await Promise.all([adminApi.dashboard(),adminApi.users(query)]);setData(d);setUsers(u?.items||[])}catch(e){setError(e instanceof Error?e.message:'Falha ao carregar painel.')}finally{setLoading(false)}},[query])
+ useEffect(()=>{void load()},[load])
+ if(loading&&!data)return <LoadingState label="Consultando apenas dados confiáveis…"/>
+ if(error&&!data)return <ErrorState title="Painel indisponível" description={error} onRetry={load}/>
+ return <div className="space-y-8">
+  <PageHeader eyebrow="DEV / ADMIN" title="Operação do sistema" description="Saúde, usuários e ações rotineiras sem terminal." actions={<Button variant="outline" onClick={load}><RefreshCw/>Atualizar</Button>}/>
+  {error?<p className="text-sm text-destructive">{error}</p>:null}
+  {data?<><div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3"><Metric icon={Activity} label="API" value={data.api} help="A API respondeu a esta consulta."/><Metric icon={Database} label="PostgreSQL" value={data.postgresql} help="Confirmado pelas consultas deste painel."/><Metric icon={Users} label="Usuários ativos" value={`${data.users.active}/${data.users.total}`} help="Contas ativas sobre o total preservado."/><Metric icon={Workflow} label="Missões ativas" value={`${data.missions.active}/${data.missions.total}`} help="Missões atualmente monitoradas."/><Metric icon={Activity} label="Coletas / falhas (24h)" value={`${data.collections.total} / ${data.collections.failed_24h}`} help="Execuções registradas e falhas reais nas últimas 24 horas."/><Metric icon={Workflow} label="Eventos / falhas (24h)" value={`${data.events.total} / ${data.events.failed_24h}`} help="Eventos e tentativas falhas ou dead-lettered nas últimas 24 horas."/></div>
+  <Card><CardHeader><CardTitle className="flex items-center gap-2">Workers <Tip text="Serviços lógicos; o runtime pode mudar sem alterar esta tela."/></CardTitle></CardHeader><CardContent className="grid gap-3 md:grid-cols-2">{data.workers.map(w=><div key={w.service} className="flex items-center justify-between rounded-xl border p-4"><div><p className="font-medium">{w.service}</p><Status value={w.status}/></div><div className="flex gap-2"><Button size="sm" variant="outline" onClick={()=>serviceAction(w.service,'start',load)}><Play/>Iniciar</Button><Button size="sm" variant="outline" onClick={()=>serviceAction(w.service,'restart',load)}><RefreshCw/>Reiniciar</Button></div></div>)}</CardContent></Card>
+  <Card><CardHeader><CardTitle className="flex items-center gap-2">Providers e coletas <Tip text="Desabilitar impede novas coletas e preserva todo o histórico."/></CardTitle></CardHeader><CardContent className="space-y-3">{data.stores.map(s=><div key={s.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border p-4"><div><p className="font-medium">{s.name}</p><p className="text-xs text-muted-foreground">Última coleta: {s.last_run_status||'sem dado'}</p></div><Button size="sm" variant={s.is_active?'outline':'default'} onClick={async()=>{if(confirm(`${s.is_active?'Desabilitar':'Habilitar'} ${s.name}?`)){await adminApi.provider(s.id,{enabled:!s.is_active,reason:'Ação confirmada no painel'});await load()}}}>{s.is_active?'Desabilitar':'Habilitar'}</Button></div>)}</CardContent></Card></>:null}
+  <Card><CardHeader><CardTitle className="flex items-center gap-2">Usuários <Tip text="Mudanças de acesso revogam sessões e preservam histórico."/></CardTitle></CardHeader><CardContent className="space-y-4"><div className="flex gap-2"><Input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Pesquisar nome, usuário ou e-mail"/><Button onClick={load}>Pesquisar</Button><Button variant="outline" onClick={()=>createUser(load)}>Adicionar</Button></div>{users.map(u=><UserRow key={u.id} user={u} reload={load}/>)}</CardContent></Card>
+  <Card><CardHeader><CardTitle className="flex items-center gap-2">API para agentes <Tip text="Estrutura preparada; emissão e autenticação externa estão desabilitadas."/></CardTitle></CardHeader><CardContent><Badge variant="secondary">Em breve / desativado</Badge></CardContent></Card>
+ </div>
 }
+
+function Metric({icon:Icon,label,value,help}:{icon:typeof Activity;label:string;value:string;help:string}){return <Card><CardContent className="pt-6"><div className="flex items-center justify-between"><Icon className="size-5 text-primary"/><Tip text={help}/></div><p className="mt-4 text-sm text-muted-foreground">{label}</p><p className="text-2xl font-semibold">{value}</p></CardContent></Card>}
+async function serviceAction(service:string,operation:string,reload:()=>Promise<void>){if(!confirm(`${operation==='start'?'Iniciar':'Reiniciar'} ${service}?`))return;await adminApi.serviceAction({service,operation,confirmation:true,reason:'Ação confirmada no painel'});await reload()}
+async function createUser(reload:()=>Promise<void>){const username=prompt('Nome de usuário');if(!username)return;const password=prompt('Senha temporária forte');if(!password)return;await adminApi.createUser({display_name:username,username,password,role:'USER'});await reload()}
+function UserRow({user,reload}:{user:AdminUser;reload:()=>Promise<void>}){const [missions,setMissions]=useState<AdminMission[]|null>(null);return <div className="rounded-xl border p-4"><div className="flex flex-wrap items-center gap-3"><div className="min-w-48 flex-1"><p className="font-medium">{user.display_name}</p><p className="text-xs text-muted-foreground">@{user.username||'removido'} · {user.mission_count} missões</p></div><Status value={user.lifecycle_status}/><Select value={user.role} onValueChange={async role=>{if(confirm(`Alterar papel para ${role}?`)){await adminApi.updateUser(user.id,{role,reason:'Alteração confirmada no painel'});await reload()}}}><SelectTrigger className="w-28"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="USER">USER</SelectItem><SelectItem value="DEV">DEV</SelectItem><SelectItem value="ADMIN">ADMIN</SelectItem></SelectContent></Select><Button size="sm" variant="outline" onClick={async()=>setMissions(await adminApi.missions(user.id)||[])}>Missões</Button>{user.lifecycle_status==='active'?<><Button size="sm" variant="outline" onClick={()=>lifecycle(user,'inactive',reload)}>Desativar</Button><Button size="sm" variant="destructive" onClick={()=>lifecycle(user,'blocked',reload)}>Bloquear</Button></>:<Button size="sm" onClick={()=>lifecycle(user,'active',reload)}>Ativar</Button>}<Button size="sm" variant="destructive" onClick={()=>remove(user,reload)}>Remover</Button></div>{missions?<div className="mt-3 space-y-2 border-t pt-3">{missions.length?missions.map(m=><div key={m.id} className="flex items-center justify-between text-sm"><span>{m.title} · {m.status}</span><div className="flex gap-1">{m.status==='active'?<Button size="sm" variant="ghost" onClick={()=>mission(m,'pause',setMissions,user.id)}>Pausar</Button>:m.status==='paused'?<Button size="sm" variant="ghost" onClick={()=>mission(m,'resume',setMissions,user.id)}>Retomar</Button>:null}{m.status==='active'?<Button size="sm" variant="ghost" onClick={()=>collect(m)}>Coletar</Button>:null}{!['cancelled','completed','expired'].includes(m.status)?<Button size="sm" variant="ghost" onClick={()=>mission(m,'cancel',setMissions,user.id)}>Cancelar</Button>:null}</div></div>):<p className="text-sm text-muted-foreground">Nenhuma missão.</p>}</div>:null}</div>}
+async function lifecycle(user:AdminUser,status:string,reload:()=>Promise<void>){if(!confirm(`${status} ${user.display_name}? Sessões serão revogadas e missões paradas.`))return;await adminApi.updateUser(user.id,{lifecycle_status:status,reason:'Ação confirmada no painel'});await reload()}
+async function remove(user:AdminUser,reload:()=>Promise<void>){const confirmation=prompt(`Digite ${user.username||user.id} para remover definitivamente a conta:`);if(!confirmation)return;await adminApi.deleteUser(user.id,{confirmation,reason:'Remoção confirmada no painel'});await reload()}
+async function mission(m:AdminMission,command:string,set:(v:AdminMission[])=>void,userId:string){if(!confirm(`${command} esta missão?`))return;await adminApi.missionCommand(m.id,{command,expected_state_version:m.state_version,reason:'Ação confirmada no painel'});set(await adminApi.missions(userId)||[])}
+async function collect(m:AdminMission){if(!confirm(`Disparar coleta controlada para ${m.title}?`))return;await adminApi.trigger({mission_id:m.id,confirmation:true,reason:'Ação confirmada no painel'})}

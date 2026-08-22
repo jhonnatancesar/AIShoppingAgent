@@ -1,5 +1,18 @@
 # Decision Log
 
+## DEC-086 — Operações ADMIN usam serviços lógicos, não o runtime Docker
+
+- **Data:** 2026-08-22.
+- **Decisão:** TASK-102 reúne dashboard, administração e operações rotineiras.
+  UI/backend usam `ServiceOps` com allowlist lógica e nunca aceitam shell,
+  container ou comando arbitrário.
+- **Runtime atual:** controlador independente assinado, rede privada e
+  socket-proxy restrito; somente `collection_worker` e `telegram_notifier`.
+- **Evolução:** Docker é adapter substituível. Instalação direta futura troca
+  somente por `WindowsServiceOpsAdapter`/supervisor equivalente.
+- **Dados:** remoção de usuário usa tombstone e preserva todo histórico; API
+  keys ficam estruturadas, porém emissão e autenticação seguem desabilitadas.
+
 ## DEC-085 — Minha conta edita somente dados existentes da própria sessão
 
 - **Data:** 2026-08-22.

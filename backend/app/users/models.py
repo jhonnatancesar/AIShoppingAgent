@@ -30,6 +30,13 @@ class UserRole(StrEnum):
     DEV = "DEV"
 
 
+class UserLifecycleStatus(StrEnum):
+    ACTIVE = "active"
+    INACTIVE = "inactive"
+    BLOCKED = "blocked"
+    DELETED = "deleted"
+
+
 class User(Base):
     """Identidade interna proprietária de recursos do sistema."""
 
@@ -38,6 +45,10 @@ class User(Base):
         CheckConstraint(
             "role IN ('USER', 'ADMIN', 'DEV')",
             name="user_role_values",
+        ),
+        CheckConstraint(
+            "lifecycle_status IN ('active', 'inactive', 'blocked', 'deleted')",
+            name="user_lifecycle_status_values",
         ),
         CheckConstraint(
             "btrim(display_name) <> ''",
@@ -81,6 +92,20 @@ class User(Base):
         default=True,
         server_default="true",
     )
+    lifecycle_status: Mapped[UserLifecycleStatus] = mapped_column(
+        Enum(
+            UserLifecycleStatus,
+            name="user_lifecycle_status_values",
+            values_callable=lambda values: [value.value for value in values],
+            native_enum=False,
+            create_constraint=False,
+            length=16,
+        ),
+        nullable=False,
+        default=UserLifecycleStatus.ACTIVE,
+        server_default=UserLifecycleStatus.ACTIVE.value,
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     telegram_user_id: Mapped[int | None] = mapped_column(
         BigInteger,
         unique=True,

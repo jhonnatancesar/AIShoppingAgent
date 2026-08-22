@@ -2,6 +2,7 @@
 
 from app.audit.models import AuditEntry
 from app.authentication.models import (
+    AdminApiKey,
     CredentialActionToken,
     TelegramLinkToken,
     UserAuthSession,
@@ -57,4 +58,5 @@ REGISTERED_MODELS = (
     TelegramLinkToken,
     TelegramUpdateReceipt,
     WebSession,
+    AdminApiKey,
 )

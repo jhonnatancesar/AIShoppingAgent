@@ -71,6 +71,7 @@ try {
         "groq_api_key",
         "telegram_bot_token",
         "telegram_webhook_secret"
+        "ops_controller_secret"
     )) {
         [System.IO.File]::WriteAllText(
             (Join-Path $temporarySecretsDirectory $name),

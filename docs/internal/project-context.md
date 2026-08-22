@@ -1,6 +1,12 @@
 # Project Context
 
-**Atualização 2026-08-22 (TASK-101 implementada no DEV, aguardando revisão):**
+**Atualização 2026-08-22 (TASK-102 implementada no DEV, aguardando revisão):**
+`/admin` reúne dashboard, usuários, missões, providers e operações allowlisted.
+O contrato usa serviços lógicos; Docker existe somente atrás do controlador
+privado atual e pode ser substituído por adapter de serviço do servidor.
+Remoção usa tombstone, auditoria é append-only e API keys seguem desabilitadas.
+
+**Atualização 2026-08-22 (TASK-101 concluída, aprovada e publicada `c57f5ab`):**
 `/app/account` permite ao USER editar o próprio perfil, lojas/categorias
 preferidas e os flags de notificação já usados pelo Telegram. Três endpoints
 iniciais e dois endpoints de vínculo exigem WebSession e as permissões

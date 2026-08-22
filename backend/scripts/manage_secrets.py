@@ -34,6 +34,10 @@ SECRET_SOURCES = {
         PROJECT_ROOT / "backend" / ".env",
         "AISHOPPING_TELEGRAM_WEBHOOK_SECRET",
     ),
+    "ops_controller_secret": (
+        PROJECT_ROOT / "backend" / ".env",
+        "AISHOPPING_OPS_CONTROLLER_SECRET",
+    ),
 }
 _MAX_SECRET_BYTES = 16 * 1024
 
@@ -106,6 +110,7 @@ def initialize_interactively(directory: Path) -> None:
     generated = {
         "postgres_password": secrets.token_urlsafe(48),
         "telegram_webhook_secret": secrets.token_urlsafe(48),
+        "ops_controller_secret": secrets.token_urlsafe(48),
     }
     for name in SECRET_SOURCES:
         path = directory / name
