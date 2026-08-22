@@ -1,5 +1,38 @@
 # Project Context
 
+**Atualização 2026-08-22 (TASK-091/TASK-092/TASK-093, itens 1-3 da
+V1.2):** os três primeiros itens da V1.2 reorganizada (`docs/internal/v1.2-scope.md`)
+estão concluídos, aprovados e publicados em `origin/main`, commit `cf666fa`,
+Alembic no head `20260822_0001`. **A TASK-091** entregou a fundação da
+aplicação web: sessão própria (`WebSession`, tabela dedicada, independente
+de `UserAuthSession` do Telegram), CSRF por double-submit cookie acoplado a
+`require_web_session` (não a nenhum router individual — endurecido em 4
+rodadas de auditoria do usuário, `DEC-074`), frontend React+TypeScript+Vite
+empacotado no mesmo `Dockerfile` (estágio Node em build-time). **A
+TASK-092** levou criar/listar/detalhar/editar/pausar/retomar/cancelar
+missão para `/app`, reaproveitando só `app.missions.service`/`query`
+(nunca um segundo sistema de missões); uma auditoria de 21 pontos
+(`DEC-075`) encontrou e corrigiu dois bugs reais — `edit_mission_criteria`
+não incrementava `state_version` (perda silenciosa de escrita concorrente)
+e `InvalidMissionTransitionError` não capturada no router web (levaria a
+`500` em vez de `409` numa transição inválida, ex. retomar missão
+cancelada) — além de formalizar posse centralizada
+(`get_mission_for_user`, indistinguível entre "não existe" e "não é sua"),
+`actor_type` obrigatório em toda criação de missão, e listagem paginada
+ordenada por `updated_at DESC, id DESC`. **A TASK-093** reduziu gravação
+redundante de `PriceObservation`: uma coleta só grava observação nova
+quando preço/moeda/disponibilidade/vendedor/fulfillment/parcelamento
+mudam de fato em relação à última observação real da mesma `Offer`
+(comparação sempre por `offer_id`, nunca por missão — a identidade correta
+já vem de `_find_offer`, que inclui `seller_id`); `Offer.last_seen_at`
+(novo, migração `20260822_0001`) preserva que a oferta continuou sendo
+vista mesmo sem observação nova, sem tocar no histórico append-only.
+**A produção real (Windows Server, `C:\App\AIShoppingAgent`) ainda não foi
+atualizada com nenhum destes três itens** — segue no estado descrito na
+seção "Continuidade no servidor" de `CLAUDE.md` (`v1.0.10`/`df7609b`);
+nenhum deploy foi solicitado ainda. O próximo item pendente da V1.2 é o 4
+("página rica de produto/oferta"), sem TASK aberta.
+
 **Atualização 2026-08-21 (reorganização de roadmap, `DEC-072`, só
 documentação):** a V1.2 foi reorganizada para ter como objetivo central
 transformar o AIShoppingAgent numa aplicação web completa de monitoramento
