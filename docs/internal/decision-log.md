@@ -1,5 +1,68 @@
 # Decision Log
 
+## DEC-083 — Pesquisa Web read-only; missão somente após “Monitorar”
+
+- **Data:** 2026-08-22.
+- **Classificação:** implementar agora, como TASK-099 e item 8 da V1.2.
+- **Correção:** o desenho inicial criava missão no ato de pesquisar e foi
+  rejeitado antes da aprovação. `/app/search` agora consulta de forma read-only
+  somente `Product`, `Offer` e a última `PriceObservation` persistidos.
+- **Decisão:** pesquisar nunca cria missão, run, observação ou coleta. Após ver
+  resultados e variantes, somente “Monitorar” chama o endpoint/service de
+  criação existente. Famílias permitem uma, várias ou todas as variantes;
+  categorias genéricas continuam válidas sem identidade forçada.
+- **Justificativa:** separa exploração de monitoramento sem criar scraper, fila,
+  tabela ou estado temporário paralelo e preserva integralmente os três fluxos
+  determinísticos da TASK-097.
+- **Sem mudança:** providers, IA, Telegram, schema e produção não foram
+  alterados. A área geral de ofertas permanece no item 9.
+
+## DEC-082 — Priorizar toda a Web restante antes da comparação
+
+- **Data:** 2026-08-22.
+- **Decisão:** adiar comparação entre lojas e executar primeiro o bloco Web
+  ainda ausente. A próxima atividade passa a ser pesquisa de produtos pelo site.
+- **Auditoria local:** hoje existem `/app`, missões, criação/detalhe de missão e
+  detalhe de oferta; `/admin` possui somente a casca inicial. Ainda faltam a
+  pesquisa, a área geral de ofertas, minha conta e as áreas administrativas.
+- **Nova ordem:** pesquisa vira item 8; ofertas USER, item 9; minha conta, item
+  10; dashboard DEV/ADMIN, item 11; administração de dados, item 12; controles
+  operacionais, item 13. Comparação entre lojas fica no item 14. Cupons, novas
+  lojas e histórico externo passam aos itens 15, 16 e 17. TASK-098 continua
+  como último item, agora o 18.
+- **Próxima ação:** formalizar a pesquisa de produtos pelo site com o próximo
+  número global quando o usuário mandar iniciar.
+
+## DEC-081 — Mover a TASK-098 para o fim da V1.2
+
+- **Data:** 2026-08-22.
+- **Decisão:** manter a TASK-098 formalizada e com o mesmo número, mas adiar sua
+  execução para o último item da V1.2.
+- **Nova ordem:** a ordem aqui registrada foi posteriormente substituída pela
+  `DEC-082`; TASK-098 continua sendo o último item da fase.
+- **Justificativa:** o usuário decidiu deixar gráficos para o fechamento da
+  fase. A dependência técnica da identidade global da TASK-097 continua
+  atendida e o escopo interno da TASK-098 não muda.
+- **Próxima ação:** substituída pela `DEC-082`, que prioriza a Web restante.
+
+## DEC-080 — Reordenar a V1.2: lojas Magalu/Mercado Livre/Shopee; autenticação comercial e lives na V2
+
+- **Data:** 2026-08-22.
+- **Decisão:** remover da V1.2 a consulta autenticada de frete/parcelamento,
+  inclusive a modalidade restrita a DEV/ADMIN, e mover integralmente essa
+  capability para a V2. Mover também a pesquisa de ofertas em lives para a V2.
+- **Novas lojas na V1.2:** o item de expansão de fontes passa a abranger Magalu,
+  Mercado Livre e Shopee, cada uma como Store Provider aderente à arquitetura
+  comum. AliExpress não entra nesta etapa e permanece futuro.
+- **Contagem e ordem:** com a retirada de dois itens, a V1.2 volta de 18 para
+  16 itens. O item de novas lojas passa a ser o 15 e menor preço histórico
+  externo passa a ser o 16. TASKs já formalizadas até a TASK-098 não mudam.
+- **Separação de escopo:** o provider público da Shopee na V1.2 não inclui
+  Shopee Live. Coleta autenticada e lives exigem desenho operacional e de
+  segurança próprio na V2.
+- **Próxima ação:** esta indicação foi posteriormente substituída pela
+  `DEC-081`, que moveu a TASK-098 para o fim da V1.2.
+
 ## DEC-079 — Separar identidade global (TASK-097) de histórico e gráficos (TASK-098)
 
 - **Data:** 2026-08-22.
@@ -935,6 +998,10 @@ Após a classificação, registrar a decisão neste arquivo e atualizar a docume
 
 ### DEC-056 — Registrar comparação de menor preço histórico externo (itens 11 e 12 da V1.2)
 
+> **Atualização (`DEC-080`/`DEC-082`, 2026-08-22):** o histórico externo
+> permanece na V1.2, agora como item 17. A pesquisa de ofertas em lives foi
+> movida para a V2. O texto abaixo preserva o contexto histórico original.
+
 - **Data:** 2026-08-10
 - **Ideia:** o usuário pediu inicialmente um "pré-aviso" de valores
   encontrados e perguntou se a IA já analisa preços comparando com
@@ -1014,6 +1081,10 @@ Após a classificação, registrar a decisão neste arquivo e atualizar a docume
   explícita futura.
 
 ### DEC-054 — Registrar Magalu como quinta fonte de oferta, item 10 da V1.2
+
+> **Atualização (`DEC-080`/`DEC-082`, 2026-08-22):** o item de fontes da V1.2
+> foi ampliado para Magalu, Mercado Livre e Shopee e renumerado como item 16.
+> AliExpress permanece futuro e fora dessa etapa.
 
 - **Data:** 2026-08-10
 - **Ideia:** o usuário pediu para registrar a Magazine Luiza (Magalu) como

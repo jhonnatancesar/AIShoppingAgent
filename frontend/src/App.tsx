@@ -10,6 +10,7 @@ import { MissionDetailPage } from './pages/missions/MissionDetailPage'
 import { OfferDetailPage } from './pages/offers/OfferDetailPage'
 import { MissionsListPage } from './pages/missions/MissionsListPage'
 import { NotFound } from './pages/NotFound'
+import { ProductSearchPage } from './pages/search/ProductSearchPage'
 
 export default function App() {
   return (
@@ -21,6 +22,7 @@ export default function App() {
         <Route element={<RequireAuth />}>
           <Route element={<AppLayout />}>
             <Route path="/app" element={<AppHome />} />
+            <Route path="/app/search" element={<ProductSearchPage />} />
             <Route path="/app/missions" element={<MissionsListPage />} />
             <Route path="/app/missions/new" element={<MissionCreatePage />} />
             <Route path="/app/missions/:missionId" element={<MissionDetailPage />} />

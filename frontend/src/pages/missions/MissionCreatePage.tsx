@@ -3,6 +3,9 @@ import { useNavigate } from 'react-router-dom'
 import { ApiError } from '../../api/client'
 import { missionsApi } from '../../api/missions'
 import { STORE_LABELS } from './statusLabels'
+import { PageHeader } from '@/components/PageHeader'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent } from '@/components/ui/card'
 
 const STORE_CODES = ['pichau', 'terabyte', 'amazon', 'kabum']
 
@@ -51,8 +54,8 @@ export function MissionCreatePage() {
 
   return (
     <section>
-      <h1>Nova missão</h1>
-      <form onSubmit={handleSubmit}>
+      <PageHeader eyebrow="Monitoramento" title="Nova missão" description="Descreva o produto e escolha onde o agente deve procurar." />
+      <Card className="max-w-3xl"><CardContent className="pt-6"><form onSubmit={handleSubmit}>
         <div className="field">
           <label htmlFor="search_query">O que você está procurando?</label>
           <input
@@ -116,11 +119,11 @@ export function MissionCreatePage() {
         {error ? <p className="form-error">{error}</p> : null}
 
         <div className="mission-actions">
-          <button className="button" type="submit" disabled={submitting}>
+          <Button type="submit" disabled={submitting}>
             {submitting ? 'Criando…' : 'Criar missão'}
-          </button>
+          </Button>
         </div>
-      </form>
+      </form></CardContent></Card>
     </section>
   )
 }

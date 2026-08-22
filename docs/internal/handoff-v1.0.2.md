@@ -90,6 +90,10 @@ código foi alterado por nenhum registro.
 
 ### `docs/internal/v1.2-scope.md` — 12 itens (itens 1–8 já existiam de sessões anteriores)
 
+> Snapshot histórico de 2026-08-10. A `DEC-080` (2026-08-22) substituiu esta
+> composição: lives foram movidas para a V2; Magalu, Mercado Livre e Shopee
+> integram o item de novas lojas da V1.2; AliExpress permanece futuro.
+
 Adicionados nesta sessão:
 
 9. Reduzir `PriceObservation` redundante — gravar só quando o estado

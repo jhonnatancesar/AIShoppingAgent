@@ -4,6 +4,10 @@ import { ApiError } from '../../api/client'
 import { missionsApi } from '../../api/missions'
 import type { MissionStatusFilter, MissionSummary } from '../../api/types'
 import { STATUS_FILTER_LABELS, STATUS_LABELS } from './statusLabels'
+import { Plus } from 'lucide-react'
+import { PageHeader } from '@/components/PageHeader'
+import { EmptyState, ErrorState, LoadingState } from '@/components/StatePanel'
+import { Button } from '@/components/ui/button'
 
 const FILTER_OPTIONS: (MissionStatusFilter | null)[] = [
   null,
@@ -41,12 +45,7 @@ export function MissionsListPage() {
 
   return (
     <section>
-      <div className="page-header">
-        <h1>Missões</h1>
-        <Link className="button" to="/app/missions/new">
-          + Nova missão
-        </Link>
-      </div>
+      <PageHeader eyebrow="Monitoramento" title="Missões" description="Gerencie produtos, lojas e preços-alvo em um só lugar." actions={<Button asChild><Link to="/app/missions/new"><Plus />Nova missão</Link></Button>} />
 
       <div className="field mission-filter">
         <label htmlFor="status-filter">Status</label>
@@ -68,12 +67,10 @@ export function MissionsListPage() {
         </select>
       </div>
 
-      {error ? <p className="form-error">{error}</p> : null}
-
-      {missions === null ? (
-        <p className="loading">Carregando…</p>
+      {error ? <ErrorState title="Não foi possível carregar as missões" description={error} onRetry={() => load(filter)} /> : missions === null ? (
+        <LoadingState label="Carregando missões…" />
       ) : missions.length === 0 ? (
-        <p className="empty-state">Nenhuma missão encontrada para este filtro.</p>
+        <EmptyState title="Nenhuma missão encontrada" description="Experimente outro filtro ou crie sua primeira missão." action={<Button asChild><Link to="/app/missions/new">Criar missão</Link></Button>} />
       ) : (
         <ul className="mission-list">
           {missions.map((mission) => (

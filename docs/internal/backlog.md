@@ -14,23 +14,27 @@
 > de notificação no cadastro e notificações por e-mail de fato) saíram da
 > V1.2 e entraram aqui, na V2.
 
+> Ajuste de 2026-08-22 (`DEC-080`): frete/parcelamento autenticado e pesquisa
+> de ofertas em lives também saíram da V1.2 e foram movidos para a V2. Magalu,
+> Mercado Livre e Shopee permanecem como novas fontes planejadas para a V1.2;
+> AliExpress não entra nessa etapa.
+
 Este documento é o repositório de ideias que surgirem durante o desenvolvimento e não pertencem à versão atual. Registrar uma ideia aqui não a aprova, não cria uma TASK e não altera o escopo da V1.
 
 Para cada item novo, registrar uma descrição curta, a motivação e eventuais dependências. A priorização e a transformação em tarefa dependem de decisão explícita posterior.
 
 ## Novas fontes de oferta
 
-- Store Providers para Mercado Livre, Shopee e AliExpress, apresentados como ***Futuro*** no bot da V1.
+- Store Provider para AliExpress, ainda futuro e fora da V1.2.
 - Inclusão após a V1 de lojas ou marketplaces que não forem selecionados para a TASK-055.
 - Critérios de qualificação, confiabilidade e manutenção de Store Providers.
 - Evolução da normalização de vendedores, frete, impostos, prazo e políticas específicas além do necessário às fontes selecionadas.
-- **Frete e parcelamento autenticados por usuário** (`DEC-045`): depois que
-  a V1.2 disponibilizar consulta autenticada de frete/parcelamento somente
-  para DEV/ADMIN (item 13 de `docs/internal/v1.2-scope.md`), a V2 poderá abrir
-  essa mesma capacidade para usuários comuns. Exige projeto próprio de
+- **Frete e parcelamento autenticados** (`DEC-045`/`DEC-080`): toda consulta
+  autenticada, inclusive a ferramenta inicialmente imaginada para DEV/ADMIN,
+  foi movida para a V2. Exige projeto próprio de
   credenciais/sessões isoladas por usuário, autorização, proteção de dados
   e ciclo de vida das sessões, além de regras específicas por marketplace —
-  nada disso é antecipado na V1 nem na V1.2.
+  nada disso será antecipado na V1.2.
 
 ## Canais e experiência do usuário
 
@@ -48,6 +52,10 @@ Para cada item novo, registrar uma descrição curta, a motivação e eventuais 
   confirmação/verificação abaixo.
 - Confirmação/verificação de e-mail no onboarding da V2; o e-mail da V1
   permanece opcional, não verificado e sem uso para recuperação.
+- **Pesquisa de ofertas em lives** (`DEC-056`/`DEC-080`): buscar promoções
+  anunciadas em transmissões ao vivo fica para a V2. O escopo anteriormente
+  limitado a YouTube e Shopee Live continua sendo referência inicial, mas não
+  cria integração na V1.2 nem se confunde com o Store Provider da Shopee.
 
 ## Inteligência e automação
 

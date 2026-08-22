@@ -1,6 +1,7 @@
 # TASK-097 — Identidade global de produto/variante e resolução de pedidos genéricos
 
-Status: **Implementada no DEV e aguardando revisão.**
+Status: **Concluída, aprovada e publicada em `origin/main` em 2026-08-22
+(`eeb2f4a`).**
 
 ## Origem e objetivo
 

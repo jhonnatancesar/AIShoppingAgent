@@ -110,6 +110,16 @@ Nunca iniciar automaticamente a próxima TASK. Encerrar apresentando resumo da i
 
 ## Estado atual
 
+**Atualização DEV 2026-08-22:** a TASK-099 implementa a pesquisa de produtos
+pela Web como consulta read-only do catálogo persistido. Pesquisar nunca cria
+missão ou coleta; somente “Monitorar” reutiliza o endpoint/service de criação.
+Os três fluxos da TASK-097 são preservados, sem migration ou scraper. Aguarda
+revisão, sem deploy.
+
+**Atualização DEV 2026-08-22:** a TASK-097 está concluída, aprovada e publicada
+em `origin/main` (`eeb2f4a`), sem deploy. A TASK-098 permanece reservada para o
+último item da V1.2.
+
 TASKs 000 a 054, TASK-055 a TASK-062, TASK-063 e TASK-064 concluídas — MVP
 da V1 completo, checklist de release 65/65. A observabilidade da
 TASK-045 (`DEC-031`) foi validada com PostgreSQL, API, worker, Collector,
@@ -433,8 +443,8 @@ PriceObservation e suas parcelas, sem migration, IA ou nova coleta. Aguarda
 revisão; sem commit, push, deploy ou acesso à produção. Foi posteriormente
 aprovada e publicada em `origin/main` no commit `0924f42`, sem deploy.
 
-**Atualização DEV 2026-08-22 (TASK-096):** o item 6 da V1.2 está implementado
-e aguarda revisão. Avaliações são snapshot explícito da Offer/Store e aparecem na
+**Atualização DEV 2026-08-22 (TASK-096):** o item 6 da V1.2 está concluído,
+aprovado e publicado em `origin/main` (`fd5a6f9`). Avaliações são snapshot explícito da Offer/Store e aparecem na
 página USER e Telegram. O enriquecimento de detalhe é único por oferta e
 extensível por provider; Terabyte permanece só-card. Sem texto de reviews,
 nota global, IA, produção, deploy, commit ou push.

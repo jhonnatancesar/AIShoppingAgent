@@ -5,13 +5,14 @@
  */
 import { Navigate, Outlet, useLocation } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext'
+import { LoadingState } from '@/components/StatePanel'
 
 export function RequireAuth() {
   const { user, loading } = useAuth()
   const location = useLocation()
 
   if (loading) {
-    return <p className="loading">Carregando…</p>
+    return <div className="mx-auto mt-20 max-w-xl px-4"><LoadingState label="Validando sua sessão…" /></div>
   }
   if (!user) {
     return <Navigate to="/login" state={{ from: location }} replace />
@@ -23,7 +24,7 @@ export function RequireAdmin() {
   const { user, loading, isAdmin } = useAuth()
 
   if (loading) {
-    return <p className="loading">Carregando…</p>
+    return <div className="mx-auto mt-20 max-w-xl px-4"><LoadingState label="Validando sua sessão…" /></div>
   }
   if (!user) {
     return <Navigate to="/login" replace />

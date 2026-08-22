@@ -33,10 +33,14 @@
 | Pausar/retomar manual e cancelamento em massa | TASK-090 | Implementada e testada; `/pausar` e `/retomar` novos, `/cancelar_missao` aceita seleção múltipla, todos reaproveitando a infraestrutura genérica da TASK-085 sem IA; `/editar_missao` encadeia direto no menu após pausar para editar, sem retomar sozinho. Alerta de preço-alvo repetitivo e busca "iphone 16 512" seguem pendentes, fora de escopo |
 | Página rica de oferta USER | TASK-095 | Concluída, aprovada e publicada em `origin/main` (`0924f42`); detalhe centrado em Offer com ownership por missão/relevância |
 | Avaliações por oferta/loja | TASK-096 | Concluída, aprovada e publicada em `origin/main` (`fd5a6f9`); snapshot explícito na Offer, página USER e Telegram (`DEC-078`) |
-| Identidade global de produto/variante | TASK-097 | Implementada no DEV e aguardando revisão; equivalência fail-closed e escolha determinística de variantes na Web e no Telegram (`DEC-079`) |
-| Histórico e gráficos por produto/variante | TASK-098 | Formalizada e reservada; depende da TASK-097 e não integra sua implementação |
+| Identidade global de produto/variante | TASK-097 | Concluída, aprovada e publicada em `origin/main` (`eeb2f4a`); equivalência fail-closed e escolha determinística de variantes (`DEC-079`) |
+| Pesquisa de produtos pela Web | TASK-099 | Implementada no DEV; pesquisa read-only, três fluxos da TASK-097 e missão somente após “Monitorar” (`DEC-083`) |
+| Área USER restante | Tarefas a definir | Ofertas e minha conta, itens 9 e 10 (`DEC-082`) |
+| Área DEV/ADMIN | Tarefas a definir | Dashboard, administração de dados e controles, itens 11 a 13 (`DEC-082`) |
+| Comparação entre lojas | Tarefa a definir | Adiada para depois do bloco Web, item 14 (`DEC-082`) |
+| Histórico e gráficos por produto/variante | TASK-098 | Formalizada e reservada como último item da V1.2 (`DEC-081`/`DEC-082`) |
 | Estado operacional no Windows Server | manutenção 2026-08-16 | HEAD `0e90cf0` implantado; 7 serviços saudáveis; WSL2 limitado a 4 GB; somente schedules de missões ativas habilitados |
-| Expansão de fontes (futuro) | Tarefas a definir | Mercado Livre, Shopee, AliExpress e outras fontes futuras |
+| Expansão de fontes na V1.2 | Tarefas a definir | Magalu, Mercado Livre e Shopee; AliExpress permanece futuro (`DEC-080`) |
 
 As TASKs 000 a 053 e as TASKs 055 a 062 estão
 concluídas. O preflight
@@ -329,20 +333,21 @@ demais duas (080, 081) e da 084 não reverificado nesta rodada — ver o
 commit log e `docs/tasks/` de cada uma para o estado real mais recente.)
 → V1.2
 (evolução funcional, documento `docs/internal/v1.2-scope.md`; reorganizada em
-2026-08-21, `DEC-072`, e ampliada em 2026-08-22 por `DEC-076`/`DEC-079` para 18 itens
+2026-08-21, ampliada e reordenada até a `DEC-082` para 18 itens
 ordenados com **objetivo central de
 transformar o AIShoppingAgent numa aplicação web completa** de monitoramento
 e comparação de preços — duas áreas na mesma aplicação/backend/banco,
 `/app` para USER e `/admin` para DEV/ADMIN, autorização real no backend —
 mantendo o Telegram principalmente como canal de alertas. Itens já
-aprovados anteriormente foram preservados e renumerados (Magalu como
-quinta loja, redução de `PriceObservation` redundante, comparação de menor
-preço histórico externo/interno estilo Steam Inventory Helper, pesquisa de
-ofertas em lives, pesquisa de cupons, frete/parcelamento autenticado só
-DEV/ADMIN — `DEC-045`/`DEC-053`/`DEC-054`/`DEC-056`); os itens de e-mail
+aprovados anteriormente foram preservados e renumerados (Magalu, Mercado Livre
+e Shopee como novas lojas, redução de `PriceObservation` redundante,
+comparação de menor preço histórico externo/interno estilo Steam Inventory
+Helper e pesquisa de cupons — `DEC-053`/`DEC-054`/`DEC-056`/`DEC-080`);
+frete/parcelamento autenticado e ofertas em lives foram movidos para a V2;
+os itens de e-mail
 (opt-in no cadastro e notificações por e-mail) saíram da V1.2 e foram
-movidos para a V2 (`docs/internal/backlog.md`). Estado atual: itens 1 a 6
-concluídos e publicados no DEV; item 7, TASK-097, implementado no DEV e
-aguardando revisão; item 8, TASK-098, formalizado e reservado para depois da
-identidade global.)
+movidos para a V2 (`docs/internal/backlog.md`). Estado atual: itens 1 a 7
+concluídos e publicados no DEV; item 8 foi implementado como TASK-099 e
+aguarda revisão; a área geral USER de ofertas é o próximo item. Comparação ficou no item 14 e
+TASK-098 permanece reservada como item 18.)
 → V2.

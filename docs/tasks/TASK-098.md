@@ -1,6 +1,6 @@
 # TASK-098 — Histórico e gráficos de preço por produto/variante
 
-Status: **Formalizada e reservada; não implementar antes da conclusão da TASK-097.**
+Status: **Formalizada e reservada como último item da V1.2 (`DEC-081`).**
 
 ## Dependência obrigatória
 

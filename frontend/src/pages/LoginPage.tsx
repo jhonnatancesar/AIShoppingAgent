@@ -1,7 +1,13 @@
 import { useState, type FormEvent } from 'react'
 import { Navigate, useLocation, useNavigate } from 'react-router-dom'
+import { motion } from 'motion/react'
+import { Bot, LockKeyhole } from 'lucide-react'
 import { ApiError } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
+import { ThemeToggle } from '@/components/ThemeToggle'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
 
 interface LocationState {
   from?: { pathname?: string }
@@ -43,20 +49,28 @@ export function LoginPage() {
   }
 
   return (
-    <div className="login-page">
-      <form className="login-card" onSubmit={handleSubmit}>
-        <h1>AIShoppingAgent</h1>
-        <label htmlFor="username">Usuário</label>
-        <input
+    <div className="relative grid min-h-screen place-items-center overflow-hidden bg-background px-4 py-12 text-foreground">
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,color-mix(in_oklab,var(--primary)_12%,transparent),transparent_42%)]" />
+      <div className="absolute right-4 top-4"><ThemeToggle /></div>
+      <motion.div initial={{ opacity: 0, y: 12, scale: .99 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={{ duration: .35, ease: 'easeOut' }} className="relative w-full max-w-sm">
+      <Card className="border-border/80 bg-card/90 backdrop-blur-xl">
+        <CardHeader className="items-center text-center">
+          <div className="mb-3 grid size-12 place-items-center rounded-2xl bg-primary text-primary-foreground shadow-glow"><Bot className="size-6" /></div>
+          <CardTitle className="text-xl">AIShoppingAgent</CardTitle>
+          <CardDescription>Acesse suas missões e ofertas monitoradas.</CardDescription>
+        </CardHeader>
+        <CardContent><form className="space-y-4" onSubmit={handleSubmit}>
+        <div className="space-y-1.5"><label className="text-sm font-medium" htmlFor="username">Usuário</label>
+        <Input
           id="username"
           name="username"
           autoComplete="username"
           value={username}
           onChange={(event) => setUsername(event.target.value)}
           required
-        />
-        <label htmlFor="password">Senha</label>
-        <input
+        /></div>
+        <div className="space-y-1.5"><label className="text-sm font-medium" htmlFor="password">Senha</label>
+        <Input
           id="password"
           name="password"
           type="password"
@@ -64,19 +78,19 @@ export function LoginPage() {
           value={password}
           onChange={(event) => setPassword(event.target.value)}
           required
-        />
+        /></div>
         {error ? (
           <p className="login-error" role="alert">
             {error}
           </p>
         ) : null}
-        <button type="submit" disabled={submitting}>
-          {submitting ? 'Entrando…' : 'Entrar'}
-        </button>
-        <p className="login-hint">
+        <Button className="w-full" size="lg" type="submit" disabled={submitting}>
+          <LockKeyhole />{submitting ? 'Entrando…' : 'Entrar'}
+        </Button>
+        <p className="text-center text-xs leading-relaxed text-muted-foreground">
           Sua senha é a mesma criada pelo link enviado no Telegram.
         </p>
-      </form>
+      </form></CardContent></Card></motion.div>
     </div>
   )
 }

@@ -147,3 +147,33 @@ export interface OfferDetail {
   } | null
   latest_observation: LatestOfferObservation | null
 }
+
+export interface ProductSearchOffer {
+  offer_id: string
+  product_id: string
+  title: string
+  image_url: string | null
+  original_url: string
+  store_code: string
+  store_name: string
+  amount: string
+  total_amount: string
+  currency: string
+  condition: OfferCondition
+  availability: OfferAvailability
+  rating_average: string | null
+  review_count: number | null
+}
+
+export interface ProductSearchVariant {
+  product_id: string
+  label: string
+  attributes: Record<string, string>
+}
+
+export interface ProductSearchResponse {
+  query: string
+  request_kind: 'specific_product' | 'product_family' | 'generic_category'
+  offers: ProductSearchOffer[]
+  variants: ProductSearchVariant[]
+}

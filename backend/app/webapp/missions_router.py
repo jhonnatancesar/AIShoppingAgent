@@ -174,6 +174,8 @@ class CreateMissionRequest(BaseModel):
     target_amount: Decimal | None = None
     target_currency: Annotated[str | None, Field(default=None, pattern=r"^[A-Z]{3}$")]
     source_codes: list[str] = Field(default_factory=list)
+    variant_product_ids: list[UUID] = Field(default_factory=list, max_length=20)
+    select_all_variants: bool = False
 
     @model_validator(mode="after")
     def _validate(self) -> CreateMissionRequest:
@@ -188,6 +190,12 @@ class CreateMissionRequest(BaseModel):
             raise ValueError(
                 f"Loja(s) não reconhecida(s): {', '.join(sorted(unknown))}."
             )
+        if self.select_all_variants and self.variant_product_ids:
+            raise ValueError(
+                "Escolha todas as variantes ou informe uma lista específica."
+            )
+        if len(set(self.variant_product_ids)) != len(self.variant_product_ids):
+            raise ValueError("variant_product_ids não pode repetir variantes.")
         return self
 
 
@@ -470,6 +478,17 @@ async def create_mission(
             schedule_stagger_seconds=settings.collection_schedule_stagger_seconds,
             actor_type=_ACTOR_TYPE,
         )
+        if payload.select_all_variants or payload.variant_product_ids:
+            await set_mission_product_selection_async(
+                session,
+                user_id=user.id,
+                mission_id=mission.id,
+                expected_state_version=mission.state_version,
+                product_ids=tuple(payload.variant_product_ids),
+                select_all=payload.select_all_variants,
+                selected_at=utc_now(),
+                allow_uncollected_family_products=True,
+            )
     except MissionCreationError as error:
         # Lojas da V1 não semeadas no banco -- falha operacional, nunca
         # causada pelo usuário (docstring de `MissionCreationError`).
@@ -520,6 +539,12 @@ async def select_mission_variants(
         )
     except MissionVersionConflictError as error:
         _raise_for_transition_error(error)
+    except MissionVariantSelectionError as error:
+        raise ApiError(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            code="mission_variant_selection_invalid",
+            message=str(error),
+        ) from error
     except MissionVariantSelectionError as error:
         raise ApiError(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

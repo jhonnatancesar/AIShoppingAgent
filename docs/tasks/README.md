@@ -1,11 +1,17 @@
 # Tarefas
 
-**TASK-098 formalizada e reservada:** histórico e gráficos exclusivamente por
-identidade global de produto/variante, depois da TASK-097; sem implementação.
+**TASK-099 implementada no DEV e aguardando revisão:** pesquisa autenticada em
+`/app/search`, read-only até a ação explícita “Monitorar”, preservando os três
+fluxos de identidade da TASK-097. Ver `docs/tasks/TASK-099.md` e
+`DEC-083`.
 
-**TASK-097 implementada no DEV e aguardando revisão:** identidade global
+**TASK-098 formalizada e reservada:** histórico e gráficos exclusivamente por
+identidade global de produto/variante; movida para o último item da V1.2 pela
+`DEC-081`, sem implementação.
+
+**TASK-097 concluída, aprovada e publicada:** identidade global
 determinística de produto/variante e escolha de variantes para pedidos genéricos
-na Web e no Telegram. Ver `docs/tasks/TASK-097.md` e `DEC-079`.
+na Web e no Telegram, commit `eeb2f4a`. Ver `docs/tasks/TASK-097.md` e `DEC-079`.
 
 **TASK-096 concluída, aprovada e publicada:** avaliações explícitas por
 Offer/Store na página USER e no Telegram, commit `fd5a6f9`. Ver

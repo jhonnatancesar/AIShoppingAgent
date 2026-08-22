@@ -18,6 +18,8 @@ export interface CreateMissionInput {
   target_amount?: string | null
   target_currency?: string | null
   source_codes?: string[]
+  variant_product_ids?: string[]
+  select_all_variants?: boolean
 }
 
 export interface EditMissionInput {

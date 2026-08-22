@@ -1,13 +1,31 @@
 # Changelog
 
-## 2026-08-22 — TASK-096: avaliações por oferta/loja (DEV, aguardando revisão)
+## 2026-08-22 — TASK-099: pesquisa de produtos pela Web (DEV, aguardando revisão)
+
+- Nova pesquisa autenticada em `/app/search`, com seleção de lojas, resultado
+  assíncrono, escolha de variantes e cards que levam ao detalhe da oferta.
+- Pesquisa é read-only sobre ofertas persistidas e preserva produto específico,
+  família e categoria genérica; missão só nasce após “Monitorar”, reutilizando
+  o endpoint/service existente. Sem migration, scraper ou fila paralela.
+- Fundação Web comum adicionada antes da TASK: Tailwind, primitives shadcn/
+  Radix, Motion, Lucide e Recharts preparado, com tokens light/dark e AppShell
+  responsivo.
+
+## 2026-08-22 — TASK-097: identidade global de produto/variante (concluída e aprovada)
+
+- Identidade determinística e fail-closed entre lojas, preservando variantes e
+  categorias genéricas, com escolha de família na Web e no Telegram.
+- Publicada em `origin/main` no commit `eeb2f4a`, sem deploy.
+
+## 2026-08-22 — TASK-096: avaliações por oferta/loja (concluída e aprovada)
 
 - Snapshot explícito de nota/contagem na Offer, apresentado na página USER e
   no Telegram, sempre identificado com a origem.
 - Enriquecimento de detalhe consolidado: vendedor, condição, parcelamento e
   avaliação compartilham a mesma abertura; Terabyte permanece sem navegação
   individual sob o bloqueio atual.
-- Sem texto de reviews, nota global, IA, produção, deploy, commit ou push.
+- Sem texto de reviews, nota global, IA, produção ou deploy. Publicada em
+  `origin/main` no commit `fd5a6f9`.
 - PostgreSQL 18.4 descartável, testes backend/React focados, Ruff e frontend
   aprovados no head Alembic `20260822_0003`.
 

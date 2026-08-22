@@ -1,12 +1,39 @@
 # Project Context
 
-**Atualização 2026-08-22 (TASK-097 implementada no DEV, aguardando revisão):**
+**Atualização 2026-08-22 (TASK-099 implementada no DEV, aguardando revisão):**
+pesquisa autenticada em `/app/search` é read-only sobre ofertas persistidas e
+nunca cria missão/coleta. `SPECIFIC_PRODUCT`, `PRODUCT_FAMILY` e
+`GENERIC_CATEGORY` seguem a TASK-097; somente “Monitorar” reutiliza a criação de
+missão existente. Não há migration, tabela, fila, scraper ou IA. A fundação visual Web comum foi consolidada
+antes da task com Tailwind/shadcn, Motion, Lucide e Recharts preparado.
+
+**Atualização 2026-08-22 (prioridade Web, `DEC-082`, somente documentação):**
+comparação entre lojas foi adiada. A próxima atividade passa a ser pesquisa de
+produtos pelo site, seguida pelas áreas USER de ofertas e conta e pelas áreas
+DEV/ADMIN de dashboard, dados e controles operacionais. Comparação fica depois
+desse bloco; TASK-098 continua no fim. A V1.2 passa a explicitar 18 itens.
+
+**Atualização 2026-08-22 (ordem V1.2, `DEC-081`, somente documentação):**
+a TASK-098 permanece formalizada, mas foi movida para o último item da V1.2.
+A ordem intermediária registrada aqui foi substituída pela `DEC-082`. Nenhum
+código, migration, teste, commit, deploy ou produção foi alterado.
+
+**Atualização 2026-08-22 (reordenação V1.2, `DEC-080`, somente documentação):**
+a V1.2 volta a 16 itens. Frete/parcelamento autenticado, inclusive para
+DEV/ADMIN, e pesquisa de ofertas em lives foram movidos para a V2. O item de
+novas fontes da V1.2 passa a reunir Magalu, Mercado Livre e Shopee; AliExpress
+permanece futuro e fora desta etapa. A ordem de execução foi posteriormente
+ajustada pela `DEC-081`. Nenhum código, migration, teste, commit, deploy ou produção foi
+alterado por esta decisão.
+
+**Atualização 2026-08-22 (TASK-097 concluída, aprovada e publicada):**
 identidade global determinística e fail-closed de produto/variante, com distinção
 persistida entre `specific_product`, `product_family` e `generic_category`.
 Famílias oferecem escolha de uma, várias ou todas na Web e no Telegram;
 categorias genéricas continuam operacionais sem seleção. A migration
 `20260822_0004` foi aprovada em PostgreSQL descartável. TASK-098 permanece
-somente reservada para histórico e gráficos. Ver `DEC-079`.
+somente reservada para histórico e gráficos. Publicada em `origin/main` no
+commit `eeb2f4a`, sem deploy. Ver `DEC-079`.
 
 **Atualização 2026-08-22 (TASK-096, item 6 da V1.2, concluída):**
 avaliações passam a ser snapshot atual da própria `Offer`/`Store`, nunca nota
@@ -754,6 +781,8 @@ UID/permissão POSIX real em bind mounts como um host Linux real aplica.
 Depois da implantação, o usuário registrou, só como planejamento (nenhuma
 TASK criada, nenhum código alterado) seis novos itens, divididos em dois
 documentos separados para não confundir as versões (`DEC-059`):
+o parágrafo abaixo é um snapshot histórico de 2026-08-10 e foi posteriormente
+reordenado pela `DEC-080` conforme a atualização no topo deste documento.
 **`docs/internal/v1.0.2-scope.md`** (release corretiva `v1.0.2`) ganhou edição de missão
 existente, categorias numeradas no `/cadastro` e pré-lista de preços
 encontrados sem IA (um preço por loja) — `DEC-057`/`DEC-055`/`DEC-058`.

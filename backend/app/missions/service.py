@@ -78,6 +78,7 @@ async def set_mission_product_selection_async(
     product_ids: Sequence[UUID] = (),
     select_all: bool = False,
     selected_at: datetime,
+    allow_uncollected_family_products: bool = False,
 ) -> tuple[Product, ...]:
     """Persiste escolha explícita de variantes de uma `PRODUCT_FAMILY`."""
     mission = await session.scalar(
@@ -106,23 +107,31 @@ async def set_mission_product_selection_async(
     if not select_all and not requested_ids:
         raise MissionVariantSelectionError("Escolha ao menos uma variante.")
 
+    available_statement = select(Product).join(Offer, Offer.product_id == Product.id)
+    if allow_uncollected_family_products:
+        # TASK-099: seleção feita a partir da pesquisa read-only. O produto
+        # precisa existir na família e em uma loja da missão; nenhuma
+        # relevância é inventada antes da primeira coleta da missão.
+        available_statement = available_statement.join(
+            MissionSource, MissionSource.store_id == Offer.store_id
+        ).where(MissionSource.mission_id == mission_id)
+    else:
+        available_statement = available_statement.join(
+            MissionOfferRelevance,
+            MissionOfferRelevance.offer_id == Offer.id,
+        ).where(
+            MissionOfferRelevance.mission_id == mission_id,
+            MissionOfferRelevance.classification.in_(
+                {OfferRelevance.MATCH, OfferRelevance.POSSIBLE_MATCH}
+            ),
+        )
     available_statement = (
-        select(Product)
-            .join(Offer, Offer.product_id == Product.id)
-            .join(
-                MissionOfferRelevance,
-                MissionOfferRelevance.offer_id == Offer.id,
-            )
-            .where(
-                MissionOfferRelevance.mission_id == mission_id,
-                MissionOfferRelevance.classification.in_(
-                    {OfferRelevance.MATCH, OfferRelevance.POSSIBLE_MATCH}
-                ),
-                Product.family_key == criteria.requested_family_key,
-                Product.identity_key.is_not(None),
-            )
-            .distinct()
-            .order_by(Product.display_name, Product.name, Product.id)
+        available_statement.where(
+            Product.family_key == criteria.requested_family_key,
+            Product.identity_key.is_not(None),
+        )
+        .distinct()
+        .order_by(Product.display_name, Product.name, Product.id)
     )
     if criteria.requested_variant is not None:
         available_statement = available_statement.where(
