@@ -19,6 +19,7 @@ from app.collection.contracts import (
 )
 from app.collection.errors import ProviderBlockedError
 from app.collection.models import CollectionRun, CollectionRunStatus, PriceObservation
+from app.collection.normalization import Availability
 from app.collection.orchestration import CollectionOrchestrator, claim_due_collections
 from app.database.session import (
     create_async_session_factory,
@@ -1340,3 +1341,160 @@ def test_api_stays_responsive_during_concurrent_collection_claim(
     # claim liberar), mas nunca bloqueio indefinido -- bem abaixo do delay
     # de IA total possível (2 claims x ate 2 chamadas x 0.4s = 1.6s).
     assert api_elapsed[0] < 3.0
+
+
+# ---------------------------------------------------------------------------
+# TASK-093 (redução de PriceObservation redundante)
+# ---------------------------------------------------------------------------
+
+
+class _ControllableOfferProvider:
+    """Mesma `Offer` (mesmo `external_id`) em toda rodada -- preço e
+    disponibilidade ajustáveis entre `run_batch`, para provar redundância
+    real contra PostgreSQL."""
+
+    source_code = "pichau"
+
+    def __init__(self, raw_price: str, raw_availability: str = "Em estoque") -> None:
+        self.raw_price = raw_price
+        self.raw_availability = raw_availability
+
+    async def collect(self, request: CollectionRequest) -> CollectionResult:
+        completed = request.requested_at.replace(microsecond=500000)
+        return CollectionResult(
+            self.source_code,
+            request.requested_at,
+            completed,
+            (
+                RawCollectedOffer(
+                    source_code=self.source_code,
+                    url="https://example.invalid/task093-offer",
+                    title="TASK-093 synthetic GPU",
+                    collected_at=completed,
+                    external_id="task093-stable-offer",
+                    raw_price=self.raw_price,
+                    raw_currency="BRL",
+                    raw_shipping="Frete grátis",
+                    raw_availability=self.raw_availability,
+                    evidence={"card_text": "safe synthetic evidence"},
+                ),
+            ),
+        )
+
+
+def _rearm_schedule(sessions, mission_id, pichau_id, due_at: datetime) -> None:
+    with sessions.begin() as session:
+        source = session.get(MissionSource, (mission_id, pichau_id))
+        source.next_eligible_at = due_at - timedelta(seconds=1)
+        schedule = session.scalar(
+            select(MissionSchedule).where(MissionSchedule.mission_id == mission_id)
+        )
+        schedule.next_run_at = due_at
+
+
+def test_identical_commercial_state_does_not_create_redundant_observation(
+    integration_database,
+) -> None:
+    """Mesma oferta, mesmo preço/disponibilidade em duas coletas
+    seguidas -- a segunda não grava `PriceObservation` nova; o histórico
+    da primeira permanece intocado; `Offer.last_seen_at` avança."""
+    now = datetime.now(UTC).replace(microsecond=0)
+    mission_id, pichau_id, _kabum_id = _seed_due_mission(
+        integration_database.sessions, now
+    )
+    provider = _ControllableOfferProvider("R$ 1.900,00")
+    orchestrator = CollectionOrchestrator(
+        integration_database.async_sessions,
+        CollectionAdapter((provider, _FailingProvider())),
+        ai_manager=_AlwaysMatchAIManager(),
+    )
+    asyncio.run(orchestrator.run_batch(now=now))
+
+    with integration_database.sessions.begin() as session:
+        original = session.scalar(select(PriceObservation))
+        assert original is not None
+        original_id = original.id
+        original_amount = original.amount
+        original_observed_at = original.observed_at
+        offer = session.get(Offer, original.offer_id)
+        first_seen = offer.last_seen_at
+
+    due_at = now + timedelta(hours=1)
+    _rearm_schedule(integration_database.sessions, mission_id, pichau_id, due_at)
+    asyncio.run(orchestrator.run_batch(now=due_at))
+
+    with integration_database.sessions.begin() as session:
+        observations = list(session.scalars(select(PriceObservation)))
+        assert len(observations) == 1  # nenhuma nova gravada
+        kept = observations[0]
+        # histórico da primeira observação intocado
+        assert kept.id == original_id
+        assert kept.amount == original_amount
+        assert kept.observed_at == original_observed_at
+        offer = session.get(Offer, kept.offer_id)
+        assert offer.last_seen_at == due_at.replace(microsecond=500000)
+        assert offer.last_seen_at > first_seen
+
+
+def test_availability_change_creates_new_observation_even_with_same_price(
+    integration_database,
+) -> None:
+    """Preço à vista igual, disponibilidade muda -- é mudança comercial
+    relevante, precisa gravar `PriceObservation` nova."""
+    now = datetime.now(UTC).replace(microsecond=0)
+    mission_id, pichau_id, _kabum_id = _seed_due_mission(
+        integration_database.sessions, now
+    )
+    provider = _ControllableOfferProvider("R$ 1.900,00", "Em estoque")
+    orchestrator = CollectionOrchestrator(
+        integration_database.async_sessions,
+        CollectionAdapter((provider, _FailingProvider())),
+        ai_manager=_AlwaysMatchAIManager(),
+    )
+    asyncio.run(orchestrator.run_batch(now=now))
+
+    provider.raw_availability = "Indisponível"
+    due_at = now + timedelta(hours=1)
+    _rearm_schedule(integration_database.sessions, mission_id, pichau_id, due_at)
+    asyncio.run(orchestrator.run_batch(now=due_at))
+
+    with integration_database.sessions.begin() as session:
+        observations = list(
+            session.scalars(
+                select(PriceObservation).order_by(PriceObservation.observed_at)
+            )
+        )
+        assert len(observations) == 2
+        assert observations[0].availability == Availability.AVAILABLE
+        assert observations[1].availability == Availability.UNAVAILABLE
+
+
+def test_price_change_creates_new_observation(integration_database) -> None:
+    """Preço mudou -- precisa gravar `PriceObservation` nova, mesmo com
+    disponibilidade/demais campos iguais."""
+    now = datetime.now(UTC).replace(microsecond=0)
+    mission_id, pichau_id, _kabum_id = _seed_due_mission(
+        integration_database.sessions, now
+    )
+    provider = _ControllableOfferProvider("R$ 1.900,00")
+    orchestrator = CollectionOrchestrator(
+        integration_database.async_sessions,
+        CollectionAdapter((provider, _FailingProvider())),
+        ai_manager=_AlwaysMatchAIManager(),
+    )
+    asyncio.run(orchestrator.run_batch(now=now))
+
+    provider.raw_price = "R$ 1.500,00"
+    due_at = now + timedelta(hours=1)
+    _rearm_schedule(integration_database.sessions, mission_id, pichau_id, due_at)
+    asyncio.run(orchestrator.run_batch(now=due_at))
+
+    with integration_database.sessions.begin() as session:
+        observations = list(
+            session.scalars(
+                select(PriceObservation).order_by(PriceObservation.observed_at)
+            )
+        )
+        assert len(observations) == 2
+        assert observations[0].amount == Decimal("1900.0000")
+        assert observations[1].amount == Decimal("1500.0000")

@@ -842,36 +842,67 @@ async def _persist_phase_a(
                 )
                 .limit(1)
             )
-            observation = PriceObservation(
-                offer_id=offer.id,
-                collection_run_id=run.id,
-                amount=item.amount,
-                currency=item.currency,
-                shipping_amount=item.shipping_amount,
-                total_amount=item.total_amount,
-                fulfillment=item.fulfillment,
-                seller_kind=item.seller_kind,
-                fulfillment_kind=item.fulfillment_kind,
-                availability=item.availability,
-                observed_at=item.raw_offer.collected_at,
-                raw_evidence=_raw_evidence(item.raw_offer),
+            latest = await session.scalar(
+                select(PriceObservation)
+                .where(PriceObservation.offer_id == offer.id)
+                .order_by(
+                    PriceObservation.observed_at.desc(), PriceObservation.id.desc()
+                )
+                .limit(1)
             )
-            session.add(observation)
-            await session.flush()
-            for option in item.installment_options:
-                session.add(
-                    OfferInstallmentOption(
-                        price_observation_id=observation.id,
-                        installment_count=option.installment_count,
-                        installment_amount=option.installment_amount,
-                        installment_total_amount=option.installment_total_amount,
-                        discount_percent=option.discount_percent,
-                        interest_kind=option.interest_kind,
-                        is_highlighted=option.is_highlighted,
+            redundant = False
+            if latest is not None and _same_commercial_state(latest, item):
+                latest_installments = list(
+                    await session.scalars(
+                        select(OfferInstallmentOption).where(
+                            OfferInstallmentOption.price_observation_id == latest.id
+                        )
                     )
                 )
-            if item.installment_options:
+                redundant = _installment_snapshot(
+                    latest_installments
+                ) == _installment_snapshot(item.installment_options)
+
+            if redundant:
+                # TASK-093: estado comercial (preço, moeda, disponibilidade,
+                # vendedor/fulfillment, parcelamento) idêntico ao já
+                # registrado -- não grava PriceObservation redundante.
+                # Histórico append-only intocado; `offer.last_seen_at`
+                # (abaixo) é o único registro de que esta coleta confirmou
+                # a oferta.
+                observation = latest
+            else:
+                observation = PriceObservation(
+                    offer_id=offer.id,
+                    collection_run_id=run.id,
+                    amount=item.amount,
+                    currency=item.currency,
+                    shipping_amount=item.shipping_amount,
+                    total_amount=item.total_amount,
+                    fulfillment=item.fulfillment,
+                    seller_kind=item.seller_kind,
+                    fulfillment_kind=item.fulfillment_kind,
+                    availability=item.availability,
+                    observed_at=item.raw_offer.collected_at,
+                    raw_evidence=_raw_evidence(item.raw_offer),
+                )
+                session.add(observation)
                 await session.flush()
+                for option in item.installment_options:
+                    session.add(
+                        OfferInstallmentOption(
+                            price_observation_id=observation.id,
+                            installment_count=option.installment_count,
+                            installment_amount=option.installment_amount,
+                            installment_total_amount=option.installment_total_amount,
+                            discount_percent=option.discount_percent,
+                            interest_kind=option.interest_kind,
+                            is_highlighted=option.is_highlighted,
+                        )
+                    )
+                if item.installment_options:
+                    await session.flush()
+            offer.last_seen_at = item.raw_offer.collected_at
 
             if (
                 previous is not None
@@ -1518,6 +1549,46 @@ def _failure_log_context(error: Exception) -> dict[str, Any]:
 def _constraint_name(error: IntegrityError) -> str | None:
     diagnostic = getattr(error.orig, "diag", None)
     return getattr(diagnostic, "constraint_name", None)
+
+
+def _same_commercial_state(latest: PriceObservation, item: Any) -> bool:
+    """TASK-093: compara só o estado comercialmente relevante entre a
+    última `PriceObservation` da mesma `Offer` (qualquer missão -- a
+    identidade correta aqui é a oferta, não a missão que a está
+    observando) e a coleta atual. `observed_at`/`recorded_at`/
+    `raw_evidence` ficam de fora de propósito -- variam a cada coleta sem
+    representar mudança comercial real; incluí-los nunca deduplicaria
+    nada. Parcelamento é comparado separadamente (`_installment_snapshot`)
+    porque é uma relação 1:N, não um campo escalar aqui."""
+    return (
+        latest.amount == item.amount
+        and latest.currency == item.currency
+        and latest.shipping_amount == item.shipping_amount
+        and latest.total_amount == item.total_amount
+        and latest.fulfillment == item.fulfillment
+        and latest.seller_kind == item.seller_kind
+        and latest.fulfillment_kind == item.fulfillment_kind
+        and latest.availability == item.availability
+    )
+
+
+def _installment_snapshot(options: Sequence[Any]) -> frozenset[tuple[Any, ...]]:
+    """TASK-093: snapshot comparável de condições de parcelamento -- serve
+    tanto para `OfferInstallmentOption` (ORM) quanto para
+    `NormalizedInstallmentOption` (coleta atual), mesmos nomes de campo.
+    Preço à vista igual não basta: uma condição de parcelamento nova ou
+    removida também é mudança comercial relevante."""
+    return frozenset(
+        (
+            option.installment_count,
+            option.installment_amount,
+            option.installment_total_amount,
+            option.discount_percent,
+            option.interest_kind,
+            option.is_highlighted,
+        )
+        for option in options
+    )
 
 
 def _raw_evidence(raw_offer: Any) -> dict[str, Any]:

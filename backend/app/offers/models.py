@@ -110,6 +110,20 @@ class Offer(Base):
         onupdate=utc_now,
         server_default=func.now(),
     )
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+        server_default=func.now(),
+    )
+    """TASK-093: quando a oferta foi confirmada como ainda existente pela
+    última vez numa coleta -- distinto de `updated_at` (que reflete
+    qualquer alteração de metadado, ex. `image_url`, sem relação com
+    continuidade comercial). Atualizado a cada coleta bem-sucedida dessa
+    oferta, mesmo quando nenhuma `PriceObservation` nova é criada por
+    redundância semântica (`app.collection.orchestration._persist_phase_a`)
+    -- é o único lugar que preserva "a oferta continuou sendo vista" sem
+    tocar no histórico append-only de `PriceObservation`."""
 
 
 class OfferShortLink(Base):

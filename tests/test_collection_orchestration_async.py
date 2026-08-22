@@ -40,6 +40,7 @@ from app.collection.orchestration import (
     _apply_source_backoff,
     _evaluate_mission_prelist,
     _find_offer,
+    _installment_snapshot,
     _maybe_publish_prelist_errata,
     _maybe_publish_prelist_ready,
     _PendingOffer,
@@ -51,6 +52,7 @@ from app.collection.orchestration import (
     _resolve_offer,
     _resolve_seller,
     _run_phase_b,
+    _same_commercial_state,
     claim_due_collections,
     ensure_missing_schedules,
     recover_stale_runs,
@@ -354,8 +356,8 @@ def test_persist_phase_a_marks_offers_needing_ai(monkeypatch) -> None:
         target_currency=None,
     )
     session = _mock_async_session()
-    # scalar: run, criteria, previous(=None)
-    session.scalar.side_effect = [run, criteria, None]
+    # scalar: run, criteria, previous(=None), latest(=None) (TASK-093)
+    session.scalar.side_effect = [run, criteria, None, None]
     # get: Mission, MissionOfferRelevance cache (None -> needs AI), Product (display_name=None)
     product = SimpleNamespace(display_name=None)
     session.get.side_effect = [mission, None, product]
@@ -441,7 +443,7 @@ def test_persist_phase_a_creates_installment_options_tied_to_new_observation(
         target_currency=None,
     )
     session = _mock_async_session()
-    session.scalar.side_effect = [run, criteria, None]
+    session.scalar.side_effect = [run, criteria, None, None]  # +latest (TASK-093)
     product = SimpleNamespace(display_name=None)
     session.get.side_effect = [mission, None, product]
     offer = SimpleNamespace(id=offer_id, product_id=product_id)
@@ -519,7 +521,7 @@ def test_persist_phase_a_adds_no_installment_row_when_offer_has_none(
         target_currency=None,
     )
     session = _mock_async_session()
-    session.scalar.side_effect = [run, criteria, None]
+    session.scalar.side_effect = [run, criteria, None, None]  # +latest (TASK-093)
     product = SimpleNamespace(display_name=None)
     session.get.side_effect = [mission, None, product]
     offer = SimpleNamespace(id=offer_id, product_id=product_id)
@@ -563,8 +565,9 @@ def test_persist_phase_a_limits_generic_search_candidates_per_source(
         target_currency=None,
     )
     session = _mock_async_session()
-    # scalar: run, criteria, depois 1 "previous observation" por sobrevivente (3, pós-limite)
-    session.scalar.side_effect = [run, criteria, None, None, None]
+    # scalar: run, criteria, depois previous+latest (TASK-093) por
+    # sobrevivente (3, pós-limite)
+    session.scalar.side_effect = [run, criteria, None, None, None, None, None, None]
     product = SimpleNamespace(display_name="Cadeira")
     # get: Mission, depois (relevance_cache, product) por sobrevivente (3, pós-limite)
     session.get.side_effect = [mission] + [None, product] * 3
@@ -650,7 +653,8 @@ def test_persist_phase_a_specific_search_not_limited(monkeypatch) -> None:
         target_currency=None,
     )
     session = _mock_async_session()
-    session.scalar.side_effect = [run, criteria, None, None, None, None, None]
+    # previous+latest (TASK-093) por sobrevivente (5, sem corte)
+    session.scalar.side_effect = [run, criteria] + [None] * 10
     product = SimpleNamespace(display_name="RTX 5070 Ti")
     session.get.side_effect = [mission] + [None, product] * 5
     offer_stub = SimpleNamespace(id=uuid4(), product_id=uuid4())
@@ -1962,3 +1966,75 @@ def test_scenario_r_next_batch_does_not_resolve_promoted_identity(monkeypatch) -
 
     assert resolver.calls == ["9950X3D"]
     assert promotion_calls == [(mission_id, "Processador AMD Ryzen 9 9950X3D")]
+
+
+# ---------------------------------------------------------------------------
+# TASK-093 (redução de PriceObservation redundante): _same_commercial_state /
+# _installment_snapshot -- comparação pura, sem sessão.
+# ---------------------------------------------------------------------------
+
+
+def _observation(**overrides):
+    base = dict(
+        amount=Decimal("100.00"),
+        currency="BRL",
+        shipping_amount=None,
+        total_amount=Decimal("100.00"),
+        fulfillment="loja",
+        seller_kind=None,
+        fulfillment_kind=None,
+        availability=Availability.AVAILABLE,
+    )
+    base.update(overrides)
+    return SimpleNamespace(**base)
+
+
+def test_same_commercial_state_true_when_all_relevant_fields_match() -> None:
+    latest = _observation()
+    item = _observation()
+
+    assert _same_commercial_state(latest, item) is True
+
+
+def test_same_commercial_state_false_when_price_differs() -> None:
+    latest = _observation()
+    item = _observation(amount=Decimal("99.00"), total_amount=Decimal("99.00"))
+
+    assert _same_commercial_state(latest, item) is False
+
+
+def test_same_commercial_state_false_when_availability_differs() -> None:
+    latest = _observation()
+    item = _observation(availability=Availability.UNAVAILABLE)
+
+    assert _same_commercial_state(latest, item) is False
+
+
+def _installment(**overrides):
+    base = dict(
+        installment_count=12,
+        installment_amount=Decimal("10.00"),
+        installment_total_amount=Decimal("120.00"),
+        discount_percent=None,
+        interest_kind="interest_free",
+        is_highlighted=False,
+    )
+    base.update(overrides)
+    return SimpleNamespace(**base)
+
+
+def test_installment_snapshot_equal_ignores_order() -> None:
+    left = [_installment(installment_count=12), _installment(installment_count=6)]
+    right = [_installment(installment_count=6), _installment(installment_count=12)]
+
+    assert _installment_snapshot(left) == _installment_snapshot(right)
+
+
+def test_installment_snapshot_differs_when_a_condition_is_added() -> None:
+    """TASK-093: preço à vista igual não basta -- uma nova condição de
+    parcelamento (ex.: desconto passou a valer para 6x) é mudança
+    comercial relevante mesmo sem o preço à vista mudar."""
+    left = [_installment(installment_count=12)]
+    right = [_installment(installment_count=12), _installment(installment_count=6)]
+
+    assert _installment_snapshot(left) != _installment_snapshot(right)
