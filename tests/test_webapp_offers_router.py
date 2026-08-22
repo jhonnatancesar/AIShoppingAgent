@@ -18,7 +18,10 @@ from app.core.errors import register_api_error_handler
 from app.database.dependency import get_web_async_session
 from app.offers.models import Offer
 from app.offers.query import (
+    UserComparisonOffer,
+    UserOfferComparison,
     UserOfferDetail,
+    comparison_offers_statement,
     get_offer_detail_for_user,
     offer_for_user_statement,
 )
@@ -26,7 +29,7 @@ from app.products.models import Product
 from app.stores.models import Seller, Store
 from app.users.models import User, UserRole
 from app.webapp.dependency import WEB_SESSION_COOKIE_NAME
-from app.webapp.offers_router import router
+from app.webapp.offers_router import _as_comparison, router
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy.dialects import postgresql
@@ -79,9 +82,7 @@ def _detail() -> UserOfferDetail:
         interest_kind=InstallmentInterestKind.INTEREST_FREE,
         is_highlighted=True,
     )
-    return UserOfferDetail(
-        offer, product, store, seller, observation, (installment,)
-    )
+    return UserOfferDetail(offer, product, store, seller, observation, (installment,))
 
 
 @pytest.fixture
@@ -93,9 +94,7 @@ def session() -> MagicMock:
 
 
 @pytest.fixture
-def client(
-    session: MagicMock, monkeypatch: pytest.MonkeyPatch
-) -> TestClient:
+def client(session: MagicMock, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     app = FastAPI()
     register_api_error_handler(app)
     app.include_router(router)
@@ -185,9 +184,7 @@ def test_offer_query_uses_latest_price_observation() -> None:
     session.scalars = AsyncMock(return_value=list(expected.installments))
 
     result = asyncio.run(
-        get_offer_detail_for_user(
-            session, offer_id=expected.offer.id, user_id=uuid4()
-        )
+        get_offer_detail_for_user(session, offer_id=expected.offer.id, user_id=uuid4())
     )
 
     assert result is not None
@@ -196,3 +193,42 @@ def test_offer_query_uses_latest_price_observation() -> None:
     sql = str(latest_statement.compile(dialect=postgresql.dialect()))
     assert "price_observations.observed_at DESC" in sql
     assert "price_observations.id DESC" in sql
+
+
+def test_comparison_query_requires_same_product_and_user_owned_relevance() -> None:
+    product_id, user_id = uuid4(), uuid4()
+    sql = str(
+        comparison_offers_statement(product_id=product_id, user_id=user_id).compile(
+            dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}
+        )
+    ).lower()
+    assert f"offers.product_id = '{product_id}'" in sql
+    assert f"missions.user_id = '{user_id}'" in sql
+    assert "classification in ('match', 'possible_match')" in sql
+    assert "no_match" not in sql
+
+
+def test_comparison_response_preserves_source_bound_data() -> None:
+    detail = _detail()
+    detail.product.identity_key = "resolved-key"
+    detail.product.variant = "512 GB"
+    response = _as_comparison(
+        UserOfferComparison(
+            product=detail.product,
+            offers=(
+                UserComparisonOffer(
+                    detail.offer,
+                    detail.store,
+                    detail.seller,
+                    detail.observation,
+                    detail.installments,
+                ),
+            ),
+        )
+    )
+    assert response.comparable is True
+    assert response.variant == "512 GB"
+    assert response.offers[0].store.code == "amazon"
+    assert response.offers[0].rating is not None
+    assert response.offers[0].latest_observation is not None
+    assert response.offers[0].latest_observation.total_amount == Decimal("4619.00")

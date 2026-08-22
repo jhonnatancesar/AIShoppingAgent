@@ -1,5 +1,18 @@
 # Decision Log
 
+## DEC-087 — Comparação exige Product específico resolvido e ownership por Offer
+
+- **Data:** 2026-08-22.
+- **Decisão:** TASK-103 compara somente Offers que apontam para o mesmo
+  `Product.id` com `identity_key` resolvida pela TASK-097. Título, família,
+  missão e IA nunca definem equivalência.
+- **Acesso:** Offer âncora e candidatas exigem relevância `MATCH` ou
+  `POSSIBLE_MATCH` em missão do USER; `NO_MATCH` e missão alheia falham
+  fechados.
+- **Comercial:** última observação e avaliação da própria origem; até cinco por
+  loja, com ordenação determinística equivalente à pré-lista.
+- **Sem expansão:** nenhuma migration, coleta, histórico ou gráfico.
+
 ## DEC-086 — Operações ADMIN usam serviços lógicos, não o runtime Docker
 
 - **Data:** 2026-08-22.

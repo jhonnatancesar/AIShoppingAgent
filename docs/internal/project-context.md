@@ -1,6 +1,12 @@
 # Project Context
 
-**Atualização 2026-08-22 (TASK-102 implementada no DEV, aguardando revisão):**
+**Atualização 2026-08-22 (TASK-103 implementada no DEV, aguardando revisão):**
+a página de Offer compara opções autorizadas entre lojas somente quando a
+identidade específica da TASK-097 está resolvida. Mesma variante significa o
+mesmo Product global; unresolved, família, categoria e NO_MATCH nunca unem.
+Sem migration, IA, coleta, histórico ou gráficos.
+
+**Atualização 2026-08-22 (TASK-102 concluída, aprovada e publicada `b93bcfa`):**
 `/admin` reúne dashboard, usuários, missões, providers e operações allowlisted.
 O contrato usa serviços lógicos; Docker existe somente atrás do controlador
 privado atual e pode ser substituído por adapter de serviço do servidor.

@@ -1,5 +1,5 @@
 import { api } from './client'
-import type { OfferDetail, OfferListResponse } from './types'
+import type { OfferComparison, OfferDetail, OfferListResponse } from './types'
 
 export interface OfferListFilters {
   q?: string
@@ -20,4 +20,6 @@ export const offersApi = {
     return api.get<OfferListResponse>(`/offers?${params.toString()}`)
   },
   get: (offerId: string) => api.get<OfferDetail>(`/offers/${offerId}`),
+  compare: (offerId: string) =>
+    api.get<OfferComparison>(`/offers/${offerId}/comparison`),
 }

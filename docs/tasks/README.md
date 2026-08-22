@@ -1,6 +1,10 @@
 # Tarefas
 
-**TASK-102 implementada no DEV e aguardando revisão:** painel DEV/ADMIN,
+**TASK-103 implementada no DEV e aguardando revisão:** comparação de Offers
+autorizadas do mesmo produto/variante global resolvido. Ver
+`docs/tasks/TASK-103.md` e `DEC-087`.
+
+**TASK-102 concluída, aprovada e publicada (`b93bcfa`):** painel DEV/ADMIN,
 administração e operações de serviços lógicos. Ver `docs/tasks/TASK-102.md` e
 `DEC-086`.
 

@@ -1,6 +1,6 @@
 # TASK-102 — Painel DEV/ADMIN e operações do sistema
 
-Status: **Implementada no DEV, aguardando revisão.**
+Status: **Concluída, aprovada e publicada em `origin/main` (`b93bcfa`).**
 
 ## Entrega
 

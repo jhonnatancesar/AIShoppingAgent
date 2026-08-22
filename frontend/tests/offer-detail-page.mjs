@@ -51,6 +51,31 @@ try {
             }],
           },
         },
+        comparison: {
+          product_id: 'product-1', title: 'Galaxy S24 Ultra 512 GB',
+          variant: '512 GB', attributes: { storage_gb: '512' }, comparable: true,
+          offers: [
+            {
+              id: 'offer-1', original_url: 'https://amazon.com.br/dp/example', image_url: null,
+              store: { code: 'amazon', name: 'Amazon' }, seller: { name: 'Amazon.com.br' },
+              rating: { average: '4.80', review_count: 2256, observed_at: '2026-08-22T15:00:00Z' },
+              latest_observation: {
+                amount: '4599.00', currency: 'BRL', shipping_amount: '20.00', total_amount: '4619.00',
+                fulfillment: 'Amazon.com.br', seller_kind: 'platform', fulfillment_kind: 'platform',
+                condition: 'new', availability: 'available', observed_at: '2026-08-22T15:00:00Z', installments: [],
+              },
+            },
+            {
+              id: 'offer-2', original_url: 'https://kabum.com.br/produto/example', image_url: null,
+              store: { code: 'kabum', name: 'KaBuM!' }, seller: null, rating: null,
+              latest_observation: {
+                amount: '4499.00', currency: 'BRL', shipping_amount: null, total_amount: '4499.00',
+                fulfillment: null, seller_kind: 'platform', fulfillment_kind: 'platform',
+                condition: 'new', availability: 'available', observed_at: '2026-08-22T15:00:00Z', installments: [],
+              },
+            },
+          ],
+        },
       }),
     ),
   )
@@ -60,6 +85,10 @@ try {
   assert.match(html, /R\$\s*4\.599,00/)
   assert.match(html, /12x de/)
   assert.match(html, /Abrir oferta na loja/)
+  assert.match(html, /Comparar entre lojas/)
+  assert.match(html, /Galaxy S24 Ultra 512 GB/)
+  assert.match(html, /KaBuM!/)
+  assert.match(html, /Variantes diferentes nunca entram/)
   console.log('offer detail render: passed')
 } finally {
   await server.close()

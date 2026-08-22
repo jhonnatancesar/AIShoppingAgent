@@ -1,6 +1,12 @@
 # Changelog
 
-## 2026-08-22 — TASK-102: painel DEV/ADMIN (DEV, aguardando revisão)
+## 2026-08-22 — TASK-103: comparação entre lojas (DEV, aguardando revisão)
+
+- comparação fail-closed por Product específico resolvido e ownership;
+- última observação, parcelamento e avaliação por origem, sem IA/migration;
+- seção responsiva na página de oferta, com até cinco opções por loja.
+
+## 2026-08-22 — TASK-102: painel DEV/ADMIN (concluída, `b93bcfa`)
 
 - dashboard, usuários, missões, providers, coleta e operações allowlisted;
 - remoção por tombstone e auditoria; API keys continuam desabilitadas;

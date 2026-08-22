@@ -23,8 +23,10 @@ from app.collection.normalization import Availability
 from app.core.errors import ApiError
 from app.database.dependency import get_web_async_session
 from app.offers.query import (
+    UserOfferComparison,
     UserOfferDetail,
     UserOfferSummary,
+    get_offer_comparison_for_user,
     get_offer_detail_for_user,
     list_user_offers,
 )
@@ -109,6 +111,25 @@ class OfferListResponse(BaseModel):
     limit: int
     offset: int
     total: int
+
+
+class ComparisonOfferOut(BaseModel):
+    id: UUID
+    original_url: str
+    image_url: str | None
+    store: StoreOut
+    seller: SellerOut | None
+    rating: OfferRatingOut | None
+    latest_observation: LatestOfferObservationOut | None
+
+
+class OfferComparisonResponse(BaseModel):
+    product_id: UUID
+    title: str
+    variant: str | None
+    attributes: dict[str, str]
+    comparable: bool
+    offers: list[ComparisonOfferOut]
 
 
 async def _deny_offer_unavailable(
@@ -218,6 +239,69 @@ def _as_summary(detail: UserOfferSummary) -> OfferSummaryOut:
     )
 
 
+def _as_comparison(comparison: UserOfferComparison) -> OfferComparisonResponse:
+    offers = []
+    for item in comparison.offers:
+        observation = item.observation
+        rating = (
+            OfferRatingOut(
+                average=item.offer.rating_average,
+                review_count=item.offer.review_count,
+                observed_at=item.offer.rating_observed_at.isoformat(),
+            )
+            if item.offer.rating_average is not None
+            and item.offer.review_count is not None
+            and item.offer.rating_observed_at is not None
+            else None
+        )
+        offers.append(
+            ComparisonOfferOut(
+                id=item.offer.id,
+                original_url=item.offer.url,
+                image_url=item.offer.image_url,
+                store=StoreOut(code=item.store.code, name=item.store.name),
+                seller=SellerOut(name=item.seller.name) if item.seller else None,
+                rating=rating,
+                latest_observation=(
+                    LatestOfferObservationOut(
+                        amount=observation.amount,
+                        currency=observation.currency,
+                        shipping_amount=observation.shipping_amount,
+                        total_amount=observation.total_amount,
+                        fulfillment=observation.fulfillment,
+                        seller_kind=observation.seller_kind,
+                        fulfillment_kind=observation.fulfillment_kind,
+                        condition=observation.condition,
+                        availability=observation.availability,
+                        observed_at=observation.observed_at.isoformat(),
+                        installments=[
+                            InstallmentOut(
+                                installment_count=option.installment_count,
+                                installment_amount=option.installment_amount,
+                                installment_total_amount=option.installment_total_amount,
+                                discount_percent=option.discount_percent,
+                                interest_kind=option.interest_kind,
+                                is_highlighted=option.is_highlighted,
+                            )
+                            for option in item.installments
+                        ],
+                    )
+                    if observation is not None
+                    else None
+                ),
+            )
+        )
+    product = comparison.product
+    return OfferComparisonResponse(
+        product_id=product.id,
+        title=product.display_name or product.name,
+        variant=product.variant,
+        attributes=product.attributes or {},
+        comparable=product.identity_key is not None,
+        offers=offers,
+    )
+
+
 @router.get(
     "",
     operation_id="list_user_offers",
@@ -260,6 +344,39 @@ async def list_offers(
         offset=offset,
         total=total,
     )
+
+
+@router.get(
+    "/{offer_id}/comparison",
+    operation_id="compare_user_offer",
+    summary="Comparar a mesma variante entre lojas",
+)
+async def compare_offer(
+    offer_id: UUID,
+    user: User = Depends(require_web_session),
+    session: AsyncSession = Depends(get_web_async_session),
+) -> OfferComparisonResponse:
+    try:
+        authorize(
+            session,
+            user,
+            Permission.MISSION_READ,
+            resource_type="offer",
+            resource_id=offer_id,
+        )
+    except AuthorizationDenied as error:
+        await session.commit()
+        raise ApiError(
+            status_code=status.HTTP_403_FORBIDDEN,
+            code="offer_comparison_access_denied",
+            message="Você não tem acesso a esta comparação.",
+        ) from error
+    comparison = await get_offer_comparison_for_user(
+        session, offer_id=offer_id, user_id=user.id
+    )
+    if comparison is None:
+        await _deny_offer_unavailable(session, user=user, offer_id=offer_id)
+    return _as_comparison(comparison)
 
 
 @router.get(

@@ -177,6 +177,25 @@ export interface OfferDetail {
   latest_observation: LatestOfferObservation | null
 }
 
+export interface OfferComparisonItem {
+  id: string
+  original_url: string
+  image_url: string | null
+  store: { code: string; name: string }
+  seller: { name: string } | null
+  rating: { average: string; review_count: number; observed_at: string } | null
+  latest_observation: LatestOfferObservation | null
+}
+
+export interface OfferComparison {
+  product_id: string
+  title: string
+  variant: string | null
+  attributes: Record<string, string>
+  comparable: boolean
+  offers: OfferComparisonItem[]
+}
+
 export interface OfferSummary {
   id: string
   title: string

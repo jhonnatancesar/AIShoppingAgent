@@ -56,6 +56,21 @@ class UserOfferSummary:
     observation: PriceObservation | None
 
 
+@dataclass(frozen=True, slots=True)
+class UserComparisonOffer:
+    offer: Offer
+    store: Store
+    seller: Seller | None
+    observation: PriceObservation | None
+    installments: tuple[OfferInstallmentOption, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class UserOfferComparison:
+    product: Product
+    offers: tuple[UserComparisonOffer, ...]
+
+
 def _accessible_offer_exists(*, user_id: UUID):
     return exists(
         select(MissionOfferRelevance.offer_id)
@@ -139,7 +154,9 @@ async def list_user_offers(
         availability=availability,
         sort=sort,
     )
-    total = await session.scalar(select(func.count()).select_from(base.order_by(None).subquery()))
+    total = await session.scalar(
+        select(func.count()).select_from(base.order_by(None).subquery())
+    )
     rows = (await session.execute(base.limit(limit).offset(offset))).all()
     return (
         tuple(
@@ -181,18 +198,18 @@ def offer_for_user_statement(*, offer_id: UUID, user_id: UUID):
 async def get_offer_detail_for_user(
     session: AsyncSession, *, offer_id: UUID, user_id: UUID
 ) -> UserOfferDetail | None:
-    row = (await session.execute(
-        offer_for_user_statement(offer_id=offer_id, user_id=user_id)
-    )).first()
+    row = (
+        await session.execute(
+            offer_for_user_statement(offer_id=offer_id, user_id=user_id)
+        )
+    ).first()
     if row is None:
         return None
     offer, product, store, seller = row
     observation = await session.scalar(
         select(PriceObservation)
         .where(PriceObservation.offer_id == offer.id)
-        .order_by(
-            PriceObservation.observed_at.desc(), PriceObservation.id.desc()
-        )
+        .order_by(PriceObservation.observed_at.desc(), PriceObservation.id.desc())
         .limit(1)
     )
     installments: tuple[OfferInstallmentOption, ...] = ()
@@ -200,9 +217,7 @@ async def get_offer_detail_for_user(
         installments = tuple(
             await session.scalars(
                 select(OfferInstallmentOption)
-                .where(
-                    OfferInstallmentOption.price_observation_id == observation.id
-                )
+                .where(OfferInstallmentOption.price_observation_id == observation.id)
                 .order_by(
                     OfferInstallmentOption.is_highlighted.desc(),
                     OfferInstallmentOption.installment_count.asc(),
@@ -218,6 +233,103 @@ async def get_offer_detail_for_user(
         observation=observation,
         installments=installments,
     )
+
+
+_COMPARISON_CONDITION_RANK = {"new": 0, "unknown": 1, "refurbished": 2, "used": 3}
+_COMPARISON_PARTY_RANK = {"platform": 0, "marketplace_partner": 1, "unknown": 2}
+_COMPARISON_AVAILABILITY_RANK = {"available": 0, "unknown": 1, "unavailable": 2}
+_COMPARISON_PER_STORE_LIMIT = 5
+
+
+def comparison_offers_statement(*, product_id: UUID, user_id: UUID):
+    """Mesmo Product global e ownership por Offer; identidade aproximada é proibida."""
+    latest_observation_id = (
+        select(PriceObservation.id)
+        .where(PriceObservation.offer_id == Offer.id)
+        .order_by(PriceObservation.observed_at.desc(), PriceObservation.id.desc())
+        .limit(1)
+        .correlate(Offer)
+        .scalar_subquery()
+    )
+    return (
+        select(Offer, Store, Seller, PriceObservation)
+        .join(Store, Store.id == Offer.store_id)
+        .outerjoin(Seller, Seller.id == Offer.seller_id)
+        .outerjoin(PriceObservation, PriceObservation.id == latest_observation_id)
+        .where(
+            Offer.product_id == product_id,
+            _accessible_offer_exists(user_id=user_id),
+        )
+        .order_by(Store.code, Offer.id)
+    )
+
+
+def _comparison_key(row: tuple[Offer, Store, Seller | None, PriceObservation | None]):
+    offer, store, _seller, observation = row
+    if observation is None:
+        return (store.code, 9, 9, 9, float("inf"), float("inf"), str(offer.id))
+    condition = getattr(observation.condition, "value", observation.condition)
+    seller_kind = getattr(observation.seller_kind, "value", observation.seller_kind)
+    availability = getattr(observation.availability, "value", observation.availability)
+    return (
+        store.code,
+        _COMPARISON_CONDITION_RANK.get(condition, 9),
+        _COMPARISON_PARTY_RANK.get(seller_kind, 9),
+        _COMPARISON_AVAILABILITY_RANK.get(availability, 9),
+        observation.total_amount,
+        observation.amount,
+        str(offer.id),
+    )
+
+
+async def get_offer_comparison_for_user(
+    session: AsyncSession, *, offer_id: UUID, user_id: UUID
+) -> UserOfferComparison | None:
+    anchor = await get_offer_detail_for_user(
+        session, offer_id=offer_id, user_id=user_id
+    )
+    if anchor is None:
+        return None
+    if anchor.product.identity_key is None:
+        return UserOfferComparison(product=anchor.product, offers=())
+    rows = list(
+        (
+            await session.execute(
+                comparison_offers_statement(
+                    product_id=anchor.product.id, user_id=user_id
+                )
+            )
+        ).all()
+    )
+    counts: dict[UUID, int] = {}
+    selected = []
+    for row in sorted(rows, key=_comparison_key):
+        store_id = row[1].id
+        if counts.get(store_id, 0) >= _COMPARISON_PER_STORE_LIMIT:
+            continue
+        counts[store_id] = counts.get(store_id, 0) + 1
+        selected.append(row)
+    result = []
+    for offer, store, seller, observation in selected:
+        installments: tuple[OfferInstallmentOption, ...] = ()
+        if observation is not None:
+            installments = tuple(
+                await session.scalars(
+                    select(OfferInstallmentOption)
+                    .where(
+                        OfferInstallmentOption.price_observation_id == observation.id
+                    )
+                    .order_by(
+                        OfferInstallmentOption.is_highlighted.desc(),
+                        OfferInstallmentOption.installment_count.desc(),
+                        OfferInstallmentOption.id,
+                    )
+                )
+            )
+        result.append(
+            UserComparisonOffer(offer, store, seller, observation, installments)
+        )
+    return UserOfferComparison(product=anchor.product, offers=tuple(result))
 
 
 async def list_current_offer_links_for_mission(
