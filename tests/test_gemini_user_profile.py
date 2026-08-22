@@ -194,7 +194,7 @@ async def test_admin_dev_falls_back_to_groq_when_gemini_fails(
 
 @pytest.mark.anyio
 async def test_gemini_converts_read_timeout_to_provider_unavailable() -> None:
-    """TASK-091: `httpx.ReadTimeout` é o que o SDK `google-genai` realmente
+    """`httpx.ReadTimeout` é o que o SDK `google-genai` realmente
     levanta quando o Gemini demora (confirmado ao vivo em produção, causa
     raiz de duas falhas reais: criação de missão travando e classificação
     de relevância nunca resolvendo). Antes desta correção, `gemini.py` só

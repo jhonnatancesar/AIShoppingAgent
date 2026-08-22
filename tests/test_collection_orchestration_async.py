@@ -1035,7 +1035,7 @@ def test_maybe_publish_prelist_ready_waits_for_the_full_round(monkeypatch) -> No
 def test_maybe_publish_prelist_ready_defers_when_relevance_pending(
     monkeypatch,
 ) -> None:
-    """TASK-091: causa real do bug de produção -- classificação de
+    """Causa real do bug de produção -- classificação de
     relevância falhou (IA indisponível) para uma oferta atual, então a
     rodada está "completa" por lojas mas ainda tem classificação
     pendente. `prelist_sent` NUNCA pode virar `True` nesse caso -- a
@@ -1115,33 +1115,70 @@ def test_maybe_publish_prelist_ready_sends_after_pending_relevance_resolves(
     assert publish.call_args.kwargs["event_type"].value == "mission.prelist_ready.v1"
 
 
-def test_mission_relevance_pending_false_when_every_current_offer_is_resolved(
-    monkeypatch,
-) -> None:
-    """Unidade direta de `_mission_relevance_pending`: a consulta real usa
-    LEFT JOIN + `MissionOfferRelevance.offer_id IS NULL` -- qualquer linha
-    já persistida (`MATCH`, `POSSIBLE_MATCH` ou `NO_MATCH`) satisfaz o
-    JOIN e nunca aparece como pendente, então uma classificação resolvida
-    como não-match (ausência de match, não ausência de linha) não trava a
-    pré-lista para sempre; só a ausência completa da linha conta como
-    pendente. `session.scalar` devolvendo `None` é exatamente o que a
-    consulta real devolve quando toda oferta atual já tem uma linha,
-    disponibilizada por qualquer classificação."""
+def _fake_execute_result(rows: list[tuple]) -> MagicMock:
+    result = MagicMock()
+    result.all.return_value = rows
+    return result
+
+
+def test_mission_relevance_pending_false_when_every_current_offer_is_resolved() -> None:
+    """Unidade direta de `_mission_relevance_pending` após o rebase sobre a
+    TASK-093: "oferta atual" de cada loja é a de maior `Offer.last_seen_at`
+    -- qualquer linha já persistida em `mission_offer_relevance` (`MATCH`,
+    `POSSIBLE_MATCH` ou `NO_MATCH`) resolve essa oferta, então uma
+    classificação resolvida como não-match não trava a pré-lista para
+    sempre; só a ausência completa da linha conta como pendente."""
+    store_id = uuid4()
+    offer_id = uuid4()
     session = _mock_async_session()
-    session.scalar.return_value = None
+    session.execute.return_value = _fake_execute_result(
+        [(offer_id, store_id, NOW)]
+    )
+    session.scalars.return_value = [offer_id]  # já tem MissionOfferRelevance
 
     pending = asyncio.run(_mission_relevance_pending(session, uuid4()))
 
     assert pending is False
 
 
-def test_mission_relevance_pending_true_when_query_finds_a_gap(monkeypatch) -> None:
+def test_mission_relevance_pending_true_when_current_offer_lacks_relevance() -> None:
+    store_id = uuid4()
+    offer_id = uuid4()
     session = _mock_async_session()
-    session.scalar.return_value = uuid4()  # offer_id sem MissionOfferRelevance
+    session.execute.return_value = _fake_execute_result(
+        [(offer_id, store_id, NOW)]
+    )
+    session.scalars.return_value = []  # nenhuma MissionOfferRelevance ainda
 
     pending = asyncio.run(_mission_relevance_pending(session, uuid4()))
 
     assert pending is True
+
+
+def test_mission_relevance_pending_ignores_offer_superseded_by_newer_same_store() -> (
+    None
+):
+    """Prova direta do motivo do rebase: uma oferta antiga da mesma loja,
+    nunca classificada, mas já substituída por uma mais nova (maior
+    `Offer.last_seen_at`, TASK-093) nunca deve travar a pré-lista -- só a
+    oferta mais recente da loja é considerada "atual". Sem isso, uma
+    oferta reaproveitada (preço idêntico, `PriceObservation` não
+    duplicada) que nunca mais aparece ficaria presa para sempre."""
+    store_id = uuid4()
+    old_offer_id = uuid4()
+    new_offer_id = uuid4()
+    session = _mock_async_session()
+    session.execute.return_value = _fake_execute_result(
+        [
+            (old_offer_id, store_id, NOW - timedelta(hours=1)),
+            (new_offer_id, store_id, NOW),
+        ]
+    )
+    session.scalars.return_value = [new_offer_id]  # só a nova foi classificada
+
+    pending = asyncio.run(_mission_relevance_pending(session, uuid4()))
+
+    assert pending is False
 
 
 def test_maybe_publish_prelist_errata_publishes_once_when_cheaper_found() -> None:
