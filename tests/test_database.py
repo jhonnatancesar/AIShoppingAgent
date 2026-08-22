@@ -160,4 +160,5 @@ def test_metadata_contains_only_implemented_tables() -> None:
         "mission_offer_relevance",
         "offer_short_links",
         "offer_installment_options",
+        "web_sessions",
     }

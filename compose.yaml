@@ -11,7 +11,11 @@ services:
     logging: *bounded-logging
     image: aishoppingagent-app:local
     build:
-      context: ./backend
+      # TASK-091 (endurecimento de 2026-08-21): contexto na raiz do
+      # repositório -- o Dockerfile precisa enxergar `backend/` e
+      # `frontend/` para o estágio de build do frontend (Node só em
+      # build-time). Os três serviços continuam a mesma imagem única.
+      context: .
       dockerfile: Dockerfile
     environment:
       AISHOPPING_APP_NAME: ${AISHOPPING_APP_NAME:-AIShoppingAgent}
@@ -35,6 +39,12 @@ services:
       AISHOPPING_TRACE_SAMPLE_RATIO: ${AISHOPPING_TRACE_SAMPLE_RATIO:-1.0}
       AISHOPPING_READINESS_TIMEOUT_SECONDS: ${AISHOPPING_READINESS_TIMEOUT_SECONDS:-1.0}
       AISHOPPING_AUTH_PUBLIC_BASE_URL: ${AISHOPPING_AUTH_PUBLIC_BASE_URL:-http://localhost:8000}
+      # TASK-091 (endurecimento de 2026-08-21): caminho do build da SPA
+      # dentro da imagem (`Dockerfile`, estágio `frontend-build`). Só o
+      # `api` serve HTTP (`register_spa`, via `app.main`) -- `telegram_notifier`/
+      # `collection_worker` rodam outros comandos e nunca importam esse
+      # módulo, por isso não recebem esta variável.
+      AISHOPPING_SPA_DIST_DIR: /app/frontend-dist
       AISHOPPING_MAX_REQUEST_BODY_BYTES: ${AISHOPPING_MAX_REQUEST_BODY_BYTES:-65536}
       AISHOPPING_TELEGRAM_RATE_LIMIT_PER_MINUTE: ${AISHOPPING_TELEGRAM_RATE_LIMIT_PER_MINUTE:-20}
       AISHOPPING_EXTERNAL_HTTP_TIMEOUT_SECONDS: ${AISHOPPING_EXTERNAL_HTTP_TIMEOUT_SECONDS:-10}
@@ -80,7 +90,11 @@ services:
     logging: *bounded-logging
     image: aishoppingagent-app:local
     build:
-      context: ./backend
+      # TASK-091 (endurecimento de 2026-08-21): contexto na raiz do
+      # repositório -- o Dockerfile precisa enxergar `backend/` e
+      # `frontend/` para o estágio de build do frontend (Node só em
+      # build-time). Os três serviços continuam a mesma imagem única.
+      context: .
       dockerfile: Dockerfile
     environment:
       AISHOPPING_ENVIRONMENT: ${AISHOPPING_ENVIRONMENT:-development}
@@ -137,7 +151,11 @@ services:
     logging: *bounded-logging
     image: aishoppingagent-app:local
     build:
-      context: ./backend
+      # TASK-091 (endurecimento de 2026-08-21): contexto na raiz do
+      # repositório -- o Dockerfile precisa enxergar `backend/` e
+      # `frontend/` para o estágio de build do frontend (Node só em
+      # build-time). Os três serviços continuam a mesma imagem única.
+      context: .
       dockerfile: Dockerfile
     # TASK-081: PID 1 do container roda o worker Python direto, sem
     # semantica de init -- processos internos do Chromium (renderer/GPU/

@@ -1,0 +1,151 @@
+:root {
+  color-scheme: dark;
+  font-family: system-ui, -apple-system, sans-serif;
+  --bg: #0b1020;
+  --panel: #151c31;
+  --border: #2c385b;
+  --text: #f4f7ff;
+  --muted: #9aa7c7;
+  --accent: #65a2ff;
+  --danger: #ff6b6b;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--text);
+}
+
+button {
+  cursor: pointer;
+  font: inherit;
+}
+
+a {
+  color: var(--accent);
+}
+
+.loading {
+  padding: 2rem;
+  text-align: center;
+  color: var(--muted);
+}
+
+/* Login */
+
+.login-page {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+}
+
+.login-card {
+  width: min(24rem, calc(100% - 2rem));
+  padding: 2rem;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+  display: flex;
+  flex-direction: column;
+}
+
+.login-card h1 {
+  margin: 0 0 1.5rem;
+  font-size: 1.4rem;
+}
+
+.login-card label {
+  margin: 0.8rem 0 0.3rem;
+}
+
+.login-card input {
+  padding: 0.7rem;
+  border-radius: 0.5rem;
+  border: 1px solid var(--border);
+  background: #0f1629;
+  color: inherit;
+}
+
+.login-card button {
+  margin-top: 1.2rem;
+  padding: 0.8rem;
+  border: 0;
+  border-radius: 0.5rem;
+  background: var(--accent);
+  color: #07101e;
+  font-weight: 700;
+}
+
+.login-card button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.login-error {
+  margin: 0.6rem 0 0;
+  color: var(--danger);
+}
+
+.login-hint {
+  margin: 1rem 0 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+/* Shell (app + admin) */
+
+.shell-header {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.shell-title {
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.admin-badge {
+  font-size: 0.7rem;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  background: var(--danger);
+  color: #1a0505;
+  font-weight: 700;
+}
+
+.shell-nav {
+  display: flex;
+  gap: 1rem;
+  flex: 1;
+}
+
+.shell-user {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  color: var(--muted);
+}
+
+.shell-user button {
+  padding: 0.4rem 0.8rem;
+  border-radius: 0.4rem;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: inherit;
+}
+
+.shell-main {
+  padding: 2rem 1.5rem;
+  max-width: 60rem;
+  margin: 0 auto;
+}

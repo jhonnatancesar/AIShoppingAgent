@@ -135,6 +135,64 @@ class UserAuthSession(Base):
     )
 
 
+class WebSession(Base):
+    """Sessão de navegador da aplicação web (TASK-091, item 1 da V1.2).
+
+    Independente de `UserAuthSession` (acoplada a `telegram_user_id`, usada
+    só para autorizar comandos do Telegram) -- misturar os dois canais na
+    mesma tabela arriscaria a lógica já validada em produção. O cookie
+    guarda o token bruto; só o hash é persistido (mesmo padrão de
+    `CredentialActionToken.token_hash`)."""
+
+    __tablename__ = "web_sessions"
+    __table_args__ = (
+        CheckConstraint(
+            "expires_at = authenticated_at + INTERVAL '12 hours'",
+            name="ck_web_sessions_absolute_ttl",
+        ),
+        CheckConstraint(
+            "revoked_at IS NULL OR revoked_at >= authenticated_at",
+            name="ck_web_sessions_revocation_time",
+        ),
+        Index(
+            "ix_web_sessions_active_lookup",
+            "token_hash",
+            "expires_at",
+            postgresql_where="revoked_at IS NULL",
+        ),
+        Index(
+            "ix_web_sessions_user_lookup",
+            "user_id",
+            postgresql_where="revoked_at IS NULL",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    authenticated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    revoked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    recorded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+        server_default=func.now(),
+    )
+
+
 class CredentialActionToken(Base):
     __tablename__ = "credential_action_tokens"
     __table_args__ = (

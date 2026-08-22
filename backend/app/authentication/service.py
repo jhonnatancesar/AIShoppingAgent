@@ -4,7 +4,12 @@
 (extensão da TASK-079, usada pelo webhook Telegram) além da síncrona
 (usada pela página `/auth` e por `scripts/validate_password_authentication.py`).
 `complete_action` (fluxo da página `/auth`, fora do webhook) permanece só
-síncrona."""
+síncrona.
+
+`authenticate_web_login`/`issue_web_session`/`get_web_session_user`/
+`revoke_web_session` (TASK-091, item 1 da V1.2) autenticam e gerenciam a
+sessão de navegador da aplicação web -- usuário + senha direto, sem token
+nem Telegram, sessão própria (`WebSession`), nunca `UserAuthSession`."""
 
 import hashlib
 import secrets
@@ -23,6 +28,7 @@ from app.authentication.models import (
     CredentialActionToken,
     UserAuthSession,
     UserCredential,
+    WebSession,
 )
 from app.authentication.passwords import (
     PasswordPolicyError,
@@ -274,6 +280,145 @@ async def logout_async(
     _audit(session, user.id, "authentication.logged_out")
 
 
+def authenticate_web_login(
+    session: Session,
+    *,
+    username: str,
+    password: str,
+    now: datetime | None = None,
+) -> User:
+    """Autentica login pela aplicação web (TASK-091): usuário + senha
+    diretos, sem token/Telegram envolvido. Reaproveita o mesmo núcleo de
+    verificação de senha do login por link (`_verify_login_password`) --
+    mesma política de bloqueio/tentativas/rehash, nunca uma segunda regra
+    paralela. Não emite sessão nenhuma; o chamador decide se/como emitir
+    (`issue_web_session`)."""
+    current = _aware_now(now)
+    user = session.scalar(select(User).where(User.username == username))
+    if user is None or not user.is_active:
+        raise AuthenticationError("As credenciais informadas são inválidas.")
+    credential = session.execute(
+        select(UserCredential)
+        .where(UserCredential.user_id == user.id)
+        .with_for_update()
+    ).scalar_one_or_none()
+    _verify_login_password(
+        session, user_id=user.id, credential=credential, password=password, now=current
+    )
+    _audit(session, user.id, "authentication.web_logged_in")
+    return user
+
+
+def issue_web_session(
+    session: Session,
+    *,
+    user: User,
+    now: datetime | None = None,
+) -> str:
+    """Emite uma sessão de navegador nova, revogando qualquer sessão web
+    anterior do usuário (mesma política de "uma sessão ativa por vez" já
+    usada para `UserAuthSession`). Devolve o token bruto -- só ele vai para
+    o cookie; o banco guarda apenas o hash (`token_digest`)."""
+    current = _aware_now(now)
+    _revoke_web_sessions(session, user_id=user.id, now=current)
+    raw_token = secrets.token_urlsafe(32)
+    session.add(
+        WebSession(
+            user_id=user.id,
+            token_hash=token_digest(raw_token),
+            authenticated_at=current,
+            expires_at=current + SESSION_TTL,
+        )
+    )
+    return raw_token
+
+
+def get_web_session_user(
+    session: Session,
+    *,
+    raw_token: str,
+    now: datetime | None = None,
+) -> User | None:
+    """Resolve o `User` de uma sessão web ativa, ou `None` se o token for
+    inválido, revogado ou expirado -- nunca distingue os três casos para o
+    chamador (evita enumeração)."""
+    if not raw_token or len(raw_token) > 128:
+        return None
+    current = _aware_now(now)
+    web_session = session.scalar(
+        select(WebSession).where(WebSession.token_hash == token_digest(raw_token))
+    )
+    if (
+        web_session is None
+        or web_session.revoked_at is not None
+        or web_session.expires_at <= current
+    ):
+        return None
+    user = session.get(User, web_session.user_id)
+    if user is None or not user.is_active:
+        return None
+    return user
+
+
+def revoke_web_session(
+    session: Session,
+    *,
+    raw_token: str,
+    now: datetime | None = None,
+) -> None:
+    """Revoga uma sessão web pelo token bruto (logout). Sem efeito se o
+    token não corresponder a nenhuma sessão ativa."""
+    if not raw_token:
+        return
+    current = _aware_now(now)
+    session.execute(
+        update(WebSession)
+        .where(
+            WebSession.token_hash == token_digest(raw_token),
+            WebSession.revoked_at.is_(None),
+        )
+        .values(revoked_at=current)
+    )
+
+
+def _revoke_web_sessions(session: Session, *, user_id: UUID, now: datetime) -> None:
+    session.execute(
+        update(WebSession)
+        .where(
+            WebSession.user_id == user_id,
+            WebSession.revoked_at.is_(None),
+        )
+        .values(revoked_at=now)
+    )
+
+
+def _verify_login_password(
+    session: Session,
+    *,
+    user_id: UUID,
+    credential: UserCredential | None,
+    password: str,
+    now: datetime,
+) -> None:
+    """Núcleo compartilhado da verificação de login: checa bloqueio,
+    verifica a senha, registra falha/rehash. Levanta em caso de falha;
+    não decide o que fazer com o token (`_complete_login`) nem com sessão
+    nenhuma -- cada chamador aplica seu próprio efeito de sucesso."""
+    if credential is None:
+        raise AuthenticationError("As credenciais informadas são inválidas.")
+    if credential.login_locked_until and now < credential.login_locked_until:
+        raise AuthenticationRateLimited("Tente novamente mais tarde.")
+    if not verify_password(credential.password_hash, password):
+        _record_login_failure(credential, now)
+        _audit(session, user_id, "authentication.login_failed")
+        raise AuthenticationError("As credenciais informadas são inválidas.")
+    credential.failed_login_attempts = 0
+    credential.login_window_started_at = None
+    credential.login_locked_until = None
+    if needs_rehash(credential.password_hash):
+        credential.password_hash = hash_password(password)
+
+
 def _complete_login(
     session: Session,
     *,
@@ -283,21 +428,15 @@ def _complete_login(
     password: str,
     now: datetime,
 ) -> None:
-    if credential is None:
+    try:
+        _verify_login_password(
+            session, user_id=user.id, credential=credential, password=password, now=now
+        )
+    except AuthenticationRateLimited:
+        raise
+    except AuthenticationError:
         _fail_token(token, now)
-        raise AuthenticationError("As credenciais informadas são inválidas.")
-    if credential.login_locked_until and now < credential.login_locked_until:
-        raise AuthenticationRateLimited("Tente novamente mais tarde.")
-    if not verify_password(credential.password_hash, password):
-        _record_login_failure(credential, now)
-        _fail_token(token, now)
-        _audit(session, user.id, "authentication.login_failed")
-        raise AuthenticationError("As credenciais informadas são inválidas.")
-    credential.failed_login_attempts = 0
-    credential.login_window_started_at = None
-    credential.login_locked_until = None
-    if needs_rehash(credential.password_hash):
-        credential.password_hash = hash_password(password)
+        raise
     # O bot possui uma única identidade autenticada por usuário/Telegram.
     # Substituir a sessão anterior evita avisos contraditórios de expiração.
     _revoke_sessions(session, user_id=user.id, now=now)

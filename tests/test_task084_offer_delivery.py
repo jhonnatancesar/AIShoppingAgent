@@ -126,8 +126,7 @@ async def test_media_rejection_falls_back_to_text(monkeypatch) -> None:
 
 def test_checkpoint_identity_includes_event_offer_and_part() -> None:
     primary_keys = {
-        column.name
-        for column in EventDeliveryCheckpoint.__table__.primary_key.columns
+        column.name for column in EventDeliveryCheckpoint.__table__.primary_key.columns
     }
     assert primary_keys == {"consumer_name", "event_id", "offer_id", "message_part"}
 

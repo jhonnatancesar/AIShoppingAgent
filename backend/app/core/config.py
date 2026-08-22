@@ -146,6 +146,15 @@ class Settings(BaseSettings):
     readiness_timeout_seconds: float = Field(default=1.0, gt=0, le=10)
     worker_metrics_port: int = Field(default=9464, ge=1, le=65535)
     auth_public_base_url: str = Field(default="http://localhost:8000", min_length=1)
+    # TASK-091 (item 1 da V1.2): diretório do build estático da SPA
+    # (`frontend/dist`, gerado por `npm run build`). `None` (padrão) resolve
+    # para o `frontend/dist` do próprio checkout, relativo a este arquivo --
+    # funciona em dev local sem configuração. Se o diretório não existir no
+    # startup, a rota de fallback da SPA responde 404 em vez de derrubar a
+    # aplicação (API/Telegram continuam funcionando mesmo sem build do
+    # frontend). Empacotamento Docker do build ainda não implementado --
+    # ver docs/tasks/TASK-091.md.
+    spa_dist_dir: Path | None = None
 
     @model_validator(mode="after")
     def resolve_secret_files(self) -> Settings:

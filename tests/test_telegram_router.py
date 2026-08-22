@@ -1217,9 +1217,7 @@ async def test_list_missions_command_is_numbered_and_deterministic(
         "app.telegram.router.has_active_session_async", AsyncMock(return_value=True)
     )
     list_mock = AsyncMock(return_value=missions)
-    monkeypatch.setattr(
-        "app.telegram.router.list_visible_missions_for_user", list_mock
-    )
+    monkeypatch.setattr("app.telegram.router.list_visible_missions_for_user", list_mock)
     adapter = _FakeAdapter(_intent(kind=IntentKind.UNKNOWN))
     session = _async_session()
 
@@ -2130,9 +2128,7 @@ async def test_full_cycle_paused_edit_stays_paused_without_auto_resume(
     session.get = AsyncMock(return_value=SimpleNamespace(user_id=user.id))
     session.scalar = AsyncMock(return_value=None)
     transition = AsyncMock(
-        side_effect=AssertionError(
-            "pausar/retomar não deve ser chamado neste cenário"
-        )
+        side_effect=AssertionError("pausar/retomar não deve ser chamado neste cenário")
     )
     monkeypatch.setattr("app.telegram.router.transition_mission_async", transition)
     edit_calls: list[dict] = []
@@ -4354,7 +4350,7 @@ async def test_cancel_mission_numeric_choice_executes_immediately_without_ai(
     assert "cancelar" in first.lower()
     assert "Exemplo: 1,3" in first
     assert user.pending_intent is None
-    assert "2 — \"RTX\" — cancelada" in second
+    assert '2 — "RTX" — cancelada' in second
 
 
 @pytest.mark.anyio

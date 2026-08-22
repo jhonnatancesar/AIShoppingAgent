@@ -32,8 +32,7 @@ class Offer(Base):
         ),
         CheckConstraint("btrim(url) <> ''", name="ck_offers_url_not_blank"),
         CheckConstraint(
-            "image_url IS NULL OR image_url ~* "
-            "'^https?://[^/@?#[:space:]]+([/?#]|$)'",
+            "image_url IS NULL OR image_url ~* '^https?://[^/@?#[:space:]]+([/?#]|$)'",
             name="ck_offers_image_url_http",
         ),
         Index("ix_offers_product_id", "product_id"),

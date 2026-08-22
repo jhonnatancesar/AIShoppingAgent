@@ -5,6 +5,7 @@ from app.authentication.models import (
     CredentialActionToken,
     UserAuthSession,
     UserCredential,
+    WebSession,
 )
 from app.collection.models import (
     CollectionRun,
@@ -51,4 +52,5 @@ REGISTERED_MODELS = (
     UserAuthSession,
     CredentialActionToken,
     TelegramUpdateReceipt,
+    WebSession,
 )

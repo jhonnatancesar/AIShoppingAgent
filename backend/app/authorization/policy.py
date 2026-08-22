@@ -33,6 +33,9 @@ class Permission(StrEnum):
     AI_PROFILE_USER = "ai_profile.user"
     AI_PROFILE_ADMIN = "ai_profile.admin"
     AI_PROFILE_DEV = "ai_profile.dev"
+    ADMIN_PANEL_ACCESS = "admin_panel.access"
+    """TASK-091 (item 1 da V1.2): acesso à área `/admin` da aplicação web
+    -- DEV/ADMIN exclusivo, nunca USER (`DEC-073`)."""
 
 
 class AuthorizationDenialReason(StrEnum):
@@ -74,7 +77,10 @@ _USER_PERMISSIONS = frozenset(
         Permission.AI_PROFILE_USER,
     }
 )
-_ADMIN_PERMISSIONS = _USER_PERMISSIONS | {Permission.AI_PROFILE_ADMIN}
+_ADMIN_PERMISSIONS = _USER_PERMISSIONS | {
+    Permission.AI_PROFILE_ADMIN,
+    Permission.ADMIN_PANEL_ACCESS,
+}
 _DEV_PERMISSIONS = _ADMIN_PERMISSIONS | {Permission.AI_PROFILE_DEV}
 
 ROLE_PERMISSIONS: dict[UserRole, frozenset[Permission]] = {

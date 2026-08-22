@@ -1,5 +1,192 @@
 # Decision Log
 
+## DEC-074 — Endurecimento da TASK-091: CSRF acoplado a `require_web_session` (não a nenhum router), frontend em TypeScript, whitelist de rotas da SPA, catch-all por qualquer método, empacotamento Docker multi-stage
+
+- **Data:** 2026-08-21/22 (quatro rodadas de revisão do usuário antes do
+  commit).
+- **Ideia (rodada 1):** antes de aceitar a fundação web (TASK-091) como
+  pronta para commit, o usuário pediu uma auditoria de segurança formal
+  com 4 pontos bloqueantes: sessão/cookie, CSRF, empacotamento Docker real
+  e limpeza de contas de teste. A auditoria confirmou que geração/hash do
+  token de `WebSession` (`secrets.token_urlsafe(32)`, 256 bits, só o
+  SHA-256 vai pro banco) e os atributos do cookie de sessão (`HttpOnly`,
+  `Secure` por ambiente, `SameSite=Lax`, `Path=/`) já estavam corretos
+  desde a implementação original; achou e corrigiu 3 lacunas reais: CSRF
+  nunca implementado, frontend nunca empacotado na imagem Docker, e uma
+  rota de API inexistente caindo incorretamente no catch-all da SPA (200
+  `index.html` em vez de 404).
+- **Ideia (rodada 2 — 3 correções sobre a rodada 1):** o usuário revisou a
+  primeira rodada e não aprovou o commit ainda, apontando 3 problemas
+  concretos na própria correção: (a) a decisão de preflight foi React +
+  **TypeScript** + Vite, mas a implementação saiu em JavaScript puro
+  (`.jsx`/`.js`); (b) CSRF só cobria `POST`/`DELETE` por `Depends` em rota
+  individual — `PUT`/`PATCH` de TASKs futuras poderiam nascer sem
+  proteção, sem ninguém perceber; (c) o isolamento de `/api/*` usava
+  blacklist de prefixos de backend, frágil por construção (uma rota nova
+  esquecida na lista vira `200 index.html` silenciosamente) — o usuário
+  pediu o inverso, whitelist explícita do que pertence à SPA.
+- **Ideia (rodada 3 — escopo do CSRF corrigido de novo):** a rodada 2
+  trocou o `Depends` por rota por um middleware ASGI sobre todo
+  `POST`/`PUT`/`PATCH`/`DELETE` cujo caminho começasse com `/api/v1/`. O
+  usuário apontou que isso era amplo demais: (a) interceptava antes de
+  saber se a rota existia, mascarando `404` de rota inexistente como `403
+  csrf_invalid`; (b) protegeria erroneamente qualquer endpoint futuro sob
+  `/api/v1` mesmo que autenticado por Bearer/service token -- um canal sem
+  cookie, sem risco de CSRF, para o qual essa defesa não faz sentido. A
+  regra correta é: CSRF protege requisição mutável que depende de
+  autenticação automática por cookie da `WebSession` (incluindo o próprio
+  login, antes da sessão existir) -- não é uma política global de
+  `/api/v1`.
+- **CSRF — double-submit cookie girado na fronteira de login, escopado ao
+  router da WebSession (não middleware, não `Depends` por rota
+  individual):** `require_csrf` (`backend/app/webapp/csrf.py`) é
+  registrada **uma única vez**, como dependência do próprio router
+  (`app.webapp.router.router = APIRouter(prefix="/api/v1", tags=["webapp"],
+  dependencies=[Depends(require_csrf)])`). Esse router É o canal
+  WebSession/cookie da aplicação web (login, logout, sessão atual) --
+  amarrar a defesa a ele, em vez de a uma string de prefixo de URL,
+  resolve as duas lacunas da rodada 2 de uma vez:
+  - Rota inexistente nunca chega a nenhum router (FastAPI/Starlette
+    resolve `404` antes de qualquer dependência rodar) -- `403` nunca mais
+    mascara ausência de rota.
+  - Um canal de autenticação diferente (Bearer, service token, webhook do
+    Telegram com segredo de header) simplesmente vive em outro router e
+    nunca passa por `require_csrf`, mesmo estando montado na mesma
+    aplicação.
+  - Qualquer endpoint mutável futuro do canal web (edição de missão pela
+    SPA, etc.) que for adicionado a este mesmo router (ou a outro que
+    também declare a mesma dependência) herda a proteção automaticamente
+    -- sem exigir que o desenvolvedor lembre de anotar `Depends(require_csrf)`
+    rota por rota; e sem arriscar proteger de mais um canal que não usa
+    cookie.
+  `require_csrf` ignora `GET`/`HEAD`/`OPTIONS` internamente, já que o
+  mesmo router também registra `GET /web-sessions/current`. Cookie
+  `aishopping_csrf`, não-`httpOnly` (a SPA precisa ler o valor),
+  `Secure`/`SameSite`/`Path` no mesmo padrão do cookie de sessão. Emitido
+  de forma anônima (sem sessão) por `register_spa` sempre que a casca
+  (`index.html`) é servida e o cliente ainda não tem um — é isso que
+  protege o próprio `POST /api/v1/web-sessions` (login) contra CSRF de
+  login, já que a SPA sempre carrega a casca antes de qualquer JS rodar.
+  `create_web_session` gira o cookie de novo após autenticar (mesmo
+  princípio de nunca atravessar uma fronteira de privilégio com um
+  identificador reaproveitado, já aplicado à própria `WebSession`).
+  Preferido a synchronizer token stateful (exigiria coluna nova em
+  `WebSession` e uma consulta a mais por requisição) por já bastar para
+  uma SPA same-origin sem introduzir estado adicional no banco.
+- **Catch-all da SPA agora casa com qualquer método HTTP, não só `GET`:**
+  efeito colateral descoberto ao validar a correção acima contra o
+  container real -- com o catch-all registrado só para `GET`, o Starlette
+  via o padrão de caminho bater (`/{full_path:path}` casa com qualquer
+  string) mas o método não, devolvendo `405 Method Not Allowed` em vez de
+  `404` para `PATCH`/`PUT`/`DELETE` numa rota de API inexistente. Não era
+  mascaramento de CSRF (o `403` já não acontecia mais depois da correção
+  acima), mas também não era o `404` esperado. `register_spa` agora
+  registra o catch-all via `app.api_route(..., methods=["GET", "HEAD",
+  "POST", "PUT", "PATCH", "DELETE"])` e responde `404` imediatamente para
+  qualquer método que não seja `GET`/`HEAD` -- a SPA em si só serve
+  navegação `GET`, mas o catch-all precisa "existir" para todos os
+  métodos para que o Starlette prefira `404` a `405` quando nenhuma rota
+  real casar.
+- **Ideia (rodada 4 — CSRF finalmente acoplado à autenticação, não a
+  nenhum router):** a rodada 3 amarrou CSRF ao router de `web-sessions`
+  (`dependencies=[Depends(require_csrf)]` no `APIRouter`). O usuário
+  apontou que isso continuava incompleto pelo motivo oposto ao da rodada
+  2: agora era estreito demais -- só protegeria endpoints daquele router
+  específico. Um endpoint futuro de missões/ofertas/admin, em outro
+  router (o desenho natural conforme a V1.2 crescer), não herdaria nada.
+  A regra arquitetural definitiva: **CSRF acompanha a autenticação por
+  `WebSession`, não o router nem o domínio funcional onde o endpoint
+  mora.**
+- **CSRF acoplado à dependência `require_web_session`, não a router
+  nenhum:** `app.webapp.dependency` ganhou dois níveis --
+  `_resolve_web_session` (interno: só resolve cookie -> hash ->
+  `WebSession` -> `User`, `401` se ausente/inválida/expirada/revogada,
+  nunca aplica CSRF) e `require_web_session` (pública: depende de
+  `_resolve_web_session`, e só para métodos mutáveis chama
+  `app.webapp.csrf.validate_csrf`). Qualquer endpoint, de qualquer
+  router/módulo, que declare `Depends(require_web_session)` herda
+  autenticação por cookie **e** CSRF automaticamente -- a composição da
+  árvore de dependências do FastAPI garante a ordem correta sozinha
+  (sessão resolvida antes do corpo de `require_web_session` executar,
+  então `401` sempre precede `403`, nunca o inverso). O helper interno
+  não é exportado para uso fora do módulo -- só a dependência pública, que
+  é seguro por padrão.
+  `require_admin_web_session` passou a compor sobre `require_web_session`
+  (antes compunha sobre o antigo `get_current_web_user`, sem CSRF): um
+  endpoint administrativo mutável futuro herda autenticação -> CSRF ->
+  autorização ADMIN só por declarar essa dependência, sem implementar nada
+  disso de novo.
+  `app.webapp.router` deixou de ter `dependencies=[Depends(require_csrf)]`
+  a nível de `APIRouter` -- login continua como exceção explícita
+  (`Depends(validate_csrf)` só nessa rota, já que ainda não existe
+  `WebSession` nesse ponto), logout e a consulta de sessão atual passaram
+  a depender de `require_web_session` como qualquer outro endpoint do
+  canal web, sem nenhuma configuração específica de router. Efeito
+  colateral do logout agora exigir sessão válida via `require_web_session`
+  (antes tolerava ausência de cookie como no-op `204`): sem sessão válida,
+  a resposta agora é `401 not_authenticated`, nunca mais um sucesso
+  silencioso nem `403 csrf_invalid`.
+  Prova arquitetural dedicada (`tests/test_webapp_dependency.py`): um
+  router propositalmente sem relação nenhuma com `app.webapp.router`
+  (simulando missões), com um endpoint usando só
+  `Depends(require_web_session)`, exige CSRF do mesmo jeito -- mutação sem
+  CSRF -> `403`; com CSRF válido -> chega ao handler. `spa.py` também
+  passou a reaproveitar `_resolve_web_session` (em vez de duplicar a
+  resolução de sessão) na checagem de `/admin`.
+- **Frontend em TypeScript, não JavaScript:** todos os arquivos fonte
+  (`.jsx`/`.js` → `.tsx`/`.ts`), `tsconfig.json`/`tsconfig.app.json`/
+  `tsconfig.node.json` no padrão do scaffold oficial `react-ts` do Vite,
+  `npm run build` agora roda `tsc -b && vite build` (falha o build se
+  houver erro de tipo, não só de bundling). Tipos explícitos para o
+  usuário da sessão (`WebSessionUser`, `UserRole`), para o cliente HTTP
+  (`ApiError`, `request<T>`) e para o contexto de autenticação
+  (`AuthContextValue`). Corrige a implementação para bater com a decisão
+  de preflight já aprovada — não é uma decisão nova, é a mesma sendo
+  cumprida corretamente.
+- **Whitelist de rotas da SPA no lugar da blacklist de prefixos de
+  backend:** `register_spa` agora testa `full_path` contra
+  `_SPA_OWNED_TOP_LEVEL_SEGMENTS = {"", "login", "app", "admin"}`
+  (espelha exatamente as rotas de `frontend/src/App.tsx`) — só esses
+  caminhos (e seus descendentes via roteamento client-side) viram
+  `index.html`; qualquer outro caminho é `404` por padrão, mesmo que
+  ninguém tenha atualizado nenhuma lista para incluí-lo. Inverte a
+  responsabilidade: antes, uma rota de backend nova exigia lembrar de
+  adicioná-la à blacklist para não vazar como `200 index.html`; agora uma
+  rota de backend nova simplesmente nunca aparece na whitelist da SPA, e o
+  comportamento seguro (`404`) é automático.
+- **Fixação de sessão — já coberta pelo desenho original, agora testada
+  explicitamente:** `issue_web_session` nunca aceita um identificador
+  vindo de fora (não existe parâmetro pra isso na assinatura) e sempre
+  revoga toda sessão ativa do usuário antes de emitir a nova. Não havia
+  lacuna real; a auditoria adicionou testes que provam isso
+  explicitamente (`tests/test_authentication_service_web.py`).
+- **Docker — build multi-stage, Node só em build-time:** `Dockerfile`
+  movido para a raiz do repositório (antes `backend/Dockerfile`), com um
+  estágio `frontend-build` (`node:22-alpine`, `npm ci` + `npm run build`,
+  agora incluindo a checagem de tipos TypeScript) cujo `dist/` é copiado
+  para o estágio Python final (`COPY --from=frontend-build`). O contexto
+  de build dos três serviços que compartilham a imagem (`api`,
+  `telegram_notifier`, `collection_worker`) muda de `./backend` para `.`
+  (raiz) em `compose.yaml` — nenhuma imagem duplicada, nenhum serviço
+  novo. Só o `api` recebe `AISHOPPING_SPA_DIST_DIR=/app/frontend-dist` (só
+  ele serve HTTP/SPA); `spa_dist_dir` no `Settings` continua `None` por
+  padrão fora do container (resolve o caminho relativo ao checkout
+  local). Validado com `docker compose build` real seguido de
+  `docker compose up` real contra Postgres containerizado — não só
+  `npm run build` no host.
+- **Classificação:** Correção/endurecimento de segurança da fundação web
+  (TASK-091, item 1 da V1.2) — nenhuma feature de negócio nova, nenhuma
+  mudança de escopo além dos pontos pedidos nas quatro rodadas.
+- **Justificativa:** cookie de sessão por si só nunca é suficiente contra
+  CSRF em nenhuma aplicação autenticada por cookie; o usuário explicitou
+  isso como bloqueador antes de aceitar a fundação. O empacotamento Docker
+  do frontend não podia ficar para "quando a aplicação for implantada" —
+  sem ele a arquitetura aprovada (SPA same-origin servida pelo mesmo
+  backend) simplesmente não existe fora do ambiente de desenvolvimento
+  local.
+- **Próxima ação:** nenhuma — TASK-091 aguardando aprovação do usuário
+  para commit com o endurecimento aplicado.
+
 ## DEC-073 — Esclarecer três pontos da reorganização da V1.2 (`DEC-072`): DEV/ADMIN exclusivo sem multi-papel, avaliações sempre por origem, `PriceObservation` redundante é semântica
 
 - **Data:** 2026-08-21.

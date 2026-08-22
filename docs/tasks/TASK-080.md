@@ -37,8 +37,8 @@ I/O externo (envio Telegram).
 
 ```python
 async def _process_batch(session_factory, *, settings, limit, processor):
-    with session_factory.begin() as session:      # Session síncrona
-        return await processor(session, ...)       # await por dentro
+    with session_factory.begin() as session:  # Session síncrona
+        return await processor(session, ...)  # await por dentro
 ```
 
 `processor` é `process_telegram_notifications`/

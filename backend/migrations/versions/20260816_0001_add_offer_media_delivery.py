@@ -21,8 +21,7 @@ def upgrade() -> None:
     op.create_check_constraint(
         "ck_offers_image_url_http",
         "offers",
-        "image_url IS NULL OR image_url ~* "
-        "'^https?://[^/@?#[:space:]]+([/?#]|$)'",
+        "image_url IS NULL OR image_url ~* '^https?://[^/@?#[:space:]]+([/?#]|$)'",
     )
     op.create_table(
         "offer_short_links",
@@ -37,9 +36,7 @@ def upgrade() -> None:
         sa.CheckConstraint(
             "btrim(token) <> ''", name="ck_offer_short_links_token_not_blank"
         ),
-        sa.ForeignKeyConstraint(
-            ["offer_id"], ["offers.id"], ondelete="RESTRICT"
-        ),
+        sa.ForeignKeyConstraint(["offer_id"], ["offers.id"], ondelete="RESTRICT"),
         sa.PrimaryKeyConstraint("token"),
         sa.UniqueConstraint("offer_id", name="uq_offer_short_links_offer_id"),
     )
