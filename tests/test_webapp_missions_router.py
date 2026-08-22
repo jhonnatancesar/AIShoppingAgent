@@ -16,12 +16,17 @@ import pytest
 from app.core.errors import register_api_error_handler
 from app.database.dependency import get_web_async_session
 from app.missions.models import Mission, MissionStatus
+from app.missions.query import MissionDetail
 from app.missions.service import (
     MissionCreationError,
     MissionEditConditionError,
     MissionTransitionConditionError,
     MissionVersionConflictError,
 )
+from app.offers.models import Offer
+from app.offers.query import MissionOfferLink
+from app.products.models import Product
+from app.stores.models import Store
 from app.users.models import User, UserRole
 from app.webapp.csrf import CSRF_COOKIE_NAME
 from app.webapp.dependency import WEB_SESSION_COOKIE_NAME
@@ -256,6 +261,48 @@ def test_get_mission_not_found_or_not_owned_is_403(
 
     assert response.status_code == 403
     assert response.json()["error"]["code"] == "mission_access_denied"
+
+
+def test_get_mission_exposes_links_to_relevant_offers(
+    client: TestClient, owner: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    mission = _mission(user_id=owner.id)
+    detail = MissionDetail(mission, None, [], None, [])
+    store = Store(
+        id=uuid4(), code="pichau", name="Pichau", base_url="https://pichau.com.br"
+    )
+    product = Product(id=uuid4(), name="RTX 5070 Ti")
+    offer = Offer(
+        id=uuid4(),
+        product_id=product.id,
+        store_id=store.id,
+        url="https://pichau.com.br/produto",
+        last_seen_at=datetime.now(UTC),
+    )
+    monkeypatch.setattr(
+        "app.webapp.missions_router.get_mission_detail_for_user",
+        AsyncMock(return_value=detail),
+    )
+    monkeypatch.setattr(
+        "app.webapp.missions_router.list_current_offer_links_for_mission",
+        AsyncMock(return_value=(MissionOfferLink(offer, product, store),)),
+    )
+
+    response = client.get(
+        f"/api/v1/missions/{mission.id}",
+        cookies={WEB_SESSION_COOKIE_NAME: "raw-token-canary"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["offers"] == [
+        {
+            "id": str(offer.id),
+            "title": product.name,
+            "store_code": "pichau",
+            "store_name": "Pichau",
+            "last_seen_at": offer.last_seen_at.isoformat(),
+        }
+    ]
 
 
 def test_pause_mission_owned_by_another_user_is_403(

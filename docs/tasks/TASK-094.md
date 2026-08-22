@@ -1,7 +1,7 @@
 # TASK-094 — Pré-lista com múltiplas ofertas relevantes por loja
 
-Status: **Implementada e validada com testes focados em 2026-08-22;
-aguardando revisão do usuário.**
+Status: **Concluída, aprovada e publicada em `origin/main` em 2026-08-22
+(`b915106`).**
 
 ## Origem
 

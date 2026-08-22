@@ -339,6 +339,6 @@ DEV/ADMIN — `DEC-045`/`DEC-053`/`DEC-054`/`DEC-056`); os itens de e-mail
 (opt-in no cadastro e notificações por e-mail) saíram da V1.2 e foram
 movidos para a V2 (`docs/internal/backlog.md`). Nenhuma TASK aberta por esta
 reorganização — só documentação. Estado atual: itens 1 a 3 concluídos e
-publicados no DEV; item 4, TASK-094, implementado e aguardando revisão; página
-rica de produto/oferta é o item 5 e próxima atividade, ainda sem TASK formal.)
+publicados no DEV; item 4, TASK-094, aprovado e publicado; item 5, TASK-095,
+página rica de oferta na área USER, implementado em DEV e aguardando revisão.)
 → V2.

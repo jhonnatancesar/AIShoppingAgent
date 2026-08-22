@@ -191,6 +191,23 @@ export function MissionDetailPage() {
         )}
       </div>
 
+      <div className="mission-section">
+        <h2>Ofertas relevantes</h2>
+        {mission.offers.length === 0 ? (
+          <p className="field-hint">Nenhuma oferta relevante disponível ainda.</p>
+        ) : (
+          <ul className="offer-link-list">
+            {mission.offers.map((offer) => (
+              <li key={offer.id}>
+                <Link to={`/app/offers/${offer.id}`}>
+                  {offer.title} — {offer.store_name}
+                </Link>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
       <div className="mission-actions">
         <Link className="button button-secondary" to="/app/missions">
           Voltar para missões

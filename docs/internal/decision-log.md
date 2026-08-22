@@ -1,5 +1,23 @@
 # Decision Log
 
+## DEC-077 — TASK-095: primeira página rica é centrada em Offer e exige relevância ligada a missão do usuário
+
+- **Data:** 2026-08-22.
+- **Decisão:** criar `GET /api/v1/offers/{offer_id}` e
+  `/app/offers/{offer_id}` sobre a `Offer` existente. `Product` fornece o
+  título, mas não é raiz da página: a coleta atual cria uma Product por nova
+  Offer e ainda não existe canonicalização global suficiente para uma página
+  agregada de produto.
+- **Ownership:** WebSession + `MISSION_READ`; o SQL exige uma
+  `MissionOfferRelevance` `MATCH`/`POSSIBLE_MATCH` ligada a uma `Mission` do
+  usuário. `NO_MATCH`, recurso inexistente e recurso alheio são indistinguíveis
+  na resposta fail-closed.
+- **Snapshot comercial:** usar a última `PriceObservation` por
+  `observed_at DESC, id DESC` e somente suas opções de parcelamento. Reutilizar
+  Product/Offer/Store/Seller; não expor evidência bruta ou IDs operacionais.
+- **Escopo:** detalhe individual e links pelas missões. Sem migration, tabela,
+  IA, coleta, reviews, gráficos, comparação entre lojas, cupons ou admin.
+
 ## DEC-076 — TASK-094: pré-lista seleciona até cinco ofertas relevantes por loja com ranking comercial determinístico
 
 - **Data:** 2026-08-22.

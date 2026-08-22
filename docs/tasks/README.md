@@ -1,6 +1,10 @@
 # Tarefas
 
-**TASK-094 implementada e aguardando revisão:** a pré-lista seleciona até cinco
+**TASK-095 implementada e aguardando revisão:** página USER centrada em Offer,
+com ownership por missão/relevância, último estado comercial e links no detalhe
+da missão; sem migration. Ver `docs/tasks/TASK-095.md` e `DEC-077`.
+
+**TASK-094 concluída, aprovada e publicada:** a pré-lista seleciona até cinco
 ofertas relevantes por loja com ranking comercial determinístico, condição
 histórica e eventos V2; Telegram agrupa uma mensagem por loja. É o item 4 da
 V1.2 e antecede a página rica. O arquivo formal da TASK-093 não existe e não foi

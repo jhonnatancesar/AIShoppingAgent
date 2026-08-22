@@ -78,9 +78,57 @@ export interface MissionTransitionOut {
   transitioned_at: string
 }
 
+export interface MissionOfferLink {
+  id: string
+  title: string
+  store_code: string
+  store_name: string
+  last_seen_at: string
+}
+
 export interface MissionDetail extends MissionSummary {
   criteria: MissionCriteria | null
   sources: MissionSourceOut[]
   schedule: MissionSchedule | null
   transitions: MissionTransitionOut[]
+  offers: MissionOfferLink[]
+}
+
+export type OfferCondition = 'new' | 'refurbished' | 'used' | 'unknown'
+export type OfferAvailability = 'available' | 'unavailable' | 'unknown'
+export type MarketplacePartyKind = 'platform' | 'marketplace_partner' | 'unknown'
+export type InstallmentInterestKind = 'interest_free' | 'with_interest' | 'unknown'
+
+export interface OfferInstallment {
+  installment_count: number
+  installment_amount: string
+  installment_total_amount: string | null
+  discount_percent: string | null
+  interest_kind: InstallmentInterestKind
+  is_highlighted: boolean
+}
+
+export interface LatestOfferObservation {
+  amount: string
+  currency: string
+  shipping_amount: string | null
+  total_amount: string
+  fulfillment: string | null
+  seller_kind: MarketplacePartyKind | null
+  fulfillment_kind: MarketplacePartyKind | null
+  condition: OfferCondition
+  availability: OfferAvailability
+  observed_at: string
+  installments: OfferInstallment[]
+}
+
+export interface OfferDetail {
+  id: string
+  title: string
+  image_url: string | null
+  original_url: string
+  last_seen_at: string
+  store: { code: string; name: string }
+  seller: { name: string } | null
+  latest_observation: LatestOfferObservation | null
 }

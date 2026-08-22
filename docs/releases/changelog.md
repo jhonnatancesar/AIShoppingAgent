@@ -1,6 +1,15 @@
 # Changelog
 
-## 2026-08-22 — TASK-094: pré-lista com múltiplas ofertas relevantes por loja (DEV, aguardando revisão)
+## 2026-08-22 — TASK-095: página rica de oferta na área USER (DEV, aguardando revisão)
+
+- Endpoint e rota React `/app/offers/{offer_id}`, com WebSession e ownership
+  por relevância ligada a missão do usuário; `NO_MATCH` não autoriza.
+- Exibe os dados existentes da Offer, sua última PriceObservation e parcelas,
+  sem migration, tabela, IA ou coleta. Missões ganharam links para ofertas
+  relevantes atuais.
+- Sem produção, deploy, commit ou push nesta implementação.
+
+## 2026-08-22 — TASK-094: pré-lista com múltiplas ofertas relevantes por loja (concluída e aprovada)
 
 - Removido o colapso da Amazon e adotado pool intermediário comum de até oito
   candidatos por loja; seleção final de até cinco por relevância, condição,
@@ -12,8 +21,9 @@
   Telegram agrupa normalmente uma mensagem por loja e a errata usa a mesma
   regra comercial da pré-lista inicial.
 - 16 testes focados aprovados; expectativas de integração atualizadas para V2,
-  mas não executadas. Sem pipeline completo, banco/scraping real,
-  commit, push, deploy ou acesso à produção nesta rodada.
+  mas não executadas. Amazon real e PostgreSQL descartável foram validados; o
+  pipeline completo não foi executado. Publicada em `origin/main` no commit
+  `b915106`, sem deploy ou acesso à produção.
 
 ## 2026-08-21 — Incidente: webhook do Telegram inacessível (Funnel "on" mas não registrado publicamente); healthcheck recriado para Windows
 

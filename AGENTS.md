@@ -422,6 +422,12 @@ snapshot foram substituídos pelas atualizações (7), (8) e (9) acima.
 **Atualização DEV 2026-08-22:** a TASK-094 implementa o item 4 da V1.2:
 pré-lista com até cinco ofertas relevantes por loja, pool intermediário comum
 de oito, condição persistida em `PriceObservation`, eventos V2 e mensagem
-Telegram agrupada por loja. Está aguardando revisão, sem commit, push ou deploy;
-produção permanece deliberadamente fora de escopo. A próxima atividade é a
-página rica de produto/oferta (item 5), ainda sem TASK formal.
+Telegram agrupada por loja. Foi aprovada e publicada em
+`origin/main` no commit `b915106`; nenhum deploy foi feito. A atividade seguinte
+é a TASK-095, página rica de oferta (item 5).
+
+**Atualização DEV 2026-08-22 (TASK-095):** o item 5 da V1.2 implementa a
+página USER `/app/offers/{offer_id}`, centrada em Offer e protegida por
+WebSession + relevância ligada a missão do proprietário. Reutiliza a última
+PriceObservation e suas parcelas, sem migration, IA ou nova coleta. Aguarda
+revisão; sem commit, push, deploy ou acesso à produção.

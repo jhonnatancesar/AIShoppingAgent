@@ -7,6 +7,7 @@ import { AppHome } from './pages/AppHome'
 import { LoginPage } from './pages/LoginPage'
 import { MissionCreatePage } from './pages/missions/MissionCreatePage'
 import { MissionDetailPage } from './pages/missions/MissionDetailPage'
+import { OfferDetailPage } from './pages/offers/OfferDetailPage'
 import { MissionsListPage } from './pages/missions/MissionsListPage'
 import { NotFound } from './pages/NotFound'
 
@@ -23,6 +24,7 @@ export default function App() {
             <Route path="/app/missions" element={<MissionsListPage />} />
             <Route path="/app/missions/new" element={<MissionCreatePage />} />
             <Route path="/app/missions/:missionId" element={<MissionDetailPage />} />
+            <Route path="/app/offers/:offerId" element={<OfferDetailPage />} />
           </Route>
         </Route>
 

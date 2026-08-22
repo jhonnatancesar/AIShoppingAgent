@@ -49,6 +49,7 @@ from app.missions.service import (
     edit_mission_criteria,
     transition_mission_async,
 )
+from app.offers.query import MissionOfferLink, list_current_offer_links_for_mission
 from app.users.models import User
 from app.webapp.dependency import require_web_session
 
@@ -121,6 +122,14 @@ class MissionTransitionOut(BaseModel):
     transitioned_at: str
 
 
+class MissionOfferLinkOut(BaseModel):
+    id: UUID
+    title: str
+    store_code: str
+    store_name: str
+    last_seen_at: str
+
+
 class MissionDetailResponse(BaseModel):
     id: UUID
     title: str
@@ -133,6 +142,7 @@ class MissionDetailResponse(BaseModel):
     sources: list[MissionSourceOut]
     schedule: MissionScheduleOut | None
     transitions: list[MissionTransitionOut]
+    offers: list[MissionOfferLinkOut]
 
 
 # --- Modelos de requisição ----------------------------------------------
@@ -285,7 +295,9 @@ def _as_summary(mission: Mission) -> MissionSummary:
     )
 
 
-def _as_detail(detail: MissionDetail) -> MissionDetailResponse:
+def _as_detail(
+    detail: MissionDetail, offer_links: tuple[MissionOfferLink, ...]
+) -> MissionDetailResponse:
     mission = detail.mission
     return MissionDetailResponse(
         id=mission.id,
@@ -333,6 +345,16 @@ def _as_detail(detail: MissionDetail) -> MissionDetailResponse:
                 transitioned_at=transition.transitioned_at.isoformat(),
             )
             for transition in detail.transitions
+        ],
+        offers=[
+            MissionOfferLinkOut(
+                id=item.offer.id,
+                title=item.product.display_name or item.product.name,
+                store_code=item.store.code,
+                store_name=item.store.name,
+                last_seen_at=item.offer.last_seen_at.isoformat(),
+            )
+            for item in offer_links
         ],
     )
 
@@ -463,7 +485,10 @@ async def get_mission(
             permission=Permission.MISSION_READ,
             mission_id=mission_id,
         )
-    return _as_detail(detail)
+    offer_links = await list_current_offer_links_for_mission(
+        session, mission_id=mission_id, user_id=user.id
+    )
+    return _as_detail(detail, offer_links)
 
 
 @router.patch(

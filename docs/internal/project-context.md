@@ -1,6 +1,14 @@
 # Project Context
 
-**Atualização 2026-08-22 (TASK-094, item 4 da V1.2, aguardando revisão):**
+**Atualização 2026-08-22 (TASK-095, item 5 da V1.2, aguardando revisão):**
+a primeira página rica USER é centrada em `Offer`, em
+`/app/offers/{offer_id}`. O endpoint autenticado só retorna `MATCH` ou
+`POSSIBLE_MATCH` ligado a missão do próprio usuário e compõe Product, Store,
+Seller, última PriceObservation e suas parcelas, sem migration/tabela/IA/nova
+coleta. O detalhe da missão oferece os links relevantes. Reviews, gráficos e
+comparação continuam nos itens 6–8.
+
+**Atualização 2026-08-22 (TASK-094, item 4 da V1.2, concluída):**
 a pré-lista agora preserva um pool comum de até 8 candidatos e seleciona até 5
 ofertas por loja por relevância persistida, condição, vendedor,
 disponibilidade, preço/total e ID estável — não mais pelo menor preço absoluto.
@@ -10,10 +18,9 @@ histórico com `unknown` conservador e a deduplicação da TASK-093 passa a
 considerá-lo. Novos eventos são `mission.prelist_ready.v2` e
 `mission.prelist_errata.v2`; V1 continua renderizável. O Telegram agrupa até
 cinco ofertas em uma mensagem por loja, salvo limite técnico. Foram aprovados
-16 testes focados e Ruff nos arquivos alterados; pipeline completo, banco real,
-scraping real, commit, push, deploy e produção não foram executados. A TASK-094
-aguarda revisão do usuário; a página rica de produto/oferta passa a ser o item
-5 e próxima atividade, ainda sem TASK formal. O arquivo formal da TASK-093 não
+16 testes focados e Ruff nos arquivos alterados; o pipeline completo não foi
+executado. Amazon real e PostgreSQL descartável foram validados. A TASK-094 foi aprovada
+e publicada em `origin/main` no commit `b915106`. O arquivo formal da TASK-093 não
 existe no repositório e não foi reconstruído nesta rodada.
 
 **Atualização 2026-08-22 (TASK-091/TASK-092/TASK-093, itens 1-3 da
