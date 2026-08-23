@@ -11,6 +11,7 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     Enum,
+    Integer,
     String,
     func,
 )
@@ -66,6 +67,18 @@ class User(Base):
             "telegram_chat_id IS NULL OR "
             "(telegram_user_id IS NOT NULL AND telegram_chat_id = telegram_user_id)",
             name="ck_users_telegram_private_chat",
+        ),
+        CheckConstraint(
+            "max_active_missions_override IS NULL OR max_active_missions_override > 0",
+            name="ck_users_max_active_missions_override_positive",
+        ),
+        CheckConstraint(
+            "max_store_slots_override IS NULL OR max_store_slots_override > 0",
+            name="ck_users_max_store_slots_override_positive",
+        ),
+        CheckConstraint(
+            "max_daily_searches_override IS NULL OR max_daily_searches_override > 0",
+            name="ck_users_max_daily_searches_override_positive",
         ),
     )
 
@@ -148,6 +161,18 @@ class User(Base):
     )
     registration_step: Mapped[str | None] = mapped_column(String(32), nullable=True)
     pending_intent: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # TASK-107: override de cota por usuário, definido pelo DEV/ADMIN.
+    # `NULL` (padrão) usa o default do sistema (`Settings.default_max_*`) --
+    # nunca um plano/tier novo, só um valor pontual por usuário (`DEC-094`).
+    max_active_missions_override: Mapped[int | None] = mapped_column(
+        Integer, nullable=True
+    )
+    max_store_slots_override: Mapped[int | None] = mapped_column(
+        Integer, nullable=True
+    )
+    max_daily_searches_override: Mapped[int | None] = mapped_column(
+        Integer, nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

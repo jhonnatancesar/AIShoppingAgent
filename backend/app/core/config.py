@@ -181,6 +181,13 @@ class Settings(BaseSettings):
     # frontend). Empacotamento Docker do build ainda não implementado --
     # ver docs/tasks/TASK-091.md.
     spa_dist_dir: Path | None = None
+    # TASK-107: defaults de cota por usuário (USER). Override por usuário
+    # fica em `User.max_*_override` (NULL = usa este default) -- sem plano/
+    # tier novo agora (`DEC-073`/`DEC-094`).
+    default_max_active_missions: int = Field(default=5, ge=1, le=1000)
+    default_max_store_slots: int = Field(default=18, ge=1, le=10000)
+    default_max_daily_searches: int = Field(default=30, ge=1, le=100000)
+    quota_warning_threshold: float = Field(default=0.8, gt=0, le=1.0)
 
     @field_validator("edge_cdp_url")
     @classmethod

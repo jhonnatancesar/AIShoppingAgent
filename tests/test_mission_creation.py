@@ -15,6 +15,7 @@ from app.missions.models import (
 )
 from app.missions.service import MissionCreationError, create_mission_from_criteria
 from app.products.identity import ProductRequestKind
+from app.users.models import User, UserRole
 
 NOW = datetime(2026, 8, 7, 12, 0, tzinfo=UTC)
 
@@ -40,13 +41,23 @@ def _session(stores: list[_FakeStore]) -> MagicMock:
 
     session.add.side_effect = _capture_add
 
+    owner = User(id=uuid4(), display_name="Teste", role=UserRole.USER)
     scalar_calls = {"count": 0}
 
     def _scalar_side_effect(*_args: object, **_kwargs: object) -> object:
         scalar_calls["count"] += 1
         if scalar_calls["count"] == 1:
             return added_missions[-1]
-        return uuid4()  # critério e fonte existentes, ambos apenas precisam ser truthy
+        if scalar_calls["count"] in (2, 3):
+            return uuid4()  # critério e fonte existentes, só precisam ser truthy
+        if scalar_calls["count"] == 4:
+            # TASK-107: dono da missão, buscado pela checagem de cota
+            # dentro de `transition_mission` (sem override -> usa default).
+            return owner
+        # TASK-107: contagens de uso de cota (missões ativas, store
+        # slots, pesquisas diárias, fontes desta missão) -- 0 sempre cabe
+        # nos defaults (`max_active_missions=5`/`max_store_slots=18`).
+        return 0
 
     session.scalar.side_effect = _scalar_side_effect
     return session

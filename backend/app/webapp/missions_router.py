@@ -57,6 +57,7 @@ from app.missions.service import (
     transition_mission_async,
 )
 from app.offers.query import MissionOfferLink, list_current_offer_links_for_mission
+from app.quotas import QuotaExceededError
 from app.users.models import User
 from app.webapp.dependency import require_web_session
 
@@ -435,10 +436,28 @@ def _raise_for_transition_error(error: Exception) -> NoReturn:
             code="mission_version_conflict",
             message="A missão mudou desde a última vez que você a viu. Atualize a página.",
         ) from error
+    if isinstance(error, QuotaExceededError):
+        _raise_for_quota_error(error)
     raise ApiError(
         status_code=status.HTTP_409_CONFLICT,
         code="mission_transition_rejected",
         message=str(error) or "Não foi possível concluir a operação nesta missão.",
+    ) from error
+
+
+def _raise_for_quota_error(error: QuotaExceededError) -> NoReturn:
+    """TASK-107: nunca só 'limite excedido' -- sempre `limit`/`current`/
+    `actions` estruturados para a UI oferecer ações reais."""
+    raise ApiError(
+        status_code=status.HTTP_409_CONFLICT,
+        code=f"quota_{error.kind.value}_exceeded",
+        message=str(error),
+        details={
+            "kind": error.kind.value,
+            "limit": error.limit,
+            "current": error.current,
+            "actions": list(error.actions),
+        },
     ) from error
 
 
@@ -497,6 +516,11 @@ async def create_mission(
             code="mission_creation_failed",
             message="Não foi possível criar a missão. Tente novamente mais tarde.",
         ) from error
+    except QuotaExceededError as error:
+        # TASK-107: criação já ativa a missão (transition_mission_async
+        # interno) -- cota estourada aqui tem a mesma resposta estruturada
+        # de qualquer outra transição.
+        _raise_for_quota_error(error)
     return _as_summary(mission)
 
 
@@ -701,6 +725,7 @@ async def _run_command(
         MissionVersionConflictError,
         InvalidMissionTransitionError,
         MissionTransitionConditionError,
+        QuotaExceededError,
     ) as error:
         _raise_for_transition_error(error)
 

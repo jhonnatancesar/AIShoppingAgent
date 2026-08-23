@@ -10,11 +10,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.collection.contracts import OfferCondition
 from app.collection.normalization import Availability
+from app.core.config import get_settings
 from app.core.errors import ApiError
 from app.database.dependency import get_web_async_session
+from app.database.time import utc_now
 from app.intent.contracts import MISSION_SOURCE_CODES
 from app.products.identity import ProductRequestKind, classify_product_request
 from app.products.search import ProductSearchHit, search_persisted_products
+from app.quotas import QuotaExceededError, check_and_reserve_search_quota_async
 from app.users.models import User
 from app.webapp.dependency import require_web_session
 
@@ -74,7 +77,7 @@ def _offer_out(hit: ProductSearchHit) -> ProductSearchOfferOut:
 async def search_products(
     q: Annotated[str, Query(min_length=2, max_length=2000)],
     stores: Annotated[list[str] | None, Query()] = None,
-    _user: User = Depends(require_web_session),
+    user: User = Depends(require_web_session),
     session: AsyncSession = Depends(get_web_async_session),
 ) -> ProductSearchResponse:
     source_codes = tuple(dict.fromkeys(stores or sorted(MISSION_SOURCE_CODES)))
@@ -85,6 +88,24 @@ async def search_products(
             code="invalid_search_store",
             message="Uma das lojas selecionadas não é válida.",
         )
+    # TASK-107: só reserva cota depois da validação de entrada acima --
+    # pesquisa inválida nunca consome `max_daily_searches`.
+    try:
+        await check_and_reserve_search_quota_async(
+            session, user=user, settings=get_settings(), now=utc_now()
+        )
+    except QuotaExceededError as error:
+        raise ApiError(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            code="quota_daily_searches_exceeded",
+            message=str(error),
+            details={
+                "kind": error.kind.value,
+                "limit": error.limit,
+                "current": error.current,
+                "actions": list(error.actions),
+            },
+        ) from error
     identity = classify_product_request(q)
     hits = await search_persisted_products(
         session,

@@ -17,9 +17,12 @@ from app.authentication.telegram_linking import (
     unlink_telegram,
 )
 from app.authorization import AuthorizationDenied, Permission, authorize
+from app.core.config import get_settings
 from app.core.errors import ApiError
 from app.database.dependency import get_session
+from app.database.time import utc_now
 from app.intent.contracts import MISSION_SOURCE_CODES
+from app.quotas import get_quota_usage, next_daily_reset_at, resolve_quota_limits
 from app.users.models import User, UserRole
 from app.users.registration import PREFERRED_CATEGORY_CODES
 from app.webapp.dependency import require_web_session
@@ -114,6 +117,19 @@ class NotificationPreferencesUpdate(BaseModel):
     notify_target_reached: bool
 
 
+class QuotaItemOut(BaseModel):
+    current: int
+    limit: int
+    near_limit: bool
+
+
+class AccountQuotaOut(BaseModel):
+    active_missions: QuotaItemOut
+    store_slots: QuotaItemOut
+    daily_searches: QuotaItemOut
+    daily_searches_reset_at: str
+
+
 class TelegramLinkChallengeOut(BaseModel):
     command: str
     expires_at: str
@@ -181,6 +197,36 @@ def get_account(
 ) -> AccountProfileOut:
     _authorize_account(session, user, Permission.PROFILE_MANAGE)
     return _as_account(session, user)
+
+
+@router.get(
+    "/quota",
+    operation_id="get_user_account_quota",
+    summary="Consultar cota de capacidade da própria conta",
+)
+def get_account_quota(
+    user: User = Depends(require_web_session),
+    session: Session = Depends(get_session),
+) -> AccountQuotaOut:
+    """TASK-107: sempre visível, mesmo longe do limite -- a UI decide
+    quando destacar o aviso usando `near_limit`."""
+    _authorize_account(session, user, Permission.PROFILE_MANAGE)
+    now = utc_now()
+    settings = get_settings()
+    limits = resolve_quota_limits(user, settings)
+    usage = get_quota_usage(session, user.id, now=now)
+    threshold = settings.quota_warning_threshold
+
+    def _item(current: int, limit: int) -> QuotaItemOut:
+        near_limit = limit > 0 and (current / limit) >= threshold
+        return QuotaItemOut(current=current, limit=limit, near_limit=near_limit)
+
+    return AccountQuotaOut(
+        active_missions=_item(usage.active_missions, limits.max_active_missions),
+        store_slots=_item(usage.store_slots, limits.max_store_slots),
+        daily_searches=_item(usage.daily_searches, limits.max_daily_searches),
+        daily_searches_reset_at=next_daily_reset_at(now).isoformat(),
+    )
 
 
 @router.put("/profile", operation_id="update_user_account_profile")

@@ -28,6 +28,7 @@ from app.missions.service import (
 )
 from app.products.identity import classify_product_request
 from app.products.models import Product
+from app.users.models import User, UserRole
 
 NOW = datetime(2026, 8, 2, 15, 0, tzinfo=UTC)
 
@@ -57,9 +58,22 @@ def _session(*scalar_results: object) -> MagicMock:
     return session
 
 
+def _owner_with_no_quota_pressure() -> User:
+    """TASK-107: dono sem override -- usa os defaults do sistema, e as
+    contagens de uso zeradas (ver `_activation_quota_clear`) sempre cabem
+    neles."""
+    return User(id=uuid4(), display_name="Dono", role=UserRole.USER)
+
+
+def _activation_quota_clear() -> tuple[object, ...]:
+    """TASK-107: sequência que `check_mission_activation_quota_async`
+    espera depois de `criteria_id`/`source_id`."""
+    return (_owner_with_no_quota_pressure(), 0, 0, 0, 0)
+
+
 def test_transition_mission_async_updates_state_version_and_appends_history() -> None:
     mission = _mission(MissionStatus.DRAFT)
-    session = _session(mission, uuid4(), uuid4())
+    session = _session(mission, uuid4(), uuid4(), *_activation_quota_clear())
 
     transition = asyncio.run(
         transition_mission_async(
@@ -164,13 +178,21 @@ def _creation_session(stores: list[_FakeStore]) -> MagicMock:
 
     session.add.side_effect = _capture_add
 
+    owner = _owner_with_no_quota_pressure()
     scalar_calls = {"count": 0}
 
     async def _scalar_side_effect(*_args: object, **_kwargs: object) -> object:
         scalar_calls["count"] += 1
         if scalar_calls["count"] == 1:
             return added_missions[-1]
-        return uuid4()  # critério e fonte existentes, ambos apenas precisam ser truthy
+        if scalar_calls["count"] in (2, 3):
+            return uuid4()  # critério e fonte existentes, só precisam ser truthy
+        if scalar_calls["count"] == 4:
+            # TASK-107: dono da missão, buscado pela checagem de cota.
+            return owner
+        # TASK-107: contagens de uso de cota, todas 0 -- cabem nos
+        # defaults do sistema.
+        return 0
 
     session.scalar = AsyncMock(side_effect=_scalar_side_effect)
     return session

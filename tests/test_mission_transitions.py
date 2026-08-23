@@ -22,6 +22,7 @@ from app.missions.service import (
     MissionVersionConflictError,
     transition_mission,
 )
+from app.users.models import User, UserRole
 from sqlalchemy import CheckConstraint, Enum, ForeignKeyConstraint, Index
 
 NOW = datetime(2026, 8, 2, 15, 0, tzinfo=UTC)
@@ -50,6 +51,20 @@ def _session(*scalar_results: object) -> MagicMock:
     return session
 
 
+def _owner_with_no_quota_pressure() -> User:
+    """TASK-107: dono sem override -- usa os defaults do sistema, e as
+    contagens de uso zeradas (ver `_activation_quota_clear`) sempre cabem
+    neles."""
+    return User(id=uuid4(), display_name="Dono", role=UserRole.USER)
+
+
+def _activation_quota_clear() -> tuple[object, ...]:
+    """TASK-107: sequência que `check_mission_activation_quota` espera
+    depois de `criteria_id`/`source_id` -- dono, missões ativas, store
+    slots, pesquisas diárias e fontes desta missão, todas 0/sem override."""
+    return (_owner_with_no_quota_pressure(), 0, 0, 0, 0)
+
+
 def test_transition_contract_contains_exact_lifecycle() -> None:
     assert set(TRANSITIONS.items()) == {
         ((MissionStatus.DRAFT, MissionCommand.ACTIVATE), MissionStatus.ACTIVE),
@@ -68,7 +83,7 @@ def test_transition_contract_contains_exact_lifecycle() -> None:
 
 def test_transition_updates_state_version_and_appends_history() -> None:
     mission = _mission(MissionStatus.DRAFT)
-    session = _session(mission, uuid4(), uuid4())
+    session = _session(mission, uuid4(), uuid4(), *_activation_quota_clear())
 
     transition = transition_mission(
         session,
@@ -220,7 +235,7 @@ def test_resume_rejects_reached_deadline() -> None:
 
     with pytest.raises(MissionTransitionConditionError):
         transition_mission(
-            _session(mission, uuid4(), uuid4()),
+            _session(mission, uuid4(), uuid4(), *_activation_quota_clear()),
             mission_id=mission.id,
             command=MissionCommand.RESUME,
             expected_state_version=0,

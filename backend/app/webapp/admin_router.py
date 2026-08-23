@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from fastapi import APIRouter, Depends, Query
@@ -90,6 +90,9 @@ class UserItem(BaseModel):
     lifecycle_status: UserLifecycleStatus
     is_active: bool
     mission_count: int = 0
+    max_active_missions_override: int | None = None
+    max_store_slots_override: int | None = None
+    max_daily_searches_override: int | None = None
 
 
 class UserListResponse(BaseModel):
@@ -107,6 +110,15 @@ class CreateUserRequest(BaseModel):
 class UpdateUserRequest(BaseModel):
     role: UserRole | None = None
     lifecycle_status: UserLifecycleStatus | None = None
+    # TASK-107: campos de cota são tri-state via `model_fields_set` --
+    # ausente do payload = não mexe; presente com um inteiro = define o
+    # override; presente como `null` explícito = limpa o override (volta
+    # ao default do sistema). Diferente de `role`/`lifecycle_status`
+    # acima, onde `None` sempre significa "não mexer" (não há caso de uso
+    # para "limpar" esses dois campos).
+    max_active_missions_override: Annotated[int | None, Field(gt=0)] = None
+    max_store_slots_override: Annotated[int | None, Field(gt=0)] = None
+    max_daily_searches_override: Annotated[int | None, Field(gt=0)] = None
     reason: str = Field(min_length=3, max_length=500)
 
 
@@ -317,6 +329,9 @@ def list_users(
                 lifecycle_status=user.lifecycle_status,
                 is_active=user.is_active,
                 mission_count=count,
+                max_active_missions_override=user.max_active_missions_override,
+                max_store_slots_override=user.max_store_slots_override,
+                max_daily_searches_override=user.max_daily_searches_override,
             )
         )
     return UserListResponse(items=items)
@@ -428,6 +443,15 @@ def update_user(
         if not user.is_active:
             _revoke_sessions(session, user.id)
             _stop_user_missions(session, user.id, actor, payload.reason)
+    # TASK-107: tri-state -- só mexe no override se o campo veio no
+    # payload (mesmo que `null`, que limpa o override e volta ao default).
+    fields_set = payload.model_fields_set
+    if "max_active_missions_override" in fields_set:
+        user.max_active_missions_override = payload.max_active_missions_override
+    if "max_store_slots_override" in fields_set:
+        user.max_store_slots_override = payload.max_store_slots_override
+    if "max_daily_searches_override" in fields_set:
+        user.max_daily_searches_override = payload.max_daily_searches_override
     _audit(
         session,
         actor,
@@ -437,6 +461,9 @@ def update_user(
         {
             "role": user.role.value,
             "status": user.lifecycle_status.value,
+            "max_active_missions_override": user.max_active_missions_override,
+            "max_store_slots_override": user.max_store_slots_override,
+            "max_daily_searches_override": user.max_daily_searches_override,
             "reason": payload.reason,
         },
     )
@@ -449,6 +476,9 @@ def update_user(
         role=user.role,
         lifecycle_status=user.lifecycle_status,
         is_active=user.is_active,
+        max_active_missions_override=user.max_active_missions_override,
+        max_store_slots_override=user.max_store_slots_override,
+        max_daily_searches_override=user.max_daily_searches_override,
         mission_count=session.scalar(
             select(func.count()).select_from(Mission).where(Mission.user_id == user.id)
         )

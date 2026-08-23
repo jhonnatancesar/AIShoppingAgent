@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 
 from app.collection.models import MissionOfferRelevance
 from app.collection.relevance import OfferRelevance
+from app.core.config import get_settings
 from app.database.time import utc_now
 from app.missions.models import (
     Mission,
@@ -34,7 +35,12 @@ from app.missions.schedule import staggered_next_run_at
 from app.offers.models import Offer
 from app.products.identity import ProductRequestKind, classify_product_request
 from app.products.models import Product
+from app.quotas.service import (
+    check_mission_activation_quota,
+    check_mission_activation_quota_async,
+)
 from app.stores.models import Store
+from app.users.models import User
 
 _DEFAULT_V1_SOURCE_CODES = (
     "pichau",
@@ -269,6 +275,19 @@ def transition_mission(
             raise MissionTransitionConditionError(
                 "A missão precisa de ao menos uma fonte selecionada."
             )
+        # TASK-107: cota checada aqui, antes de aplicar `next_status` -- a
+        # missão ainda não é `ACTIVE` neste ponto, então a checagem não
+        # conta a própria transição duas vezes. Nunca pausa/cancela nada
+        # sozinho, só recusa a transição (`QuotaExceededError`).
+        owner = session.scalar(select(User).where(User.id == mission.user_id))
+        assert owner is not None  # FK RESTRICT garante que sempre existe
+        check_mission_activation_quota(
+            session,
+            user=owner,
+            mission_id=mission.id,
+            settings=get_settings(),
+            now=accepted_at,
+        )
     if command is MissionCommand.RESUME and _deadline_reached(mission, accepted_at):
         raise MissionTransitionConditionError(
             "Uma missão expirada não pode ser retomada."
@@ -361,6 +380,16 @@ async def transition_mission_async(
             raise MissionTransitionConditionError(
                 "A missão precisa de ao menos uma fonte selecionada."
             )
+        # TASK-107: mesma checagem de cota da versão síncrona.
+        owner = await session.scalar(select(User).where(User.id == mission.user_id))
+        assert owner is not None  # FK RESTRICT garante que sempre existe
+        await check_mission_activation_quota_async(
+            session,
+            user=owner,
+            mission_id=mission.id,
+            settings=get_settings(),
+            now=accepted_at,
+        )
     if command is MissionCommand.RESUME and _deadline_reached(mission, accepted_at):
         raise MissionTransitionConditionError(
             "Uma missão expirada não pode ser retomada."
