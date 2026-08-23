@@ -18,7 +18,12 @@ from app.collection.contracts import (
     RawCollectedOffer,
 )
 from app.collection.errors import ProviderBlockedError
-from app.collection.models import CollectionRun, CollectionRunStatus, PriceObservation
+from app.collection.models import (
+    CollectionRun,
+    CollectionRunStatus,
+    PriceObservation,
+    UserCollectionQueueState,
+)
 from app.collection.normalization import Availability
 from app.collection.orchestration import CollectionOrchestrator, claim_due_collections
 from app.database.session import (
@@ -165,6 +170,132 @@ def _seed_due_mission(sessions, now: datetime) -> tuple:
             )
         )
         return mission.id, stores["pichau"].id, stores["kabum"].id
+
+
+def _seed_due_mission_for_new_user(sessions, now: datetime, *, label: str) -> tuple:
+    """TASK-108: um usuário próprio, uma missão due, uma única fonte
+    (pichau) -- o mínimo para exercitar a fila justa por usuário sem o
+    ruído de múltiplas fontes por missão."""
+    with sessions.begin() as session:
+        store = session.scalar(select(Store).where(Store.code == "pichau"))
+        user = User(display_name=f"TASK-108 {label}", role=UserRole.USER)
+        session.add(user)
+        session.flush()
+        mission = Mission(
+            user_id=user.id, title=f"TASK-108 {label}", status=MissionStatus.ACTIVE
+        )
+        session.add(mission)
+        session.flush()
+        session.add_all(
+            (
+                MissionCriteria(mission_id=mission.id, search_query="synthetic GPU"),
+                MissionSchedule(
+                    mission_id=mission.id,
+                    interval_minutes=60,
+                    next_run_at=now,
+                    is_enabled=True,
+                ),
+                MissionSource(mission_id=mission.id, store_id=store.id),
+            )
+        )
+        return user.id, mission.id
+
+
+def test_fair_queue_claims_only_max_users_and_leaves_others_untouched(
+    integration_database,
+) -> None:
+    """TASK-108: com `max_users=1`, só um dos dois usuários elegíveis tem
+    claim reivindicada nesta rodada; o outro fica intocado (schedule
+    continua due, sem `CollectionRun` criada)."""
+    now = datetime.now(UTC).replace(microsecond=0)
+    user_a, mission_a = _seed_due_mission_for_new_user(
+        integration_database.sessions, now, label="A"
+    )
+    user_b, mission_b = _seed_due_mission_for_new_user(
+        integration_database.sessions, now, label="B"
+    )
+
+    async def _claim():
+        async with integration_database.async_sessions() as session, session.begin():
+            return await claim_due_collections(session, now=now, limit=25, max_users=1)
+
+    claims = asyncio.run(_claim())
+
+    assert len(claims) == 1
+    claimed_mission_ids = {claim.mission_id for claim in claims}
+    assert claimed_mission_ids in ({mission_a}, {mission_b})
+
+    with integration_database.sessions() as session:
+        runs = list(session.scalars(select(CollectionRun)))
+        assert len(runs) == 1
+        untouched_mission = mission_b if claimed_mission_ids == {mission_a} else mission_a
+        schedule = session.scalar(
+            select(MissionSchedule).where(
+                MissionSchedule.mission_id == untouched_mission
+            )
+        )
+        assert schedule.next_run_at == now  # não avançou -- não foi tocada
+
+        claimed_user = user_a if claimed_mission_ids == {mission_a} else user_b
+        untouched_user = user_b if claimed_mission_ids == {mission_a} else user_a
+        assert session.get(UserCollectionQueueState, claimed_user) is not None
+        assert session.get(UserCollectionQueueState, untouched_user) is None
+
+
+def test_fair_queue_cooldown_is_per_user_and_does_not_block_others(
+    integration_database,
+) -> None:
+    """TASK-108: depois que A é processado (fica em cooldown), uma nova
+    rodada no MESMO instante escolhe B -- o cooldown de A nunca bloqueia
+    B, que segue elegível imediatamente."""
+    now = datetime.now(UTC).replace(microsecond=0)
+    user_a, mission_a = _seed_due_mission_for_new_user(
+        integration_database.sessions, now, label="A"
+    )
+    user_b, mission_b = _seed_due_mission_for_new_user(
+        integration_database.sessions, now, label="B"
+    )
+
+    async def _claim():
+        async with integration_database.async_sessions() as session, session.begin():
+            return await claim_due_collections(
+                session,
+                now=now,
+                limit=25,
+                max_users=1,
+                user_cooldown_min_seconds=60.0,
+                user_cooldown_max_seconds=60.0,
+            )
+
+    first = asyncio.run(_claim())
+    assert len(first) == 1
+    first_user = user_a if first[0].mission_id == mission_a else user_b
+
+    with integration_database.sessions() as session:
+        state = session.get(UserCollectionQueueState, first_user)
+        assert state.last_processed_at == now
+        assert state.next_eligible_at > now
+
+    # TASK-108: a missão do usuário já processado ganha outra execução due
+    # no mesmo instante (simula "ainda tinha trabalho pendente") --
+    # reforça só o `next_run_at`, sem tocar no cooldown do usuário.
+    with integration_database.sessions.begin() as session:
+        schedule = session.scalar(
+            select(MissionSchedule).where(
+                MissionSchedule.mission_id
+                == (mission_a if first_user == user_a else mission_b)
+            )
+        )
+        schedule.next_run_at = now
+
+    second = asyncio.run(_claim())
+    assert len(second) == 1
+    second_mission = second[0].mission_id
+    second_user = user_a if second_mission == mission_a else user_b
+
+    # O usuário do primeiro ciclo está em cooldown -- a segunda rodada,
+    # no mesmo `now`, nunca o escolhe de novo; escolhe o outro usuário.
+    assert second_user != first_user
 
 
 def test_orchestrator_isolates_source_failure_and_publishes_real_events(

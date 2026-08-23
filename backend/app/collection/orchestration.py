@@ -10,6 +10,7 @@ transações jamais mantém um `await` externo (IA, HTTP, Playwright) aberto.
 
 import asyncio
 import logging
+import random
 import traceback
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
@@ -51,6 +52,7 @@ from app.collection.models import (
     MissionOfferRelevance,
     OfferInstallmentOption,
     PriceObservation,
+    UserCollectionQueueState,
 )
 from app.collection.normalization import (
     Availability,
@@ -89,7 +91,6 @@ from app.missions.models import (
 )
 from app.missions.schedule import (
     advance_schedule,
-    find_due_schedules_async,
     next_source_backoff,
     staggered_next_run_at,
 )
@@ -251,19 +252,132 @@ async def recover_stale_runs(
     return len(runs)
 
 
+async def _select_due_schedules_for_batch(
+    session: AsyncSession,
+    *,
+    due_at: datetime,
+    limit: int,
+    max_users: int,
+) -> list[tuple[MissionSchedule, UUID]]:
+    """TASK-108: fila justa por usuário -- camada ortogonal ao backoff por
+    provider (`DEC-046`, intocado). Entre os agendamentos due, devolve só
+    os de até `max_users` usuários elegíveis (fora do cooldown
+    individual), escolhidos por round-robin: quem nunca foi processado
+    (`last_processed_at IS NULL`) vence sempre; entre os já processados,
+    o mais antigo primeiro. O cooldown de um usuário nunca exclui os
+    demais candidatos -- eles só são ignorados nesta seleção, sem afetar
+    sua própria agenda (`MissionSchedule.next_run_at` continua vencida
+    até serem escolhidos num ciclo futuro)."""
+    rows = (
+        await session.execute(
+            select(MissionSchedule, Mission.user_id)
+            .join(Mission, Mission.id == MissionSchedule.mission_id)
+            .where(
+                MissionSchedule.is_enabled.is_(True),
+                MissionSchedule.next_run_at <= due_at,
+                Mission.status == MissionStatus.ACTIVE,
+                or_(Mission.expires_at.is_(None), Mission.expires_at > due_at),
+            )
+            .order_by(MissionSchedule.next_run_at, MissionSchedule.id)
+            .limit(limit)
+            .with_for_update(skip_locked=True, of=MissionSchedule)
+        )
+    ).all()
+    if not rows:
+        return []
+
+    schedules_by_user: dict[UUID, list[MissionSchedule]] = {}
+    user_order: list[UUID] = []
+    for schedule, user_id in rows:
+        if user_id not in schedules_by_user:
+            schedules_by_user[user_id] = []
+            user_order.append(user_id)
+        schedules_by_user[user_id].append(schedule)
+
+    states = {
+        state.user_id: state
+        for state in await session.scalars(
+            select(UserCollectionQueueState).where(
+                UserCollectionQueueState.user_id.in_(user_order)
+            )
+        )
+    }
+
+    def sort_key(user_id: UUID) -> tuple[int, object]:
+        last_processed_at = states[user_id].last_processed_at if user_id in states else None
+        if last_processed_at is None:
+            return (0, str(user_id))
+        return (1, last_processed_at, str(user_id))
+
+    eligible_users = [
+        user_id
+        for user_id in user_order
+        if user_id not in states
+        or states[user_id].next_eligible_at is None
+        or states[user_id].next_eligible_at <= due_at
+    ]
+    eligible_users.sort(key=sort_key)
+    selected_users = eligible_users[:max_users]
+
+    return [
+        (schedule, user_id)
+        for user_id in selected_users
+        for schedule in schedules_by_user[user_id]
+    ]
+
+
+async def _advance_user_queue_state(
+    session: AsyncSession,
+    *,
+    user_id: UUID,
+    processed_at: datetime,
+    cooldown_min_seconds: float,
+    cooldown_max_seconds: float,
+) -> None:
+    """TASK-108: registra que este usuário acabou de ter um lote real
+    reivindicado -- fica inelegível por um jitter curto e, por
+    consequência de `last_processed_at` avançar, vai para o fim da fila
+    round-robin. Nunca afeta outros usuários."""
+    next_eligible_at = processed_at + timedelta(
+        seconds=random.uniform(cooldown_min_seconds, cooldown_max_seconds)
+    )
+    statement = (
+        postgresql_insert(UserCollectionQueueState)
+        .values(
+            user_id=user_id,
+            last_processed_at=processed_at,
+            next_eligible_at=next_eligible_at,
+            updated_at=processed_at,
+        )
+        .on_conflict_do_update(
+            index_elements=[UserCollectionQueueState.user_id],
+            set_={
+                "last_processed_at": processed_at,
+                "next_eligible_at": next_eligible_at,
+                "updated_at": processed_at,
+            },
+        )
+    )
+    await session.execute(statement)
+
+
 async def claim_due_collections(
     session: AsyncSession,
     *,
     now: datetime | None = None,
     limit: int = 25,
+    max_users: int = 1,
+    user_cooldown_min_seconds: float = 60.0,
+    user_cooldown_max_seconds: float = 180.0,
 ) -> tuple[ClaimedCollection, ...]:
     """Reserva fonte por fonte e avança a agenda numa transação curta."""
     effective_now = now or utc_now()
     claims: list[ClaimedCollection] = []
-    schedules = await find_due_schedules_async(
-        session, due_at=effective_now, limit=limit
+    processed_users: set[UUID] = set()
+    schedules = await _select_due_schedules_for_batch(
+        session, due_at=effective_now, limit=limit, max_users=max_users
     )
-    for schedule in schedules:
+    for schedule, user_id in schedules:
         mission_id = schedule.mission_id
         running = await session.scalar(
             select(CollectionRun.id)
@@ -327,6 +441,19 @@ async def claim_due_collections(
         if mission_claims:
             advance_schedule(schedule, started_at=effective_now)
             claims.extend(mission_claims)
+            processed_users.add(user_id)
+    # TASK-108: só usuários que realmente contribuíram com uma claim real
+    # nesta rodada entram em cooldown -- um usuário selecionado cujas
+    # missões due não geraram nenhuma claim (já rodando, fontes em
+    # backoff) não é penalizado por um lote vazio.
+    for user_id in processed_users:
+        await _advance_user_queue_state(
+            session,
+            user_id=user_id,
+            processed_at=effective_now,
+            cooldown_min_seconds=user_cooldown_min_seconds,
+            cooldown_max_seconds=user_cooldown_max_seconds,
+        )
     await session.flush()
     return tuple(claims)
 
@@ -355,6 +482,9 @@ class CollectionOrchestrator:
         stale_run_minutes: int = 10,
         max_concurrency: int = 4,
         claim_deadline_seconds: float = 300.0,
+        max_concurrent_user_batches: int = 1,
+        user_cooldown_min_seconds: float = 60.0,
+        user_cooldown_max_seconds: float = 180.0,
     ) -> None:
         if schedule_interval_minutes <= 0:
             raise ValueError("schedule_interval_minutes must be positive")
@@ -366,6 +496,12 @@ class CollectionOrchestrator:
             raise ValueError("max_concurrency must be between 1 and 4")
         if claim_deadline_seconds <= 0:
             raise ValueError("claim_deadline_seconds must be positive")
+        if max_concurrent_user_batches <= 0:
+            raise ValueError("max_concurrent_user_batches must be positive")
+        if user_cooldown_min_seconds <= 0 or user_cooldown_max_seconds <= 0:
+            raise ValueError("user cooldown seconds must be positive")
+        if user_cooldown_max_seconds < user_cooldown_min_seconds:
+            raise ValueError("user cooldown max must not be smaller than min")
         self._session_factory = session_factory
         self._adapter = adapter
         self._ai_manager = ai_manager
@@ -377,6 +513,11 @@ class CollectionOrchestrator:
         self._stale_after = timedelta(minutes=stale_run_minutes)
         self._claim_deadline_seconds = claim_deadline_seconds
         self._semaphore = asyncio.Semaphore(max_concurrency)
+        # TASK-108: fila justa por usuário -- camada ortogonal ao backoff
+        # por provider (DEC-046), que continua intocado.
+        self._max_concurrent_user_batches = max_concurrent_user_batches
+        self._user_cooldown_min_seconds = user_cooldown_min_seconds
+        self._user_cooldown_max_seconds = user_cooldown_max_seconds
 
     async def run_batch(
         self, *, now: datetime | None = None, limit: int = 25
@@ -395,7 +536,12 @@ class CollectionOrchestrator:
                 session, now=effective_now, stale_after=self._stale_after
             )
             claims = await claim_due_collections(
-                session, now=effective_now, limit=limit
+                session,
+                now=effective_now,
+                limit=limit,
+                max_users=self._max_concurrent_user_batches,
+                user_cooldown_min_seconds=self._user_cooldown_min_seconds,
+                user_cooldown_max_seconds=self._user_cooldown_max_seconds,
             )
         # Transação da Fase A já fechada neste ponto (fim do `async with`
         # acima) -- a Fase B (TASK-083) roda inteiramente fora dela.

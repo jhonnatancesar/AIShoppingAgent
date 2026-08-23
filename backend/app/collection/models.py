@@ -381,3 +381,37 @@ class MissionOfferRelevance(Base):
         default=utc_now,
         server_default=func.now(),
     )
+
+
+class UserCollectionQueueState(Base):
+    """Estado da fila justa por usuário do `collection_worker` (TASK-108).
+
+    Camada ortogonal ao backoff por provider (`MissionSource.
+    next_eligible_at`, `DEC-046`) — esta aqui protege contra um único
+    usuário monopolizar o worker, não contra bloqueio de uma loja.
+    `last_processed_at=NULL` (usuário nunca processado) sempre vence no
+    desempate round-robin. `next_eligible_at` é o cooldown individual:
+    enquanto no futuro, o usuário fica de fora da seleção do próximo
+    lote, mas nunca pausa a fila para os demais.
+    """
+
+    __tablename__ = "user_collection_queue_state"
+
+    user_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    last_processed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    next_eligible_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+        onupdate=utc_now,
+        server_default=func.now(),
+    )

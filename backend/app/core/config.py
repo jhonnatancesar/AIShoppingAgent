@@ -188,6 +188,13 @@ class Settings(BaseSettings):
     default_max_store_slots: int = Field(default=18, ge=1, le=10000)
     default_max_daily_searches: int = Field(default=30, ge=1, le=100000)
     quota_warning_threshold: float = Field(default=0.8, gt=0, le=1.0)
+    # TASK-108: fila justa por usuário -- camada ortogonal ao backoff por
+    # provider (já existente, intocado). Cooldown curto (1-3 min) o
+    # bastante para não represar throughput, longo o bastante pra evitar
+    # que o mesmo usuário volte imediatamente ao topo da fila.
+    max_concurrent_user_batches: int = Field(default=1, ge=1, le=4)
+    user_cooldown_min_seconds: float = Field(default=60.0, gt=0, le=600)
+    user_cooldown_max_seconds: float = Field(default=180.0, gt=0, le=600)
 
     @field_validator("edge_cdp_url")
     @classmethod
@@ -207,6 +214,10 @@ class Settings(BaseSettings):
         if self.event_retry_cap_seconds < self.event_retry_base_seconds:
             raise ValueError(
                 "event retry cap must not be smaller than event retry base"
+            )
+        if self.user_cooldown_max_seconds < self.user_cooldown_min_seconds:
+            raise ValueError(
+                "user cooldown max must not be smaller than user cooldown min"
             )
         for secret_field, file_field in _SECRET_FILE_FIELDS.items():
             direct_value = getattr(self, secret_field)
