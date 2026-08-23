@@ -1,5 +1,64 @@
 # Decision Log
 
+## DEC-095 — TASK-108: fila justa por usuário, cooldown individual, sem monopolização
+
+- **Data:** 2026-08-22.
+- **Classificação:** Planejamento/documentação; nenhum código escrito.
+- **Contexto real levantado antes de propor desenho:** `run_batch`/
+  `claim_due_collections` (`app/collection/orchestration.py`) hoje não têm
+  nenhum conceito de usuário — claims de várias missões/usuários entram
+  misturadas no mesmo batch e rodam em paralelo sob um único
+  `asyncio.Semaphore(max_concurrency)` global. O único isolamento
+  existente é por missão (lock de seção crítica) e por `(mission_id,
+  store_id)` (backoff, `DEC-046`) — preservado sem alteração.
+- **Decisão:** introduzir fila FIFO/round-robin por `user_id`, com
+  `max_concurrent_user_batches=1` (só um usuário processado por vez) e
+  cooldown individual por usuário (`user_cooldown_min/max_seconds`,
+  10–15 min com jitter) depois que o lote desse usuário termina —
+  cooldown nunca bloqueia outros usuários elegíveis, que seguem
+  imediatamente. `coupon_worker` (`DEC-093`) permanece inteiramente fora
+  dessa fila. Pesquisa Web recebe rate-limit (não fila de processamento
+  própria), reaproveitando `max_daily_searches` da `DEC-094`.
+- **Pontos assumidos sem confirmação total**, registrados como abertos em
+  `docs/tasks/TASK-108.md`: interpretação do cooldown como não-bloqueante
+  para outros usuários; "fila" de pesquisa web como rate-limit e não
+  enfileiramento real.
+- **Fora de escopo:** qualquer alteração nos limites por provider já
+  existentes, implementação de código nesta rodada.
+
+## DEC-094 — TASK-107: cotas por usuário, sem plano/tier novo
+
+- **Data:** 2026-08-22.
+- **Classificação:** Planejamento/documentação; nenhum código escrito.
+- **Decisão:** limitar por USER `max_active_missions=5`,
+  `max_store_slots=18` (1 loja de missão `ACTIVE` = 1 slot) e
+  `max_daily_searches=30`, com revalidação em `resume` e em edição de
+  lojas de missão ativa. `PAUSED`/`CANCELLED`/`EXPIRED`/`COMPLETED` nunca
+  consomem quota. Nenhuma pausa/cancelamento automático em nenhuma
+  circunstância — toda liberação de capacidade é ação explícita do
+  usuário. UX sempre visível (uso/limite), aviso antes do limite, e
+  explicação com ações contextuais ao bater a quota (nunca só "limite
+  excedido"). DEV/ADMIN pode sobrescrever quota por usuário no painel já
+  existente (`admin_router.py`), com a mesma auditoria já aplicada a toda
+  mutação admin.
+- **Compatibilidade com `DEC-073`:** não introduz `user_roles`, múltiplos
+  papéis, RBAC avançado nem planos FREE/PLUS/PRO — esses continuam
+  reservados para a V2. Os defaults ficam como constantes de sistema
+  (`Settings`) com override por usuário como único mecanismo de
+  diferenciação hoje; isso deixa o caminho pronto para um futuro sistema
+  de planos aplicar valores por tier sem redesenhar o mecanismo de
+  verificação/consumo.
+- **Base real no schema:** `MissionStatus` (string enum já existente,
+  `active`/`paused`/`cancelled`/`expired`/`completed`/`draft`),
+  `MissionSource` (`mission_sources`, uma linha por `(mission, store)`,
+  contada só para missões `ACTIVE` do usuário — diferente da contagem já
+  existente em `_mission_prelist_round_complete`, que não filtra por
+  status). `max_daily_searches` não tem infraestrutura hoje; padrão mais
+  próximo a adaptar é `reserve_telegram_update`
+  (`app/telegram/limits.py`), trocando a janela de 1 minuto por 1 dia.
+- **Fora de escopo:** sistema de planos, implementação de código nesta
+  rodada.
+
 ## DEC-093 — Cupom é subsistema independente, nunca acoplado ao StoreProvider/coleta
 
 - **Data:** 2026-08-22.
