@@ -1,5 +1,42 @@
 # Decision Log
 
+## DEC-096 — TASK-109: migrar collection_worker para Windows nativo com Edge
+
+- **Data:** 2026-08-22.
+- **Classificação:** Preflight + plano de migração; nenhum código escrito.
+- **Decisão:** tirar o `collection_worker` do Docker/Linux (Playwright/
+  Chromium) e rodá-lo como processo Windows nativo controlando um Edge
+  real via CDP loopback — generaliza o padrão já validado para Magalu
+  (`DEC-090`) e Terabyte (esta sessão, TASK-105) para todas as seis
+  lojas. API, PostgreSQL, Telegram notifier, `ops_controller` e
+  observabilidade continuam em Docker.
+- **Achado favorável do preflight:** a abstração operacional já existe
+  pronta para isso -- `app/admin/service_ops.py`
+  (`ServiceOps`/`ManagedService`) é runtime-neutro, e
+  `app/ops_controller.py` já isola Docker num único
+  `DockerOpsAdapter` ("Único ponto que conhece Docker"). A mudança para
+  suportar um worker Windows fica local a `ops_controller.py` (novo
+  adapter + dispatch por serviço); o painel ADMIN não muda nada.
+- **Sem Browser Bridge:** como o worker passa a rodar na mesma máquina
+  do Edge, controla via CDP loopback diretamente -- um bridge de rede só
+  faria sentido em hosts diferentes.
+- **Execução:** Task Scheduler (não Windows Service/Session 0) -- o
+  servidor já faz login automático e bloqueia a tela; Session 0 isolaria
+  o Edge da sessão interativa que ele pode precisar.
+- **Ordem de validação antes de remover Chromium:** Magalu/Terabyte
+  (já comprovadas) → Mercado Livre (Edge/CDP como primário, hoje só
+  fallback) → Amazon/Kabum/Pichau (nunca testadas em Edge/CDP, mesma
+  auditoria real sem evasão já usada nas outras). Chromium só sai depois
+  das seis confirmadas.
+- **Riscos/pontos em aberto registrados em `docs/tasks/TASK-109.md`:**
+  canal de status/controle do `ops_controller` para o worker Windows
+  (WSL2 → host) ainda sem solução única óbvia; suposição não confirmada
+  de que Postgres/API em `127.0.0.1` do Docker Desktop/WSL2 aparecem no
+  `127.0.0.1` do host Windows; comportamento de Edge/CDP com sessão
+  Windows bloqueada (não desconectada) não documentado ainda.
+- **Fora de escopo:** implementação, deploy, remoção do Chromium antes
+  da validação completa das seis lojas.
+
 ## DEC-095 — TASK-108: fila justa por usuário, cooldown individual, sem monopolização
 
 - **Data:** 2026-08-22.
