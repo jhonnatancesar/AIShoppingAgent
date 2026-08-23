@@ -1,6 +1,6 @@
 # TASK-107 — Cotas e capacidade por usuário
 
-Status: **Backend implementado no DEV (commit local `ac34725`, não publicado em `origin/main`); UX obrigatória do frontend ainda não implementada.**
+Status: **Backend e frontend implementados no DEV (commits locais `ac34725`/`faa939c`/`83a9572`, não publicados em `origin/main`).**
 
 ## Implementação (2026-08-22)
 
@@ -35,12 +35,30 @@ Status: **Backend implementado no DEV (commit local `ac34725`, não publicado em
   desde a TASK-104A (usa `"magalu"`, hoje uma loja válida) — sinalizado
   como task separada, não corrigido aqui.
 
+## Frontend (2026-08-22)
+
+- `QuotaSummaryCard`/`QuotaUsageRow` (`components/QuotaSummary.tsx`):
+  missões ativas, lojas monitoradas e pesquisas hoje, sempre com
+  uso/limite; aviso visual quando `near_limit` (já calculado pelo
+  backend). Exibido na Minha Conta via novo `accountApi.getQuota()`.
+- `QuotaExceededNotice`/`quotaDetailsFromError`
+  (`components/QuotaExceededNotice.tsx`): traduz `ApiError.details`
+  (kind/limit/current/actions) em mensagem real + botões de ação
+  (reduzir lojas, pausar, cancelar, gerenciar missões) — nunca erro
+  genérico. Integrado em criação de missão, `resume` (detalhe da
+  missão) e pesquisa.
+- Pesquisa (`ProductSearchPage.tsx`): mostra uso diário sempre visível;
+  ao bater a cota, mensagem clara ("Você já fez X/Y pesquisas hoje"),
+  sem botão de ação (só esperar a renovação).
+- ADMIN (`AdminHome.tsx`): edição tri-state dos três overrides por
+  usuário, reaproveitando o `PATCH` já existente.
+- Teste novo `tests/quota-components.mjs` (render de uso + ações da
+  cota excedida). `npm run lint`/`npm run build` limpos; suíte
+  scriptada existente (account/search/offer/offers) continua passando.
+
 ## Pendente
 
-- UX obrigatória no frontend (exibição de uso/limite, aviso perto do
-  limite, mensagens com ações contextuais ao bater a quota) — nenhuma
-  linha de frontend foi escrita ainda.
-- Suíte de integração real (Postgres) não executada.
+- Suíte de integração real (Postgres) não executada nesta rodada.
 
 ## Objetivo
 
