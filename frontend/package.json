@@ -11,6 +11,7 @@
     "test:search": "node tests/product-search-page.mjs",
     "test:offers": "node tests/offers-list-page.mjs",
     "test:account": "node tests/account-page.mjs",
+    "test:quota": "node tests/quota-components.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

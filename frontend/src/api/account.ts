@@ -1,5 +1,5 @@
 import { api } from './client'
-import type { AccountProfile, TelegramLinkChallenge } from './types'
+import type { AccountProfile, AccountQuota, TelegramLinkChallenge } from './types'
 
 export interface AccountProfileUpdate {
   display_name: string
@@ -15,6 +15,7 @@ export interface NotificationPreferencesUpdate {
 
 export const accountApi = {
   get: () => api.get<AccountProfile>('/account'),
+  getQuota: () => api.get<AccountQuota>('/account/quota'),
   updateProfile: (payload: AccountProfileUpdate) =>
     api.put<AccountProfile>('/account/profile', payload),
   updateNotifications: (payload: NotificationPreferencesUpdate) =>

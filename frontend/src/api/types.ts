@@ -82,6 +82,36 @@ export interface AccountProfile {
   available_categories: AccountOption[]
 }
 
+// TASK-107: cota de capacidade por usuário.
+export interface QuotaItem {
+  current: number
+  limit: number
+  near_limit: boolean
+}
+
+export interface AccountQuota {
+  active_missions: QuotaItem
+  store_slots: QuotaItem
+  daily_searches: QuotaItem
+  daily_searches_reset_at: string
+}
+
+// Mesmo vocabulário de `QuotaExceededError.actions` no backend
+// (`app.quotas.service`) -- nunca inventado no cliente.
+export type QuotaAction =
+  | 'pause_mission'
+  | 'cancel_mission'
+  | 'manage_missions'
+  | 'reduce_mission_stores'
+  | 'wait_for_daily_reset'
+
+export interface QuotaErrorDetails {
+  kind: 'active_missions' | 'store_slots' | 'daily_searches'
+  limit: number
+  current: number
+  actions: QuotaAction[]
+}
+
 export interface TelegramLinkChallenge {
   command: string
   expires_at: string

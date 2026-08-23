@@ -3,7 +3,9 @@ import { useNavigate } from 'react-router-dom'
 import { ApiError } from '../../api/client'
 import { missionsApi } from '../../api/missions'
 import { STORE_LABELS } from './statusLabels'
+import type { QuotaErrorDetails } from '@/api/types'
 import { PageHeader } from '@/components/PageHeader'
+import { QuotaExceededNotice, quotaDetailsFromError } from '@/components/QuotaExceededNotice'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 
@@ -17,6 +19,7 @@ export function MissionCreatePage() {
   const [targetCurrency, setTargetCurrency] = useState('BRL')
   const [sourceCodes, setSourceCodes] = useState<string[]>([])
   const [error, setError] = useState<string | null>(null)
+  const [quotaError, setQuotaError] = useState<QuotaErrorDetails | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
   function toggleSource(code: string) {
@@ -28,6 +31,7 @@ export function MissionCreatePage() {
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setError(null)
+    setQuotaError(null)
     setSubmitting(true)
     try {
       const mission = await missionsApi.create({
@@ -42,11 +46,19 @@ export function MissionCreatePage() {
       }
       navigate(`/app/missions/${mission.id}`, { replace: true })
     } catch (submitError) {
-      setError(
-        submitError instanceof ApiError
-          ? submitError.message
-          : 'Não foi possível criar a missão. Tente novamente.',
-      )
+      if (submitError instanceof ApiError) {
+        const details = quotaDetailsFromError(submitError)
+        if (details) {
+          // TASK-107: nunca mostra "erro genérico" quando a cota bloqueia
+          // a criação -- o motivo e as ações vêm do próprio backend.
+          setQuotaError(details)
+          setError(submitError.message)
+        } else {
+          setError(submitError.message)
+        }
+      } else {
+        setError('Não foi possível criar a missão. Tente novamente.')
+      }
     } finally {
       setSubmitting(false)
     }
@@ -116,7 +128,11 @@ export function MissionCreatePage() {
           </div>
         </div>
 
-        {error ? <p className="form-error">{error}</p> : null}
+        {quotaError ? (
+          <QuotaExceededNotice message={error ?? ''} details={quotaError} />
+        ) : error ? (
+          <p className="form-error">{error}</p>
+        ) : null}
 
         <div className="mission-actions">
           <Button type="submit" disabled={submitting}>

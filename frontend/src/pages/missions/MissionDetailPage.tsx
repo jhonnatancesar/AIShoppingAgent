@@ -2,8 +2,9 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { ApiError } from '../../api/client'
 import { missionsApi } from '../../api/missions'
-import type { MissionDetail } from '../../api/types'
+import type { MissionDetail, QuotaErrorDetails } from '../../api/types'
 import { STATUS_LABELS, STORE_LABELS } from './statusLabels'
+import { QuotaExceededNotice, quotaDetailsFromError } from '@/components/QuotaExceededNotice'
 
 const STORE_CODES = ['pichau', 'terabyte', 'amazon', 'kabum', 'magalu', 'mercadolivre']
 
@@ -11,6 +12,7 @@ export function MissionDetailPage() {
   const { missionId } = useParams<{ missionId: string }>()
   const [mission, setMission] = useState<MissionDetail | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [quotaError, setQuotaError] = useState<QuotaErrorDetails | null>(null)
   const [actionPending, setActionPending] = useState(false)
 
   const load = useCallback(async () => {
@@ -36,6 +38,7 @@ export function MissionDetailPage() {
     if (!mission) return
     setActionPending(true)
     setError(null)
+    setQuotaError(null)
     try {
       await action(mission.id, mission.state_version)
       await load()
@@ -51,11 +54,15 @@ export function MissionDetailPage() {
         await load()
         return
       }
-      setError(
-        actionError instanceof ApiError
-          ? actionError.message
-          : 'Não foi possível concluir a ação.',
-      )
+      if (actionError instanceof ApiError) {
+        // TASK-107: `resume` pode ser recusado por cota -- mostra motivo
+        // e ações reais, nunca só "não foi possível concluir a ação".
+        const details = quotaDetailsFromError(actionError)
+        if (details) setQuotaError(details)
+        setError(actionError.message)
+        return
+      }
+      setError('Não foi possível concluir a ação.')
     } finally {
       setActionPending(false)
     }
@@ -92,7 +99,11 @@ export function MissionDetailPage() {
         </span>
       </div>
 
-      {error ? <p className="form-error">{error}</p> : null}
+      {quotaError ? (
+        <QuotaExceededNotice message={error ?? ''} details={quotaError} />
+      ) : error ? (
+        <p className="form-error">{error}</p>
+      ) : null}
 
       {mission.criteria ? (
         <div className="mission-section">

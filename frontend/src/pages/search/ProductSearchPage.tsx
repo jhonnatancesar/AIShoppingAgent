@@ -1,12 +1,15 @@
-import { useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { motion } from 'motion/react'
 import { ExternalLink, Eye, Search, ShoppingBag, Target } from 'lucide-react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
+import { accountApi } from '@/api/account'
 import { ApiError } from '@/api/client'
 import { missionsApi } from '@/api/missions'
 import { searchApi } from '@/api/search'
-import type { ProductSearchOffer, ProductSearchResponse } from '@/api/types'
+import type { AccountQuota, ProductSearchOffer, ProductSearchResponse, QuotaErrorDetails } from '@/api/types'
 import { PageHeader } from '@/components/PageHeader'
+import { QuotaExceededNotice, quotaDetailsFromError } from '@/components/QuotaExceededNotice'
+import { QuotaUsageRow } from '@/components/QuotaSummary'
 import { EmptyState, ErrorState, LoadingState } from '@/components/StatePanel'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -34,16 +37,42 @@ export function ProductSearchPage() {
   const [searching, setSearching] = useState(false)
   const [monitoring, setMonitoring] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [quotaError, setQuotaError] = useState<QuotaErrorDetails | null>(null)
+  const [quota, setQuota] = useState<AccountQuota | null>(null)
+
+  async function loadQuota() {
+    try {
+      const loaded = await accountApi.getQuota()
+      if (loaded) setQuota(loaded)
+    } catch {
+      // TASK-107: uso diário é só informativo aqui -- falha ao carregar
+      // não deve impedir a pesquisa em si.
+    }
+  }
+
+  useEffect(() => { void loadQuota() }, [])
 
   async function runSearch(value: string, stores: string[]) {
     if (!value.trim() || stores.length === 0) return
-    setSearching(true); setError(null); setResult(null)
+    setSearching(true); setError(null); setQuotaError(null); setResult(null)
     try {
       const response = await searchApi.search(value.trim(), stores)
       if (!response) throw new Error('Resposta inesperada do servidor.')
       setResult(response); setSelectedVariants([]); setSelectAllVariants(false); setSelectedGenericOffer(null)
+      void loadQuota()
     } catch (searchError) {
-      setError(searchError instanceof ApiError ? searchError.message : 'Não foi possível pesquisar agora.')
+      if (searchError instanceof ApiError) {
+        const details = quotaDetailsFromError(searchError)
+        if (details) {
+          // TASK-107: pesquisa recusada por cota diária -- mensagem clara
+          // de que a quota acabou, nunca "não foi possível pesquisar agora".
+          setQuotaError(details)
+          void loadQuota()
+        }
+        setError(searchError.message)
+      } else {
+        setError('Não foi possível pesquisar agora.')
+      }
     } finally { setSearching(false) }
   }
 
@@ -89,9 +118,17 @@ export function ProductSearchPage() {
   return (
     <section>
       <PageHeader eyebrow="Pesquisa multiloja" title="O que você procura?" description="Pesquise e explore resultados livremente. Uma missão só será criada quando você escolher Monitorar." />
+      {quota ? (
+        <div className="mb-5 max-w-xs">
+          <QuotaUsageRow label="Pesquisas hoje" item={quota.daily_searches} />
+        </div>
+      ) : null}
       <SearchForm query={query} setQuery={updateQuery} selectedStores={selectedStores} toggleStore={toggleStore} searching={searching} onSubmit={submit} />
+      {quotaError ? (
+        <div className="mt-4"><QuotaExceededNotice message={error ?? ''} details={quotaError} /></div>
+      ) : null}
       <div className="mt-7">
-        {searching ? <LoadingState label="Consultando ofertas já encontradas…" /> : error && !result ? <ErrorState title="Pesquisa indisponível" description={error} /> : result ? (
+        {searching ? <LoadingState label="Consultando ofertas já encontradas…" /> : error && !result && !quotaError ? <ErrorState title="Pesquisa indisponível" description={error} /> : result ? (
           result.offers.length === 0 ? <EmptyState title="Nenhum resultado conhecido" description="Ainda não há ofertas persistidas que correspondam com segurança a esta pesquisa. Pesquisar não criou nenhuma missão." /> : <>
             <ResultHeading result={result} />
             {result.request_kind === 'product_family' ? <VariantSelection result={result} selected={selectedVariants} setSelected={setSelectedVariants} selectAll={selectAllVariants} setSelectAll={setSelectAllVariants} /> : null}

@@ -2,9 +2,10 @@ import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from
 import { Bell, Check, Clock3, Link2, RefreshCw, Save, ShieldCheck, Unlink, UserRound } from 'lucide-react'
 import { accountApi } from '@/api/account'
 import { ApiError } from '@/api/client'
-import type { AccountOption, AccountProfile } from '@/api/types'
+import type { AccountOption, AccountProfile, AccountQuota } from '@/api/types'
 import { useAuth } from '@/auth/AuthContext'
 import { PageHeader } from '@/components/PageHeader'
+import { QuotaSummaryCard } from '@/components/QuotaSummary'
 import { ErrorState, LoadingState } from '@/components/StatePanel'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -13,13 +14,19 @@ import { Input } from '@/components/ui/input'
 
 export function AccountPage() {
   const [account, setAccount] = useState<AccountProfile | null>(null)
+  const [quota, setQuota] = useState<AccountQuota | null>(null)
   const [error, setError] = useState<string | null>(null)
   const { refresh } = useAuth()
 
   const load = useCallback(async () => {
     setError(null)
     try {
-      setAccount(await accountApi.get())
+      const [loadedAccount, loadedQuota] = await Promise.all([
+        accountApi.get(),
+        accountApi.getQuota(),
+      ])
+      setAccount(loadedAccount)
+      setQuota(loadedQuota)
     } catch (loadError) {
       setError(loadError instanceof ApiError ? loadError.message : 'Não foi possível carregar sua conta.')
     }
@@ -33,6 +40,7 @@ export function AccountPage() {
   return (
     <AccountView
       account={account}
+      quota={quota}
       onProfileSaved={async (updated) => { setAccount(updated); await refresh() }}
       onNotificationsSaved={setAccount}
       onTelegramChanged={setAccount}
@@ -42,11 +50,13 @@ export function AccountPage() {
 
 export function AccountView({
   account,
+  quota,
   onProfileSaved,
   onNotificationsSaved,
   onTelegramChanged,
 }: {
   account: AccountProfile
+  quota?: AccountQuota | null
   onProfileSaved: (account: AccountProfile) => void | Promise<void>
   onNotificationsSaved: (account: AccountProfile) => void
   onTelegramChanged: (account: AccountProfile) => void
@@ -63,7 +73,10 @@ export function AccountView({
           <ProfileForm account={account} onSaved={onProfileSaved} />
           <NotificationForm account={account} onSaved={onNotificationsSaved} />
         </div>
-        <AccountSummary account={account} onChanged={onTelegramChanged} />
+        <div className="space-y-6">
+          {quota ? <QuotaSummaryCard quota={quota} /> : null}
+          <AccountSummary account={account} onChanged={onTelegramChanged} />
+        </div>
       </div>
     </section>
   )
