@@ -1,4 +1,13 @@
-"""Supervisão local do Edge dedicado ao transporte CDP da Magalu."""
+"""Supervisão local do Edge dedicado, compartilhado por todos os providers.
+
+TASK-109: generalizado a partir do antigo `MagaluEdgeSupervisor` -- o Edge
+supervisionado aqui é infraestrutura do `collection_worker`, não de uma
+loja específica (Magalu, Terabyte, Mercado Livre e futuros providers só
+reaproveitam o mesmo processo/perfil/CDP já supervisionado). Esta classe
+não conhece nenhuma loja: inicia o Edge, gerencia perfil dedicado, expõe
+CDP, monitora liveness, recupera automaticamente e evita processos
+duplicados/órfãos -- nada além disso.
+"""
 
 import asyncio
 import logging
@@ -9,15 +18,16 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 import httpx
+import psutil
 from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import async_playwright
 
-from app.collection.providers.magalu_transport import validate_loopback_cdp_endpoint
+from app.collection.providers.edge_cdp_endpoint import validate_loopback_cdp_endpoint
 
-logger = logging.getLogger("app.collection.magalu_edge_supervisor")
+logger = logging.getLogger("app.collection.edge_cdp_supervisor")
 
 
-class MagaluEdgeSupervisorError(RuntimeError):
+class EdgeCdpSupervisorError(RuntimeError):
     """Falha ao iniciar ou recuperar o Edge dedicado."""
 
 
@@ -27,7 +37,7 @@ def discover_edge_executable(explicit_path: Path | None = None) -> Path:
         candidate = explicit_path.expanduser().resolve()
         if candidate.is_file():
             return candidate
-        raise MagaluEdgeSupervisorError("configured Edge executable was not found")
+        raise EdgeCdpSupervisorError("configured Edge executable was not found")
 
     candidates: list[Path] = []
     for variable in ("PROGRAMFILES(X86)", "PROGRAMFILES", "LOCALAPPDATA"):
@@ -39,15 +49,22 @@ def discover_edge_executable(explicit_path: Path | None = None) -> Path:
     for candidate in candidates:
         if candidate.is_file():
             return candidate.resolve()
-    raise MagaluEdgeSupervisorError("Microsoft Edge executable was not found")
+    raise EdgeCdpSupervisorError("Microsoft Edge executable was not found")
 
 
-def default_magalu_edge_profile_dir() -> Path:
-    """Perfil persistente e exclusivo, separado do perfil pessoal do usuário."""
+def default_edge_profile_dir() -> Path:
+    """Perfil persistente e exclusivo, separado do perfil pessoal do usuário.
+
+    Nome da pasta em disco mantido igual ao original (`...-magalu-edge-...`)
+    de propósito, mesmo com a classe generalizada (TASK-109): um Edge já
+    em execução de antes desta mudança precisa continuar reconhecível por
+    `_find_dedicated_edge_process()` -- renomear a pasta faria o supervisor
+    rejeitar um processo legítimo já supervisionado como "de outro perfil"
+    até o próximo restart completo do ambiente."""
     return Path(tempfile.gettempdir()) / "aishoppingagent-magalu-edge-profile"
 
 
-class MagaluEdgeSupervisor:
+class EdgeCdpSupervisor:
     """Mantém um Edge dedicado disponível em CDP loopback durante o worker."""
 
     def __init__(
@@ -73,7 +90,7 @@ class MagaluEdgeSupervisor:
         if restart_delay_seconds < 0:
             raise ValueError("restart delay must not be negative")
         self._executable = discover_edge_executable(executable)
-        self._profile_dir = (profile_dir or default_magalu_edge_profile_dir()).resolve()
+        self._profile_dir = (profile_dir or default_edge_profile_dir()).resolve()
         self._startup_timeout_seconds = startup_timeout_seconds
         self._probe_interval_seconds = probe_interval_seconds
         self._restart_delay_seconds = restart_delay_seconds
@@ -99,14 +116,14 @@ class MagaluEdgeSupervisor:
                 return
             self._stopping = False
             if await self._cdp_ready() and not self._started_process:
-                if not await self._is_dedicated_browser():
-                    raise MagaluEdgeSupervisorError(
+                if await self._find_dedicated_edge_process() is None:
+                    raise EdgeCdpSupervisorError(
                         "configured CDP port is owned by another Edge profile"
                     )
                 self._started_process = True
             await self._ensure_running()
             self._monitor_task = asyncio.create_task(
-                self._monitor(), name="magalu-edge-supervisor"
+                self._monitor(), name="edge-cdp-supervisor"
             )
 
     async def stop(self) -> None:
@@ -131,7 +148,7 @@ class MagaluEdgeSupervisor:
             if await self._cdp_ready():
                 return
             await asyncio.sleep(min(self._probe_interval_seconds, 0.25))
-        raise MagaluEdgeSupervisorError("Edge CDP did not become ready")
+        raise EdgeCdpSupervisorError("Edge CDP did not become ready")
 
     async def _monitor(self) -> None:
         while not self._stopping:
@@ -144,7 +161,7 @@ class MagaluEdgeSupervisor:
                 raise
             except Exception as error:
                 logger.warning(
-                    "magalu_edge_recovery_failed",
+                    "edge_cdp_recovery_failed",
                     extra={"supervisor_failure": type(error).__name__},
                 )
                 await asyncio.sleep(self._restart_delay_seconds)
@@ -183,14 +200,14 @@ class MagaluEdgeSupervisor:
                 creationflags=creationflags,
             )
         except OSError as error:
-            raise MagaluEdgeSupervisorError("could not start dedicated Edge") from error
+            raise EdgeCdpSupervisorError("could not start dedicated Edge") from error
         self._started_process = True
         try:
             await self.wait_until_ready()
         except Exception:
             await self._terminate_launcher()
             raise
-        logger.info("magalu_edge_ready")
+        logger.info("edge_cdp_ready")
 
     async def _terminate_launcher(self) -> None:
         process = self._process
@@ -215,24 +232,51 @@ class MagaluEdgeSupervisor:
                 session = await browser.new_browser_cdp_session()
                 await session.send("Browser.close")
         except PlaywrightError:
-            logger.warning("magalu_edge_shutdown_failed")
+            logger.warning("edge_cdp_shutdown_failed")
 
-    async def _is_dedicated_browser(self) -> bool:
-        """Adota após restart do worker somente o Edge com o perfil esperado."""
-        expected = f"--user-data-dir={self._profile_dir}"
-        try:
-            async with async_playwright() as playwright:
-                browser = await playwright.chromium.connect_over_cdp(
-                    self.endpoint, timeout=5_000
-                )
-                session = await browser.new_browser_cdp_session()
-                result = await session.send("Browser.getBrowserCommandLine")
-        except PlaywrightError:
-            return False
-        arguments = result.get("arguments", [])
-        return any(
-            str(argument).casefold() == expected.casefold() for argument in arguments
-        )
+    async def _find_dedicated_edge_process(self) -> int | None:
+        """Identifica com segurança, por inspeção nativa de processos do
+        Windows (`psutil`, sem shell), o processo do Edge dedicado do
+        AIShoppingAgent já em execução -- usado só para decidir se um
+        Edge encontrado no CDP configurado pode ser adotado após um
+        restart do worker.
+
+        TASK-109: substitui `Browser.getBrowserCommandLine` (CDP), que
+        neste ambiente passou a falhar com "Command line not returned
+        because --enable-automation not set" -- fato comprovado por
+        teste direto, sem depender de suposição sobre a causa (não
+        adicionamos `--enable-automation` só para contornar isso).
+
+        Adoção exige TODAS as condições, nunca por heurística de nome
+        isolada: processo `msedge.exe`, sem `--type=` (exclui processos
+        filhos -- renderer/GPU/utility herdam os mesmos flags do
+        processo principal e dariam falso positivo), com
+        `--remote-debugging-port=<porta configurada>` e
+        `--user-data-dir=<perfil dedicado configurado>` batendo
+        exatamente (comparação por argumento inteiro, não substring)."""
+        expected_port_arg = f"--remote-debugging-port={self._port}".casefold()
+        expected_profile_arg = f"--user-data-dir={self._profile_dir}".casefold()
+
+        def _scan() -> int | None:
+            for process in psutil.process_iter(["name", "cmdline"]):
+                try:
+                    name = (process.info["name"] or "").casefold()
+                    if name != "msedge.exe":
+                        continue
+                    cmdline = process.info["cmdline"] or []
+                except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                    continue
+                normalized = [str(argument).casefold() for argument in cmdline]
+                if any(argument.startswith("--type=") for argument in normalized):
+                    continue
+                if expected_port_arg not in normalized:
+                    continue
+                if expected_profile_arg not in normalized:
+                    continue
+                return process.pid
+            return None
+
+        return await asyncio.to_thread(_scan)
 
     async def _cdp_ready(self) -> bool:
         try:

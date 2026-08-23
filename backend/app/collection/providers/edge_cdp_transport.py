@@ -1,4 +1,4 @@
-"""Fallback CDP genérico e restrito a loopback para providers Playwright."""
+"""Transporte CDP genérico e restrito a loopback, reutilizável por qualquer provider."""
 
 import asyncio
 from collections.abc import Awaitable, Callable
@@ -8,22 +8,24 @@ from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import Page, async_playwright
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
-from app.collection.providers.magalu_transport import validate_loopback_cdp_endpoint
+from app.collection.providers.edge_cdp_endpoint import validate_loopback_cdp_endpoint
 
 ResultT = TypeVar("ResultT")
 
 
-class CdpFallbackError(RuntimeError):
+class EdgeCdpTransportError(RuntimeError):
     """Falha única no transporte CDP, sem retry próprio."""
 
 
-class CdpPageFallback:
+class EdgeCdpTransport:
     """Executa a extração existente numa página Edge/CDP já supervisionada.
 
-    Genérico o bastante para dois papéis diferentes: último recurso do
-    Mercado Livre (só depois do Playwright falhar) e transporte primário
-    -- e único -- da Terabyte (TASK-105, Playwright comprovadamente
-    bloqueado pelo Cloudflare, sem fallback de volta a ele)."""
+    Genérico o bastante para qualquer papel de qualquer provider -- último
+    recurso do Mercado Livre (só depois do Playwright falhar) e transporte
+    primário -- e único -- da Terabyte (TASK-105, Playwright comprovadamente
+    bloqueado pelo Cloudflare, sem fallback de volta a ele). Não conhece
+    nenhuma loja: recebe URL, seletor de prontidão e função de extração
+    já resolvidos pelo provider chamador."""
 
     def __init__(
         self,
@@ -57,7 +59,7 @@ class CdpPageFallback:
                 self.endpoint, timeout=self._connect_timeout_ms
             )
             if not browser.contexts:
-                raise CdpFallbackError("CDP browser has no context")
+                raise EdgeCdpTransportError("CDP browser has no context")
             page = await browser.contexts[0].new_page()
             page.set_default_timeout(self._document_timeout_ms)
             response = await page.goto(
@@ -66,19 +68,19 @@ class CdpPageFallback:
                 timeout=self._navigation_timeout_ms,
             )
             if response is None or response.status in {401, 403, 408, 429}:
-                raise CdpFallbackError("CDP fallback navigation failed")
+                raise EdgeCdpTransportError("CDP fallback navigation failed")
             if response.status >= 500:
-                raise CdpFallbackError("CDP fallback navigation failed")
+                raise EdgeCdpTransportError("CDP fallback navigation failed")
             await page.locator(readiness_selector).first.wait_for(
                 state="attached", timeout=self._document_timeout_ms
             )
             return await extract(page)
         except asyncio.CancelledError:
             raise
-        except CdpFallbackError:
+        except EdgeCdpTransportError:
             raise
         except (PlaywrightError, PlaywrightTimeoutError) as error:
-            raise CdpFallbackError("CDP fallback failed") from error
+            raise EdgeCdpTransportError("CDP fallback failed") from error
         finally:
             if page is not None:
                 try:

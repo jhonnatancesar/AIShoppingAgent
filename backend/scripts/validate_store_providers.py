@@ -16,7 +16,7 @@ from app.collection import (
     PriceNormalizer,
     TerabyteProvider,
 )
-from app.collection.providers.cdp_fallback import CdpPageFallback
+from app.collection.providers.edge_cdp_transport import EdgeCdpTransport
 from app.collection.providers.magalu_transport import build_magalu_search_transport
 
 PROVIDERS = {
@@ -57,7 +57,7 @@ async def validate(
             html_timeout_ms=3_000,
         )
     if source == "mercadolivre" and edge_cdp_url:
-        provider_kwargs["edge_fallback"] = CdpPageFallback(
+        provider_kwargs["edge_fallback"] = EdgeCdpTransport(
             edge_cdp_url,
             connect_timeout_ms=5_000,
             navigation_timeout_ms=20_000,
@@ -67,7 +67,7 @@ async def validate(
         # TASK-105: Playwright gerenciado está comprovadamente bloqueado
         # (DEC-070) -- sem `edge_cdp_url`, a validação manual falha rápido,
         # igual ao worker real.
-        provider_kwargs["cdp_transport"] = CdpPageFallback(
+        provider_kwargs["cdp_transport"] = EdgeCdpTransport(
             edge_cdp_url,
             connect_timeout_ms=5_000,
             navigation_timeout_ms=20_000,

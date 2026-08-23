@@ -92,7 +92,53 @@ os demais serviços de observabilidade continuam em Docker.
 
 ## Arquitetura proposta
 
-### 1. `EdgeSupervisor` único e compartilhado (generaliza `MagaluEdgeSupervisor`)
+### 1. `EdgeCdpSupervisor` único e compartilhado (generaliza `MagaluEdgeSupervisor`)
+
+**Feito na FASE 3.** `MagaluEdgeSupervisor` → `EdgeCdpSupervisor`
+(`app/collection/providers/edge_cdp_supervisor.py`); `CdpPageFallback` →
+`EdgeCdpTransport` (`app/collection/providers/edge_cdp_transport.py`);
+`validate_loopback_cdp_endpoint` extraído para
+`edge_cdp_endpoint.py` (deixou de depender de `magalu_transport.py`).
+Settings do supervisor renomeadas (`edge_executable`, `edge_profile_dir`,
+`edge_startup_timeout_seconds`, `edge_probe_interval_seconds`), nomes
+antigos `AISHOPPING_MAGALU_EDGE_*` continuam aceitos por compatibilidade
+(mesmo padrão já usado por `edge_cdp_url`/`AISHOPPING_MAGALU_CDP_URL`
+desde a TASK-105). Nenhuma lógica de loja entrou no supervisor/transporte
+-- ambos continuam sem saber o que é Magalu/Terabyte/Mercado Livre.
+Comportamento de Magalu e Terabyte preservado (revalidado ao vivo depois
+da mudança).
+
+**Achado colateral (pré-existente, não causado por esta mudança) --
+corrigido:** `_is_dedicated_browser()` (usava `Browser.getBrowserCommandLine`
+via CDP para decidir se adota um Edge já rodando de antes do restart do
+worker) começou a falhar nesta máquina com `Command line not returned
+because --enable-automation not set` -- confirmado que a lógica era
+idêntica à original (sem diff), então é uma restrição do próprio Edge
+neste ambiente atual; fato comprovado por teste direto, sem causa raiz
+assumida (não confirmado se veio de atualização do navegador ou outro
+motivo -- não afirmamos isso sem evidência). Efeito antes da correção:
+se o worker reiniciava enquanto um Edge já supervisionado continuava
+vivo de antes, a adoção falhava e a supervisão de recuperação daquele
+Edge ficava inativa.
+
+**Correção:** `_is_dedicated_browser()` (CDP) substituído por
+`_find_dedicated_edge_process()` -- identificação determinística via
+inspeção nativa de processos do Windows (`psutil`, sem shell genérico,
+sem heurística só pelo nome `msedge.exe`). Adoção exige processo
+`msedge.exe` sem `--type=` (exclui filhos renderer/GPU, que herdam os
+mesmos flags e dariam falso positivo) com `--remote-debugging-port=` e
+`--user-data-dir=` batendo exatamente (comparação por argumento inteiro
+da lista de `cmdline`, não substring) com a porta/perfil configurados.
+Se qualquer condição falhar, não adota e não mata o processo
+desconhecido -- só retorna conflito de ownership.
+
+Testado ao vivo, com a tela bloqueada: (A) reinício só do worker com
+Edge vivo -- adotou o mesmo PID, Magalu real funcionou depois; (B) kill
+do Edge adotado -- supervisor detectou e relançou (~5s), nova coleta
+real (Terabyte) funcionou; (C) porta CDP ocupada por um Edge de perfil
+diferente (simulado de propósito) -- supervisor recusou adotar, **não**
+matou o processo estranho, worker seguiu vivo e estável sem Edge. Sem
+processos duplicados/órfãos em nenhum dos três casos.
 
 Renomear/generalizar o supervisor já existente para um único Edge
 dedicado por processo `collection_worker`, usado por **todos** os

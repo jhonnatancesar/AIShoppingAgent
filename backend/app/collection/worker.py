@@ -20,11 +20,11 @@ from app.collection.providers import (
     MercadoLivreProvider,
     TerabyteProvider,
 )
-from app.collection.providers.cdp_fallback import CdpPageFallback
-from app.collection.providers.magalu_edge_supervisor import (
-    MagaluEdgeSupervisor,
-    MagaluEdgeSupervisorError,
+from app.collection.providers.edge_cdp_supervisor import (
+    EdgeCdpSupervisor,
+    EdgeCdpSupervisorError,
 )
+from app.collection.providers.edge_cdp_transport import EdgeCdpTransport
 from app.collection.providers.magalu_transport import build_magalu_search_transport
 from app.core.config import Settings
 from app.core.logging import configure_logging
@@ -51,24 +51,24 @@ logger = logging.getLogger("app.collection.worker")
 _HEADED_SOURCES = frozenset({"pichau", "terabyte", "magalu", "mercadolivre"})
 
 
-async def start_magalu_edge_supervisor(
+async def start_edge_supervisor(
     settings: Settings,
-) -> MagaluEdgeSupervisor | None:
-    """Falha do runtime Magalu nunca impede o worker das outras origens."""
+) -> EdgeCdpSupervisor | None:
+    """Falha do Edge compartilhado nunca impede o worker das outras origens."""
     if settings.edge_cdp_url is None:
         return None
     try:
-        supervisor = MagaluEdgeSupervisor(
+        supervisor = EdgeCdpSupervisor(
             settings.edge_cdp_url,
-            executable=settings.magalu_edge_executable,
-            profile_dir=settings.magalu_edge_profile_dir,
-            startup_timeout_seconds=settings.magalu_edge_startup_timeout_seconds,
-            probe_interval_seconds=settings.magalu_edge_probe_interval_seconds,
+            executable=settings.edge_executable,
+            profile_dir=settings.edge_profile_dir,
+            startup_timeout_seconds=settings.edge_startup_timeout_seconds,
+            probe_interval_seconds=settings.edge_probe_interval_seconds,
         )
         await supervisor.start()
-    except MagaluEdgeSupervisorError as error:
+    except EdgeCdpSupervisorError as error:
         logger.warning(
-            "magalu_edge_unavailable",
+            "edge_cdp_unavailable",
             extra={"supervisor_failure": type(error).__name__},
         )
         return None
@@ -122,7 +122,7 @@ def build_collection_adapter(settings: Settings) -> CollectionAdapter:
                 html_timeout_ms=int(settings.magalu_cdp_html_timeout_seconds * 1000),
             )
         if provider_type is MercadoLivreProvider and settings.edge_cdp_url:
-            provider_kwargs["edge_fallback"] = CdpPageFallback(
+            provider_kwargs["edge_fallback"] = EdgeCdpTransport(
                 settings.edge_cdp_url,
                 connect_timeout_ms=int(
                     settings.magalu_cdp_connect_timeout_seconds * 1000
@@ -140,7 +140,7 @@ def build_collection_adapter(settings: Settings) -> CollectionAdapter:
         # coleta falha isolada (nunca cai de volta ao Playwright, já
         # comprovadamente bloqueado pelo Cloudflare -- DEC-070).
         if provider_type is TerabyteProvider and settings.edge_cdp_url:
-            provider_kwargs["cdp_transport"] = CdpPageFallback(
+            provider_kwargs["cdp_transport"] = EdgeCdpTransport(
                 settings.edge_cdp_url,
                 connect_timeout_ms=int(
                     settings.magalu_cdp_connect_timeout_seconds * 1000
@@ -176,7 +176,7 @@ async def run_worker(
         raise ValueError("poll_seconds must be positive")
     if not 1 <= limit <= 1000:
         raise ValueError("batch_size must be between 1 and 1000")
-    edge_supervisor = await start_magalu_edge_supervisor(settings)
+    edge_supervisor = await start_edge_supervisor(settings)
 
     # TASK-079: engine assíncrono dedicado -- nenhuma chamada bloqueante do
     # SQLAlchemy/psycopg roda direto na thread do event loop neste

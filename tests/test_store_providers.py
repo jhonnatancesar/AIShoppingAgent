@@ -22,7 +22,7 @@ from app.collection import (
     TerabyteProvider,
 )
 from app.collection.providers.base import PlaywrightStoreProvider
-from app.collection.providers.cdp_fallback import CdpFallbackError
+from app.collection.providers.edge_cdp_transport import EdgeCdpTransportError
 from app.collection.providers.magalu_transport import MagaluSearchTransportError
 from app.core.resilience import RetryPolicy
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
@@ -368,11 +368,11 @@ def test_terabyte_never_falls_back_to_blocked_playwright_on_cdp_failure(
 
     class FailingTransport:
         async def run(self, url, *, readiness_selector, extract):
-            raise CdpFallbackError("CDP fallback failed")
+            raise EdgeCdpTransportError("CDP fallback failed")
 
     provider = TerabyteProvider(clock=lambda: NOW, cdp_transport=FailingTransport())
 
-    with pytest.raises(CdpFallbackError):
+    with pytest.raises(EdgeCdpTransportError):
         asyncio.run(
             provider.collect(CollectionRequest(uuid4(), "terabyte", "RTX 5070", NOW))
         )
@@ -383,7 +383,7 @@ def test_terabyte_without_cdp_transport_fails_isolated_without_navigation() -> N
     silenciosamente reabre o transporte Playwright já bloqueado."""
     provider = TerabyteProvider(clock=lambda: NOW)
 
-    with pytest.raises(CdpFallbackError, match="not configured"):
+    with pytest.raises(EdgeCdpTransportError, match="not configured"):
         asyncio.run(
             provider.collect(CollectionRequest(uuid4(), "terabyte", "RTX 5070", NOW))
         )

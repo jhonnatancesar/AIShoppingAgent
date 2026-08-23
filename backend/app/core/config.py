@@ -145,10 +145,46 @@ class Settings(BaseSettings):
             "edge_cdp_url", "AISHOPPING_EDGE_CDP_URL", "AISHOPPING_MAGALU_CDP_URL"
         ),
     )
-    magalu_edge_executable: Path | None = None
-    magalu_edge_profile_dir: Path | None = None
-    magalu_edge_startup_timeout_seconds: float = Field(default=30.0, gt=0, le=120)
-    magalu_edge_probe_interval_seconds: float = Field(default=1.0, gt=0, le=30)
+    # TASK-109: nomes genéricos -- o Edge supervisionado (`EdgeCdpSupervisor`)
+    # não pertence a nenhuma loja, mesmo tratamento que `edge_cdp_url` já
+    # recebeu na TASK-105. Nomes antigos `AISHOPPING_MAGALU_EDGE_*`
+    # continuam aceitos por compatibilidade.
+    edge_executable: Path | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "edge_executable",
+            "AISHOPPING_EDGE_EXECUTABLE",
+            "AISHOPPING_MAGALU_EDGE_EXECUTABLE",
+        ),
+    )
+    edge_profile_dir: Path | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "edge_profile_dir",
+            "AISHOPPING_EDGE_PROFILE_DIR",
+            "AISHOPPING_MAGALU_EDGE_PROFILE_DIR",
+        ),
+    )
+    edge_startup_timeout_seconds: float = Field(
+        default=30.0,
+        gt=0,
+        le=120,
+        validation_alias=AliasChoices(
+            "edge_startup_timeout_seconds",
+            "AISHOPPING_EDGE_STARTUP_TIMEOUT_SECONDS",
+            "AISHOPPING_MAGALU_EDGE_STARTUP_TIMEOUT_SECONDS",
+        ),
+    )
+    edge_probe_interval_seconds: float = Field(
+        default=1.0,
+        gt=0,
+        le=30,
+        validation_alias=AliasChoices(
+            "edge_probe_interval_seconds",
+            "AISHOPPING_EDGE_PROBE_INTERVAL_SECONDS",
+            "AISHOPPING_MAGALU_EDGE_PROBE_INTERVAL_SECONDS",
+        ),
+    )
     magalu_cdp_connect_timeout_seconds: float = Field(default=5.0, gt=0, le=30)
     magalu_cdp_navigation_timeout_seconds: float = Field(default=20.0, gt=0, le=60)
     magalu_cdp_document_timeout_seconds: float = Field(default=10.0, gt=0, le=30)

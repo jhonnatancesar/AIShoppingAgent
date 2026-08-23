@@ -7,7 +7,7 @@ from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 from playwright.async_api import async_playwright
 
-from app.core.urls import normalize_loopback_http_endpoint
+from app.collection.providers.edge_cdp_endpoint import validate_loopback_cdp_endpoint
 
 
 class MagaluSearchTransportError(RuntimeError):
@@ -101,14 +101,6 @@ class CdpMagaluSearchTransport:
                     pass
             if playwright is not None:
                 await playwright.stop()
-
-
-def validate_loopback_cdp_endpoint(endpoint: str) -> str:
-    """Aceita somente CDP HTTP local; nunca conecta a porta pública/remota."""
-    value = normalize_loopback_http_endpoint(endpoint)
-    if value is None:
-        raise ValueError("Magalu CDP endpoint must be loopback HTTP with explicit port")
-    return value
 
 
 def build_magalu_search_transport(

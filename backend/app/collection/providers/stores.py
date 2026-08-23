@@ -23,7 +23,10 @@ from app.collection.errors import (
     ProviderNavigationError,
 )
 from app.collection.providers.base import PlaywrightStoreProvider
-from app.collection.providers.cdp_fallback import CdpFallbackError, CdpPageFallback
+from app.collection.providers.edge_cdp_transport import (
+    EdgeCdpTransport,
+    EdgeCdpTransportError,
+)
 from app.collection.providers.magalu_transport import (
     MagaluSearchTransport,
     UnavailableMagaluSearchTransport,
@@ -186,7 +189,7 @@ class TerabyteProvider(PlaywrightStoreProvider):
     Playwright gerenciado está comprovadamente bloqueado, ele nunca é
     tentado como fallback aqui (ao contrário do Mercado Livre, cujo
     primário ainda funciona); reaproveita a mesma infraestrutura CDP/Edge
-    supervisionado da Magalu (`CdpPageFallback`, sem supervisor/porta
+    compartilhada do worker (`EdgeCdpTransport`, sem supervisor/porta
     próprios).
     """
 
@@ -195,7 +198,7 @@ class TerabyteProvider(PlaywrightStoreProvider):
     def __init__(
         self,
         *args,
-        cdp_transport: CdpPageFallback | None = None,
+        cdp_transport: EdgeCdpTransport | None = None,
         **kwargs,
     ) -> None:
         super().__init__(*args, **kwargs)
@@ -209,7 +212,7 @@ class TerabyteProvider(PlaywrightStoreProvider):
         seletor de resultado e fallback de disponibilidade continuam
         exatamente os mesmos usados pelas demais lojas."""
         if self._cdp_transport is None:
-            raise CdpFallbackError("Terabyte CDP transport is not configured")
+            raise EdgeCdpTransportError("Terabyte CDP transport is not configured")
         started_at = self._clock()
         offers = await self._cdp_transport.run(
             self.build_url(request.search_query),
@@ -433,7 +436,7 @@ class MercadoLivreProvider(PlaywrightStoreProvider):
     def __init__(
         self,
         *args,
-        edge_fallback: CdpPageFallback | None = None,
+        edge_fallback: EdgeCdpTransport | None = None,
         **kwargs,
     ) -> None:
         super().__init__(*args, **kwargs)
@@ -461,8 +464,8 @@ class MercadoLivreProvider(PlaywrightStoreProvider):
                     readiness_selector=self.result_selector,
                     extract=lambda page: self.extract(page, self._clock()),
                 )
-            except CdpFallbackError as fallback_error:
-                raise CdpFallbackError(
+            except EdgeCdpTransportError as fallback_error:
+                raise EdgeCdpTransportError(
                     "Mercado Livre primary and Edge/CDP fallback failed"
                 ) from fallback_error
             return CollectionResult(

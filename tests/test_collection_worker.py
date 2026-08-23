@@ -7,12 +7,12 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from app.collection.identity_resolution import StoreProductIdentityResolver
-from app.collection.providers.cdp_fallback import CdpPageFallback
+from app.collection.providers.edge_cdp_transport import EdgeCdpTransport
 from app.collection.providers.magalu_transport import CdpMagaluSearchTransport
 from app.collection.worker import (
     build_collection_adapter,
     run_worker,
-    start_magalu_edge_supervisor,
+    start_edge_supervisor,
 )
 from app.core.config import Settings
 from app.observability.metrics import mark_worker_started, observe_worker_failure
@@ -70,7 +70,7 @@ def test_build_adapter_uses_configured_loopback_cdp_for_magalu_and_ml_fallback()
 
     assert isinstance(transport, CdpMagaluSearchTransport)
     assert transport.endpoint == "http://127.0.0.1:9223"
-    assert isinstance(fallback, CdpPageFallback)
+    assert isinstance(fallback, EdgeCdpTransport)
     assert fallback.endpoint == "http://127.0.0.1:9223"
 
 
@@ -83,7 +83,7 @@ def test_build_adapter_uses_configured_loopback_cdp_for_terabyte_primary() -> No
 
     transport = adapter._providers["terabyte"]._cdp_transport
 
-    assert isinstance(transport, CdpPageFallback)
+    assert isinstance(transport, EdgeCdpTransport)
     assert transport.endpoint == "http://127.0.0.1:9223"
 
 
@@ -95,21 +95,21 @@ def test_build_adapter_leaves_terabyte_cdp_unset_without_configured_endpoint() -
     assert adapter._providers["terabyte"]._cdp_transport is None
 
 
-def test_unavailable_magalu_edge_does_not_block_worker_setup(monkeypatch) -> None:
+def test_unavailable_edge_does_not_block_worker_setup(monkeypatch) -> None:
     class UnavailableSupervisor:
         def __init__(self, *args, **kwargs):
-            from app.collection.providers.magalu_edge_supervisor import (
-                MagaluEdgeSupervisorError,
+            from app.collection.providers.edge_cdp_supervisor import (
+                EdgeCdpSupervisorError,
             )
 
-            raise MagaluEdgeSupervisorError("Edge unavailable")
+            raise EdgeCdpSupervisorError("Edge unavailable")
 
     monkeypatch.setattr(
-        "app.collection.worker.MagaluEdgeSupervisor", UnavailableSupervisor
+        "app.collection.worker.EdgeCdpSupervisor", UnavailableSupervisor
     )
     settings = Settings(edge_cdp_url="http://127.0.0.1:9223", _env_file=None)
 
-    assert asyncio.run(start_magalu_edge_supervisor(settings)) is None
+    assert asyncio.run(start_edge_supervisor(settings)) is None
 
 
 def test_collection_worker_is_an_allowlisted_metric_dimension() -> None:
@@ -141,7 +141,7 @@ def test_worker_once_records_batch_and_disposes(monkeypatch) -> None:
 
     monkeypatch.setattr(
         "app.collection.worker.create_collection_async_database_engine",
-        lambda *_: engine,
+        lambda *_, **__: engine,
     )
     monkeypatch.setattr(
         "app.collection.worker.create_async_session_factory", lambda *_: factory
