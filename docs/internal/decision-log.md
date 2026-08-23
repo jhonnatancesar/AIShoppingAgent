@@ -1,5 +1,45 @@
 # Decision Log
 
+## DEC-093 — Cupom é subsistema independente, nunca acoplado ao StoreProvider/coleta
+
+- **Data:** 2026-08-22.
+- **Classificação:** Correção arquitetural da TASK-106, antes de qualquer
+  código (mesmo espírito da `DEC-069`, que corrigiu o desenho do
+  parcelamento antes de consolidar).
+- **Decisão:** cupom não é um campo a mais coletado durante a busca normal
+  de oferta. É um subsistema próprio, com collector, persistência e
+  avaliação de aplicabilidade independentes do `CollectionOrchestrator`/
+  `collection_worker`. Falha, bloqueio ou lentidão do coletor de cupons
+  nunca afeta a coleta de preço; e a coleta de preço nunca espera ou abre
+  navegação extra por causa de cupom.
+- **Motivação:** a auditoria real (mesmo dia) mostrou que cupom não vive
+  no mesmo lugar que a oferta — Amazon/Kabum expõem no card de busca (a
+  mesma abertura já usada), mas Magalu/Mercado Livre só mostram na
+  **home** da loja, fora do fluxo de busca por produto. Acoplar cupom à
+  coleta normal criaria navegação extra por Offer (ex.: abrir a home a
+  cada oferta), exatamente o tipo de carga repetitiva que gerou o
+  bloqueio observado na própria Shopee horas antes. Separar os dois
+  processos evita esse acoplamento estrutural.
+- **Arquitetura aprovada (detalhada em `docs/tasks/TASK-106.md`):**
+  1. **Coupon Collector** — processo próprio, frequência própria, varre
+     fontes oficiais por loja (não por missão/produto); reaproveita
+     transporte/provider de cada loja só como infraestrutura (função de
+     navegação/parsing), nunca a orquestração do `collection_worker`.
+  2. **Persistência** — modelo `Coupon` próprio (não é campo de `Offer`),
+     com todos os atributos só quando houver evidência real; nunca
+     persistido sem evidência.
+  3. **Aplicabilidade** — processo separado cruza cupons ativos com
+     ofertas relevantes das missões (`MissionOfferRelevance`), decide
+     deterministicamente se um cupom se aplica; regra ambígua nunca vira
+     afirmação — fica "possivelmente aplicável".
+  4. **Notificação** — só dispara quando o cupom transforma a oferta em
+     oportunidade relevante; sempre mostra preço atual, desconto, preço
+     estimado, código, regra relevante, link e evidência; deixa explícito
+     que o preço é estimado até a aplicação real no checkout.
+- **Fora de escopo, mantido de propósito:** nenhuma técnica de evasão;
+  Firecrawl e agregadores de terceiro continuam fora desta versão
+  (`DEC-088`); nenhum código de provider ou collector foi escrito ainda.
+
 ## DEC-092 — Adiar TASK-104C (Shopee) por bloqueio anti-bot mesmo autenticado
 
 - **Data:** 2026-08-22.
