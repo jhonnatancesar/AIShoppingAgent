@@ -1,6 +1,6 @@
 # TASK-107 — Cotas e capacidade por usuário
 
-Status: **Backend e frontend implementados no DEV (commits locais `ac34725`/`faa939c`/`83a9572`, não publicados em `origin/main`).**
+Status: **Concluída e publicada em `origin/main` (`ac34725`/`faa939c`/`83a9572`/`d61951a`).**
 
 ## Implementação (2026-08-22)
 
