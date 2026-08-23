@@ -19,6 +19,15 @@
 > Mercado Livre e Shopee permanecem como novas fontes planejadas para a V1.2;
 > AliExpress não entra nessa etapa.
 
+> Estado em 2026-08-22 (`DEC-089`/`DEC-090`/`DEC-091`/`DEC-092`): das três
+> fontes acima, Magalu (TASK-104A) e Mercado Livre (TASK-104B) estão
+> concluídas e publicadas. Shopee (TASK-104C) foi **adiada**, não
+> cancelada — auditoria real sem evasão confirmou CAPTCHA
+> (`scene=crawler_item`) mesmo com Edge/CDP autenticado e sessão
+> persistente; nenhum código de provider foi escrito. Fica registrada
+> aqui como candidata a retomar quando existir uma abordagem sem evasão
+> (ex.: API oficial/parceria). AliExpress continua fora.
+
 Este documento é o repositório de ideias que surgirem durante o desenvolvimento e não pertencem à versão atual. Registrar uma ideia aqui não a aprova, não cria uma TASK e não altera o escopo da V1.
 
 Para cada item novo, registrar uma descrição curta, a motivação e eventuais dependências. A priorização e a transformação em tarefa dependem de decisão explícita posterior.
