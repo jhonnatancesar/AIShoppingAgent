@@ -197,10 +197,12 @@ def test_resolve_create_mission_sources_uses_the_task_070_order() -> None:
     # diferente da usada pelo /cadastro.
     assert resolve_create_mission_sources("1,4") == ("pichau", "kabum")
     assert resolve_create_mission_sources("5") == ("magalu",)
-    assert resolve_create_mission_sources("6") == (
+    assert resolve_create_mission_sources("6") == ("mercadolivre",)
+    assert resolve_create_mission_sources("7") == (
         "amazon",
         "kabum",
         "magalu",
+        "mercadolivre",
         "pichau",
         "terabyte",
     )
@@ -241,7 +243,8 @@ def test_describe_create_mission_sources_prompt_lists_task_070_order() -> None:
     assert "3 — Amazon" in prompt
     assert "4 — Kabum" in prompt
     assert "5 — Magalu" in prompt
-    assert "6 — Todas" in prompt
+    assert "6 — Mercado Livre" in prompt
+    assert "7 — Todas" in prompt
 
 
 def test_describe_create_mission_sources_retry_asks_again() -> None:
@@ -537,6 +540,7 @@ def test_missing_store_options_excludes_current_and_uses_task_070_order() -> Non
         "2": "amazon",
         "3": "kabum",
         "4": "magalu",
+        "5": "mercadolivre",
     }
     assert missing_store_options(()) == {
         "1": "pichau",
@@ -544,9 +548,13 @@ def test_missing_store_options_excludes_current_and_uses_task_070_order() -> Non
         "3": "amazon",
         "4": "kabum",
         "5": "magalu",
+        "6": "mercadolivre",
     }
     assert (
-        missing_store_options(("pichau", "terabyte", "amazon", "kabum", "magalu")) == {}
+        missing_store_options(
+            ("pichau", "terabyte", "amazon", "kabum", "magalu", "mercadolivre")
+        )
+        == {}
     )
 
 

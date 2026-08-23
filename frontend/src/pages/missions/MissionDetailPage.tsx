@@ -5,7 +5,7 @@ import { missionsApi } from '../../api/missions'
 import type { MissionDetail } from '../../api/types'
 import { STATUS_LABELS, STORE_LABELS } from './statusLabels'
 
-const STORE_CODES = ['pichau', 'terabyte', 'amazon', 'kabum', 'magalu']
+const STORE_CODES = ['pichau', 'terabyte', 'amazon', 'kabum', 'magalu', 'mercadolivre']
 
 export function MissionDetailPage() {
   const { missionId } = useParams<{ missionId: string }>()

@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-08-22 — TASK-104B: provider Mercado Livre (DEV, validação final pendente)
+
+- provider comum com múltiplas ofertas, seller/fulfillment independentes,
+  condição, parcelamento e avaliação por Offer/origem;
+- Playwright normal/headed como transporte primário e uma única tentativa no
+  Edge/CDP loopback como último recurso, reutilizando o mesmo extrator;
+- integração nas seleções Web/Telegram e seed `20260822_0008`;
+- ausência de evidência permanece `unknown`/`NULL`; selo oficial não transforma
+  parceiro em vendedor da plataforma;
+- validação externa reservada para uma única abertura final no Edge.
+
 ## 2026-08-22 — TASK-104A: provider Magalu (DEV, pronta para revisão)
 
 - busca Magalu exclusivamente por Edge/CDP supervisionado, sem fallback HTTP
@@ -15,7 +26,7 @@
 - migration/seed Magalu aprovada no PostgreSQL 18.4 descartável, head
   `20260822_0007`.
 
-## 2026-08-22 — TASK-103: comparação entre lojas (DEV, aguardando revisão)
+## 2026-08-22 — TASK-103: comparação entre lojas (concluída, `610a997`)
 
 - comparação fail-closed por Product específico resolvido e ownership;
 - última observação, parcelamento e avaliação por origem, sem IA/migration;

@@ -31,6 +31,7 @@ _STORE_LABELS = {
     "amazon": "Amazon",
     "kabum": "KaBuM!",
     "magalu": "Magalu",
+    "mercadolivre": "Mercado Livre",
     "pichau": "Pichau",
     "terabyte": "Terabyte",
 }

@@ -122,12 +122,13 @@ _CREATE_MISSION_SOURCE_OPTIONS: dict[str, str] = {
     "3": "amazon",
     "4": "kabum",
     "5": "magalu",
+    "6": "mercadolivre",
 }
 """TASK-070: ordem própria deste fluxo -- diferente da usada pelo
 `/cadastro` (`app/users/registration.py`), que não é alterada por esta
 TASK. Cada fluxo numerado define o próprio mapa."""
 
-_CREATE_MISSION_SOURCE_ALL_TOKENS = frozenset({"6", "todo", "todos", "toda", "todas"})
+_CREATE_MISSION_SOURCE_ALL_TOKENS = frozenset({"7", "todo", "todos", "toda", "todas"})
 
 _CREATE_MISSION_SOURCES_PROMPT = (
     "🏪 Em quais lojas você quer que eu procure?\n\n"
@@ -136,15 +137,16 @@ _CREATE_MISSION_SOURCES_PROMPT = (
     "3 — Amazon\n"
     "4 — Kabum\n"
     "5 — Magalu\n"
-    "6 — Todas\n\n"
+    "6 — Mercado Livre\n"
+    "7 — Todas\n\n"
     "Digite os números separados por vírgula.\n"
     "Exemplo: 1,3\n\n"
-    "Para escolher todas, envie 6."
+    "Para escolher todas, envie 7."
 )
 
 _CREATE_MISSION_SOURCES_RETRY = (
     "Não entendi essa opção.\n\n"
-    "Use os números de 1 a 5 separados por vírgula ou 6 para todas."
+    "Use os números de 1 a 6 separados por vírgula ou 7 para todas."
 )
 
 
@@ -505,8 +507,7 @@ def describe_edit_lojas_menu_retry() -> str:
 
 def missing_store_options(current_sources: Sequence[str]) -> dict[str, str]:
     """TASK-071: lojas que a missão ainda não tem, numeradas a partir de 1
-    na mesma ordem canônica da TASK-070 (`1 Pichau/2 Terabyte/3 Amazon/
-    4 Kabum`)."""
+    na mesma ordem canônica da TASK-070."""
     missing = [
         code
         for code in _CREATE_MISSION_SOURCE_OPTIONS.values()

@@ -24,4 +24,5 @@ export const STORE_LABELS: Record<string, string> = {
   amazon: 'Amazon',
   kabum: 'KaBuM!',
   magalu: 'Magalu',
+  mercadolivre: 'Mercado Livre',
 }

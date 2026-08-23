@@ -17,7 +17,13 @@ from app.collection.contracts import (
     RawCollectedOffer,
     RawInstallmentOption,
 )
+from app.collection.errors import (
+    ProviderBlockedError,
+    ProviderCircuitOpenError,
+    ProviderNavigationError,
+)
 from app.collection.providers.base import PlaywrightStoreProvider
+from app.collection.providers.cdp_fallback import CdpFallbackError, CdpPageFallback
 from app.collection.providers.magalu_transport import (
     MagaluSearchTransport,
     UnavailableMagaluSearchTransport,
@@ -345,6 +351,163 @@ class KabumProvider(PlaywrightStoreProvider):
             else MarketplacePartyKind.MARKETPLACE_PARTNER
         )
         return (kind, kind)
+
+
+_MERCADO_LIVRE_PLATFORM_NAMES = frozenset(
+    {"mercado livre", "mercadolivre", "mercado livre brasil"}
+)
+
+
+def _mercado_livre_party_kind(value: str | None) -> MarketplacePartyKind:
+    if not value or not value.strip():
+        return MarketplacePartyKind.UNKNOWN
+    return (
+        MarketplacePartyKind.PLATFORM
+        if value.strip().casefold() in _MERCADO_LIVRE_PLATFORM_NAMES
+        else MarketplacePartyKind.MARKETPLACE_PARTNER
+    )
+
+
+def _mercado_livre_condition(value: object, title: object) -> str:
+    evidence = f"{value or ''}\n{title or ''}"
+    if re.search(r"\b(?:recondicionado|refurbished|renewed)\b", evidence, re.I):
+        return "Recondicionado"
+    if re.search(r"\b(?:usado|seminovo)\b", evidence, re.I):
+        return "Usado"
+    return "Novo"
+
+
+class MercadoLivreProvider(PlaywrightStoreProvider):
+    """Provider Mercado Livre com Edge/CDP somente após o primário falhar."""
+
+    source_code = "mercadolivre"
+    result_selector = "li.ui-search-layout__item:has(a.poly-component__title)"
+    rating_detail_enabled = True
+
+    def __init__(
+        self,
+        *args,
+        edge_fallback: CdpPageFallback | None = None,
+        **kwargs,
+    ) -> None:
+        super().__init__(*args, **kwargs)
+        self._edge_fallback = edge_fallback
+
+    def build_url(self, query: str) -> str:
+        slug = re.sub(r"\s+", "-", query.strip())
+        return f"https://lista.mercadolivre.com.br/{quote(slug)}"
+
+    async def collect(self, request: CollectionRequest) -> CollectionResult:
+        """Esgota o transporte primário antes de uma única tentativa CDP."""
+        try:
+            return await super().collect(request)
+        except (
+            ProviderBlockedError,
+            ProviderCircuitOpenError,
+            ProviderNavigationError,
+        ):
+            if self._edge_fallback is None:
+                raise
+            started_at = self._clock()
+            try:
+                offers = await self._edge_fallback.run(
+                    self.build_url(request.search_query),
+                    readiness_selector=self.result_selector,
+                    extract=lambda page: self.extract(page, self._clock()),
+                )
+            except CdpFallbackError as fallback_error:
+                raise CdpFallbackError(
+                    "Mercado Livre primary and Edge/CDP fallback failed"
+                ) from fallback_error
+            return CollectionResult(
+                self.source_code, started_at, self._clock(), offers
+            )
+
+    async def extract(
+        self, page: Page, collected_at: datetime
+    ) -> tuple[RawCollectedOffer, ...]:
+        rows = await page.locator(self.result_selector).evaluate_all(
+            r"""cards => cards.map(card => { const link = card.querySelector('a.poly-component__title'); if (!link || card.querySelector('.poly-component__ads-promotions') || /click\d*\.mercadolivre\.com\.br$/i.test(new URL(link.href).hostname)) return null; const url = new URL(link.href); const fragment = new URLSearchParams(url.hash.slice(1)); const filter = url.searchParams.get('pdp_filters') || ''; const itemFilter = filter.match(/item_id:(MLB\d+)/i)?.[1]; const externalId = fragment.get('wid') || itemFilter || url.pathname.match(/\/(MLB\d+)(?:[/?]|$)/i)?.[1]; const current = card.querySelector('.poly-price__current .andes-money-amount, .poly-price__amount'); const currency = current?.querySelector('.andes-money-amount__currency-symbol')?.textContent?.trim(); const fraction = current?.querySelector('.andes-money-amount__fraction')?.textContent?.trim(); const cents = current?.querySelector('.andes-money-amount__cents')?.textContent?.trim(); const seller = card.querySelector('.poly-component__seller')?.textContent?.trim(); const shippingText = card.querySelector('.poly-component__shipping-v2')?.textContent?.trim(); const condition = card.querySelector('.poly-component__item-condition')?.textContent?.trim(); const review = card.querySelector('.poly-component__review-compacted'); const rating = review?.querySelector('.polylabel-label')?.textContent?.trim(); const reviewCount = review?.querySelector('[data-review-count], .poly-component__review-count')?.textContent?.trim(); const hasRating = !!rating && !!reviewCount; const full = !!card.querySelector('[aria-label="FULL"], [data-testid*="fulfillment"], [class*="fulfillment"]') || /(?:^|\s)FULL(?:\s|$)/i.test(card.innerText || ''); return {url: link.href, title: link.textContent?.trim(), price: currency && fraction ? `${currency} ${fraction}${cents ? `,${cents}` : ''}` : null, external_id: externalId, seller_external_id: seller, seller, seller_kind: seller ? (/^mercado\s*livre(?:\s+brasil)?$/i.test(seller) ? 'platform' : 'marketplace_partner') : null, fulfillment_kind: full ? 'platform' : null, image: card.querySelector('img.poly-component__picture')?.currentSrc || card.querySelector('img.poly-component__picture')?.src, shipping: /frete gr[aá]tis/i.test(shippingText || '') ? 'Frete grátis' : null, availability: null, condition, evidence: card.innerText || '', rating_average: hasRating ? rating : null, review_count: hasRating ? reviewCount : null, installmentText: card.querySelector('.poly-price__installments')?.textContent?.trim()}; }).filter(Boolean)"""
+        )
+        for row in rows:
+            seller = re.sub(
+                r"^(?:vendido\s+por|por)\s+",
+                "",
+                str(row.get("seller") or "").strip(),
+                flags=re.I,
+            )
+            row["seller"] = seller or None
+            row.pop("seller_external_id", None)
+            row["seller_kind"] = _mercado_livre_party_kind(seller).value
+            row["condition"] = _mercado_livre_condition(
+                row.get("condition"), row.get("title")
+            )
+        rows = _apply_installment_summary(rows, text_key="installmentText")
+        return self.offers_from_rows(rows, collected_at)
+
+    async def resolve_marketplace_parties(
+        self, page: Page
+    ) -> tuple[MarketplacePartyKind, MarketplacePartyKind]:
+        seller = await self.resolve_seller_name(page)
+        full = page.locator(
+            '[aria-label="FULL"], [data-testid*="fulfillment"], [class*="fulfillment"]'
+        )
+        fulfillment = (
+            MarketplacePartyKind.PLATFORM
+            if await full.count()
+            else MarketplacePartyKind.UNKNOWN
+        )
+        return _mercado_livre_party_kind(seller), fulfillment
+
+    async def resolve_seller_name(self, page: Page) -> str | None:
+        seller = page.locator(
+            ".ui-pdp-seller-summary__link-trigger-button, "
+            ".ui-pdp-seller-summary__link, .ui-seller-data-header__title"
+        ).first
+        if not await seller.count():
+            return None
+        value = (await seller.inner_text()).strip()
+        return value or None
+
+    async def resolve_offer_condition(self, page: Page) -> str | None:
+        for raw_json in await page.locator(
+            'script[type="application/ld+json"]'
+        ).all_text_contents():
+            try:
+                document = json.loads(raw_json)
+            except TypeError, ValueError:
+                continue
+            if not isinstance(document, dict):
+                continue
+            value = str(document.get("itemCondition") or "").rsplit("/", 1)[-1]
+            mapping = {
+                "newcondition": "Novo",
+                "usedcondition": "Usado",
+                "refurbishedcondition": "Recondicionado",
+            }
+            if value.casefold() in mapping:
+                return mapping[value.casefold()]
+        return None
+
+    async def resolve_offer_availability(self, page: Page) -> str | None:
+        for raw_json in await page.locator(
+            'script[type="application/ld+json"]'
+        ).all_text_contents():
+            try:
+                document = json.loads(raw_json)
+            except TypeError, ValueError:
+                continue
+            if not isinstance(document, dict):
+                continue
+            offers = document.get("offers")
+            if not isinstance(offers, dict):
+                continue
+            value = str(offers.get("availability") or "").rsplit("/", 1)[-1]
+            if value.casefold() in {"instock", "limitedavailability"}:
+                return "Disponível"
+            if value.casefold() in {"outofstock", "soldout", "discontinued"}:
+                return "Indisponível"
+        return None
 
 
 _MAGALU_PLATFORM_NAMES = frozenset({"magalu", "magazine luiza", "magazineluiza"})

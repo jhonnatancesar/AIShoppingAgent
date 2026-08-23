@@ -42,6 +42,7 @@ from app.collection.providers import (
     AmazonProvider,
     KabumProvider,
     MagaluProvider,
+    MercadoLivreProvider,
     PichauProvider,
     TerabyteProvider,
 )
@@ -77,6 +78,7 @@ __all__ = [
     "AmazonProvider",
     "KabumProvider",
     "MagaluProvider",
+    "MercadoLivreProvider",
     "PichauProvider",
     "StoreProductIdentityResolver",
     "TerabyteProvider",

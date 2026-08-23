@@ -1,6 +1,13 @@
 # Tarefas
 
-**TASK-103 implementada no DEV e aguardando revisão:** comparação de Offers
+**Atividade atual:** TASK-104B (Mercado Livre) implementada no DEV e aguardando
+uma única validação real final pelo fallback Edge/CDP; depois vem a TASK-104C
+(Shopee). Cada loja tem provider e validação próprios, mas
+reutiliza integralmente o domínio e os consumidores comuns. Venda própria,
+parceiro e selo oficial seguem evidências distintas (`DEC-089`). Pesquisa de
+cupons fica depois; TASK-098 continua no final da V1.2.
+
+**TASK-103 concluída e publicada (`610a997`):** comparação de Offers
 autorizadas do mesmo produto/variante global resolvido. Ver
 `docs/tasks/TASK-103.md` e `DEC-087`.
 

@@ -13,7 +13,12 @@ from app.collection.adapter import CollectionAdapter
 from app.collection.browser import BrowserSettings
 from app.collection.identity_resolution import StoreProductIdentityResolver
 from app.collection.orchestration import CollectionOrchestrator
-from app.collection.providers import V1_PROVIDER_TYPES, MagaluProvider
+from app.collection.providers import (
+    V1_PROVIDER_TYPES,
+    MagaluProvider,
+    MercadoLivreProvider,
+)
+from app.collection.providers.cdp_fallback import CdpPageFallback
 from app.collection.providers.magalu_edge_supervisor import (
     MagaluEdgeSupervisor,
     MagaluEdgeSupervisorError,
@@ -41,7 +46,7 @@ logger = logging.getLogger("app.collection.worker")
 # bloqueadas por proteção anti-bot; Amazon e Kabum toleram headless.
 # Mesma distinção de backend/scripts/validate_store_providers.py e
 # docs/architecture/playwright.md (TASK-055) — o worker de produção não a herdava.
-_HEADED_SOURCES = frozenset({"pichau", "terabyte", "magalu"})
+_HEADED_SOURCES = frozenset({"pichau", "terabyte", "magalu", "mercadolivre"})
 
 
 async def start_magalu_edge_supervisor(
@@ -113,6 +118,19 @@ def build_collection_adapter(settings: Settings) -> CollectionAdapter:
                     settings.magalu_cdp_document_timeout_seconds * 1000
                 ),
                 html_timeout_ms=int(settings.magalu_cdp_html_timeout_seconds * 1000),
+            )
+        if provider_type is MercadoLivreProvider and settings.magalu_cdp_url:
+            provider_kwargs["edge_fallback"] = CdpPageFallback(
+                settings.magalu_cdp_url,
+                connect_timeout_ms=int(
+                    settings.magalu_cdp_connect_timeout_seconds * 1000
+                ),
+                navigation_timeout_ms=int(
+                    settings.magalu_cdp_navigation_timeout_seconds * 1000
+                ),
+                document_timeout_ms=int(
+                    settings.magalu_cdp_document_timeout_seconds * 1000
+                ),
             )
         providers.append(
             provider_type(

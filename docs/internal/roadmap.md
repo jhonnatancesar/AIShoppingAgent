@@ -38,11 +38,14 @@
 | Área USER — ofertas | TASK-100 | Concluída, aprovada e publicada em `origin/main` (`b4e61c5`); listagem paginada, fail-closed e sem duplicação (`DEC-084`) |
 | Área USER — minha conta | TASK-101 | Concluída, aprovada e publicada em `origin/main` (`c57f5ab`); perfil, preferências e vínculo Telegram opcional (`DEC-085`) |
 | Área DEV/ADMIN | TASK-102 | Concluída, aprovada e publicada em `origin/main` (`b93bcfa`); dashboard, dados e operações runtime-neutral (`DEC-086`) |
-| Comparação entre lojas | TASK-103 | Implementada no DEV, aguardando revisão; mesma identidade específica e ownership por Offer (`DEC-087`) |
+| Comparação entre lojas | TASK-103 | Concluída e publicada `610a997`; mesma identidade específica e ownership por Offer (`DEC-087`) |
 | Store Provider Magalu | TASK-104A | Implementada no DEV; Edge/CDP supervisionado é o único transporte operacional, parser SSR comum e falha rápida isolada (`DEC-090`) |
+| Store Provider Mercado Livre | TASK-104B | Implementada no DEV, aguardando validação real final única; Playwright normal primário e Edge/CDP como último recurso (`DEC-091`) |
+| Store Provider Shopee | TASK-104C | Formalizada após 104B. Selo oficial é atributo do vendedor, não venda pela plataforma (`DEC-089`) |
+| Pesquisa de cupons | Tarefa a definir | Após a expansão de lojas; somente com evidência real (`DEC-088`) |
 | Histórico e gráficos por produto/variante | TASK-098 | Formalizada e reservada como último item da V1.2 (`DEC-081`/`DEC-082`) |
 | Estado operacional no Windows Server | manutenção 2026-08-16 | HEAD `0e90cf0` implantado; 7 serviços saudáveis; WSL2 limitado a 4 GB; somente schedules de missões ativas habilitados |
-| Expansão de fontes na V1.2 | Tarefas a definir | Magalu, Mercado Livre e Shopee; AliExpress permanece futuro (`DEC-080`) |
+| Expansão de fontes na V1.2 | TASK-104A/B/C | Magalu, Mercado Livre e Shopee; AliExpress permanece futuro (`DEC-080`/`DEC-089`) |
 
 As TASKs 000 a 053 e as TASKs 055 a 062 estão
 concluídas. O preflight

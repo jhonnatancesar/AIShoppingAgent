@@ -11,21 +11,24 @@ from app.collection import (
     CollectionRequest,
     KabumProvider,
     MagaluProvider,
+    MercadoLivreProvider,
     PichauProvider,
     PriceNormalizer,
     TerabyteProvider,
 )
+from app.collection.providers.cdp_fallback import CdpPageFallback
 from app.collection.providers.magalu_transport import build_magalu_search_transport
 
 PROVIDERS = {
     "amazon": AmazonProvider,
     "kabum": KabumProvider,
     "magalu": MagaluProvider,
+    "mercadolivre": MercadoLivreProvider,
     "pichau": PichauProvider,
     "terabyte": TerabyteProvider,
 }
 
-HEADED_SOURCES = {"pichau", "terabyte", "magalu"}
+HEADED_SOURCES = {"pichau", "terabyte", "magalu", "mercadolivre"}
 
 
 def should_use_headed(
@@ -52,6 +55,13 @@ async def validate(
             navigation_timeout_ms=20_000,
             document_timeout_ms=10_000,
             html_timeout_ms=3_000,
+        )
+    if source == "mercadolivre" and magalu_cdp_url:
+        provider_kwargs["edge_fallback"] = CdpPageFallback(
+            magalu_cdp_url,
+            connect_timeout_ms=5_000,
+            navigation_timeout_ms=20_000,
+            document_timeout_ms=10_000,
         )
     provider = PROVIDERS[source](
         BrowserSettings(headless=not headed, navigation_timeout_ms=60_000),

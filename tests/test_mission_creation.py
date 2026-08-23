@@ -240,6 +240,7 @@ def test_create_mission_without_sources_uses_all_available_sources() -> None:
         _FakeStore("amazon"),
         _FakeStore("kabum"),
         _FakeStore("magalu"),
+        _FakeStore("mercadolivre"),
     ]
     session = _session(stores)
 
@@ -254,7 +255,14 @@ def test_create_mission_without_sources_uses_all_available_sources() -> None:
         actor_type="telegram",
     )
 
-    assert set(sources) == {"pichau", "terabyte", "amazon", "kabum", "magalu"}
+    assert set(sources) == {
+        "pichau",
+        "terabyte",
+        "amazon",
+        "kabum",
+        "magalu",
+        "mercadolivre",
+    }
     assert mission.status is MissionStatus.ACTIVE
 
 

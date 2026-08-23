@@ -66,7 +66,7 @@ _SYSTEM_PROMPT = (
     '"model_confidence": "alta" | "baixa" | null, '
     '"target_amount": string decimal (ex.: "1500.00") ou null, '
     '"target_currency": string ISO 4217 de 3 letras maiúsculas (ex.: "BRL") ou null, '
-    '"sources": lista com zero ou mais valores entre "pichau", "terabyte", "amazon", "kabum", "magalu", '
+    '"sources": lista com zero ou mais valores entre "pichau", "terabyte", "amazon", "kabum", "magalu", "mercadolivre", '
     '"mission_reference": string ou null, '
     '"clear_target": true ou false}}\n\n'
     'Use "kind": "mission_command" somente com um "command" entre os seis '

@@ -106,7 +106,9 @@ from app.users.models import UserRole
 
 logger = logging.getLogger("app.collection.orchestration")
 
-V1_SOURCE_CODES = frozenset({"pichau", "terabyte", "amazon", "kabum", "magalu"})
+V1_SOURCE_CODES = frozenset(
+    {"pichau", "terabyte", "amazon", "kabum", "magalu", "mercadolivre"}
+)
 _RUNNING_INDEX = "uq_collection_runs_running_mission_store"
 _MISSION_OFFER_RELEVANCE_PK = (
     MissionOfferRelevance.mission_id,

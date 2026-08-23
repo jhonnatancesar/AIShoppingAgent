@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from app.collection.identity_resolution import StoreProductIdentityResolver
+from app.collection.providers.cdp_fallback import CdpPageFallback
 from app.collection.providers.magalu_transport import CdpMagaluSearchTransport
 from app.collection.worker import (
     build_collection_adapter,
@@ -23,6 +24,7 @@ def test_build_adapter_registers_exactly_v1_sources() -> None:
         "amazon",
         "kabum",
         "magalu",
+        "mercadolivre",
         "pichau",
         "terabyte",
     )
@@ -38,6 +40,7 @@ def test_build_adapter_uses_headed_only_for_configured_sources() -> None:
     assert adapter._providers["amazon"].settings.headless is True
     assert adapter._providers["kabum"].settings.headless is True
     assert adapter._providers["magalu"].settings.headless is False
+    assert adapter._providers["mercadolivre"].settings.headless is False
 
 
 def test_build_adapter_decouples_navigation_timeout_from_action_timeout() -> None:
@@ -57,15 +60,18 @@ def test_build_adapter_decouples_navigation_timeout_from_action_timeout() -> Non
     assert settings.browser_navigation_timeout_seconds == 45.0
 
 
-def test_build_adapter_uses_configured_loopback_cdp_only_for_magalu() -> None:
+def test_build_adapter_uses_configured_loopback_cdp_for_magalu_and_ml_fallback() -> None:
     adapter = build_collection_adapter(
         Settings(magalu_cdp_url="http://127.0.0.1:9223", _env_file=None)
     )
 
     transport = adapter._providers["magalu"]._search_transport
+    fallback = adapter._providers["mercadolivre"]._edge_fallback
 
     assert isinstance(transport, CdpMagaluSearchTransport)
     assert transport.endpoint == "http://127.0.0.1:9223"
+    assert isinstance(fallback, CdpPageFallback)
+    assert fallback.endpoint == "http://127.0.0.1:9223"
 
 
 def test_unavailable_magalu_edge_does_not_block_worker_setup(monkeypatch) -> None:

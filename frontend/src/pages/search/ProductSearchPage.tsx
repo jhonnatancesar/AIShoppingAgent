@@ -17,6 +17,7 @@ const STORES = [
   { code: 'amazon', label: 'Amazon' },
   { code: 'kabum', label: 'KaBuM!' },
   { code: 'magalu', label: 'Magalu' },
+  { code: 'mercadolivre', label: 'Mercado Livre' },
   { code: 'pichau', label: 'Pichau' },
   { code: 'terabyte', label: 'Terabyte' },
 ] as const

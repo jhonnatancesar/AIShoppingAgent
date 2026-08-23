@@ -240,8 +240,9 @@ async def test_registration_numbered_stores_password_and_login_are_one_onboardin
             _post(client, 202, _PRIMARY_TELEGRAM_ID, "pular")
             assert "1 — Kabum" in replies[-1][1]
             assert "5 — Magalu" in replies[-1][1]
-            assert "6 — Todas" in replies[-1][1]
-            _post(client, 203, _PRIMARY_TELEGRAM_ID, "5")
+            assert "6 — Mercado Livre" in replies[-1][1]
+            assert "7 — Todas" in replies[-1][1]
+            _post(client, 203, _PRIMARY_TELEGRAM_ID, "7")
             _post(client, 204, _PRIMARY_TELEGRAM_ID, "informatica")
             registration_reply = replies[-1][1]
             assert "Cadastro confirmado" in registration_reply
@@ -285,6 +286,7 @@ async def test_registration_numbered_stores_password_and_login_are_one_onboardin
                 "amazon",
                 "kabum",
                 "magalu",
+                "mercadolivre",
                 "pichau",
                 "terabyte",
             ]

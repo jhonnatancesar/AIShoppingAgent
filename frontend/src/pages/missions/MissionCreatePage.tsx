@@ -7,7 +7,7 @@ import { PageHeader } from '@/components/PageHeader'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 
-const STORE_CODES = ['pichau', 'terabyte', 'amazon', 'kabum', 'magalu']
+const STORE_CODES = ['pichau', 'terabyte', 'amazon', 'kabum', 'magalu', 'mercadolivre']
 
 export function MissionCreatePage() {
   const navigate = useNavigate()

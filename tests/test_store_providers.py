@@ -12,6 +12,7 @@ from app.collection import (
     KabumProvider,
     MagaluProvider,
     MarketplacePartyKind,
+    MercadoLivreProvider,
     OfferCondition,
     PichauProvider,
     PriceNormalizer,
@@ -68,6 +69,21 @@ CASES = (
         '<div data-testid="product-card-tags">Frete Grátis</div></a>',
         "abc123",
         "https://a-static.mlcdn.com.br/gpu.jpg",
+    ),
+    (
+        MercadoLivreProvider,
+        '<li class="ui-search-layout__item"><div>'
+        '<a class="poly-component__title" '
+        'href="https://produto.mercadolivre.com.br/MLB-123#origin=share&wid=MLB123">'
+        'GPU Mercado Livre</a>'
+        '<img class="poly-component__picture" src="https://http2.mlstatic.com/gpu.jpg">'
+        '<div class="poly-price__current"><span class="andes-money-amount">'
+        '<span class="andes-money-amount__currency-symbol">R$</span>'
+        '<span class="andes-money-amount__fraction">2.599</span>'
+        '<span class="andes-money-amount__cents">90</span></span></div>'
+        '<span class="poly-component__seller">Loja Parceira</span></div></li>',
+        "MLB123",
+        "https://http2.mlstatic.com/gpu.jpg",
     ),
 )
 
@@ -166,6 +182,124 @@ def test_magalu_card_without_rating_preserves_unknown_instead_of_zero() -> None:
 
     assert normalized.rating_average is None
     assert normalized.review_count is None
+
+
+def test_mercado_livre_extracts_multiple_cards_and_only_explicit_evidence() -> None:
+    def card(
+        item_id: str,
+        *,
+        seller: str,
+        condition: str = "",
+        rating: str = "",
+        reviews: str = "",
+    ) -> str:
+        return (
+            '<li class="ui-search-layout__item"><div>'
+            f'<a class="poly-component__title" href="https://produto.mercadolivre.com.br/{item_id}#wid={item_id}">'
+            f"Galaxy S24 Ultra {condition}</a>"
+            '<div class="poly-price__current"><span class="andes-money-amount">'
+            '<span class="andes-money-amount__currency-symbol">R$</span>'
+            '<span class="andes-money-amount__fraction">4.599</span></span></div>'
+            f'<span class="poly-component__seller">{seller}</span>'
+            f'<span class="poly-component__item-condition">{condition}</span>'
+            '<span class="poly-component__review-compacted">'
+            f'<span class="polylabel-label">{rating}</span>'
+            f'<span data-review-count="{reviews}">{reviews}</span></span>'
+            '<span class="poly-price__installments">10x de R$ 459,90 sem juros</span>'
+            "</div></li>"
+        )
+
+    async def scenario():
+        async with BrowserSession() as session:
+            page = await session.new_page()
+            await page.set_content(
+                card(
+                    "MLB100",
+                    seller="Mercado Livre",
+                    rating="4.8",
+                    reviews="321",
+                )
+                + card(
+                    "MLB200",
+                    seller="Trocafy",
+                    condition="Recondicionado",
+                )
+            )
+            return await MercadoLivreProvider().extract(page, NOW)
+
+    offers = asyncio.run(scenario())
+    first = PriceNormalizer().normalize_offer(offers[0])
+    second = PriceNormalizer().normalize_offer(offers[1])
+
+    assert len(offers) == 2
+    assert offers[0].seller_kind is MarketplacePartyKind.PLATFORM
+    assert first.condition is OfferCondition.NEW
+    assert first.rating_average == Decimal("4.8")
+    assert first.review_count == 321
+    assert offers[1].seller_kind is MarketplacePartyKind.MARKETPLACE_PARTNER
+    assert second.condition is OfferCondition.REFURBISHED
+    assert second.rating_average is None
+    assert second.review_count is None
+
+
+def test_mercado_livre_uses_edge_once_only_after_primary_failure(monkeypatch) -> None:
+    fallback_calls = 0
+
+    async def failed_primary(self, request):
+        raise ProviderNavigationError("mercadolivre", 403)
+
+    class Fallback:
+        async def run(self, url, *, readiness_selector, extract):
+            nonlocal fallback_calls
+            fallback_calls += 1
+            assert readiness_selector == MercadoLivreProvider.result_selector
+            return (
+                RawCollectedOffer(
+                    source_code="mercadolivre",
+                    url="https://produto.mercadolivre.com.br/MLB-1",
+                    title="Produto",
+                    collected_at=NOW,
+                    raw_price="R$ 100,00",
+                ),
+            )
+
+    monkeypatch.setattr(PlaywrightStoreProvider, "collect", failed_primary)
+    provider = MercadoLivreProvider(clock=lambda: NOW, edge_fallback=Fallback())
+
+    result = asyncio.run(
+        provider.collect(CollectionRequest(uuid4(), "mercadolivre", "Produto", NOW))
+    )
+
+    assert len(result.offers) == 1
+    assert fallback_calls == 1
+
+
+def test_mercado_livre_primary_success_never_opens_edge(monkeypatch) -> None:
+    expected = RawCollectedOffer(
+        source_code="mercadolivre",
+        url="https://produto.mercadolivre.com.br/MLB-1",
+        title="Produto",
+        collected_at=NOW,
+        raw_price="R$ 100,00",
+    )
+
+    async def successful_primary(self, request):
+        from app.collection import CollectionResult
+
+        return CollectionResult("mercadolivre", NOW, NOW, (expected,))
+
+    class ForbiddenFallback:
+        async def run(self, *args, **kwargs):
+            raise AssertionError("Edge must remain the last resort")
+
+    monkeypatch.setattr(PlaywrightStoreProvider, "collect", successful_primary)
+    provider = MercadoLivreProvider(edge_fallback=ForbiddenFallback())
+
+    result = asyncio.run(
+        provider.collect(CollectionRequest(uuid4(), "mercadolivre", "Produto", NOW))
+    )
+
+    assert result.offers == (expected,)
 
 
 def test_magalu_search_uses_ssr_json_and_returns_multiple_without_playwright(
@@ -1751,6 +1885,7 @@ def test_uses_headed_only_for_protected_sources_by_default() -> None:
     assert should_use_headed("pichau") is True
     assert should_use_headed("terabyte") is True
     assert should_use_headed("magalu") is True
+    assert should_use_headed("mercadolivre") is True
     assert should_use_headed("amazon") is False
     assert should_use_headed("kabum") is False
     assert should_use_headed("pichau", force_headless=True) is False

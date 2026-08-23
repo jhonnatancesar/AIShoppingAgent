@@ -1,5 +1,15 @@
 # Project Context
 
+**Atualização 2026-08-22 (TASK-104B implementada, validação externa final
+pendente):** Mercado Livre usa Playwright normal/headed como transporte
+primário e uma única tentativa Edge/CDP loopback como último recurso após
+bloqueio/falha de navegação. Ambos reutilizam o mesmo `extract()`; parser,
+normalização, identidade, relevância e ranking continuam comuns. Seller próprio
+exige evidência explícita de Mercado Livre, fulfillment é independente, selo de
+loja oficial não promove parceiro e rating ausente permanece `NULL`. A única
+abertura Edge real final reunirá múltiplas ofertas e todos os campos necessários
+para não repetir acessos (`DEC-091`).
+
 **Atualização 2026-08-22 (TASK-104A implementada e validada no DEV):** aquisição
 Magalu usa a porta substituível `MagaluSearchTransport`; quando configurado, o
 adapter Edge/CDP conecta somente em loopback e entrega o HTML final ao parser
@@ -10,7 +20,14 @@ enriquecimento, domínio e ranking não conhecem CDP. Ausência de avaliação
 permanece `NULL` e falha Magalu segue isolada por claim (`DEC-090`). A
 migration/seed foi aprovada no PostgreSQL 18.4 descartável, head `20260822_0007`.
 
-**Atualização 2026-08-22 (TASK-103 implementada no DEV, aguardando revisão):**
+**Atualização 2026-08-22 (TASK-104 dividida por loja):** a expansão passa a ser
+TASK-104A Magalu, TASK-104B Mercado Livre e TASK-104C Shopee. Magalu/ML
+distinguem venda própria de parceiro; na Shopee, selo oficial é atributo do
+vendedor e não equivale a venda/entrega pela plataforma. Todas reutilizam a
+arquitetura comum e a mesma abertura da oferta (`DEC-089`). Cupons ficam depois,
+AliExpress permanece fora e TASK-098 continua no final.
+
+**Atualização 2026-08-22 (TASK-103 concluída e publicada `610a997`):**
 a página de Offer compara opções autorizadas entre lojas somente quando a
 identidade específica da TASK-097 está resolvida. Mesma variante significa o
 mesmo Product global; unresolved, família, categoria e NO_MATCH nunca unem.

@@ -21,7 +21,7 @@ export function AppHome() {
         </Card>
       </motion.div>
       <div className="mt-5 grid gap-4 sm:grid-cols-3">
-        {[{ icon: Search, title: 'Busca multiloja', text: 'Amazon, Pichau, KaBuM!, Terabyte e Magalu.' }, { icon: BellRing, title: 'Alertas conectados', text: 'Web e Telegram acompanham a mesma missão.' }, { icon: Target, title: 'Ofertas relevantes', text: 'Seleção por relevância, condição e vendedor.' }].map(({ icon: Icon, title, text }) => (
+        {[{ icon: Search, title: 'Busca multiloja', text: 'Amazon, Pichau, KaBuM!, Terabyte, Magalu e Mercado Livre.' }, { icon: BellRing, title: 'Alertas conectados', text: 'Web e Telegram acompanham a mesma missão.' }, { icon: Target, title: 'Ofertas relevantes', text: 'Seleção por relevância, condição e vendedor.' }].map(({ icon: Icon, title, text }) => (
           <Card key={title}><CardHeader><div className="mb-2 grid size-9 place-items-center rounded-lg bg-muted text-muted-foreground"><Icon className="size-4" /></div><CardTitle className="text-sm">{title}</CardTitle><CardDescription>{text}</CardDescription></CardHeader></Card>
         ))}
       </div>

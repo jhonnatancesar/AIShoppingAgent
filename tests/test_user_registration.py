@@ -167,7 +167,8 @@ def test_registration_prompt_offers_numbered_stores_and_all_option() -> None:
     assert "1 — Kabum" in prompt
     assert "4 — Amazon" in prompt
     assert "5 — Magalu" in prompt
-    assert "6 — Todas" in prompt
+    assert "6 — Mercado Livre" in prompt
+    assert "7 — Todas" in prompt
 
 
 @pytest.mark.parametrize(
@@ -176,8 +177,15 @@ def test_registration_prompt_offers_numbered_stores_and_all_option() -> None:
         ("1,2", ["kabum", "pichau"]),
         ("2, 4", ["amazon", "pichau"]),
         ("5", ["magalu"]),
-        ("6", ["amazon", "kabum", "magalu", "pichau", "terabyte"]),
-        ("todas", ["amazon", "kabum", "magalu", "pichau", "terabyte"]),
+        ("6", ["mercadolivre"]),
+        (
+            "7",
+            ["amazon", "kabum", "magalu", "mercadolivre", "pichau", "terabyte"],
+        ),
+        (
+            "todas",
+            ["amazon", "kabum", "magalu", "mercadolivre", "pichau", "terabyte"],
+        ),
     ],
 )
 def test_advance_registration_parses_numbered_stores(
@@ -198,7 +206,7 @@ def test_advance_registration_rejects_favorite_stores_with_no_known_match() -> N
     with pytest.raises(RegistrationError):
         asyncio.run(
             advance_registration(
-                user, answer="shopee, mercado livre", session=_session()
+                user, answer="shopee, aliexpress", session=_session()
             )
         )
     assert user.registration_step == "favorite_stores"

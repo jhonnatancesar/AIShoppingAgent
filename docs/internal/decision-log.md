@@ -1,5 +1,23 @@
 # Decision Log
 
+## DEC-091 — Mercado Livre usa Edge/CDP somente como fallback final
+
+- **Data:** 2026-08-22.
+- **Decisão:** TASK-104B mantém Playwright normal/headed como aquisição
+  primária. Somente bloqueio, circuito aberto ou falha de navegação admite uma
+  tentativa pelo Edge/CDP loopback já supervisionado; não há retry próprio.
+- **Desacoplamento:** os dois transportes entregam a mesma `Page` ao mesmo
+  `MercadoLivreProvider.extract()`. Edge/CDP não conhece seller, condição,
+  avaliação, identidade, relevância ou ranking.
+- **Carga:** sucesso primário nunca toca o Edge. O fallback abre uma página,
+  coleta todos os cards necessários e encerra somente essa página; não cria nem
+  encerra o Edge dedicado. Enriquecimento de detalhe reúne seller, entrega,
+  condição, disponibilidade e avaliação na mesma abertura comum e limitada.
+- **Falha segura:** endpoint CDP é restrito a loopback, timeouts são explícitos,
+  falha final fica isolada na origem Mercado Livre e não bloqueia outras lojas.
+- **Validação real:** por decisão operacional, será feita uma única abertura
+  final no Edge, depois de toda preparação offline.
+
 ## DEC-090 — Magalu separa transporte do parser SSR e admite Edge/CDP loopback
 
 - **Data:** 2026-08-22.
@@ -28,6 +46,32 @@
 - **Smoke real:** Edge ausente iniciou automaticamente; após encerrar os 8
   processos do perfil dedicado, o supervisor recuperou com novo PID e a busca
   posterior retornou 20 ofertas.
+
+## DEC-089 — Expansão de lojas dividida em TASK-104A/B/C
+
+- **Data:** 2026-08-22.
+- **Decisão:** dividir a expansão em TASK-104A Magalu, TASK-104B Mercado Livre
+  e TASK-104C Shopee, permitindo implementação e validação real independentes
+  sem duplicar domínio ou consumidores.
+- **Magalu/Mercado Livre:** `platform` somente quando houver evidência
+  explícita de venda pela própria plataforma; parceiro e fulfillment são
+  classificados separadamente, e ausência permanece `unknown`.
+- **Shopee:** vendedor oficial depende do selo explícito da página e será um
+  atributo próprio, tri-state, do `Seller`; nunca será confundido com
+  `seller_kind=platform` ou entrega pela Shopee.
+- **Navegação:** vendedor, entrega, condição e avaliação aproveitam a mesma
+  abertura/enriquecimento da oferta. Nenhuma loja ganha navegação adicional
+  exclusiva para esses campos.
+- **Ordem:** 104A, 104B e 104C; cupons vêm depois e TASK-098 permanece no fim.
+
+## DEC-088 — Expansão de lojas precede cupons na V1.2
+
+- **Data:** 2026-08-22.
+- **Decisão:** após a TASK-103, a próxima prioridade é integrar Magalu,
+  Mercado Livre e Shopee pela arquitetura comum de Store Providers. Pesquisa
+  de cupons passa ao item seguinte.
+- **Limites preservados:** AliExpress continua fora da V1.2 e a TASK-098
+  permanece reservada como último item da versão.
 
 ## DEC-087 — Comparação exige Product específico resolvido e ownership por Offer
 

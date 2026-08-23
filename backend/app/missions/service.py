@@ -36,7 +36,14 @@ from app.products.identity import ProductRequestKind, classify_product_request
 from app.products.models import Product
 from app.stores.models import Store
 
-_DEFAULT_V1_SOURCE_CODES = ("pichau", "terabyte", "amazon", "kabum", "magalu")
+_DEFAULT_V1_SOURCE_CODES = (
+    "pichau",
+    "terabyte",
+    "amazon",
+    "kabum",
+    "magalu",
+    "mercadolivre",
+)
 _DEFAULT_SCHEDULE_INTERVAL_MINUTES = 60
 _DEFAULT_SCHEDULE_STAGGER_SECONDS = 0
 """Fontes selecionáveis da V1 usadas quando o Intent não especifica nenhuma."""

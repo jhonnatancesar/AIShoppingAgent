@@ -991,7 +991,8 @@ async def test_create_mission_without_sources_stages_source_selection_and_preser
     assert "3 — Amazon" in reply
     assert "4 — Kabum" in reply
     assert "5 — Magalu" in reply
-    assert "6 — Todas" in reply
+    assert "6 — Mercado Livre" in reply
+    assert "7 — Todas" in reply
 
 
 @pytest.mark.anyio
@@ -2643,6 +2644,7 @@ async def test_lojas_choice_add_shows_missing_stores(
             "2": "amazon",
             "3": "kabum",
             "4": "magalu",
+            "5": "mercadolivre",
         },
         "auto_paused": False,
     }
@@ -2739,6 +2741,7 @@ async def test_lojas_choice_add_blocked_when_all_stores_already_linked(
                 "amazon",
                 "kabum",
                 "magalu",
+                "mercadolivre",
             ],
         }
     )
