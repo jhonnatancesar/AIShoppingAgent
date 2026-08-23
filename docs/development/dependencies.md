@@ -136,10 +136,17 @@ Para a TASK-104A, Microsoft Edge é a dependência do único transporte
 operacional Magalu no runtime Windows. O Edge não é biblioteca Python nem entra
 na imagem. O worker o inicia e recupera por supervisor local, com perfil
 dedicado e CDP restrito a loopback; configure
-`AISHOPPING_MAGALU_CDP_URL=http://127.0.0.1:<porta>` no processo do
+`AISHOPPING_EDGE_CDP_URL=http://127.0.0.1:<porta>` no processo do
 `collection_worker`. Sem essa variável, a Magalu falha rápido e isoladamente.
 Nunca publique a porta, use `0.0.0.0`, perfil pessoal,
 cookies copiados ou flags de stealth/fingerprint.
+
+TASK-105 reaproveita esse mesmo Edge/CDP como transporte primário e único da
+Terabyte (Playwright gerenciado ficou comprovadamente bloqueado pelo
+Cloudflare, `DEC-070`) e como fallback já existente do Mercado Livre — uma
+única variável, um único Edge supervisionado, três providers. A variável
+antiga `AISHOPPING_MAGALU_CDP_URL` continua funcionando por compatibilidade,
+mas `AISHOPPING_EDGE_CDP_URL` é o nome atual.
 
 Para comparar e instalar em uma nova máquina, após autorização:
 

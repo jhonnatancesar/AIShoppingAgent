@@ -4,7 +4,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, SecretStr, field_validator, model_validator
+from pydantic import AliasChoices, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.core.urls import normalize_loopback_http_endpoint
@@ -133,7 +133,18 @@ class Settings(BaseSettings):
     # falha real (ProviderNavigationError) em lojas cuja página demora mais
     # que 10s para atingir domcontentloaded.
     browser_navigation_timeout_seconds: float = Field(default=45.0, gt=0, le=120)
-    magalu_cdp_url: str | None = None
+    # TASK-105: nome genérico -- o mesmo Edge/CDP supervisionado passou a
+    # ser reaproveitado pela Terabyte (transporte primário/único, DEC-070)
+    # além da Magalu (transporte primário/único) e do Mercado Livre
+    # (fallback de último recurso). `AISHOPPING_MAGALU_CDP_URL` (nome
+    # histórico) continua aceito por compatibilidade; `edge_cdp_url` puro
+    # também funciona para construção direta (testes/scripts).
+    edge_cdp_url: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "edge_cdp_url", "AISHOPPING_EDGE_CDP_URL", "AISHOPPING_MAGALU_CDP_URL"
+        ),
+    )
     magalu_edge_executable: Path | None = None
     magalu_edge_profile_dir: Path | None = None
     magalu_edge_startup_timeout_seconds: float = Field(default=30.0, gt=0, le=120)
@@ -171,14 +182,14 @@ class Settings(BaseSettings):
     # ver docs/tasks/TASK-091.md.
     spa_dist_dir: Path | None = None
 
-    @field_validator("magalu_cdp_url")
+    @field_validator("edge_cdp_url")
     @classmethod
-    def validate_magalu_cdp_url(cls, value: str | None) -> str | None:
+    def validate_edge_cdp_url(cls, value: str | None) -> str | None:
         if value is None:
             return None
         normalized = normalize_loopback_http_endpoint(value)
         if normalized is None:
-            raise ValueError("magalu_cdp_url must be loopback HTTP with explicit port")
+            raise ValueError("edge_cdp_url must be loopback HTTP with explicit port")
         return normalized
 
     @model_validator(mode="after")

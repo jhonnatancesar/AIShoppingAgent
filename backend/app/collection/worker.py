@@ -17,6 +17,7 @@ from app.collection.providers import (
     V1_PROVIDER_TYPES,
     MagaluProvider,
     MercadoLivreProvider,
+    TerabyteProvider,
 )
 from app.collection.providers.cdp_fallback import CdpPageFallback
 from app.collection.providers.magalu_edge_supervisor import (
@@ -53,11 +54,11 @@ async def start_magalu_edge_supervisor(
     settings: Settings,
 ) -> MagaluEdgeSupervisor | None:
     """Falha do runtime Magalu nunca impede o worker das outras origens."""
-    if settings.magalu_cdp_url is None:
+    if settings.edge_cdp_url is None:
         return None
     try:
         supervisor = MagaluEdgeSupervisor(
-            settings.magalu_cdp_url,
+            settings.edge_cdp_url,
             executable=settings.magalu_edge_executable,
             profile_dir=settings.magalu_edge_profile_dir,
             startup_timeout_seconds=settings.magalu_edge_startup_timeout_seconds,
@@ -107,7 +108,7 @@ def build_collection_adapter(settings: Settings) -> CollectionAdapter:
         }
         if provider_type is MagaluProvider:
             provider_kwargs["search_transport"] = build_magalu_search_transport(
-                cdp_endpoint=settings.magalu_cdp_url,
+                cdp_endpoint=settings.edge_cdp_url,
                 connect_timeout_ms=int(
                     settings.magalu_cdp_connect_timeout_seconds * 1000
                 ),
@@ -119,9 +120,27 @@ def build_collection_adapter(settings: Settings) -> CollectionAdapter:
                 ),
                 html_timeout_ms=int(settings.magalu_cdp_html_timeout_seconds * 1000),
             )
-        if provider_type is MercadoLivreProvider and settings.magalu_cdp_url:
+        if provider_type is MercadoLivreProvider and settings.edge_cdp_url:
             provider_kwargs["edge_fallback"] = CdpPageFallback(
-                settings.magalu_cdp_url,
+                settings.edge_cdp_url,
+                connect_timeout_ms=int(
+                    settings.magalu_cdp_connect_timeout_seconds * 1000
+                ),
+                navigation_timeout_ms=int(
+                    settings.magalu_cdp_navigation_timeout_seconds * 1000
+                ),
+                document_timeout_ms=int(
+                    settings.magalu_cdp_document_timeout_seconds * 1000
+                ),
+            )
+        # TASK-105: mesmo endpoint/infra CDP da Magalu -- sem supervisor,
+        # porta ou perfil de Edge próprios para a Terabyte. Sem
+        # `edge_cdp_url` configurado, `cdp_transport` fica `None` e a
+        # coleta falha isolada (nunca cai de volta ao Playwright, já
+        # comprovadamente bloqueado pelo Cloudflare -- DEC-070).
+        if provider_type is TerabyteProvider and settings.edge_cdp_url:
+            provider_kwargs["cdp_transport"] = CdpPageFallback(
+                settings.edge_cdp_url,
                 connect_timeout_ms=int(
                     settings.magalu_cdp_connect_timeout_seconds * 1000
                 ),

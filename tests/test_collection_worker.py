@@ -62,7 +62,7 @@ def test_build_adapter_decouples_navigation_timeout_from_action_timeout() -> Non
 
 def test_build_adapter_uses_configured_loopback_cdp_for_magalu_and_ml_fallback() -> None:
     adapter = build_collection_adapter(
-        Settings(magalu_cdp_url="http://127.0.0.1:9223", _env_file=None)
+        Settings(edge_cdp_url="http://127.0.0.1:9223", _env_file=None)
     )
 
     transport = adapter._providers["magalu"]._search_transport
@@ -72,6 +72,27 @@ def test_build_adapter_uses_configured_loopback_cdp_for_magalu_and_ml_fallback()
     assert transport.endpoint == "http://127.0.0.1:9223"
     assert isinstance(fallback, CdpPageFallback)
     assert fallback.endpoint == "http://127.0.0.1:9223"
+
+
+def test_build_adapter_uses_configured_loopback_cdp_for_terabyte_primary() -> None:
+    """TASK-105: mesma infraestrutura CDP da Magalu, reaproveitada como
+    transporte primário -- e único -- da Terabyte."""
+    adapter = build_collection_adapter(
+        Settings(edge_cdp_url="http://127.0.0.1:9223", _env_file=None)
+    )
+
+    transport = adapter._providers["terabyte"]._cdp_transport
+
+    assert isinstance(transport, CdpPageFallback)
+    assert transport.endpoint == "http://127.0.0.1:9223"
+
+
+def test_build_adapter_leaves_terabyte_cdp_unset_without_configured_endpoint() -> None:
+    """Sem `edge_cdp_url`, a Terabyte não ganha transporte nenhum -- nunca
+    cai de volta ao Playwright, já comprovadamente bloqueado (DEC-070)."""
+    adapter = build_collection_adapter(Settings(_env_file=None))
+
+    assert adapter._providers["terabyte"]._cdp_transport is None
 
 
 def test_unavailable_magalu_edge_does_not_block_worker_setup(monkeypatch) -> None:
@@ -86,7 +107,7 @@ def test_unavailable_magalu_edge_does_not_block_worker_setup(monkeypatch) -> Non
     monkeypatch.setattr(
         "app.collection.worker.MagaluEdgeSupervisor", UnavailableSupervisor
     )
-    settings = Settings(magalu_cdp_url="http://127.0.0.1:9223", _env_file=None)
+    settings = Settings(edge_cdp_url="http://127.0.0.1:9223", _env_file=None)
 
     assert asyncio.run(start_magalu_edge_supervisor(settings)) is None
 

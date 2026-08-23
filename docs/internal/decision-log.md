@@ -825,6 +825,31 @@
   envolva evasão (ex.: parceria/API oficial) -- decisão de produto, fora
   do escopo técnico. Ver `docs/tasks/TASK-089.md`, seção "Terabyte
   desativada e simplificada".
+- **Atualização (TASK-105, 2026-08-22):** o diagnóstico acima permanece
+  válido -- o bloqueio identificado em 20/08 foi real e não foi contornado.
+  O que mudou é o transporte: diagnóstico repetido no DEV confirmou que o
+  mesmo Chromium gerenciado pelo Playwright continua bloqueado, mas um
+  Edge normal via CDP loopback (mesmo padrão já em produção para a
+  Magalu, sem stealth/spoof/proxy) passa limpo -- busca real, 300 cards,
+  `TerabyteProvider.extract()` e `resolve_product_availability` atuais
+  (sem nenhuma alteração de parser) funcionaram sem bloqueio, inclusive
+  em página individual. `TerabyteProvider` passou a usar
+  `CdpPageFallback` (mesma infraestrutura CDP/Edge supervisionado da
+  Magalu, sem supervisor/porta próprios) como transporte primário e
+  único -- sem fallback de volta ao Playwright, que continua
+  comprovadamente bloqueado. Ver `docs/tasks/TASK-105.md`.
+- **Fechamento (TASK-105, 2026-08-22):** a desativação temporária terminou.
+  Migration `20260822_0009_reactivate_terabyte.py` marca
+  `stores.is_active=true` para `code='terabyte'` -- mesmo mecanismo
+  reversível já usado para desativar (`downgrade()` restaura `false`),
+  agora automatizado por Alembic em vez de `UPDATE` manual: a Terabyte
+  sobe ativa em qualquer ambiente que rode `alembic upgrade head` a
+  partir desta revisão, sem intervenção manual em produção. A variável de
+  configuração também deixou de ser exclusiva da Magalu --
+  `Settings.magalu_cdp_url` foi renomeada para `Settings.edge_cdp_url`
+  (nome antigo/env `AISHOPPING_MAGALU_CDP_URL` continua aceito por
+  compatibilidade), já que o mesmo Edge/CDP supervisionado agora atende
+  Magalu, Mercado Livre e Terabyte.
 
 ## DEC-069 — Corrigir a modelagem de parcelamento da TASK-089 para relação 1:N
 

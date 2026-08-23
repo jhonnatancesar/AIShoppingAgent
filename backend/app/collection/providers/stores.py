@@ -173,10 +173,56 @@ class PichauProvider(PlaywrightStoreProvider):
 
 
 class TerabyteProvider(PlaywrightStoreProvider):
+    """Provider Terabyte; Edge/CDP é o único transporte operacional.
+
+    TASK-105: `DEC-070` (2026-08-20) documentou bloqueio persistente do
+    Cloudflare Bot Management contra o Chromium gerenciado pelo Playwright
+    (403/`cf-mitigated: challenge`). Diagnóstico repetido em 2026-08-22
+    confirmou que o mesmo bloqueio não ocorre por um Edge normal via CDP
+    loopback (mesmo padrão já validado pela Magalu): busca real, página
+    individual e `extract()`/`resolve_product_availability` já existentes
+    funcionaram sem qualquer alteração. `DEC-070` permanece válida como
+    histórico do diagnóstico original -- só o transporte muda. Como o
+    Playwright gerenciado está comprovadamente bloqueado, ele nunca é
+    tentado como fallback aqui (ao contrário do Mercado Livre, cujo
+    primário ainda funciona); reaproveita a mesma infraestrutura CDP/Edge
+    supervisionado da Magalu (`CdpPageFallback`, sem supervisor/porta
+    próprios).
+    """
+
     source_code, result_selector = "terabyte", 'a.product-item__name[href*="/produto/"]'
+
+    def __init__(
+        self,
+        *args,
+        cdp_transport: CdpPageFallback | None = None,
+        **kwargs,
+    ) -> None:
+        super().__init__(*args, **kwargs)
+        self._cdp_transport = cdp_transport
 
     def build_url(self, query: str) -> str:
         return f"https://www.terabyteshop.com.br/busca?str={quote_plus(query)}"
+
+    async def _collect_once(self, request: CollectionRequest) -> CollectionResult:
+        """Substitui a navegação Playwright padrão por Edge/CDP; parser,
+        seletor de resultado e fallback de disponibilidade continuam
+        exatamente os mesmos usados pelas demais lojas."""
+        if self._cdp_transport is None:
+            raise CdpFallbackError("Terabyte CDP transport is not configured")
+        started_at = self._clock()
+        offers = await self._cdp_transport.run(
+            self.build_url(request.search_query),
+            readiness_selector=self.result_selector,
+            extract=self._extract_via_cdp_page,
+        )
+        return CollectionResult(self.source_code, started_at, self._clock(), offers)
+
+    async def _extract_via_cdp_page(self, page: Page) -> tuple[RawCollectedOffer, ...]:
+        offers = await self.extract(page, self._clock())
+        if not offers:
+            raise ProviderBlockedError(self.source_code, None)
+        return await self._resolve_unknown_availability(page, offers)
 
     async def extract(
         self, page: Page, collected_at: datetime

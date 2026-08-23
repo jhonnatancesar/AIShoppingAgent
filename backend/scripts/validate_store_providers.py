@@ -45,20 +45,30 @@ async def validate(
     headed: bool,
     *,
     show_evidence: bool = False,
-    magalu_cdp_url: str | None = None,
+    edge_cdp_url: str | None = None,
 ) -> None:
     provider_kwargs = {}
     if source == "magalu":
         provider_kwargs["search_transport"] = build_magalu_search_transport(
-            cdp_endpoint=magalu_cdp_url,
+            cdp_endpoint=edge_cdp_url,
             connect_timeout_ms=5_000,
             navigation_timeout_ms=20_000,
             document_timeout_ms=10_000,
             html_timeout_ms=3_000,
         )
-    if source == "mercadolivre" and magalu_cdp_url:
+    if source == "mercadolivre" and edge_cdp_url:
         provider_kwargs["edge_fallback"] = CdpPageFallback(
-            magalu_cdp_url,
+            edge_cdp_url,
+            connect_timeout_ms=5_000,
+            navigation_timeout_ms=20_000,
+            document_timeout_ms=10_000,
+        )
+    if source == "terabyte" and edge_cdp_url:
+        # TASK-105: Playwright gerenciado está comprovadamente bloqueado
+        # (DEC-070) -- sem `edge_cdp_url`, a validação manual falha rápido,
+        # igual ao worker real.
+        provider_kwargs["cdp_transport"] = CdpPageFallback(
+            edge_cdp_url,
             connect_timeout_ms=5_000,
             navigation_timeout_ms=20_000,
             document_timeout_ms=10_000,
@@ -95,8 +105,9 @@ def main() -> None:
     mode.add_argument("--headless", action="store_true")
     parser.add_argument("--show-evidence", action="store_true")
     parser.add_argument(
-        "--magalu-cdp-url",
-        help="Endpoint CDP HTTP loopback de um Edge normal já iniciado.",
+        "--edge-cdp-url",
+        help="Endpoint CDP HTTP loopback de um Edge normal já iniciado "
+        "(Magalu, Mercado Livre e Terabyte).",
     )
     args = parser.parse_args()
     headed = should_use_headed(
@@ -108,7 +119,7 @@ def main() -> None:
             args.query,
             headed,
             show_evidence=args.show_evidence,
-            magalu_cdp_url=args.magalu_cdp_url,
+            edge_cdp_url=args.edge_cdp_url,
         )
     )
 

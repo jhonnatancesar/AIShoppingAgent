@@ -22,6 +22,7 @@ from app.collection import (
     TerabyteProvider,
 )
 from app.collection.providers.base import PlaywrightStoreProvider
+from app.collection.providers.cdp_fallback import CdpFallbackError
 from app.collection.providers.magalu_transport import MagaluSearchTransportError
 from app.core.resilience import RetryPolicy
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
@@ -300,6 +301,123 @@ def test_mercado_livre_primary_success_never_opens_edge(monkeypatch) -> None:
     )
 
     assert result.offers == (expected,)
+
+
+def test_terabyte_uses_cdp_transport_as_primary_and_extracts_multiple_offers(
+    monkeypatch,
+) -> None:
+    """TASK-105: Playwright gerenciado está comprovadamente bloqueado pelo
+    Cloudflare (DEC-070) -- Edge/CDP é o único transporte tentado, sem
+    passar pelo `PlaywrightStoreProvider.collect` normal."""
+    offers = (
+        RawCollectedOffer(
+            source_code="terabyte",
+            url="https://www.terabyteshop.com.br/produto/1/gpu-a",
+            title="GPU A",
+            collected_at=NOW,
+            raw_price="R$ 100,00",
+            raw_availability="Disponível",
+        ),
+        RawCollectedOffer(
+            source_code="terabyte",
+            url="https://www.terabyteshop.com.br/produto/2/gpu-b",
+            title="GPU B",
+            collected_at=NOW,
+            raw_price="R$ 200,00",
+            raw_availability="Disponível",
+        ),
+    )
+
+    async def fake_extract(self, page, collected_at):
+        assert page == "fake-cdp-page"
+        return offers
+
+    monkeypatch.setattr(TerabyteProvider, "extract", fake_extract)
+
+    class Transport:
+        def __init__(self):
+            self.calls = 0
+
+        async def run(self, url, *, readiness_selector, extract):
+            self.calls += 1
+            assert url == "https://www.terabyteshop.com.br/busca?str=RTX+5070"
+            assert readiness_selector == TerabyteProvider.result_selector
+            return await extract("fake-cdp-page")
+
+    transport = Transport()
+    provider = TerabyteProvider(clock=lambda: NOW, cdp_transport=transport)
+
+    result = asyncio.run(
+        provider.collect(CollectionRequest(uuid4(), "terabyte", "RTX 5070", NOW))
+    )
+
+    assert result.offers == offers
+    assert transport.calls == 1
+
+
+def test_terabyte_never_falls_back_to_blocked_playwright_on_cdp_failure(
+    monkeypatch,
+) -> None:
+    """O Playwright gerenciado da Terabyte está comprovadamente bloqueado
+    (DEC-070) -- diferente do Mercado Livre, ele nunca deve ser tentado."""
+
+    async def forbidden_primary(self, request):
+        raise AssertionError("Playwright must never be attempted for Terabyte")
+
+    monkeypatch.setattr(PlaywrightStoreProvider, "_collect_once", forbidden_primary)
+
+    class FailingTransport:
+        async def run(self, url, *, readiness_selector, extract):
+            raise CdpFallbackError("CDP fallback failed")
+
+    provider = TerabyteProvider(clock=lambda: NOW, cdp_transport=FailingTransport())
+
+    with pytest.raises(CdpFallbackError):
+        asyncio.run(
+            provider.collect(CollectionRequest(uuid4(), "terabyte", "RTX 5070", NOW))
+        )
+
+
+def test_terabyte_without_cdp_transport_fails_isolated_without_navigation() -> None:
+    """Sem `edge_cdp_url` configurado, a claim falha isolada -- nunca
+    silenciosamente reabre o transporte Playwright já bloqueado."""
+    provider = TerabyteProvider(clock=lambda: NOW)
+
+    with pytest.raises(CdpFallbackError, match="not configured"):
+        asyncio.run(
+            provider.collect(CollectionRequest(uuid4(), "terabyte", "RTX 5070", NOW))
+        )
+
+
+def test_terabyte_reconnects_via_fresh_cdp_run_on_each_collection() -> None:
+    """Cada coleta abre uma nova conexão CDP -- sem estado cacheado entre
+    chamadas, então uma recuperação do Edge supervisionado (reinício)
+    nunca deixa a Terabyte presa a uma conexão morta."""
+    offer = RawCollectedOffer(
+        source_code="terabyte",
+        url="https://www.terabyteshop.com.br/produto/1/gpu-a",
+        title="GPU A",
+        collected_at=NOW,
+        raw_price="R$ 100,00",
+        raw_availability="Disponível",
+    )
+
+    class Transport:
+        def __init__(self):
+            self.calls = 0
+
+        async def run(self, url, *, readiness_selector, extract):
+            self.calls += 1
+            return (offer,)
+
+    transport = Transport()
+    provider = TerabyteProvider(clock=lambda: NOW, cdp_transport=transport)
+    request = CollectionRequest(uuid4(), "terabyte", "RTX 5070", NOW)
+
+    asyncio.run(provider.collect(request))
+    asyncio.run(provider.collect(request))
+
+    assert transport.calls == 2
 
 
 def test_magalu_search_uses_ssr_json_and_returns_multiple_without_playwright(

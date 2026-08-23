@@ -14,11 +14,16 @@ ResultT = TypeVar("ResultT")
 
 
 class CdpFallbackError(RuntimeError):
-    """Falha única no último transporte, sem retry próprio."""
+    """Falha única no transporte CDP, sem retry próprio."""
 
 
 class CdpPageFallback:
-    """Executa a extração existente numa página Edge/CDP já supervisionada."""
+    """Executa a extração existente numa página Edge/CDP já supervisionada.
+
+    Genérico o bastante para dois papéis diferentes: último recurso do
+    Mercado Livre (só depois do Playwright falhar) e transporte primário
+    -- e único -- da Terabyte (TASK-105, Playwright comprovadamente
+    bloqueado pelo Cloudflare, sem fallback de volta a ele)."""
 
     def __init__(
         self,

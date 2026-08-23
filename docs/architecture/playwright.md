@@ -55,18 +55,27 @@ Pichau e Terabyte usam headed por padrão no validador; Amazon e Kabum usam
 headless. `--headed` e `--headless` permitem diagnóstico explícito. Bloqueio ou
 mudança de markup produz erro e não autoriza stealth, CAPTCHA solver ou evasão.
 
-## Magalu: transporte CDP substituível
+## Edge/CDP: transporte compartilhado por Magalu, Mercado Livre e Terabyte
 
 A TASK-104A não acopla o provider ao Edge. `MagaluProvider` recebe a porta
 `MagaluSearchTransport`, que apenas devolve o HTML da busca; o parser SSR,
 normalização, ranking, Web e Telegram não conhecem o transporte.
 
-Quando `AISHOPPING_MAGALU_CDP_URL` é configurada, o worker inicia e mantém um
+Quando `AISHOPPING_EDGE_CDP_URL` é configurada, o worker inicia e mantém um
 Edge normal dedicado por supervisor, aguarda o `#__NEXT_DATA__` final e se
 desconecta sem encerrar o navegador. A URL aceita exclusivamente HTTP loopback
 (`127.0.0.1`, `localhost` ou `::1`) com porta explícita. `0.0.0.0`, IP de rede,
 credenciais e porta pública falham no startup. O worker e o Edge precisam rodar
 no mesmo host/network namespace; Docker não recebe socket ou privilégio novo.
+O nome antigo, `AISHOPPING_MAGALU_CDP_URL`, continua funcionando por
+compatibilidade.
+
+O mesmo Edge supervisionado, uma única variável, é reaproveitado por três
+providers, cada um com seu próprio papel (TASK-104B/TASK-105): transporte
+primário e único da Magalu e da Terabyte (nenhuma delas tenta Playwright
+depois -- a Terabyte porque `DEC-070` comprovou bloqueio Cloudflare
+persistente do Chromium gerenciado), e fallback de último recurso do Mercado
+Livre, só depois do Playwright primário falhar.
 
 Exemplo de validação local; o supervisor inicia o Edge com endereço loopback,
 porta escolhida e perfil dedicado:
@@ -74,12 +83,13 @@ porta escolhida e perfil dedicado:
 ```powershell
 python -m scripts.validate_store_providers magalu `
   --query "Samsung Galaxy S24 Ultra" `
-  --magalu-cdp-url http://127.0.0.1:9223
+  --edge-cdp-url http://127.0.0.1:9223
 ```
 
-Nesta versão não existe fallback HTTP ou Playwright para a busca Magalu: sem
-CDP, com Edge indisponível ou após timeout, somente essa origem falha rápido.
-Conexão, navegação, documento e leitura do HTML têm limites independentes. Um
-futuro serviço Windows/supervisor troca somente o adapter de transporte; não
-refaz regras de negócio. Não usar perfil pessoal, stealth, alteração de
-fingerprint, CAPTCHA solver, proxy ou cópia de cookies.
+Nesta versão não existe fallback HTTP ou Playwright para a busca Magalu nem
+para a Terabyte: sem CDP, com Edge indisponível ou após timeout, cada uma
+dessas origens falha rápido e isolada. Conexão, navegação, documento e
+leitura do HTML têm limites independentes. Um futuro serviço Windows/
+supervisor troca somente o adapter de transporte; não refaz regras de
+negócio. Não usar perfil pessoal, stealth, alteração de fingerprint, CAPTCHA
+solver, proxy ou cópia de cookies.
