@@ -1,5 +1,45 @@
 # Decision Log
 
+## DEC-092 — Adiar TASK-104C (Shopee) por bloqueio anti-bot mesmo autenticado
+
+- **Data:** 2026-08-22.
+- **Classificação:** Bloqueio externo confirmado — reação a proteção
+  anti-bot real, não decisão de arquitetura do provider. Mesmo *padrão de
+  resposta* usado no `DEC-070` original (diagnosticar sem evasão,
+  documentar, adiar), **não** o mesmo resultado: a Terabyte foi resolvida
+  trocando o transporte para Edge/CDP (TASK-105); a Shopee já foi testada
+  exatamente por esse mesmo caminho — Edge/CDP normal, com e sem login —
+  e o bloqueio persistiu (ver "Diagnóstico" abaixo). Não há, hoje, uma
+  solução equivalente já validada para a Shopee.
+- **O que foi tentado, sem evasão:** busca pública sem login (bloqueada,
+  `error: 90309999`, redirecionamento para tela de login); Edge/CDP normal
+  (mesmo padrão já validado para Magalu/Terabyte) sem login (mesmo
+  bloqueio); login real via Google numa sessão Edge/CDP persistente e
+  dedicada (perfil próprio, loopback) — login funcionou e a sessão
+  persistiu de fato entre fechar/reabrir o Edge (cookies `SPC_ST`/`SPC_U`
+  confirmados), mas tanto a busca quanto uma repetição isolada (sessão
+  "fria", uma única requisição) foram redirecionadas para
+  `shopee.com.br/verify/captcha?...scene=crawler_item...` (CAPTCHA de
+  arrastar peça). A API `search_items` respondeu `error: 90309999` mesmo
+  autenticada.
+- **Diagnóstico:** diferente da Terabyte (bloqueio por características do
+  Chromium gerenciado, resolvido trocando para Edge/CDP -- `DEC-070`/
+  TASK-105), a Shopee classifica como `crawler_item` mesmo com Edge normal
+  via CDP e sessão logada -- o sinal parece estar na própria conexão
+  automatizada (CDP/Playwright), não em headless, IP ou ausência de login.
+  Não existe hoje um transporte já validado no projeto capaz de contornar
+  isso sem técnica de evasão (stealth, CAPTCHA solver, fingerprint).
+- **Decisão:** `TASK-104C` fica formalmente **adiada** (não cancelada) --
+  nenhum código de provider foi escrito; login humano não é reproduzido
+  automaticamente em nenhum fluxo. Fica para estudo futuro quando houver
+  uma abordagem sem evasão (ex.: API oficial/parceria, ou mudança de
+  comportamento da própria Shopee). Nenhuma técnica de evasão foi
+  cogitada ou implementada.
+- **Fora de escopo, mantido de propósito:** resolver o CAPTCHA (manual ou
+  automatizado), stealth, spoof de fingerprint, proxy, rotação de IP,
+  cookies copiados. Credencial usada no teste não foi registrada em
+  código, log ou documentação.
+
 ## DEC-091 — Mercado Livre usa Edge/CDP somente como fallback final
 
 - **Data:** 2026-08-22.

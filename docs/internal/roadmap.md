@@ -41,11 +41,12 @@
 | Comparação entre lojas | TASK-103 | Concluída e publicada `610a997`; mesma identidade específica e ownership por Offer (`DEC-087`) |
 | Store Provider Magalu | TASK-104A | Implementada no DEV; Edge/CDP supervisionado é o único transporte operacional, parser SSR comum e falha rápida isolada (`DEC-090`) |
 | Store Provider Mercado Livre | TASK-104B | Implementada no DEV, aguardando validação real final única; Playwright normal primário e Edge/CDP como último recurso (`DEC-091`) |
-| Store Provider Shopee | TASK-104C | Formalizada após 104B. Selo oficial é atributo do vendedor, não venda pela plataforma (`DEC-089`) |
+| Store Provider Shopee | TASK-104C | Adiada; bloqueio anti-bot confirmado mesmo autenticado (Edge/CDP, login real, sessão persistente) — nenhum código de provider escrito (`DEC-092`) |
+| Reativação da Terabyte via Edge/CDP | TASK-105 | Concluída e publicada em `origin/main` (`31df942`); Cloudflare bloqueava só o Chromium gerenciado pelo Playwright — mesma infra CDP da Magalu reaproveitada como transporte primário/único, sem fallback Playwright; `stores.is_active` volta a `true` por migration (`20260822_0009`) |
 | Pesquisa de cupons | Tarefa a definir | Após a expansão de lojas; somente com evidência real (`DEC-088`) |
 | Histórico e gráficos por produto/variante | TASK-098 | Formalizada e reservada como último item da V1.2 (`DEC-081`/`DEC-082`) |
 | Estado operacional no Windows Server | manutenção 2026-08-16 | HEAD `0e90cf0` implantado; 7 serviços saudáveis; WSL2 limitado a 4 GB; somente schedules de missões ativas habilitados |
-| Expansão de fontes na V1.2 | TASK-104A/B/C | Magalu, Mercado Livre e Shopee; AliExpress permanece futuro (`DEC-080`/`DEC-089`) |
+| Expansão de fontes na V1.2 | TASK-104A/B/C | Magalu e Mercado Livre implementadas; Shopee adiada por bloqueio anti-bot; AliExpress permanece futuro (`DEC-080`/`DEC-089`/`DEC-092`) |
 
 As TASKs 000 a 053 e as TASKs 055 a 062 estão
 concluídas. O preflight
