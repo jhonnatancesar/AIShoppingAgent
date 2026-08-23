@@ -14,17 +14,25 @@
 - **Decisão:** introduzir fila FIFO/round-robin por `user_id`, com
   `max_concurrent_user_batches=1` (só um usuário processado por vez) e
   cooldown individual por usuário (`user_cooldown_min/max_seconds`,
-  10–15 min com jitter) depois que o lote desse usuário termina —
-  cooldown nunca bloqueia outros usuários elegíveis, que seguem
-  imediatamente. `coupon_worker` (`DEC-093`) permanece inteiramente fora
-  dessa fila. Pesquisa Web recebe rate-limit (não fila de processamento
-  própria), reaproveitando `max_daily_searches` da `DEC-094`.
-- **Pontos assumidos sem confirmação total**, registrados como abertos em
-  `docs/tasks/TASK-108.md`: interpretação do cooldown como não-bloqueante
-  para outros usuários; "fila" de pesquisa web como rate-limit e não
-  enfileiramento real.
+  **1–3 min** com jitter, corrigido pelo usuário -- proposta original de
+  10–15 min era longa demais) depois que o lote desse usuário termina;
+  esse usuário volta para o **fim da fila**. Cooldown nunca bloqueia
+  outros usuários elegíveis, que seguem imediatamente -- confirmado
+  explicitamente pelo usuário, não é mais suposição. `coupon_worker`
+  (`DEC-093`) permanece inteiramente fora dessa fila. Pesquisa Web
+  recebe rate-limit (não fila de processamento própria, confirmado),
+  reaproveitando `max_daily_searches` da `DEC-094` -- não consome
+  recursos de coleta/provider, então não precisa de fila.
+- **Duas camadas de proteção, confirmado pelo usuário:** a proteção
+  principal contra excesso de requisições continua sendo por
+  provider/loja (circuit breaker por `source_code`, backoff
+  `next_eligible_at`/`consecutive_blocks` em `MissionSource`, `DEC-046`)
+  -- já existe, intocada. A fila por usuário desta TASK é uma segunda
+  camada, ortogonal, contra monopolização do worker por um único
+  usuário; um provider em cooldown nunca trava desnecessariamente os
+  demais.
 - **Fora de escopo:** qualquer alteração nos limites por provider já
-  existentes, implementação de código nesta rodada.
+  existentes, sistema de planos (`DEC-094`/`DEC-073`).
 
 ## DEC-094 — TASK-107: cotas por usuário, sem plano/tier novo
 

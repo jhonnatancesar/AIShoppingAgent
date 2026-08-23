@@ -1,6 +1,6 @@
 # TASK-108 — Fila justa e controle de carga
 
-Status: **Formalizada (planejamento); aguardando aprovação. Nenhum código escrito.**
+Status: **Formalizada e corrigida (planejamento aprovado, 2026-08-22); pronta para implementação.**
 
 ## Objetivo
 
@@ -35,57 +35,61 @@ Levantado em `backend/app/collection/orchestration.py` e
 - **Não existe hoje**: fila por usuário, cooldown entre usuários,
   round-robin, nem qualquer feedback de "posição na fila" para o usuário.
 
-## Configuração proposta
+## Configuração (corrigida, 2026-08-22)
 
 Mesmo padrão de `Settings` já usado (`Field(default=..., ge=..., le=...)`,
 env `AISHOPPING_`):
 
 ```python
 max_concurrent_user_batches: int = Field(default=1, ge=1, le=4)
-user_cooldown_min_seconds: float = Field(default=600.0, gt=0, le=3600)
-user_cooldown_max_seconds: float = Field(default=900.0, gt=0, le=3600)
+user_cooldown_min_seconds: float = Field(default=60.0, gt=0, le=600)
+user_cooldown_max_seconds: float = Field(default=180.0, gt=0, le=600)
 ```
 
-(`user_cooldown_min/max` = 10–15 min do pedido original, em segundos para
-consistência com as demais configs de tempo já existentes.)
+(Correção do usuário: **1–3 minutos**, não 10–15 minutos como na proposta
+original — cooldown curto o bastante para não represar throughput, longo
+o bastante para evitar que o mesmo usuário volte imediatamente ao topo da
+fila.)
 
-## Arquitetura proposta
+## Arquitetura (duas camadas de proteção, corrigida 2026-08-22)
+
+Duas camadas independentes, cada uma protegendo uma coisa diferente:
+
+### Camada 1 — por provider/loja (já existe, intocada)
+
+Circuit breaker por `source_code`, backoff `next_eligible_at`/
+`consecutive_blocks` em `MissionSource` após bloqueio confirmado
+(`DEC-046`), timeouts por loja. Um provider em cooldown não trava os
+demais — cada `(mission, store)` já é avaliado independentemente hoje.
+Esta é a proteção **principal** contra excesso de requisições a uma
+fonte externa; a TASK-108 não altera nada aqui.
+
+### Camada 2 — fila justa por usuário (nova, esta TASK)
 
 - **Fila FIFO/round-robin por `user_id`** — não por missão nem por claim
-  individual. Proposta: manter/derivar a ordem a partir do
-  agendamento já existente (`find_due_schedules_async`), agrupando as
-  missões due por `user_id` em vez de tratá-las soltas.
+  individual. Deriva a ordem do agendamento já existente
+  (`find_due_schedules_async`), agrupando as missões due por `user_id`.
 - **`max_concurrent_user_batches = 1`**: só as claims de **um** usuário
-  são processadas por vez (mesmo semáforo/gather de hoje, mas escopado ao
-  lote do usuário da vez, não a todas as claims due do sistema).
-- **Cooldown é por usuário, não global**: ao terminar o lote de um
-  usuário, esse usuário específico só volta a ficar elegível depois de um
-  jitter aleatório entre `user_cooldown_min` e `user_cooldown_max`
-  (10–15 min) — evita sincronização em massa (thundering herd) se vários
-  usuários tiverem o mesmo intervalo de agendamento. **Outros usuários não
-  esperam esse cooldown** — o sistema passa para o próximo usuário
-  elegível da fila imediatamente. Interpretação assumida para "usuário não
-  monopoliza"; se a intenção for outra (cooldown também pausando a fila
-  inteira), precisa de confirmação antes de implementar.
-- **`coupon_worker` (TASK-106) fica inteiramente fora dessa fila** — já é
-  processo/loop separado por decisão da `DEC-093`; "baixa prioridade" aqui
+  são processadas por vez (mesmo semáforo/gather de hoje, escopado ao
+  lote do usuário da vez).
+- **Regra de cooldown (confirmada pelo usuário):**
+  1. termina o lote do USER A;
+  2. A fica inelegível por 1–3 min (jitter, `user_cooldown_min/max`);
+  3. A volta para o **fim da fila** (não fica parado esperando no topo);
+  4. USER B/C/etc. executam imediatamente se elegíveis — **o cooldown de
+     A nunca pausa a fila inteira**.
+- **`coupon_worker` (TASK-106) fica inteiramente fora desta fila** — já é
+  processo/loop separado por decisão da `DEC-093`; "baixa prioridade"
   significa nunca competir pelo mesmo semáforo/slot de concorrência do
   `collection_worker`, não uma prioridade dentro do mesmo scheduler.
-- **Limites por provider permanecem intocados** — circuit breaker por
-  `source_code`, backoff de `MissionSource`, timeouts por loja: nada disso
-  muda.
 
-## Pesquisa pela Web (rate limit, não fila de processamento)
+## Pesquisa pela Web (confirmado: rate limit, não fila)
 
 A pesquisa (`search_router.py`) é síncrona e read-only sobre dados já
-persistidos — não compete pelo mesmo recurso que a coleta em background
-(Playwright/Edge-CDP) e não precisa de fila de processamento própria.
-"Fila/rate limit controlado" aqui é entendido como: aplicar o mesmo
-`max_daily_searches` da TASK-107 nesse endpoint, evitando que um usuário
-sozinho gere volume desproporcional de leitura. Se a intenção original for
-outra (ex.: enfileirar de fato as requisições de busca, não só limitar por
-dia), precisa de confirmação — a leitura atual do pedido não indica isso
-claramente.
+persistidos — **não consome recursos de coleta/provider**, então fica
+fora da fila da TASK-108. Reaproveita `max_daily_searches` (TASK-107),
+já implementado. Se a busca Web um dia passar a disparar coleta em tempo
+real, essa operação nova é que entraria numa fila própria — não esta.
 
 ## Feedback ao USER durante espera
 
@@ -111,12 +115,13 @@ aguardando (ordem da fila), próximos horários estimados de elegibilidade
 (considerando o cooldown por usuário). Reaproveita o padrão de
 autorização/auditoria já usado nas demais rotas admin.
 
-## Pontos em aberto (não implementar sem decidir)
+## Pontos em aberto (decisão de implementação, não bloqueiam início)
 
-- Confirmar a interpretação do cooldown (por usuário, não bloqueando a
-  fila inteira) — ver seção "Arquitetura proposta" acima;
-- confirmar se "fila" de pesquisa web é rate-limit (interpretação atual)
-  ou enfileiramento real de requisições;
+Os dois pontos arquiteturais (escopo do cooldown; pesquisa como
+rate-limit, não fila) foram confirmados pelo usuário e já estão
+refletidos acima. Restam só decisões de implementação, sem impacto no
+comportamento observável:
+
 - mecanismo exato de fila persistida (nova tabela/estado vs. derivar tudo
   de `Mission`/agendamento já existente a cada `run_batch`);
 - mecanismo exato de feedback de espera ao usuário (reaproveitar
@@ -127,7 +132,7 @@ autorização/auditoria já usado nas demais rotas admin.
 - só um usuário por vez tem claims processadas quando
   `max_concurrent_user_batches = 1`;
 - usuário recém-processado não é escolhido de novo antes do cooldown
-  (10–15 min, com jitter real, não fixo);
+  (1–3 min, com jitter real, não fixo) e volta para o fim da fila;
 - outro usuário elegível não espera pelo cooldown de um usuário diferente
   (teste explícito de "não monopolização");
 - pacing por loja (backoff de `MissionSource`) e limites por provider
