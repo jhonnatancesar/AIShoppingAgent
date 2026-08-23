@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from app.collection.models import CollectionRun, CollectionRunStatus, PriceObservation
 from app.database.session import create_database_engine, create_session_factory
 from app.events import Event, EventType
-from app.missions.models import Mission
+from app.missions.models import Mission, MissionSource
 from app.missions.service import create_mission_from_criteria
 from app.users.models import User, UserRole
 from sqlalchemy import func, select
@@ -15,7 +15,7 @@ _DISPLAY_NAME = "TASK-062 Docker validation"
 _QUERY = "RTX 4060"
 
 
-def seed() -> None:
+def seed(source_codes: tuple[str, ...] = ()) -> None:
     engine = create_database_engine()
     sessions = create_session_factory(engine)
     try:
@@ -33,12 +33,13 @@ def seed() -> None:
                 search_query=_QUERY,
                 target_amount=None,
                 target_currency=None,
-                source_codes=(),
+                source_codes=source_codes,
                 requested_at=datetime.now(UTC),
                 actor_type="task_validation",
             )
             print(f"seeded mission with {len(sources)} sources")
-            if len(sources) != 4 or mission.status.value != "active":
+            expected = len(source_codes) or 4
+            if len(sources) != expected or mission.status.value != "active":
                 raise RuntimeError("validation mission was not created correctly")
     finally:
         engine.dispose()
@@ -59,15 +60,20 @@ def verify() -> None:
             )
             if mission_id is None:
                 raise RuntimeError("worker did not publish collection events")
+            expected = session.scalar(
+                select(func.count(MissionSource.store_id)).where(
+                    MissionSource.mission_id == mission_id
+                )
+            )
             runs = list(
                 session.scalars(
                     select(CollectionRun).where(CollectionRun.mission_id == mission_id)
                 )
             )
-            if len(runs) != 4 or any(
+            if len(runs) != expected or any(
                 run.status is CollectionRunStatus.RUNNING for run in runs
             ):
-                raise RuntimeError("worker did not terminalize all four sources")
+                raise RuntimeError("worker did not terminalize all expected sources")
             event_count = session.scalar(
                 select(func.count(Event.id)).where(
                     Event.mission_id == mission_id,
@@ -87,14 +93,14 @@ def verify() -> None:
                 )
                 .where(CollectionRun.mission_id == mission_id)
             )
-            if event_count != 4 or not observations:
+            if event_count != expected or not observations:
                 raise RuntimeError(
                     "worker pipeline did not persist its expected evidence"
                 )
             succeeded = sum(run.status is CollectionRunStatus.SUCCEEDED for run in runs)
             failed = len(runs) - succeeded
             print(
-                f"validated sources=4 succeeded={succeeded} failed={failed} "
+                f"validated sources={expected} succeeded={succeeded} failed={failed} "
                 f"observations={observations} events={event_count}"
             )
     finally:
@@ -104,8 +110,18 @@ def verify() -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=("seed", "verify"))
+    parser.add_argument(
+        "--source",
+        action="append",
+        dest="sources",
+        help="Restringe o seed a uma fonte (repita para mais de uma); "
+        "sem uso, mantém o padrão de todas as 4 fontes V1.",
+    )
     arguments = parser.parse_args()
-    (seed if arguments.action == "seed" else verify)()
+    if arguments.action == "seed":
+        seed(tuple(arguments.sources or ()))
+    else:
+        verify()
 
 
 if __name__ == "__main__":

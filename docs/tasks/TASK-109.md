@@ -1,8 +1,10 @@
 # TASK-109 — Migrar o collection_worker para Windows nativo com Edge
 
 Status: **FASE 1 concluída e aprovada no DEV (Ops Agent + supervisão do
-worker via Task Scheduler). FASE 2 (worker nativo com Edge, prova de
-ciclo real) ainda não iniciada. Nenhum deploy feito.**
+worker via Task Scheduler). FASE 2 concluída no DEV (worker nativo com
+Edge, ciclo real de coleta da Magalu provado ponta a ponta, incluindo
+recovery). FASE 3 (demais lojas) ainda não iniciada. Nenhum deploy
+feito.**
 
 ## Objetivo
 
@@ -270,3 +272,58 @@ segredo em produção (Windows Server, sem Kaspersky) ainda não foi
 validada e faz parte obrigatória do preflight de PROD antes do deploy
 desta TASK — DEV e PROD são ambientes de antivírus diferentes e não se
 pode assumir o mesmo comportamento.
+
+## FASE 2 — worker nativo com Edge (concluída no DEV)
+
+Confirmado por leitura de código que a "generalização do supervisor
+Magalu" já estava satisfeita desde a TASK-105 (`settings.edge_cdp_url`
+já compartilhado por Magalu/Mercado Livre/Terabyte); nenhuma mudança
+necessária em `collection/providers/`.
+
+**Achado 1 -- `localhost` resolve para IPv6 primeiro:** no Windows,
+`AISHOPPING_DATABASE_HOST=localhost` resolve para `::1` antes de
+`127.0.0.1`; como o Postgres do Docker só publica em IPv4, cada conexão
+nova travava ~130s até cair pro IPv4. Corrigido usando `127.0.0.1`
+explícito em `backend/.env`/`.env.example` (conexão caiu para ~1.5s).
+
+**Achado 2 -- conflito real de event loop (psycopg async vs. Playwright
+no Windows):** `psycopg` em modo assíncrono exige `SelectorEventLoop`;
+`asyncio.create_subprocess_exec` (usado tanto pelo `MagaluEdgeSupervisor`
+quanto internamente pelo próprio driver do Playwright, que sobe seu
+processo Node.js a cada `async_playwright()`/`connect_over_cdp()`) exige
+`ProactorEventLoop` -- únicos e incompatíveis entre si no Windows. Não
+dava pra isolar a correção só no supervisor: qualquer uso de Playwright
+quebra sob `SelectorEventLoop`.
+
+**Decisão (aceita explicitamente):** manter o `ProactorEventLoop` padrão
+do Windows (Playwright continua funcionando sem mudança) e trocar,
+**só na engine assíncrona do `collection_worker` nativo Windows**, o
+driver do Postgres para `asyncpg` (sem essa restrição de loop).
+`app/database/session.py` ganhou um parâmetro `async_driver` central
+(`create_async_database_engine`/`create_collection_async_database_engine`,
+padrão `psycopg`, inalterado para API/Telegram/scripts/migrations/Linux);
+`run_worker` (`app/collection/worker.py`) só escolhe `asyncpg` quando
+`sys.platform == "win32"`. Único ponto psycopg-specific encontrado no
+caminho: `connect_args["options"]` (string libpq `-c lock_timeout=...`)
+-- asyncpg usa `server_settings` (dict de GUCs, valores explícitos em
+`ms`); a conversão segundos→ms ficou centralizada
+(`_timeout_milliseconds`) para não duplicar entre os dois formatos.
+
+**Validação do driver (isolada, antes do ciclo real):** os 3 GUCs
+(`lock_timeout`/`statement_timeout`/`idle_in_transaction_session_timeout`)
+conferidos via `SHOW` batem exatamente com a config (10s/15s/10s);
+commit/rollback corretos; UUID, enum (`UserRole`) e datetime
+(`tzinfo=UTC`) sem regressão de tipo via `asyncpg`.
+
+**Prova ponta a ponta (worker nativo, `ProactorEventLoop` + `asyncpg` +
+Playwright + Edge real, tela bloqueada):** missão real criada via
+`create_mission_from_criteria` (mesmo serviço de domínio usado pela
+API/Telegram) para a Magalu, claimed pelo worker no próprio ciclo de
+poll, `CollectionRun` `succeeded`, 8 `PriceObservation` reais
+persistidas, evento `collection.completed.v1` emitido. Kill externo do
+processo -> Ops Agent detectou (~14s) e reiniciou (~24-38s) -- mesmo
+mecanismo da FASE 1, sem regressão. Edge reaproveitado após o restart
+(mesmo processo/perfil, sem duplicar). Nova missão criada depois do
+recovery também foi coletada e persistida com sucesso (8 observações),
+provando que o worker recuperado volta a coletar de verdade, não só que
+o processo volta a existir.

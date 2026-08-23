@@ -3,6 +3,7 @@
 import argparse
 import asyncio
 import logging
+import sys
 from time import perf_counter
 
 from opentelemetry import trace
@@ -180,7 +181,14 @@ async def run_worker(
     # TASK-079: engine assíncrono dedicado -- nenhuma chamada bloqueante do
     # SQLAlchemy/psycopg roda direto na thread do event loop neste
     # caminho (causa raiz comprovada do autodeadlock; ver docs/tasks/TASK-079.md).
-    engine = create_collection_async_database_engine(settings)
+    # TASK-109: no worker nativo Windows, `asyncpg` -- `psycopg` async exige
+    # SelectorEventLoop, incompatível com o ProactorEventLoop que o
+    # Playwright precisa para o próprio subprocesso do driver (ver
+    # docs/tasks/TASK-109.md). Linux/Docker mantém `psycopg`, sem mudança.
+    async_driver = "asyncpg" if sys.platform == "win32" else "psycopg"
+    engine = create_collection_async_database_engine(
+        settings, async_driver=async_driver
+    )
     session_factory = create_async_session_factory(engine)
     orchestrator = CollectionOrchestrator(
         session_factory,
@@ -272,6 +280,11 @@ def main() -> None:
     if settings.observability_enabled:
         start_worker_metrics_server(settings.worker_metrics_port)
         mark_worker_started("collection_orchestrator")
+    # TASK-109: mantém o loop padrão do Windows (ProactorEventLoop) --
+    # Playwright precisa dele para o próprio subprocesso do driver; a
+    # incompatibilidade com o Postgres assíncrono é resolvida trocando o
+    # driver da engine de coleta para `asyncpg` (ver `run_worker` acima),
+    # não trocando o loop.
     asyncio.run(
         run_worker(
             settings,

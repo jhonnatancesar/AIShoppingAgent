@@ -16,7 +16,9 @@ class DatabaseConfigurationError(RuntimeError):
     """Indica ausência de configuração obrigatória para acessar o banco."""
 
 
-def build_database_url(settings: Settings | None = None) -> URL:
+def build_database_url(
+    settings: Settings | None = None, *, drivername: str = "postgresql+psycopg"
+) -> URL:
     """Monta uma URL PostgreSQL sem interpolar ou registrar a senha."""
     current_settings = settings or get_settings()
     password = current_settings.database_password
@@ -26,7 +28,7 @@ def build_database_url(settings: Settings | None = None) -> URL:
         )
 
     return URL.create(
-        drivername="postgresql+psycopg",
+        drivername=drivername,
         username=current_settings.database_user,
         password=password.get_secret_value(),
         host=current_settings.database_host,
@@ -62,6 +64,22 @@ def create_session_factory(engine: Engine) -> sessionmaker[Session]:
     return sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
 
 
+def _timeout_milliseconds(
+    *,
+    lock_timeout_seconds: float,
+    statement_timeout_seconds: float,
+    idle_in_transaction_timeout_seconds: float,
+) -> tuple[int, int, int]:
+    """Conversão única de segundos para milissegundos -- ponto central para
+    não duplicar a regra entre o formato psycopg (`options`, libpq) e o
+    formato asyncpg (`server_settings`, TASK-109)."""
+    return (
+        int(lock_timeout_seconds * 1000),
+        int(statement_timeout_seconds * 1000),
+        int(idle_in_transaction_timeout_seconds * 1000),
+    )
+
+
 def _connect_options(
     *,
     lock_timeout_seconds: float,
@@ -72,13 +90,40 @@ def _connect_options(
     para ser testável sem inspecionar internals do engine/pool do
     SQLAlchemy. Genérico: cada engine assíncrono dedicado (collection_worker,
     API/Telegram, ...) passa seus próprios valores; nunca compartilhado nem
-    aplicado a `postgresql.conf` global."""
-    return (
-        f"-c lock_timeout={int(lock_timeout_seconds * 1000)} "
-        f"-c statement_timeout={int(statement_timeout_seconds * 1000)} "
-        "-c idle_in_transaction_session_timeout="
-        f"{int(idle_in_transaction_timeout_seconds * 1000)}"
+    aplicado a `postgresql.conf` global. Só para o driver `psycopg`."""
+    lock_ms, statement_ms, idle_ms = _timeout_milliseconds(
+        lock_timeout_seconds=lock_timeout_seconds,
+        statement_timeout_seconds=statement_timeout_seconds,
+        idle_in_transaction_timeout_seconds=idle_in_transaction_timeout_seconds,
     )
+    return (
+        f"-c lock_timeout={lock_ms} "
+        f"-c statement_timeout={statement_ms} "
+        f"-c idle_in_transaction_session_timeout={idle_ms}"
+    )
+
+
+def _server_settings(
+    *,
+    lock_timeout_seconds: float,
+    statement_timeout_seconds: float,
+    idle_in_transaction_timeout_seconds: float,
+) -> dict[str, str]:
+    """Equivalente a `_connect_options` para o driver `asyncpg` (TASK-109,
+    worker nativo Windows -- ver `docs/tasks/TASK-109.md`): asyncpg não
+    aceita a string `options` do libpq, usa `server_settings` (dict de
+    GUCs); valores explícitos em `ms` para não depender de interpretação
+    implícita de unidade."""
+    lock_ms, statement_ms, idle_ms = _timeout_milliseconds(
+        lock_timeout_seconds=lock_timeout_seconds,
+        statement_timeout_seconds=statement_timeout_seconds,
+        idle_in_transaction_timeout_seconds=idle_in_transaction_timeout_seconds,
+    )
+    return {
+        "lock_timeout": f"{lock_ms}ms",
+        "statement_timeout": f"{statement_ms}ms",
+        "idle_in_transaction_session_timeout": f"{idle_ms}ms",
+    }
 
 
 def create_async_database_engine(
@@ -88,6 +133,7 @@ def create_async_database_engine(
     lock_timeout_seconds: float | None = None,
     statement_timeout_seconds: float | None = None,
     idle_in_transaction_timeout_seconds: float | None = None,
+    async_driver: str = "psycopg",
 ) -> AsyncEngine:
     """Engine assíncrono dedicado a um caminho específico da aplicação
     (`collection_worker` -- TASK-079 -- ou webhook Telegram/API -- extensão
@@ -101,11 +147,19 @@ def create_async_database_engine(
     mesmo padrão no webhook Telegram.
 
     Os timeouts de `lock_timeout`/`statement_timeout`/
-    `idle_in_transaction_session_timeout` são aplicados via `options` da
-    conexão (libpq) só quando fornecidos -- portanto só valem para conexões
+    `idle_in_transaction_session_timeout` são aplicados via `options`
+    (libpq, driver `psycopg`) ou `server_settings` (driver `asyncpg`,
+    TASK-109) só quando fornecidos -- portanto só valem para conexões
     abertas por ESTE engine, nunca alteram `postgresql.conf` nem afetam
     outros serviços. São um airbag, não a correção: a correção é nunca
     manter uma dessas transações aberta durante um `await` externo.
+
+    `async_driver` (TASK-109): `psycopg` (padrão, Linux/Docker -- exige
+    `SelectorEventLoop`, incompatível com o `ProactorEventLoop` que o
+    Playwright precisa no worker nativo Windows) ou `asyncpg` (worker
+    Windows -- ver `docs/tasks/TASK-109.md`, sem essa restrição de loop).
+    Nunca usado pelos demais caminhos (API, Telegram, scripts, migrations),
+    que continuam em `psycopg` sem qualquer mudança.
     """
     current_settings = settings or get_settings()
     connect_args: dict[str, object] = {}
@@ -123,15 +177,27 @@ def create_async_database_engine(
                 "os três timeouts (lock/statement/idle_in_transaction) devem "
                 "ser fornecidos juntos, ou nenhum deles"
             )
-        connect_args["options"] = _connect_options(
-            lock_timeout_seconds=lock_timeout_seconds,
-            statement_timeout_seconds=statement_timeout_seconds,
-            idle_in_transaction_timeout_seconds=idle_in_transaction_timeout_seconds,
-        )
+        if async_driver == "asyncpg":
+            connect_args["server_settings"] = _server_settings(
+                lock_timeout_seconds=lock_timeout_seconds,
+                statement_timeout_seconds=statement_timeout_seconds,
+                idle_in_transaction_timeout_seconds=idle_in_transaction_timeout_seconds,
+            )
+        else:
+            connect_args["options"] = _connect_options(
+                lock_timeout_seconds=lock_timeout_seconds,
+                statement_timeout_seconds=statement_timeout_seconds,
+                idle_in_transaction_timeout_seconds=idle_in_transaction_timeout_seconds,
+            )
     if connect_timeout_seconds is not None:
-        connect_args["connect_timeout"] = max(1, int(connect_timeout_seconds))
+        if async_driver == "asyncpg":
+            connect_args["timeout"] = connect_timeout_seconds
+        else:
+            connect_args["connect_timeout"] = max(1, int(connect_timeout_seconds))
     engine = create_async_engine(
-        build_database_url(current_settings),
+        build_database_url(
+            current_settings, drivername=f"postgresql+{async_driver}"
+        ),
         pool_pre_ping=True,
         connect_args=connect_args,
     )
@@ -146,9 +212,14 @@ def create_collection_async_database_engine(
     settings: Settings | None = None,
     *,
     connect_timeout_seconds: float | None = None,
+    async_driver: str = "psycopg",
 ) -> AsyncEngine:
     """Atalho para o engine assíncrono do `collection_worker` (TASK-079),
-    lendo os timeouts já configurados em `Settings`."""
+    lendo os timeouts já configurados em `Settings`.
+
+    `async_driver` (TASK-109): o worker nativo Windows passa `asyncpg`
+    (ver `run_worker` em `app/collection/worker.py`); Linux/Docker mantém
+    o padrão `psycopg`, sem mudança."""
     current_settings = settings or get_settings()
     return create_async_database_engine(
         current_settings,
@@ -158,6 +229,7 @@ def create_collection_async_database_engine(
         idle_in_transaction_timeout_seconds=(
             current_settings.collection_idle_in_transaction_timeout_seconds
         ),
+        async_driver=async_driver,
     )
 
 
