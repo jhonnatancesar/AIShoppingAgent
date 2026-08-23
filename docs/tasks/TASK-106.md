@@ -1,6 +1,6 @@
 # TASK-106 — Pesquisa de cupons
 
-Status: **Formalizada; aguardando auditoria real por loja antes de qualquer código.**
+Status: **Auditoria real concluída nas quatro lojas (Amazon, Kabum, Magalu, Mercado Livre). Nenhum código de provider escrito ainda.**
 
 ## Objetivo
 
@@ -31,6 +31,34 @@ lojas já existentes, sem nunca inventar ou presumir cupom sem evidência.
   `app/search/firecrawl.py`), não descartado, apenas fora desta versão.
 - **Agregadores de cupons de terceiro** (ex.: Cuponomia, Pelando): adiados
   para V2/fallback futuro — fora desta TASK.
+
+## Escopo de lojas para a auditoria (2026-08-22)
+
+Por conhecimento prévio do usuário sobre o comportamento real de cada loja
+(a confirmar pela auditoria, não presumido como evidência final):
+Pichau raramente expõe cupom e a Terabyte só expõe promoção (não cupom) —
+as duas ficam **fora da auditoria inicial**. Amazon, Kabum, Magalu e
+Mercado Livre entram primeiro, por relato de cupom real existente nelas.
+Pichau/Terabyte podem ser revisitadas depois, sem bloquear o restante.
+
+## Resultado da auditoria real (2026-08-22, Edge/CDP, mesmo transporte já validado)
+
+| Loja | Cupom real encontrado? | Onde | Evidência literal |
+|---|---|---|---|
+| Amazon | Sim | Card de busca | `"Cupom de R$ 20,00 de desconto aplicado"` / `"Cupom de 5% de desconto aplicado"` — sem código alfanumérico, aplicado automaticamente (clip coupon) |
+| Kabum | Sim | Card de busca, mesmo seletor que o `KabumProvider` já lê (`a[href*="/produto/"]`) | `"SELO: CUPOM GAMER10"` — código real (`GAMER10`), precisa ser aplicado pelo comprador |
+| Magalu | Sim | **Home**, não na busca — a busca variou entre 0 e 6 itens com cupom em execuções diferentes (parece campanha rotativa/instável, não um campo fixo) | `"Cupom R$ 100 OFF"` nos cards de "Ofertas Relâmpago" da home |
+| Mercado Livre | Sim | Home | `"15% OFF com Cupom"` em card da home |
+
+**Consequência prática:** nenhuma das quatro lojas expõe cupom de forma
+100% estável/previsível no mesmo lugar — Amazon e Kabum mostraram no card
+de busca (evidência mais fácil de reaproveitar, mesma abertura já usada
+pela oferta), Magalu e Mercado Livre mostraram na **home**, não na busca
+por termo. Isso muda a expectativa original: capturar cupom só durante a
+busca normal por produto não cobre Magalu/ML — seria necessário também
+auditar/coletar a home dessas duas lojas separadamente, o que é uma
+navegação adicional fora do padrão "mesma abertura da oferta" já usado
+para vendedor/condição/avaliação.
 
 ## Pontos que dependem de auditoria real (ainda não decididos)
 
