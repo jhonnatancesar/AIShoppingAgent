@@ -1,6 +1,8 @@
 # TASK-109 — Migrar o collection_worker para Windows nativo com Edge
 
-Status: **Formalizada (preflight + plano de migração); aguardando aprovação. Nenhum código escrito.**
+Status: **FASE 1 concluída e aprovada no DEV (Ops Agent + supervisão do
+worker via Task Scheduler). FASE 2 (worker nativo com Edge, prova de
+ciclo real) ainda não iniciada. Nenhum deploy feito.**
 
 ## Objetivo
 
@@ -224,3 +226,47 @@ Implementação de código nesta rodada, deploy, remoção efetiva do
 Chromium/Playwright do Dockerfile (só depois de todas as lojas
 validadas), qualquer mudança na Terabyte/Magalu além de confirmar que
 continuam funcionando (TASK-105/104A já concluídas, sem reabrir).
+
+## FASE 1 — Ops Agent e supervisão do worker (concluída, aprovada no DEV)
+
+**Achado decisivo:** o reinício automático nativo do Task Scheduler
+(`RestartCount`/`RestartInterval`) **não funciona** para o processo do
+worker morto externamente (testado ao vivo: `Stop-Process -Force`, 90s
+de espera, sem reinício, `LastTaskResult=4294967295`). Por isso a tarefa
+`AIShoppingAgent-CollectionWorker` ficou restrita a iniciar o worker no
+logon/manualmente; a responsabilidade de detectar queda e reiniciar
+passou para um componente novo e separado.
+
+**Windows Ops Agent** (`ops_agent/collection_worker_ops_agent.py`):
+Windows Service real (pywin32), Session 0, recuperação nativa própria
+via SCM (`sc.exe failure`). Não abre nem controla o Edge. Liveness:
+reaproveita o rastreamento nativo do próprio Task Scheduler
+(`Get-ScheduledTask -TaskName ... | State`, enum .NET — não o texto de
+`schtasks /query`, que sai localizado no idioma do SO e quebrou a
+primeira tentativa) a cada 15s; ao detectar queda, aciona
+`Start-ScheduledTask` com backoff crescente (5/15/30/60/120s) e teto de
+5 tentativas por janela de 10min (`RestartGovernor`), evitando restart
+loop. Expõe API HTTP restrita (status/start/restart) em loopback
+(`127.0.0.1:8021`), assinada por HMAC (mesmo esquema timestamp+nonce já
+usado por `app/ops_controller.py`).
+
+**Prova ao vivo (tela bloqueada o tempo todo):** kill externo do processo
+→ detecção em ~1.5s → restart acionado (com backoff de 5s) → worker de
+volta rodando em ~12-13s → Edge/CDP comprovadamente funcional depois
+(navegação real, título extraído). Testado tanto pelo loop interno de
+monitoramento quanto pela API HTTP (`/v1/collection_worker/restart`).
+HMAC válido aceito, inválido rejeitado, timestamp expirado rejeitado,
+replay de nonce rejeitado — todos confirmados via chamadas reais.
+
+**Segredo do Ops Agent:** local definitivo
+`C:\ProgramData\AIShoppingAgent\secrets\ops-agent-secret`, ACL restrita
+a SYSTEM + `BUILTIN\Administrators` (SID fixo `S-1-5-32-544`, não o nome
+localizado) via `icacls`. Fora do Git, nunca logado (só o caminho é
+logado, nunca o valor). No local antigo (fora do ProgramData, sem ACL
+dedicada) o arquivo era removido em menos de ~2min nesta máquina DEV
+(Kaspersky) — no local novo, ficou estável por toda a janela de teste
+observada (~2m30s). **Pendência explícita:** a persistência definitiva do
+segredo em produção (Windows Server, sem Kaspersky) ainda não foi
+validada e faz parte obrigatória do preflight de PROD antes do deploy
+desta TASK — DEV e PROD são ambientes de antivírus diferentes e não se
+pode assumir o mesmo comportamento.

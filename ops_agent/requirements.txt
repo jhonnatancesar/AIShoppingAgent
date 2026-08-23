@@ -1,0 +1,4 @@
+# TASK-109: dependencia exclusiva do Ops Agent (Windows Service nativo).
+# NAO adicionar a backend/requirements.txt -- pywin32 nao instala em Linux
+# e quebraria a imagem Docker do collection_worker/api.
+pywin32>=312
