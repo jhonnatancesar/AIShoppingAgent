@@ -1,6 +1,46 @@
 # TASK-107 — Cotas e capacidade por usuário
 
-Status: **Formalizada (planejamento); aguardando aprovação. Nenhum código escrito.**
+Status: **Backend implementado no DEV (commit local `ac34725`, não publicado em `origin/main`); UX obrigatória do frontend ainda não implementada.**
+
+## Implementação (2026-08-22)
+
+- Novo módulo `app/quotas/` (`models.py`: `SearchReceipt`;
+  `service.py`: `QuotaLimits`/`QuotaUsage`/`resolve_quota_limits`/
+  `get_quota_usage(_async)`/`check_mission_activation_quota(_async)`/
+  `check_and_reserve_search_quota_async`/`QuotaExceededError`).
+- Integrado em `transition_mission`/`transition_mission_async`
+  (`ACTIVATE`/`RESUME`) — cobre também `create_mission_from_criteria`
+  via ativação automática, sem precisar duplicar a checagem lá. Edição de
+  lojas de missão `ACTIVE` **não existe** no código real
+  (`edit_mission_criteria` só edita missão `PAUSED`) — a suposição
+  original do documento estava errada; `PAUSE → editar → RESUME` já cobre
+  o caso via a checagem no `RESUME`.
+- `search_router.py`: reserva `max_daily_searches` antes de executar a
+  pesquisa, 429 estruturado se excedido.
+- `GET /api/v1/account/quota` (novo, `account_router.py`): uso/limite/
+  aviso de proximidade dos três limites, mais `daily_searches_reset_at`.
+- `PATCH /api/v1/admin/users/{id}` (`admin_router.py`): três campos de
+  override tri-state (ausente = não mexe; `null` = limpa; valor = define),
+  auditado como o resto do endpoint.
+- Migration `20260822_0010`: 3 colunas nullable em `users` + tabela
+  `search_receipts`.
+- Testes: `tests/test_quotas_service.py` (novo, unitário) +
+  `test_mission_transitions.py`/`test_mission_creation.py`/
+  `test_mission_service_async.py` atualizados para a nova sequência de
+  checagem. 120 testes diretamente afetados passando; suíte de
+  integração (Postgres real) revisada por volume de missões/fontes por
+  usuário nos fixtures, não executada nesta rodada (sem Postgres
+  disponível na sessão). Achado à parte, não relacionado a esta TASK:
+  `test_create_mission_rejects_unknown_source_code` está desatualizado
+  desde a TASK-104A (usa `"magalu"`, hoje uma loja válida) — sinalizado
+  como task separada, não corrigido aqui.
+
+## Pendente
+
+- UX obrigatória no frontend (exibição de uso/limite, aviso perto do
+  limite, mensagens com ações contextuais ao bater a quota) — nenhuma
+  linha de frontend foi escrita ainda.
+- Suíte de integração real (Postgres) não executada.
 
 ## Objetivo
 
