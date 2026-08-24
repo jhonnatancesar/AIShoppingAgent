@@ -3,8 +3,9 @@
 Status: **FASE 1 concluída e aprovada no DEV (Ops Agent + supervisão do
 worker via Task Scheduler). FASE 2 concluída no DEV (worker nativo com
 Edge, ciclo real de coleta da Magalu provado ponta a ponta, incluindo
-recovery). FASE 3 (demais lojas) ainda não iniciada. Nenhum deploy
-feito.**
+recovery). FASE 3 em andamento: Terabyte/Magalu/Amazon/KaBuM!/Mercado
+Livre validados em Edge no DEV; Pichau parada (achado real, aguardando
+decisão -- ver seção FASE 3). Nenhum deploy feito.**
 
 ## Objetivo
 
@@ -318,6 +319,56 @@ segredo em produção (Windows Server, sem Kaspersky) ainda não foi
 validada e faz parte obrigatória do preflight de PROD antes do deploy
 desta TASK — DEV e PROD são ambientes de antivírus diferentes e não se
 pode assumir o mesmo comportamento.
+
+## FASE 3 — Amazon, KaBuM! e Mercado Livre primário (em andamento)
+
+**Amazon e KaBuM!:** ganharam `cdp_transport: EdgeCdpTransport | None`
+igual à Terabyte, mas com fallback -- diferente da Terabyte (Playwright
+comprovadamente bloqueado), o Chromium gerenciado continua funcionando
+nas duas, então sem `edge_cdp_url` configurado `_collect_once` usa
+Playwright normalmente. `extract()`/parser 100% preservados. Validado
+ao vivo, pipeline completo (missão real via `IntentInterpreter` real,
+`source_codes` isolado): `CollectionRun succeeded`, 8 `PriceObservation`
+reais cada, `collection.completed.v1` emitido, sem Edge
+duplicado/órfão.
+
+**Mercado Livre:** invertida a prioridade (TASK-104B tinha CDP só como
+último recurso após o Playwright falhar) -- agora Edge/CDP é tentado
+primeiro quando configurado; Playwright gerenciado (que continua
+funcionando na ML) vira rede de segurança só se o CDP falhar, em vez de
+ser removido. `_collect_once` (não mais `collect()`) decide, mesmo
+padrão de Amazon/KaBuM/Terabyte; parâmetro do construtor renomeado de
+`edge_fallback` para `cdp_transport` (consistência). Validado ao vivo:
+pipeline completo, `CollectionRun succeeded`, 8 observações reais,
+`collection.completed.v1`, sem Edge duplicado/órfão.
+
+**Achado importante (não é bug, é escopo real do que "depender de
+Chromium" significa):** mesmo com `_collect_once` migrado, Amazon e
+KaBuM! continuam abrindo um `BrowserSession` (Chromium gerenciado)
+separado durante o enriquecimento de detalhe (`enrich_offer_details` /
+`resolve_marketplace_parties` / `resolve_offer_condition`), chamado
+pelo orquestrador *depois* de `collect()` retornar -- essa navegação de
+página individual nunca passou pelo `_collect_once` e não foi tocada
+nesta TASK (fora do que foi pedido: só a busca). A Terabyte não tem essa
+dependência residual porque não implementa nenhum desses hooks de
+enriquecimento -- por isso ela, e só ela até agora, está genuinamente
+livre de Chromium.
+
+**Pichau — parado, não implementado ainda.** Diferente de
+Amazon/KaBuM/Terabyte/ML, a Pichau sobrescreve `empty_result_locator`
+(distingue "zero resultados legítimo" de bloqueio/erro) e
+`navigation_wait_until = "commit"` -- regra de negócio real (TASK-075,
+correção de timing). O padrão simples reaproveitado pelas outras quatro
+(`EdgeCdpTransport.run()` com só `readiness_selector`) não tem essa
+distinção -- aplicá-lo direto faria uma busca com zero resultados
+legítimos virar falha técnica, mudando comportamento sem necessidade.
+Correção mínima proposta (não implementada, aguardando decisão): dar ao
+`EdgeCdpTransport` um método de nível mais baixo que só conecta+navega e
+devolve a `Page` (sem fazer o wait/extract embutido), permitindo que a
+Pichau reaproveise `PlaywrightStoreProvider._wait_for_results_or_empty`
+já existente (mesma lógica usada hoje com Playwright gerenciado) contra
+uma página CDP -- sem duplicar a lógica de distinção em código
+Pichau-specific.
 
 ## FASE 2 — worker nativo com Edge (concluída no DEV)
 

@@ -243,39 +243,56 @@ def test_mercado_livre_extracts_multiple_cards_and_only_explicit_evidence() -> N
     assert second.review_count is None
 
 
-def test_mercado_livre_uses_edge_once_only_after_primary_failure(monkeypatch) -> None:
-    fallback_calls = 0
+def test_mercado_livre_edge_is_primary_and_playwright_never_touched(
+    monkeypatch,
+) -> None:
+    """TASK-109: Edge/CDP passa a ser o transporte primário -- o Playwright
+    gerenciado nem é tentado quando o CDP responde."""
 
-    async def failed_primary(self, request):
-        raise ProviderNavigationError("mercadolivre", 403)
+    async def forbidden_primary(self, request):
+        raise AssertionError("Playwright must not be attempted when CDP succeeds")
 
-    class Fallback:
+    monkeypatch.setattr(PlaywrightStoreProvider, "_collect_once", forbidden_primary)
+
+    class Transport:
+        def __init__(self):
+            self.calls = 0
+
         async def run(self, url, *, readiness_selector, extract):
-            nonlocal fallback_calls
-            fallback_calls += 1
+            self.calls += 1
             assert readiness_selector == MercadoLivreProvider.result_selector
-            return (
-                RawCollectedOffer(
-                    source_code="mercadolivre",
-                    url="https://produto.mercadolivre.com.br/MLB-1",
-                    title="Produto",
-                    collected_at=NOW,
-                    raw_price="R$ 100,00",
-                ),
-            )
+            return await extract("fake-cdp-page")
 
-    monkeypatch.setattr(PlaywrightStoreProvider, "collect", failed_primary)
-    provider = MercadoLivreProvider(clock=lambda: NOW, edge_fallback=Fallback())
+    offers = (
+        RawCollectedOffer(
+            source_code="mercadolivre",
+            url="https://produto.mercadolivre.com.br/MLB-1",
+            title="Produto",
+            collected_at=NOW,
+            raw_price="R$ 100,00",
+        ),
+    )
+
+    async def fake_extract(self, page, collected_at):
+        assert page == "fake-cdp-page"
+        return offers
+
+    monkeypatch.setattr(MercadoLivreProvider, "extract", fake_extract)
+    transport = Transport()
+    provider = MercadoLivreProvider(clock=lambda: NOW, cdp_transport=transport)
 
     result = asyncio.run(
         provider.collect(CollectionRequest(uuid4(), "mercadolivre", "Produto", NOW))
     )
 
-    assert len(result.offers) == 1
-    assert fallback_calls == 1
+    assert result.offers == offers
+    assert transport.calls == 1
 
 
-def test_mercado_livre_primary_success_never_opens_edge(monkeypatch) -> None:
+def test_mercado_livre_falls_back_to_playwright_when_cdp_fails(monkeypatch) -> None:
+    """CDP continua com uma rede de segurança: se falhar, o Playwright
+    gerenciado (que continua funcionando na ML, ao contrário da Terabyte)
+    ainda é tentado."""
     expected = RawCollectedOffer(
         source_code="mercadolivre",
         url="https://produto.mercadolivre.com.br/MLB-1",
@@ -289,12 +306,39 @@ def test_mercado_livre_primary_success_never_opens_edge(monkeypatch) -> None:
 
         return CollectionResult("mercadolivre", NOW, NOW, (expected,))
 
-    class ForbiddenFallback:
-        async def run(self, *args, **kwargs):
-            raise AssertionError("Edge must remain the last resort")
+    monkeypatch.setattr(PlaywrightStoreProvider, "_collect_once", successful_primary)
 
-    monkeypatch.setattr(PlaywrightStoreProvider, "collect", successful_primary)
-    provider = MercadoLivreProvider(edge_fallback=ForbiddenFallback())
+    class FailingTransport:
+        async def run(self, *args, **kwargs):
+            raise EdgeCdpTransportError("CDP failed")
+
+    provider = MercadoLivreProvider(cdp_transport=FailingTransport())
+
+    result = asyncio.run(
+        provider.collect(CollectionRequest(uuid4(), "mercadolivre", "Produto", NOW))
+    )
+
+    assert result.offers == (expected,)
+
+
+def test_mercado_livre_without_cdp_transport_uses_playwright(monkeypatch) -> None:
+    """Sem `edge_cdp_url` configurado, comportamento inalterado: Playwright
+    gerenciado continua sendo usado normalmente."""
+    expected = RawCollectedOffer(
+        source_code="mercadolivre",
+        url="https://produto.mercadolivre.com.br/MLB-1",
+        title="Produto",
+        collected_at=NOW,
+        raw_price="R$ 100,00",
+    )
+
+    async def successful_primary(self, request):
+        from app.collection import CollectionResult
+
+        return CollectionResult("mercadolivre", NOW, NOW, (expected,))
+
+    monkeypatch.setattr(PlaywrightStoreProvider, "_collect_once", successful_primary)
+    provider = MercadoLivreProvider()
 
     result = asyncio.run(
         provider.collect(CollectionRequest(uuid4(), "mercadolivre", "Produto", NOW))

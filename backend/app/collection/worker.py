@@ -16,6 +16,8 @@ from app.collection.identity_resolution import StoreProductIdentityResolver
 from app.collection.orchestration import CollectionOrchestrator
 from app.collection.providers import (
     V1_PROVIDER_TYPES,
+    AmazonProvider,
+    KabumProvider,
     MagaluProvider,
     MercadoLivreProvider,
     TerabyteProvider,
@@ -122,7 +124,7 @@ def build_collection_adapter(settings: Settings) -> CollectionAdapter:
                 html_timeout_ms=int(settings.magalu_cdp_html_timeout_seconds * 1000),
             )
         if provider_type is MercadoLivreProvider and settings.edge_cdp_url:
-            provider_kwargs["edge_fallback"] = EdgeCdpTransport(
+            provider_kwargs["cdp_transport"] = EdgeCdpTransport(
                 settings.edge_cdp_url,
                 connect_timeout_ms=int(
                     settings.magalu_cdp_connect_timeout_seconds * 1000
@@ -140,6 +142,24 @@ def build_collection_adapter(settings: Settings) -> CollectionAdapter:
         # coleta falha isolada (nunca cai de volta ao Playwright, já
         # comprovadamente bloqueado pelo Cloudflare -- DEC-070).
         if provider_type is TerabyteProvider and settings.edge_cdp_url:
+            provider_kwargs["cdp_transport"] = EdgeCdpTransport(
+                settings.edge_cdp_url,
+                connect_timeout_ms=int(
+                    settings.magalu_cdp_connect_timeout_seconds * 1000
+                ),
+                navigation_timeout_ms=int(
+                    settings.magalu_cdp_navigation_timeout_seconds * 1000
+                ),
+                document_timeout_ms=int(
+                    settings.magalu_cdp_document_timeout_seconds * 1000
+                ),
+            )
+        # TASK-109: Amazon e Kabum ganham o mesmo transporte Edge/CDP da
+        # Terabyte, mas com fallback -- ao contrário da Terabyte (Playwright
+        # comprovadamente bloqueado), o Chromium gerenciado continua
+        # funcionando aqui, então sem `edge_cdp_url` configurado o provider
+        # usa Playwright normalmente (`_collect_once` decide).
+        if provider_type in (AmazonProvider, KabumProvider) and settings.edge_cdp_url:
             provider_kwargs["cdp_transport"] = EdgeCdpTransport(
                 settings.edge_cdp_url,
                 connect_timeout_ms=int(

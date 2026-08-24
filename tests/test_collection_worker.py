@@ -60,18 +60,32 @@ def test_build_adapter_decouples_navigation_timeout_from_action_timeout() -> Non
     assert settings.browser_navigation_timeout_seconds == 45.0
 
 
-def test_build_adapter_uses_configured_loopback_cdp_for_magalu_and_ml_fallback() -> None:
+def test_build_adapter_uses_configured_loopback_cdp_for_magalu_and_ml_primary() -> None:
     adapter = build_collection_adapter(
         Settings(edge_cdp_url="http://127.0.0.1:9223", _env_file=None)
     )
 
     transport = adapter._providers["magalu"]._search_transport
-    fallback = adapter._providers["mercadolivre"]._edge_fallback
+    ml_transport = adapter._providers["mercadolivre"]._cdp_transport
 
     assert isinstance(transport, CdpMagaluSearchTransport)
     assert transport.endpoint == "http://127.0.0.1:9223"
-    assert isinstance(fallback, EdgeCdpTransport)
-    assert fallback.endpoint == "http://127.0.0.1:9223"
+    assert isinstance(ml_transport, EdgeCdpTransport)
+    assert ml_transport.endpoint == "http://127.0.0.1:9223"
+
+
+def test_build_adapter_uses_configured_loopback_cdp_for_amazon_and_kabum() -> None:
+    adapter = build_collection_adapter(
+        Settings(edge_cdp_url="http://127.0.0.1:9223", _env_file=None)
+    )
+
+    amazon_transport = adapter._providers["amazon"]._cdp_transport
+    kabum_transport = adapter._providers["kabum"]._cdp_transport
+
+    assert isinstance(amazon_transport, EdgeCdpTransport)
+    assert amazon_transport.endpoint == "http://127.0.0.1:9223"
+    assert isinstance(kabum_transport, EdgeCdpTransport)
+    assert kabum_transport.endpoint == "http://127.0.0.1:9223"
 
 
 def test_build_adapter_uses_configured_loopback_cdp_for_terabyte_primary() -> None:

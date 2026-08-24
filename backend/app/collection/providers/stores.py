@@ -17,11 +17,7 @@ from app.collection.contracts import (
     RawCollectedOffer,
     RawInstallmentOption,
 )
-from app.collection.errors import (
-    ProviderBlockedError,
-    ProviderCircuitOpenError,
-    ProviderNavigationError,
-)
+from app.collection.errors import ProviderBlockedError
 from app.collection.providers.base import PlaywrightStoreProvider
 from app.collection.providers.edge_cdp_transport import (
     EdgeCdpTransport,
@@ -291,13 +287,44 @@ def _amazon_card_seller_kind(value: object) -> str | None:
 
 
 class AmazonProvider(PlaywrightStoreProvider):
+    """TASK-109: Edge/CDP como transporte da busca, mesmo padrão da
+    Terabyte -- parser/`extract()`/enriquecimento de detalhe continuam
+    exatamente os mesmos; só a navegação da busca deixa de ser Chromium
+    gerenciado."""
+
     source_code, result_selector = (
         "amazon",
         '[data-component-type="s-search-result"][data-asin]',
     )
 
+    def __init__(
+        self,
+        *args,
+        cdp_transport: EdgeCdpTransport | None = None,
+        **kwargs,
+    ) -> None:
+        super().__init__(*args, **kwargs)
+        self._cdp_transport = cdp_transport
+
     def build_url(self, query: str) -> str:
         return f"https://www.amazon.com.br/s?k={quote_plus(query)}"
+
+    async def _collect_once(self, request: CollectionRequest) -> CollectionResult:
+        if self._cdp_transport is None:
+            return await super()._collect_once(request)
+        started_at = self._clock()
+        offers = await self._cdp_transport.run(
+            self.build_url(request.search_query),
+            readiness_selector=self.result_selector,
+            extract=self._extract_via_cdp_page,
+        )
+        return CollectionResult(self.source_code, started_at, self._clock(), offers)
+
+    async def _extract_via_cdp_page(self, page: Page) -> tuple[RawCollectedOffer, ...]:
+        offers = await self.extract(page, self._clock())
+        if not offers:
+            raise ProviderBlockedError(self.source_code, None)
+        return await self._resolve_unknown_availability(page, offers)
 
     async def extract(
         self, page: Page, collected_at: datetime
@@ -344,6 +371,10 @@ class AmazonProvider(PlaywrightStoreProvider):
 
 
 class KabumProvider(PlaywrightStoreProvider):
+    """TASK-109: Edge/CDP como transporte da busca, mesmo padrão da
+    Terabyte/Amazon -- parser/`extract()`/enriquecimento de detalhe
+    continuam exatamente os mesmos."""
+
     source_code, result_selector = "kabum", 'main a[href*="/produto/"]'
 
     # TASK-075: facet_filters={"kabum_product":["true"]} em base64 --
@@ -353,12 +384,38 @@ class KabumProvider(PlaywrightStoreProvider):
     # navegação por categoria.
     _KABUM_PRODUCT_FACET_FILTER = "eyJrYWJ1bV9wcm9kdWN0IjpbInRydWUiXX0="
 
+    def __init__(
+        self,
+        *args,
+        cdp_transport: EdgeCdpTransport | None = None,
+        **kwargs,
+    ) -> None:
+        super().__init__(*args, **kwargs)
+        self._cdp_transport = cdp_transport
+
     def build_url(self, query: str) -> str:
         slug = quote(query.strip().replace(" ", "-"))
         return (
             f"https://www.kabum.com.br/busca/{slug}"
             f"?facet_filters={self._KABUM_PRODUCT_FACET_FILTER}"
         )
+
+    async def _collect_once(self, request: CollectionRequest) -> CollectionResult:
+        if self._cdp_transport is None:
+            return await super()._collect_once(request)
+        started_at = self._clock()
+        offers = await self._cdp_transport.run(
+            self.build_url(request.search_query),
+            readiness_selector=self.result_selector,
+            extract=self._extract_via_cdp_page,
+        )
+        return CollectionResult(self.source_code, started_at, self._clock(), offers)
+
+    async def _extract_via_cdp_page(self, page: Page) -> tuple[RawCollectedOffer, ...]:
+        offers = await self.extract(page, self._clock())
+        if not offers:
+            raise ProviderBlockedError(self.source_code, None)
+        return await self._resolve_unknown_availability(page, offers)
 
     async def extract(
         self, page: Page, collected_at: datetime
@@ -427,7 +484,12 @@ def _mercado_livre_condition(value: object, title: object) -> str:
 
 
 class MercadoLivreProvider(PlaywrightStoreProvider):
-    """Provider Mercado Livre com Edge/CDP somente após o primário falhar."""
+    """Provider Mercado Livre; Edge/CDP é o transporte primário (TASK-109).
+
+    Playwright gerenciado vira rede de segurança -- só é tentado se o CDP
+    falhar (ou se `cdp_transport` não estiver configurado) -- inverte a
+    prioridade original (TASK-104B: CDP só depois do Playwright falhar),
+    mas preserva o mesmo transporte de reserva em vez de removê-lo."""
 
     source_code = "mercadolivre"
     result_selector = "li.ui-search-layout__item:has(a.poly-component__title)"
@@ -436,41 +498,35 @@ class MercadoLivreProvider(PlaywrightStoreProvider):
     def __init__(
         self,
         *args,
-        edge_fallback: EdgeCdpTransport | None = None,
+        cdp_transport: EdgeCdpTransport | None = None,
         **kwargs,
     ) -> None:
         super().__init__(*args, **kwargs)
-        self._edge_fallback = edge_fallback
+        self._cdp_transport = cdp_transport
 
     def build_url(self, query: str) -> str:
         slug = re.sub(r"\s+", "-", query.strip())
         return f"https://lista.mercadolivre.com.br/{quote(slug)}"
 
-    async def collect(self, request: CollectionRequest) -> CollectionResult:
-        """Esgota o transporte primário antes de uma única tentativa CDP."""
+    async def _collect_once(self, request: CollectionRequest) -> CollectionResult:
+        if self._cdp_transport is None:
+            return await super()._collect_once(request)
+        started_at = self._clock()
         try:
-            return await super().collect(request)
-        except (
-            ProviderBlockedError,
-            ProviderCircuitOpenError,
-            ProviderNavigationError,
-        ):
-            if self._edge_fallback is None:
-                raise
-            started_at = self._clock()
-            try:
-                offers = await self._edge_fallback.run(
-                    self.build_url(request.search_query),
-                    readiness_selector=self.result_selector,
-                    extract=lambda page: self.extract(page, self._clock()),
-                )
-            except EdgeCdpTransportError as fallback_error:
-                raise EdgeCdpTransportError(
-                    "Mercado Livre primary and Edge/CDP fallback failed"
-                ) from fallback_error
-            return CollectionResult(
-                self.source_code, started_at, self._clock(), offers
+            offers = await self._cdp_transport.run(
+                self.build_url(request.search_query),
+                readiness_selector=self.result_selector,
+                extract=self._extract_via_cdp_page,
             )
+        except EdgeCdpTransportError:
+            return await super()._collect_once(request)
+        return CollectionResult(self.source_code, started_at, self._clock(), offers)
+
+    async def _extract_via_cdp_page(self, page: Page) -> tuple[RawCollectedOffer, ...]:
+        offers = await self.extract(page, self._clock())
+        if not offers:
+            raise ProviderBlockedError(self.source_code, None)
+        return await self._resolve_unknown_availability(page, offers)
 
     async def extract(
         self, page: Page, collected_at: datetime

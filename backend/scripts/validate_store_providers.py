@@ -57,16 +57,20 @@ async def validate(
             html_timeout_ms=3_000,
         )
     if source == "mercadolivre" and edge_cdp_url:
-        provider_kwargs["edge_fallback"] = EdgeCdpTransport(
+        # TASK-109: Edge/CDP virou o transporte primário -- Playwright
+        # gerenciado só entra se o CDP falhar.
+        provider_kwargs["cdp_transport"] = EdgeCdpTransport(
             edge_cdp_url,
             connect_timeout_ms=5_000,
             navigation_timeout_ms=20_000,
             document_timeout_ms=10_000,
         )
-    if source == "terabyte" and edge_cdp_url:
-        # TASK-105: Playwright gerenciado está comprovadamente bloqueado
-        # (DEC-070) -- sem `edge_cdp_url`, a validação manual falha rápido,
-        # igual ao worker real.
+    if source in ("terabyte", "amazon", "kabum") and edge_cdp_url:
+        # TASK-105/109: Playwright gerenciado está comprovadamente
+        # bloqueado na Terabyte (DEC-070) -- sem `edge_cdp_url`, a
+        # validação manual falha rápido, igual ao worker real. Amazon e
+        # Kabum caem de volta pro Playwright se `edge_cdp_url` não for
+        # passado (`_collect_once` decide).
         provider_kwargs["cdp_transport"] = EdgeCdpTransport(
             edge_cdp_url,
             connect_timeout_ms=5_000,
@@ -107,7 +111,7 @@ def main() -> None:
     parser.add_argument(
         "--edge-cdp-url",
         help="Endpoint CDP HTTP loopback de um Edge normal já iniciado "
-        "(Magalu, Mercado Livre e Terabyte).",
+        "(Magalu, Mercado Livre, Terabyte, Amazon e Kabum).",
     )
     args = parser.parse_args()
     headed = should_use_headed(
