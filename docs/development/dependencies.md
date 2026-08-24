@@ -143,11 +143,13 @@ demanda por supervisor local (`EdgeCdpSupervisor`), com perfil dedicado e CDP
 restrito a loopback; configure `AISHOPPING_EDGE_CDP_URL=http://127.0.0.1:<porta>`
 no processo do `collection_worker` — sem essa variável, cada Store Provider
 falha rápido e isoladamente (nunca abre um navegador como fallback). Em
-desenvolvimento/CI, a suíte de testes usa o mesmo Edge do sistema
-(`app.collection.browser.BrowserSession`, só para obter um `Page` real e
-testar parsing de HTML local — nunca acessa a rede) via
-`Playwright.chromium.launch(executable_path=...)` apontando para o Edge
-descoberto automaticamente (`app.collection.edge_discovery`) — não existe
+desenvolvimento/CI, a suíte de testes conecta ao mesmo tipo de Edge, mesma
+arquitetura (`Playwright.chromium.connect_over_cdp()`, nunca `.launch()`):
+`tests/conftest.py` sobe um Edge dedicado da suíte (porta/perfil exclusivos,
+via `EdgeCdpSupervisor`) uma vez por sessão de teste, e
+`app.collection.browser.BrowserSession` só conecta nele
+(`EdgeCdpTransport.open_blank_page()`) para obter um `Page` real e testar
+parsing de HTML local — nunca acessa a rede. Não existe
 `python -m playwright install chromium` em nenhum passo deste projeto. Nunca
 publique a porta CDP, use `0.0.0.0`, perfil pessoal, cookies copiados ou
 flags de stealth/fingerprint.

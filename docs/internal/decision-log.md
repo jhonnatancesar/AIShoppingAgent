@@ -73,7 +73,32 @@
   `docs/development/dependencies.md`,
   `docs/development/local-pipeline.md`). Resultado: zero binário de
   Chromium em qualquer lugar do projeto, produção e teste na mesma
-  direção arquitetural (Edge).
+  direção arquitetural (Edge). **Superada pela parte 3 abaixo** --
+  `chromium.launch(executable_path=...)` ainda é `chromium.launch()`.
+- **Fechamento, parte 3 (2026-08-24):** usuário apontou a inconsistência:
+  mesmo apontando pro Edge, `chromium.launch()` continuava sendo chamado
+  -- queria a mesma arquitetura de produção também em teste
+  (`Playwright -> connect_over_cdp() -> Edge`, nunca `.launch()` de
+  nenhum tipo). `BrowserSession` passou a conectar via
+  `EdgeCdpTransport.open_blank_page()` (reaproveitado sem duplicar
+  lifecycle) contra um Edge dedicado da suíte, porta/perfil exclusivos
+  (`EDGE_SESSION_CDP_URL`/`EDGE_SESSION_PROFILE_DIR`,
+  `app/collection/browser.py`) -- nunca a porta/perfil de um Edge real de
+  dev/produção. `tests/conftest.py` (novo) sobe esse Edge uma vez por
+  sessão de teste (`EdgeCdpSupervisor.ensure_started()`, novo método
+  público -- inicia sem lease/monitor/timer) e derruba no fim
+  (`close_via_cdp()`, novo -- fecha só via comando CDP `Browser.close`,
+  sem depender do handle do subprocesso). Achado técnico durante a
+  implementação: setup e teardown do fixture de sessão rodam em
+  `asyncio.run()` separados (loops de evento diferentes); tanto
+  `lease()` (cria `asyncio.Task` presas ao loop) quanto `stop()`
+  (`process.wait()` no handle do subprocesso, também preso ao loop que o
+  criou) quebram ao serem reaproveitados de um loop diferente --
+  `ensure_started()`/`close_via_cdp()` foram desenhados especificamente
+  para nunca tocar em nenhum objeto asyncio preso a um loop que já
+  fechou. Nenhum dos ~40 testes precisou de reescrita (interface de
+  `BrowserSession` inalterada de novo). `EdgeCdpSupervisor.stop()`
+  (produção, sempre um único `asyncio.run()`/loop) não muda.
 
 ## DEC-095 — TASK-108: fila justa por usuário, cooldown individual, sem monopolização
 

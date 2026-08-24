@@ -4,29 +4,44 @@ Nenhum Store Provider real usa mais isto -- a coleta de produção navega
 exclusivamente via `EdgeCdpTransport`/`connect_over_cdp()` contra o Edge
 supervisionado (`app/collection/providers/edge_cdp_supervisor.py`). O que
 resta aqui existe só para dar a testes locais um `Page` real, sem rede
-(`page.set_content(html)`), para exercitar parsing de HTML -- por isso
-`BrowserSession` também lança o Microsoft Edge já instalado na máquina
-(`discover_edge_executable`, mesma descoberta usada pelo supervisor),
-nunca um Chromium baixado pelo Playwright: zero binário de Chromium em
-todo o projeto, produção e teste apontam para o mesmo navegador real.
+(`page.set_content(html)`), para exercitar parsing de HTML.
+
+TASK-109 (fechamento, parte 3): `BrowserSession` nunca chama
+`chromium.launch()` -- mesma arquitetura de produção, só
+`connect_over_cdp()` contra um Microsoft Edge real (`EdgeCdpTransport`,
+reaproveitado sem duplicar lifecycle). O processo do Edge em si (start/
+stop) é responsabilidade de `tests/conftest.py` (fixture de sessão da
+suíte, usa o mesmo `EdgeCdpSupervisor` de produção, porta/perfil
+dedicados e distintos de qualquer Edge real de dev/produção) -- nunca
+desta classe, que só conecta. `EDGE_SESSION_CDP_URL`/
+`EDGE_SESSION_PROFILE_DIR` abaixo são o contrato entre os dois lados.
 """
 
+import tempfile
 from dataclasses import dataclass
+from pathlib import Path
 
-from playwright.async_api import (
-    Browser,
-    BrowserContext,
-    Page,
-    Playwright,
-    async_playwright,
-)
+from playwright.async_api import Page
 
-from app.collection.edge_discovery import discover_edge_executable
+# TASK-109 (fechamento, parte 3): porta/perfil exclusivos da suíte de
+# testes -- nunca a mesma porta/perfil de um Edge real de
+# dev/produção (`AISHOPPING_EDGE_CDP_URL`, default 9223), para que rodar
+# a suíte nunca dispute nem interfira com um `collection_worker` real
+# rodando ao mesmo tempo na mesma máquina. `tests/conftest.py` importa
+# as duas constantes para saber onde/como subir o Edge dedicado.
+EDGE_SESSION_CDP_URL = "http://127.0.0.1:9333"
+EDGE_SESSION_PROFILE_DIR = Path(tempfile.gettempdir()) / "aishoppingagent-test-edge-profile"
 
 
 @dataclass(frozen=True, slots=True)
 class BrowserSettings:
-    """Opções seguras e independentes de uma fonte específica."""
+    """Opções seguras e independentes de uma fonte específica.
+
+    `headless` não é mais lida por `BrowserSession` (TASK-109, fechamento
+    parte 3 -- conecta a um Edge já em execução, nunca lança processo),
+    mas continua aqui: `worker.py`/`validate_store_providers.py`
+    constroem `BrowserSettings` para os Store Providers reais (timeouts/
+    locale), sem relação nenhuma com `BrowserSession`."""
 
     headless: bool = True
     action_timeout_ms: int = 10_000
@@ -43,33 +58,36 @@ class BrowserSettings:
 
 
 class BrowserSession:
-    """Gerencia Playwright, o Edge instalado na máquina e um contexto
-    isolado -- só para teste (ver docstring do módulo)."""
+    """Página de teste via CDP contra o Edge dedicado da suíte -- só
+    conecta, nunca lança processo nenhum (ver docstring do módulo)."""
 
     def __init__(self, settings: BrowserSettings | None = None) -> None:
         self.settings = settings or BrowserSettings()
-        self._playwright: Playwright | None = None
-        self._browser: Browser | None = None
-        self._context: BrowserContext | None = None
+        self._transport_cm = None
+        self._page: Page | None = None
 
-    async def __aenter__(self) -> BrowserSession:
-        if self._playwright is not None:
+    async def __aenter__(self) -> "BrowserSession":
+        if self._transport_cm is not None:
             raise RuntimeError("browser session is already open")
 
-        self._playwright = await async_playwright().start()
+        # Import adiado (TASK-109, fechamento parte 3): `browser.py` é
+        # importado por `app/collection/__init__.py` antes do pacote
+        # `providers` terminar de carregar (`base.py` importa
+        # `BrowserSettings` daqui) -- importar `EdgeCdpTransport` no topo
+        # do módulo criaria import circular. Nunca executado até alguém
+        # de fato abrir uma `BrowserSession`, quando todos os módulos já
+        # terminaram de carregar.
+        from app.collection.providers.edge_cdp_transport import EdgeCdpTransport
+
+        transport = EdgeCdpTransport(
+            EDGE_SESSION_CDP_URL,
+            connect_timeout_ms=5_000,
+            navigation_timeout_ms=self.settings.navigation_timeout_ms,
+            document_timeout_ms=self.settings.action_timeout_ms,
+        )
+        self._transport_cm = transport.open_blank_page()
         try:
-            self._browser = await self._playwright.chromium.launch(
-                headless=self.settings.headless,
-                executable_path=str(discover_edge_executable()),
-            )
-            self._context = await self._browser.new_context(
-                accept_downloads=False,
-                locale=self.settings.locale,
-            )
-            self._context.set_default_timeout(self.settings.action_timeout_ms)
-            self._context.set_default_navigation_timeout(
-                self.settings.navigation_timeout_ms
-            )
+            self._page = await self._transport_cm.__aenter__()
         except BaseException:
             await self.close()
             raise
@@ -84,24 +102,14 @@ class BrowserSession:
         await self.close()
 
     async def new_page(self) -> Page:
-        """Cria uma página no contexto isolado da sessão ativa."""
-        if self._context is None:
+        """Devolve a página da sessão ativa -- uma só por sessão."""
+        if self._page is None:
             raise RuntimeError("browser session is not open")
-        return await self._context.new_page()
+        return self._page
 
     async def close(self) -> None:
-        """Encerra todos os recursos, inclusive após inicialização parcial."""
-        context, self._context = self._context, None
-        browser, self._browser = self._browser, None
-        playwright, self._playwright = self._playwright, None
-
-        try:
-            if context is not None:
-                await context.close()
-        finally:
-            try:
-                if browser is not None:
-                    await browser.close()
-            finally:
-                if playwright is not None:
-                    await playwright.stop()
+        """Encerra a conexão CDP, inclusive após inicialização parcial."""
+        transport_cm, self._transport_cm = self._transport_cm, None
+        self._page = None
+        if transport_cm is not None:
+            await transport_cm.__aexit__(None, None, None)

@@ -16,12 +16,18 @@ como fallback -- falha explícita, `EdgeCdpTransportError`);
 (`WindowsOpsAgentAdapter`). Documentação nova/atualizada:
 `docs/architecture/windows-collection-worker.md`,
 `docs/architecture/playwright.md`,
-`docs/architecture/service-operations.md`. FASE 5 (fechamento, parte 2)
-concluída no DEV: `BrowserSession` (só teste) passou a lançar o Microsoft
-Edge da máquina em vez de Chromium do Playwright -- **zero binário de
-Chromium em qualquer parte do projeto**, produção e teste na mesma
-direção arquitetural. Nenhum deploy feito -- produção continua nos sete
-serviços Docker.**
+`docs/architecture/service-operations.md`. FASE 5 (fechamento, parte 2,
+superada pela FASE 6) trocou Chromium por Edge em `BrowserSession`, mas
+ainda via `chromium.launch(executable_path=...)`. FASE 6 (fechamento,
+parte 3) concluída no DEV: `BrowserSession` parou de lançar qualquer
+processo -- só conecta via `EdgeCdpTransport.open_blank_page()`
+(`connect_over_cdp()`) a um Edge dedicado da suíte, subido/derrubado uma
+vez por sessão de teste (`tests/conftest.py`,
+`EdgeCdpSupervisor.ensure_started()`/`close_via_cdp()`, dois métodos
+novos e pequenos, sem lifecycle duplicado). **Zero `.launch()` de
+qualquer tipo em todo o projeto** -- produção e teste usam exatamente a
+mesma arquitetura (`Playwright -> connect_over_cdp() -> Edge`). Nenhum
+deploy feito -- produção continua nos sete serviços Docker.**
 
 ## Objetivo
 
@@ -780,3 +786,82 @@ corrigida (não descrevia mais Edge/CDP).
 `test_edge_cdp_supervisor.py`, `test_collection_worker.py`) -- 128
 testes, todos passando com Edge real abrindo em vez de Chromium. Sem
 coleta real, sem deploy, sem push.
+
+**Superada pela FASE 6 abaixo** -- `chromium.launch(executable_path=...)`
+ainda é `chromium.launch()`; o usuário não considerou isso suficiente.
+
+## FASE 6 (fechamento, parte 3) — zero `.launch()` também nos testes (concluída no DEV)
+
+**Pedido do usuário:** mesmo apontando pro Edge, a FASE 5 ainda chamava
+`chromium.launch()`. O usuário quis a mesma arquitetura de produção
+também em teste: `Playwright -> connect_over_cdp() -> Edge`, nunca
+`.launch()` de nenhum tipo -- e pediu para eu parar e explicar antes de
+implementar, caso isso exigisse complexidade desproporcional só para
+testes.
+
+**Avaliação de complexidade (feita antes de implementar):** reaproveitar
+`EdgeCdpTransport.open_blank_page()` (já existe, já faz exatamente
+"conectar via CDP e devolver uma página", TASK-109 anterior) para
+`BrowserSession` é barato -- zero lifecycle novo. O único ponto real de
+complexidade é QUEM inicia/encerra o processo do Edge que os testes
+conectam (`connect_over_cdp()` exige um processo já rodando, ao
+contrário de `.launch()`). Avaliado como proporcional -- reaproveitar
+`EdgeCdpSupervisor` (já existe) resolve isso sem nenhuma lógica de
+lifecycle nova, só dois métodos públicos pequenos que expõem partes já
+existentes do supervisor (`ensure_started`/`close_via_cdp`, abaixo).
+
+**Mudança:** `BrowserSession` (`app/collection/browser.py`) parou de
+lançar qualquer processo -- só conecta via
+`EdgeCdpTransport(EDGE_SESSION_CDP_URL).open_blank_page()` (mesma classe
+de produção). `EDGE_SESSION_CDP_URL`/`EDGE_SESSION_PROFILE_DIR` (novas
+constantes no módulo) são porta/perfil exclusivos da suíte -- nunca a
+porta/perfil de um Edge real de dev/produção (`AISHOPPING_EDGE_CDP_URL`),
+para nunca disputar/interferir com um `collection_worker` real rodando
+na mesma máquina ao mesmo tempo.
+
+**`tests/conftest.py` (novo):** fixture de sessão, `autouse=True`, sobe
+o Edge dedicado da suíte uma vez (não por teste) e derruba no fim.
+
+**Achado técnico durante a implementação (motivo de dois métodos novos
+no `EdgeCdpSupervisor`, não reaproveitar `lease()`/`stop()` direto):**
+setup e teardown do fixture de sessão rodam em `asyncio.run()`
+separados -- loops de evento diferentes, convenção já estabelecida do
+projeto (um `asyncio.run()` por teste/fixture, sem pytest-asyncio). Duas
+quebras reais, encontradas empiricamente, não só por inspeção:
+1. `lease()` liga monitor/timer (`asyncio.Task`), presos ao loop que os
+   criou -- reaproveitar essas tasks de um loop diferente no teardown
+   quebra.
+2. `stop()` espera (`process.wait()`) o `asyncio.subprocess.Process`
+   lançado no loop de setup, a partir do loop de teardown --
+   `RuntimeError: ... attached to a different loop` (reproduzido ao
+   vivo antes da correção).
+
+Dois métodos públicos novos, cada um evita um dos dois problemas, sem
+duplicar nenhuma lógica de lifecycle (só reaproveitam métodos internos
+já existentes):
+- `EdgeCdpSupervisor.ensure_started()`: garante o Edge rodando, sem
+  lease/monitor/timer -- nunca cria a `asyncio.Task` do problema 1.
+- `EdgeCdpSupervisor.close_via_cdp()`: encerra só via comando CDP
+  (`Browser.close`), sem tocar no handle do subprocesso -- nunca toca o
+  objeto do problema 2. O processo real termina mesmo assim (confirmado
+  ao vivo: nenhum `msedge.exe` da porta/perfil de teste sobra depois da
+  suíte); só não é formalmente esperado (`wait()`) pelo Python.
+
+`EdgeCdpSupervisor.lease()`/`stop()` (produção, sempre dentro de um
+único `asyncio.run()`/loop do `collection_worker` real) não mudaram.
+
+**Descoberta do executável revertida para dentro do supervisor:** como
+`BrowserSession` não descobre mais o executável do Edge diretamente (só
+conecta, quem lança é o fixture via `EdgeCdpSupervisor`, que já faz sua
+própria descoberta), `app/collection/edge_discovery.py` (FASE 5) deixou
+de ser importado por `browser.py` -- continua existindo, ainda usado
+internamente por `EdgeCdpSupervisor`.
+
+**Validação:** suíte focada -- 136 testes
+(`test_playwright_browser.py`, `test_store_providers.py`,
+`test_store_provider_installments.py`, `test_edge_cdp_supervisor.py`,
+`test_collection_worker.py`, `test_admin_operations.py`), todos
+passando, mais rápido que a FASE 5 (44s vs. ~100s -- um único Edge
+compartilhado pela sessão em vez de lançar um por teste). Confirmado ao
+vivo: zero `msedge.exe` da porta/perfil de teste (`9333`) sobrevive
+depois da suíte terminar. Sem coleta real, sem deploy, sem push.

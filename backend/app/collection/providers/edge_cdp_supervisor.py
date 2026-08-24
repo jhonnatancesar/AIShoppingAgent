@@ -154,6 +154,19 @@ class EdgeCdpSupervisor:
         finally:
             await self._release()
 
+    async def ensure_started(self) -> None:
+        """Garante o Edge rodando, sem lease/monitor/timer -- para quem
+        gerencia o próprio ciclo de vida por fora, num limite de
+        `asyncio.run()` só seu (ex.: fixture de sessão da suíte de
+        testes, `tests/conftest.py`, que também chama `stop()` num
+        `asyncio.run()` separado no fim). Nunca usado pelo
+        `collection_worker` real (esse sempre passa por `lease()`) --
+        por isso nunca liga monitor/timer, que criariam `asyncio.Task`
+        presos ao loop deste `asyncio.run()` e quebrariam ao serem
+        reaproveitados por um `stop()` chamado de outro loop depois."""
+        async with self._lifecycle_lock:
+            await self._ensure_running()
+
     async def _acquire(self) -> None:
         async with self._lifecycle_lock:
             self._active_leases += 1
@@ -186,6 +199,20 @@ class EdgeCdpSupervisor:
             await self._cancel_idle_timer()
         await self._close_dedicated_browser()
         await self._terminate_launcher()
+
+    async def close_via_cdp(self) -> None:
+        """Encerra o Edge só pelo protocolo CDP (`Browser.close`), sem
+        tocar no `asyncio.subprocess.Process` que o lançou -- para quem
+        chama `ensure_started()`/`close_via_cdp()` de dois `asyncio.run()`
+        separados (ex.: fixture de sessão de teste, `tests/conftest.py`):
+        o handle do subprocesso fica preso ao loop que o criou
+        (`_terminate_launcher`/`process.wait()` quebra com
+        "attached to a different loop" se chamado de outro loop depois).
+        O processo real ainda termina -- só não é formalmente esperado
+        (`wait()`) pelo Python; aceitável para teste, nunca usado pelo
+        `collection_worker` real (que sempre roda `lease()`/`stop()` no
+        mesmo loop, via `stop()` acima)."""
+        await self._close_dedicated_browser()
 
     async def wait_until_ready(self, *, timeout_seconds: float | None = None) -> None:
         """Espera a recuperação sem expor processo ou comandos ao provider."""

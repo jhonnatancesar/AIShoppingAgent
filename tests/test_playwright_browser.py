@@ -3,7 +3,6 @@
 
 import asyncio
 
-import app.collection.browser as browser_module
 import pytest
 from app.collection import BrowserSession, BrowserSettings
 
@@ -47,14 +46,18 @@ def test_edge_opens_local_page_and_closes_session() -> None:
         asyncio.run(closed_session.new_page())
 
 
-def test_session_stops_playwright_when_browser_launch_fails(
+def test_session_propagates_and_cleans_up_when_cdp_connect_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """TASK-109 (fechamento, parte 3): `BrowserSession` só conecta via
+    CDP -- uma falha de `connect_over_cdp` (não mais de `launch`) precisa
+    propagar e deixar a sessão limpa, igual antes."""
+    import app.collection.providers.edge_cdp_transport as transport_module
+
     class FailingChromium:
-        async def launch(self, *, headless: bool, executable_path: str) -> None:
-            assert headless is True
-            assert executable_path
-            raise OSError("browser launch failed")
+        async def connect_over_cdp(self, endpoint: str, *, timeout: int) -> None:
+            assert endpoint
+            raise OSError("cdp connect failed")
 
     class FakePlaywright:
         def __init__(self) -> None:
@@ -73,13 +76,13 @@ def test_session_stops_playwright_when_browser_launch_fails(
 
     fake_playwright = FakePlaywright()
     monkeypatch.setattr(
-        browser_module,
+        transport_module,
         "async_playwright",
         lambda: FakeManager(fake_playwright),
     )
     session = BrowserSession()
 
-    with pytest.raises(OSError, match="browser launch failed"):
+    with pytest.raises(OSError, match="cdp connect failed"):
         asyncio.run(session.__aenter__())
 
     assert fake_playwright.stopped is True

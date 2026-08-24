@@ -1,14 +1,17 @@
-# Playwright: sempre Edge, nunca Chromium
+# Playwright: sempre `connect_over_cdp()`, nunca `.launch()`
 
 A TASK-024 adicionou a infraestrutura de navegador original (Chromium
-gerenciado, `BrowserSession`). A TASK-109 (fechamento da migração de
-browser, 2026-08) trocou o navegador em **toda** parte do projeto: hoje
-**nada abre Chromium** -- nem em produção, nem na suíte de testes. Zero
-binário de Chromium é baixado, instalado ou executado neste projeto.
-Produção e teste apontam para o mesmo navegador real, o Microsoft Edge já
-instalado na máquina.
+gerenciado, `BrowserSession`, via `chromium.launch()`). A TASK-109
+(fechamento da migração de browser, 2026-08) trocou a arquitetura em
+**toda** parte do projeto: hoje **nada chama `.launch()` de nenhum
+tipo** -- nem em produção, nem na suíte de testes. Playwright só conecta
+(`connect_over_cdp()`) a um Microsoft Edge já em execução; zero binário
+de Chromium é baixado, instalado ou executado neste projeto, e zero
+processo de navegador é lançado pela própria chamada Playwright que o
+usa (lançar o processo é sempre responsabilidade de `EdgeCdpSupervisor`,
+separado de quem conecta).
 
-## Dois papéis, um único navegador
+## Dois papéis, uma única arquitetura
 
 - **Produção (`app.collection.providers`)**: todos os seis Store
   Providers (Amazon, Kabum, Magalu, Mercado Livre, Pichau, Terabyte)
@@ -25,19 +28,26 @@ instalado na máquina.
   `.extract()`/parsing de HTML estático em `tests/test_store_providers.py`
   e `tests/test_playwright_browser.py`. Nenhum destes testes representa
   coleta real; nenhum navega para uma URL externa. Desde o fechamento da
-  TASK-109, `BrowserSession` lança o **mesmo Edge instalado no sistema**
-  (`Playwright.chromium.launch(executable_path=...)`, descoberta em
-  `app.collection.edge_discovery.discover_edge_executable` -- a mesma
-  usada pelo `EdgeCdpSupervisor` de produção), nunca um Chromium baixado
-  pelo Playwright.
+  TASK-109, `BrowserSession` **conecta** via `EdgeCdpTransport.open_blank_page()`
+  (a mesma classe de produção, reaproveitada sem duplicar lifecycle) a um
+  Edge dedicado da suíte -- porta/perfil exclusivos
+  (`EDGE_SESSION_CDP_URL`/`EDGE_SESSION_PROFILE_DIR`, definidos em
+  `app.collection.browser`), nunca a mesma porta/perfil de um Edge real
+  de dev/produção. `tests/conftest.py` sobe esse Edge uma vez por sessão
+  de teste (`EdgeCdpSupervisor.ensure_started()`) e derruba no fim
+  (`close_via_cdp()`) -- `BrowserSession` em si só conecta, nunca lança
+  processo nenhum.
 
 ## Componentes (`app.collection.browser`, uso de teste)
 
-- `BrowserSettings` define execução headless, timeouts positivos e locale.
-- `BrowserSession` inicia Playwright e o Edge da máquina de forma
-  assíncrona.
-- Contexto, navegador e processo Playwright são encerrados mesmo quando a
-  abertura falha ou o bloco assíncrono termina com erro.
+- `BrowserSettings` define timeouts positivos e locale (`headless`
+  também existe, mas não é lida por `BrowserSession` -- só por
+  `PlaywrightStoreProvider`/scripts que ainda constroem o dataclass).
+- `BrowserSession` conecta via CDP e devolve uma página -- nunca lança
+  processo.
+- A conexão CDP é encerrada mesmo quando a abertura falha ou o bloco
+  assíncrono termina com erro; o processo do Edge em si é gerenciado
+  pelo fixture de sessão (`tests/conftest.py`), não por `BrowserSession`.
 
 ## Instalação local
 
@@ -53,9 +63,10 @@ real e (2) rodar a suíte de testes local/CI completa.
 python -m pip install -r backend/requirements-dev.txt
 ```
 
-Sem Edge instalado, `BrowserSession`/os testes que dependem dela falham
-com `EdgeExecutableNotFoundError` -- mensagem clara, nunca um download
-silencioso de outro navegador.
+Sem Edge instalado, o fixture de sessão (`tests/conftest.py`) falha ao
+tentar subir o Edge dedicado da suíte -- mensagem clara
+(`EdgeExecutableNotFoundError`/`EdgeCdpSupervisorError`), nunca um
+download silencioso de outro navegador.
 
 ## Limites
 
