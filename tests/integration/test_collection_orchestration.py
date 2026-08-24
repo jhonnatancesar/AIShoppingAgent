@@ -18,7 +18,13 @@ from app.collection.contracts import (
     RawCollectedOffer,
 )
 from app.collection.errors import ProviderBlockedError
-from app.collection.models import CollectionRun, CollectionRunStatus, PriceObservation
+from app.collection.models import (
+    CollectionQueueConfig,
+    CollectionRun,
+    CollectionRunStatus,
+    PriceObservation,
+    UserCollectionQueueState,
+)
 from app.collection.normalization import Availability
 from app.collection.orchestration import CollectionOrchestrator, claim_due_collections
 from app.database.session import (
@@ -41,6 +47,33 @@ from app.users.models import User, UserRole
 from sqlalchemy import func, select, text
 
 pytestmark = pytest.mark.integration
+
+# TASK-108: testes legados anteriores à fila justa por usuário --
+# exercitam backoff por PROVIDER (DEC-046), chamando `run_batch()`
+# várias vezes em sequência real para o MESMO usuário único. O cooldown
+# individual (default 60-180s) os bloquearia na 2a/3a chamada sem
+# relação nenhuma com o que o teste testa. Neutralizado explicitamente
+# aqui -- a lógica da fila em si não muda por causa disso. Literalmente
+# 0 (não só "pequeno"): `now`/`due_at` nestes testes são truncados a
+# segundo inteiro (`.replace(microsecond=0)`) e podem colidir no MESMO
+# segundo entre duas chamadas reais -- qualquer intervalo > 0 arriscaria
+# `next_eligible_at` ficar estritamente à frente do `due_at` seguinte só
+# por causa do truncamento, não da lógica de cooldown em si.
+_NEUTRAL_USER_COOLDOWN_SECONDS = 0.0
+# TASK-108: mesmo raciocínio para o pacing GLOBAL por loja (default 2s no
+# `CollectionOrchestrator`) -- testes que chamam `run_batch`/
+# `claim_due_collections` várias vezes em sequência real para a MESMA
+# loja (backoff por provider, ou dois usuários due na mesma loja só para
+# testar fairness) não podem ser bloqueados por um throttle que não têm
+# relação com o que testam. Literalmente 0 (não só "pequeno") de
+# propósito: `now`/`due_at` nestes testes são truncados a segundo inteiro
+# (`.replace(microsecond=0)`) e podem colidir no MESMO segundo entre duas
+# chamadas reais -- qualquer intervalo > 0 arriscaria `next_allowed_at`
+# ficar estritamente à frente do `due_at` seguinte só por causa do
+# truncamento, não da lógica. `0` é permitido só na API direta do
+# `CollectionOrchestrator` (nunca via `Settings`/ADMIN, que exigem > 0) --
+# equivale a desligar o throttle, uso exclusivo de teste.
+_NEUTRAL_STORE_INTERVAL_SECONDS = 0.0
 
 
 class _AlwaysMatchAIManager:
@@ -165,6 +198,260 @@ def _seed_due_mission(sessions, now: datetime) -> tuple:
             )
         )
         return mission.id, stores["pichau"].id, stores["kabum"].id
+
+
+def _seed_due_mission_for_new_user(sessions, now: datetime, *, label: str) -> tuple:
+    """TASK-108: um usuário próprio, uma missão due, uma única fonte
+    (pichau) -- o mínimo para exercitar a fila justa por usuário sem o
+    ruído de múltiplas fontes por missão."""
+    with sessions.begin() as session:
+        store = session.scalar(select(Store).where(Store.code == "pichau"))
+        user = User(display_name=f"TASK-108 {label}", role=UserRole.USER)
+        session.add(user)
+        session.flush()
+        mission = Mission(
+            user_id=user.id, title=f"TASK-108 {label}", status=MissionStatus.ACTIVE
+        )
+        session.add(mission)
+        session.flush()
+        session.add_all(
+            (
+                MissionCriteria(mission_id=mission.id, search_query="synthetic GPU"),
+                MissionSchedule(
+                    mission_id=mission.id,
+                    interval_minutes=60,
+                    next_run_at=now,
+                    is_enabled=True,
+                ),
+                MissionSource(mission_id=mission.id, store_id=store.id),
+            )
+        )
+        return user.id, mission.id
+
+
+def test_fair_queue_claims_only_max_users_and_leaves_others_untouched(
+    integration_database,
+) -> None:
+    """TASK-108: com `max_users=1`, só um dos dois usuários elegíveis tem
+    claim reivindicada nesta rodada; o outro fica intocado (schedule
+    continua due, sem `CollectionRun` criada)."""
+    now = datetime.now(UTC).replace(microsecond=0)
+    user_a, mission_a = _seed_due_mission_for_new_user(
+        integration_database.sessions, now, label="A"
+    )
+    user_b, mission_b = _seed_due_mission_for_new_user(
+        integration_database.sessions, now, label="B"
+    )
+
+    async def _claim():
+        async with integration_database.async_sessions() as session, session.begin():
+            return await claim_due_collections(session, now=now, limit=25, max_users=1)
+
+    claims = asyncio.run(_claim())
+
+    assert len(claims) == 1
+    claimed_mission_ids = {claim.mission_id for claim in claims}
+    assert claimed_mission_ids in ({mission_a}, {mission_b})
+
+    with integration_database.sessions() as session:
+        runs = list(session.scalars(select(CollectionRun)))
+        assert len(runs) == 1
+        untouched_mission = mission_b if claimed_mission_ids == {mission_a} else mission_a
+        schedule = session.scalar(
+            select(MissionSchedule).where(
+                MissionSchedule.mission_id == untouched_mission
+            )
+        )
+        assert schedule.next_run_at == now  # não avançou -- não foi tocada
+
+        claimed_user = user_a if claimed_mission_ids == {mission_a} else user_b
+        untouched_user = user_b if claimed_mission_ids == {mission_a} else user_a
+        assert session.get(UserCollectionQueueState, claimed_user) is not None
+        assert session.get(UserCollectionQueueState, untouched_user) is None
+
+
+def test_fair_queue_cooldown_is_per_user_and_does_not_block_others(
+    integration_database,
+) -> None:
+    """TASK-108: depois que A é processado (fica em cooldown), uma nova
+    rodada no MESMO instante escolhe B -- o cooldown de A nunca bloqueia
+    B, que segue elegível imediatamente."""
+    now = datetime.now(UTC).replace(microsecond=0)
+    user_a, mission_a = _seed_due_mission_for_new_user(
+        integration_database.sessions, now, label="A"
+    )
+    user_b, mission_b = _seed_due_mission_for_new_user(
+        integration_database.sessions, now, label="B"
+    )
+
+    async def _claim():
+        async with integration_database.async_sessions() as session, session.begin():
+            return await claim_due_collections(
+                session,
+                now=now,
+                limit=25,
+                max_users=1,
+                user_cooldown_min_seconds=60.0,
+                user_cooldown_max_seconds=60.0,
+                store_min_interval_seconds=_NEUTRAL_STORE_INTERVAL_SECONDS,
+            )
+
+    first = asyncio.run(_claim())
+    assert len(first) == 1
+    first_user = user_a if first[0].mission_id == mission_a else user_b
+
+    with integration_database.sessions() as session:
+        state = session.get(UserCollectionQueueState, first_user)
+        assert state.last_processed_at == now
+        assert state.next_eligible_at > now
+
+    # TASK-108: a missão do usuário já processado ganha outra execução due
+    # no mesmo instante (simula "ainda tinha trabalho pendente") --
+    # reforça só o `next_run_at`, sem tocar no cooldown do usuário.
+    with integration_database.sessions.begin() as session:
+        schedule = session.scalar(
+            select(MissionSchedule).where(
+                MissionSchedule.mission_id
+                == (mission_a if first_user == user_a else mission_b)
+            )
+        )
+        schedule.next_run_at = now
+
+    second = asyncio.run(_claim())
+    assert len(second) == 1
+    second_mission = second[0].mission_id
+    second_user = user_a if second_mission == mission_a else user_b
+
+    # O usuário do primeiro ciclo está em cooldown -- a segunda rodada,
+    # no mesmo `now`, nunca o escolhe de novo; escolhe o outro usuário.
+    assert second_user != first_user
+
+
+def test_store_throttle_blocks_second_user_same_store_within_batch(
+    integration_database,
+) -> None:
+    """TASK-108: pacing GLOBAL por loja -- dois usuários diferentes com
+    missões due na MESMA loja, no MESMO batch; só a primeira claim passa,
+    a segunda fica de fora por causa do throttle da loja (não da fila por
+    usuário -- `max_users=2` deixa os dois elegíveis)."""
+    now = datetime.now(UTC).replace(microsecond=0)
+    user_a, mission_a = _seed_due_mission_for_new_user(
+        integration_database.sessions, now, label="StoreA"
+    )
+    user_b, mission_b = _seed_due_mission_for_new_user(
+        integration_database.sessions, now, label="StoreB"
+    )
+
+    async def _claim():
+        async with integration_database.async_sessions() as session, session.begin():
+            return await claim_due_collections(
+                session,
+                now=now,
+                limit=25,
+                max_users=2,
+                store_min_interval_seconds=60.0,
+            )
+
+    claims = asyncio.run(_claim())
+
+    assert len(claims) == 1
+    claimed_mission = claims[0].mission_id
+    assert claimed_mission in (mission_a, mission_b)
+
+    with integration_database.sessions() as session:
+        untouched_mission = mission_b if claimed_mission == mission_a else mission_a
+        schedule = session.scalar(
+            select(MissionSchedule).where(
+                MissionSchedule.mission_id == untouched_mission
+            )
+        )
+        # Nunca avançou -- ficou de fora pelo throttle GLOBAL da loja, não
+        # por cooldown/fairness (os dois usuários eram elegíveis).
+        assert schedule.next_run_at == now
+
+
+def test_store_throttle_persists_across_restart(integration_database) -> None:
+    """TASK-108: o throttle da loja sobrevive a um "restart" do worker --
+    sessão/transação novas a cada chamada, mesmo idioma de teste já usado
+    por `test_source_backoff_lifecycle_across_batches` (equivalente a um
+    restart real: nenhum estado sobrevive em memória entre as chamadas,
+    só o que está persistido)."""
+    now = datetime.now(UTC).replace(microsecond=0)
+    _seed_due_mission_for_new_user(
+        integration_database.sessions, now, label="RestartA"
+    )
+
+    async def _claim(claim_now):
+        async with integration_database.async_sessions() as session, session.begin():
+            return await claim_due_collections(
+                session, now=claim_now, limit=25, store_min_interval_seconds=120.0
+            )
+
+    first = asyncio.run(_claim(now))
+    assert len(first) == 1
+
+    # Segunda missão due na MESMA loja (pichau, fixo em
+    # `_seed_due_mission_for_new_user`), quase imediatamente depois --
+    # "restart" simulado só pela sessão/transação novas.
+    _, mission_2 = _seed_due_mission_for_new_user(
+        integration_database.sessions, now, label="RestartB"
+    )
+    second = asyncio.run(_claim(now + timedelta(seconds=1)))
+
+    assert len(second) == 0
+    with integration_database.sessions() as session:
+        schedule = session.scalar(
+            select(MissionSchedule).where(MissionSchedule.mission_id == mission_2)
+        )
+        assert schedule.next_run_at == now  # nunca avançou -- throttle persistido
+
+
+def test_queue_config_admin_override_applies_without_worker_restart(
+    integration_database,
+) -> None:
+    """TASK-108: um override do ADMIN (`CollectionQueueConfig`,
+    persistido) já vale no PRÓXIMO `run_batch` -- nunca precisa recriar o
+    `CollectionOrchestrator` nem reiniciar o worker."""
+    now = datetime.now(UTC).replace(microsecond=0)
+    user_a, mission_a = _seed_due_mission_for_new_user(
+        integration_database.sessions, now, label="ConfigA"
+    )
+
+    # Override persistido ANTES de qualquer batch: intervalo de loja bem
+    # maior que o default de fábrica do orchestrator (2s) -- se o
+    # override não fosse aplicado, a segunda claim abaixo passaria.
+    with integration_database.sessions.begin() as session:
+        session.add(
+            CollectionQueueConfig(
+                id=1, store_min_interval_seconds_override=120.0
+            )
+        )
+
+    orchestrator = CollectionOrchestrator(
+        integration_database.async_sessions,
+        CollectionAdapter((_SuccessfulProvider(),)),
+        ai_manager=_AlwaysMatchAIManager(),
+        # Default do orchestrator propositalmente baixo -- só o override
+        # persistido, resolvido a cada `run_batch`, deve valer.
+        store_min_interval_seconds=1.0,
+    )
+
+    first = asyncio.run(orchestrator.run_batch(now=now))
+    assert (first.claimed, first.succeeded) == (1, 1)
+
+    user_b, mission_b = _seed_due_mission_for_new_user(
+        integration_database.sessions, now, label="ConfigB"
+    )
+    second = asyncio.run(orchestrator.run_batch(now=now + timedelta(seconds=1)))
+
+    # Sem o override (1s já teria expirado), a claim de B passaria --
+    # bloqueada porque o override (120s) foi lido de novo neste batch.
+    assert (second.claimed, second.succeeded) == (0, 0)
+    with integration_database.sessions() as session:
+        schedule = session.scalar(
+            select(MissionSchedule).where(MissionSchedule.mission_id == mission_b)
+        )
+        assert schedule.next_run_at == now
 
 
 def test_orchestrator_isolates_source_failure_and_publishes_real_events(
@@ -531,6 +818,9 @@ def test_source_backoff_lifecycle_across_batches(integration_database) -> None:
         integration_database.async_sessions,
         CollectionAdapter((_SuccessfulProvider(), _FailingProvider())),
         ai_manager=_AlwaysMatchAIManager(),
+        user_cooldown_min_seconds=_NEUTRAL_USER_COOLDOWN_SECONDS,
+        user_cooldown_max_seconds=_NEUTRAL_USER_COOLDOWN_SECONDS,
+        store_min_interval_seconds=_NEUTRAL_STORE_INTERVAL_SECONDS,
     )
 
     # Ciclo 1: pichau sucede, kabum leva 403 confirmado -> 1o bloqueio.
@@ -670,6 +960,9 @@ def test_prelist_ready_fires_once_then_errata_corrects_a_cheaper_late_offer(
         integration_database.async_sessions,
         CollectionAdapter((_SuccessfulProvider(), _FailingProvider())),
         ai_manager=_AlwaysMatchAIManager(),
+        user_cooldown_min_seconds=_NEUTRAL_USER_COOLDOWN_SECONDS,
+        user_cooldown_max_seconds=_NEUTRAL_USER_COOLDOWN_SECONDS,
+        store_min_interval_seconds=_NEUTRAL_STORE_INTERVAL_SECONDS,
     )
     result1 = asyncio.run(orchestrator_round1.run_batch(now=now))
     assert (result1.claimed, result1.succeeded, result1.failed) == (2, 1, 1)
@@ -716,6 +1009,9 @@ def test_prelist_ready_fires_once_then_errata_corrects_a_cheaper_late_offer(
         integration_database.async_sessions,
         CollectionAdapter((_SuccessfulProvider(), _KabumOfferProvider("R$ 1.500,00"))),
         ai_manager=_AlwaysMatchAIManager(),
+        user_cooldown_min_seconds=_NEUTRAL_USER_COOLDOWN_SECONDS,
+        user_cooldown_max_seconds=_NEUTRAL_USER_COOLDOWN_SECONDS,
+        store_min_interval_seconds=_NEUTRAL_STORE_INTERVAL_SECONDS,
     )
     result2 = asyncio.run(orchestrator_round2.run_batch(now=due_at))
     assert (result2.claimed, result2.succeeded, result2.failed) == (2, 2, 0)
@@ -757,6 +1053,9 @@ def test_prelist_ready_fires_once_then_errata_corrects_a_cheaper_late_offer(
         integration_database.async_sessions,
         CollectionAdapter((_SuccessfulProvider(), _KabumOfferProvider("R$ 1.000,00"))),
         ai_manager=_AlwaysMatchAIManager(),
+        user_cooldown_min_seconds=_NEUTRAL_USER_COOLDOWN_SECONDS,
+        user_cooldown_max_seconds=_NEUTRAL_USER_COOLDOWN_SECONDS,
+        store_min_interval_seconds=_NEUTRAL_STORE_INTERVAL_SECONDS,
     )
     result3 = asyncio.run(orchestrator_round3.run_batch(now=due_at_3))
     assert (result3.claimed, result3.succeeded, result3.failed) == (2, 2, 0)

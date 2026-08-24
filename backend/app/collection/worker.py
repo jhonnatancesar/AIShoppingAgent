@@ -244,6 +244,10 @@ async def run_worker(
         stale_run_minutes=settings.collection_stale_run_minutes,
         max_concurrency=settings.collection_max_concurrency,
         claim_deadline_seconds=settings.collection_claim_deadline_seconds,
+        max_concurrent_user_batches=settings.max_concurrent_user_batches,
+        user_cooldown_min_seconds=settings.user_cooldown_min_seconds,
+        user_cooldown_max_seconds=settings.user_cooldown_max_seconds,
+        store_min_interval_seconds=settings.store_min_interval_seconds,
     )
     try:
         consecutive_failures = 0

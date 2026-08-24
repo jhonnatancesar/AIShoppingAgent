@@ -213,6 +213,64 @@ def test_worker_once_records_batch_and_disposes(monkeypatch) -> None:
     )
 
 
+def test_worker_wires_fair_queue_and_store_throttle_settings(monkeypatch) -> None:
+    """TASK-108: `run_worker` precisa repassar os quatro parâmetros da
+    fila justa/pacing global (`Settings` -> `CollectionOrchestrator`) --
+    sem isso, o worker nativo Windows sempre usaria os defaults do
+    código, nunca o que vem de `.env`/`CollectionQueueConfig`."""
+    engine = MagicMock()
+    engine.dispose = AsyncMock()
+    factory = MagicMock()
+    orchestrator = MagicMock()
+
+    async def result(*_args, **_kwargs):
+        return SimpleNamespace(claimed=0, succeeded=0, failed=0, recovered_stale=0)
+
+    orchestrator.run_batch = result
+    captured_kwargs: dict[str, object] = {}
+
+    def _capture_orchestrator(*_args, **kwargs):
+        captured_kwargs.update(kwargs)
+        return orchestrator
+
+    monkeypatch.setattr(
+        "app.collection.worker.create_collection_async_database_engine",
+        lambda *_, **__: engine,
+    )
+    monkeypatch.setattr(
+        "app.collection.worker.create_async_session_factory", lambda *_: factory
+    )
+    monkeypatch.setattr("app.collection.worker.build_collection_adapter", MagicMock())
+    monkeypatch.setattr(
+        "app.collection.worker.build_admin_dev_ai_provider_manager", MagicMock()
+    )
+    monkeypatch.setattr(
+        "app.collection.worker.CollectionOrchestrator", _capture_orchestrator
+    )
+    monkeypatch.setattr("app.collection.worker.observe_worker_batch", MagicMock())
+    monkeypatch.setattr(
+        "app.collection.worker.trace.get_tracer",
+        lambda *_: SimpleNamespace(
+            start_as_current_span=lambda *_a, **_k: nullcontext()
+        ),
+    )
+
+    settings = Settings(
+        max_concurrent_user_batches=2,
+        user_cooldown_min_seconds=61.0,
+        user_cooldown_max_seconds=179.0,
+        store_min_interval_seconds=3.5,
+        _env_file=None,
+    )
+
+    asyncio.run(run_worker(settings, once=True))
+
+    assert captured_kwargs["max_concurrent_user_batches"] == 2
+    assert captured_kwargs["user_cooldown_min_seconds"] == 61.0
+    assert captured_kwargs["user_cooldown_max_seconds"] == 179.0
+    assert captured_kwargs["store_min_interval_seconds"] == 3.5
+
+
 def test_worker_identity_resolver_uses_dedicated_kabum_amazon_providers() -> None:
     """TASK-083: nunca reutiliza os providers da coleta normal -- instâncias
     próprias, namespace de circuito separado ("identity")."""

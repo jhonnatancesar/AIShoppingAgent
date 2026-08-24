@@ -204,6 +204,82 @@
   demais.
 - **Fora de escopo:** qualquer alteração nos limites por provider já
   existentes, sistema de planos (`DEC-094`/`DEC-073`).
+- **Implementação (2026-08-24), retomada sobre a arquitetura final da
+  TASK-109:** correção à premissa acima -- auditoria confirmou que a
+  "proteção principal por provider/loja" NÃO era global entre usuários
+  como o texto original supunha. `MissionSource.next_eligible_at`
+  (`DEC-046`) é backoff por `(mission_id, store_id)`, não por loja
+  isolada -- duas missões de usuários diferentes na mesma loja não
+  compartilham nada. O único mecanismo genuinamente global por provider
+  era o circuit breaker (`app.core.resilience.CIRCUITS`), e só em
+  memória, perdido a cada restart. Nenhum `next_allowed_at`
+  persistido e cross-usuário existia. Implementado como terceira camada
+  nova, explícita: `StoreThrottleState` (`store_id` como chave, `Postgres`,
+  `FOR UPDATE SKIP LOCKED` na mesma transação curta de
+  `claim_due_collections`) -- intervalo mínimo global entre QUALQUER duas
+  claims da mesma loja, aplicado imediatamente por claim (não em lote no
+  fim do batch), para que nenhuma troca de usuário dentro do mesmo ciclo
+  fure o intervalo. `DEC-046`/`MissionSource` continuam absolutamente
+  intocados -- camadas independentes, nunca fundidas.
+  - **Reaproveitamento do WIP** (`task/108-fair-queue-wip`, commit
+    `21f1c05`): modelo (`UserCollectionQueueState`), migration, a
+    seleção justa em si (`_select_due_schedules_for_batch`/
+    `_advance_user_queue_state` em `orchestration.py`) e os 2 testes de
+    fairness reaplicaram sem conflito (nenhum dos arquivos tinha
+    divergido de `main` desde que o WIP foi criado). O wiring de
+    `worker.py` da branch WIP era da arquitetura pré-TASK-109 (Docker) --
+    descartado e reaplicado manualmente contra o `worker.py` atual
+    (nativo Windows).
+  - **Config persistida e editável pelo ADMIN, sem depender só de `.env`**
+    (pedido explícito): `CollectionQueueConfig` (linha única, overrides
+    nulos por padrão), resolvida a cada `run_batch`
+    (`resolve_queue_config`) -- uma mudança do ADMIN vale no próximo
+    ciclo, nunca precisa de restart do worker. `GET/PATCH
+    /api/v1/admin/queue` (`admin_router.py`) -- mesmo padrão tri-state
+    (`model_fields_set`) já usado pelos overrides de cota por usuário
+    (`DEC-094`), mesma auditoria (`AuditEntry`).
+  - **Achado real durante os testes, documentado e não perseguido:** dois
+    testes de integração legados (`test_source_backoff_lifecycle_across_batches`,
+    `test_prelist_ready_fires_once_then_errata_corrects_a_cheaper_late_offer`)
+    continuam falhando -- já falhavam exatamente assim no WIP original
+    ("CONHECIDO QUEBRADO" no commit `21f1c05`, nunca corrigido). O
+    cooldown por usuário e o novo throttle de loja foram neutralizados
+    explicitamente nesses dois testes (não têm relação com o que eles
+    testam -- backoff por provider para um único usuário), mas ambos
+    continuam falhando por uma causa DIFERENTE e mais profunda,
+    diagnosticada nesta rodada mas não corrigida (fora do pedido):
+    `_persist_phase_a` confirma `CollectionRun.status == RUNNING`
+    corretamente, mas `_persist_phase_c` (mais adiante, depois da Fase B
+    de IA) encontra o mesmo run já fora de `RUNNING` e retorna `False` --
+    o intervalo exato em que isso acontece não foi encontrado. Não é
+    causado por nenhum código desta TASK (`_persist_phase_a`/
+    `_persist_phase_c` não foram tocados); afeta só esses dois testes
+    específicos (todos os outros 19 do arquivo, incluindo os 3 novos de
+    throttle de loja/config do ADMIN, passam). Decisão de correção fica
+    para o usuário -- instrução explícita foi não alterar a lógica da
+    fila para satisfazer esses testes, e uma investigação mais profunda
+    é trabalho novo, não desta rodada.
+  - **Resolvido (2026-08-24), em commit separado:** investigação mais
+    profunda (worktree isolado contra `origin/main` limpo, sem nenhum
+    código da TASK-108) provou causa raiz diferente e mais precisa da
+    hipótese acima -- não é inconsistência de status entre Fase A/C, é
+    `PriceAlertEvaluationError` (`app/alerts/evaluator.py`, guard
+    "observations must be distinct"): dedupe da TASK-093 pode reaproveitar
+    a mesma `PriceObservation` como `current`/`previous` da mesma missão,
+    e `_persist_phase_c` não sabia disso. Bug pré-existente, não causado
+    pela TASK-108 (reproduzido em `origin/main` limpo). Corrigido em
+    `DEC-097` (commit `742dcf2`, separado deste). Os dois testes voltaram
+    a passar depois de adaptados para `_select_due_schedules_for_batch`
+    (troca mecânica de `find_due_schedules_async`, sem enfraquecer
+    nenhuma asserção).
+  - **Terceiro achado, sem relação com esta TASK:** rodar a suíte de
+    integração inteira (não só este arquivo, só para checagem cruzada)
+    revelou `test_product_identity.py::test_same_variant_from_all_stores_reuses_one_global_product`
+    também falhando -- asserção hardcoded assume só 4 lojas seed
+    (`amazon`/`kabum`/`pichau`/`terabyte`), desatualizada desde que Magalu
+    e Mercado Livre foram seedados (TASK-104A/B). Anterior a esta TASK,
+    sem relação com fila/throttle -- só registrado aqui por ter aparecido
+    durante a validação.
 
 ## DEC-094 — TASK-107: cotas por usuário, sem plano/tier novo
 

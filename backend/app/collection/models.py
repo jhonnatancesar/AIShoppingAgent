@@ -11,6 +11,7 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     Enum,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -379,5 +380,106 @@ class MissionOfferRelevance(Base):
         DateTime(timezone=True),
         nullable=False,
         default=utc_now,
+        server_default=func.now(),
+    )
+
+
+class UserCollectionQueueState(Base):
+    """Estado da fila justa por usuário do `collection_worker` (TASK-108).
+
+    Camada ortogonal ao backoff por provider (`MissionSource.
+    next_eligible_at`, `DEC-046`) — esta aqui protege contra um único
+    usuário monopolizar o worker, não contra bloqueio de uma loja.
+    `last_processed_at=NULL` (usuário nunca processado) sempre vence no
+    desempate round-robin. `next_eligible_at` é o cooldown individual:
+    enquanto no futuro, o usuário fica de fora da seleção do próximo
+    lote, mas nunca pausa a fila para os demais.
+    """
+
+    __tablename__ = "user_collection_queue_state"
+
+    user_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    last_processed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    next_eligible_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+        onupdate=utc_now,
+        server_default=func.now(),
+    )
+
+
+class StoreThrottleState(Base):
+    """Pacing GLOBAL por loja (TASK-108) -- camada distinta do backoff
+    por `(mission_id, store_id)` de `MissionSource` (`DEC-046`, que
+    continua intocado). Aqui é global entre TODOS os usuários/missões:
+    nenhuma troca de usuário pode "furar" o intervalo mínimo entre
+    requisições à mesma loja, porque do ponto de vista da própria loja é
+    sempre o mesmo worker/IP fazendo a requisição, não importa de qual
+    usuário partiu. Auditoria confirmou que nada equivalente existia
+    antes (o circuit breaker de `app.core.resilience` é global por
+    provider, mas só em memória, perdido a cada restart do worker)."""
+
+    __tablename__ = "store_throttle_state"
+
+    store_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("stores.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    next_allowed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+        onupdate=utc_now,
+        server_default=func.now(),
+    )
+
+
+class CollectionQueueConfig(Base):
+    """Configuração da fila justa/pacing global, persistida e editável
+    pelo ADMIN (TASK-108) -- linha única (`id` fixo em 1). `NULL` em
+    qualquer campo usa o default de `Settings`
+    (`AISHOPPING_MAX_CONCURRENT_USER_BATCHES`/etc.), mesmo padrão já
+    usado pelos overrides de cota por usuário (TASK-107,
+    `resolve_quota_limits`). Lida de novo a cada `run_batch`
+    (`resolve_queue_config`) -- uma mudança pelo ADMIN nunca precisa de
+    restart do worker para valer."""
+
+    __tablename__ = "collection_queue_config"
+    __table_args__ = (
+        CheckConstraint("id = 1", name="ck_collection_queue_config_singleton"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    max_concurrent_user_batches_override: Mapped[int | None] = mapped_column(
+        Integer, nullable=True
+    )
+    user_cooldown_min_seconds_override: Mapped[float | None] = mapped_column(
+        Float, nullable=True
+    )
+    user_cooldown_max_seconds_override: Mapped[float | None] = mapped_column(
+        Float, nullable=True
+    )
+    store_min_interval_seconds_override: Mapped[float | None] = mapped_column(
+        Float, nullable=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+        onupdate=utc_now,
         server_default=func.now(),
     )

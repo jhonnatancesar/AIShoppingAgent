@@ -1,6 +1,25 @@
 # TASK-108 — Fila justa e controle de carga
 
-Status: **Formalizada e corrigida (planejamento aprovado, 2026-08-22); pronta para implementação.**
+Status: **Concluída (2026-08-24), retomada e implementada sobre a
+arquitetura final da TASK-109 (Windows nativo/Edge sob demanda).
+Reaproveitou o WIP de `task/108-fair-queue-wip` (modelo, migration,
+`orchestration.py`, settings, testes de fairness) com pequenas correções
+-- worker.py reaplicado manualmente (a branch WIP tinha o wiring antigo,
+pré-TASK-109). Terceira camada nova, não coberta pelo WIP original:
+pacing GLOBAL por loja (`StoreThrottleState`), auditoria confirmou que
+não existia nada equivalente antes (só backoff por `(mission_id,
+store_id)`, `MissionSource`/DEC-046, e um circuit breaker em memória,
+perdido a cada restart). Config persistida e editável pelo ADMIN
+(`CollectionQueueConfig`) nova, resolvida a cada `run_batch` -- não
+depende só de `.env`. Dois testes de integração legados (backoff por
+provider) tiveram o cooldown/throttle neutralizado explicitamente no
+setup, sem alterar a lógica da fila; a causa raiz real da falha deles
+era um bug arquitetural não relacionado (dedupe da TASK-093 x contrato
+de alertas), corrigido em commit separado (`DEC-097`, `742dcf2`), depois
+do qual os dois passaram a usar `_select_due_schedules_for_batch` e
+voltaram a passar. Commitado localmente; push/deploy fora desta rodada.
+Ver `docs/internal/decision-log.md` (`DEC-095` atualizado) para os
+detalhes técnicos completos.**
 
 ## Objetivo
 

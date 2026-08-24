@@ -227,9 +227,18 @@ def test_stale_runs_are_terminal_and_publish_failure(monkeypatch) -> None:
 
 
 def test_claim_due_schedule_creates_runs_and_advances(monkeypatch) -> None:
+    """TASK-062 original: dado um schedule due com 2 fontes elegíveis, cada
+    fonte ganha seu próprio `CollectionRun` e o schedule avança. TASK-108
+    trocou a seleção de schedules due por `_select_due_schedules_for_batch`
+    (devolve `(schedule, user_id)`, não só `schedule`) -- aqui ela é
+    mockada diretamente (não é o objeto deste teste, que é a criação de
+    run/avanço de schedule dado um schedule já selecionado). Fairness/
+    cooldown/throttle de loja também não são o objeto deste teste --
+    neutralizados explicitamente para não mascarar o cenário."""
     from app.missions.models import MissionSchedule
 
     mission_id = uuid4()
+    user_id = uuid4()
     schedule = MissionSchedule(
         id=uuid4(),
         mission_id=mission_id,
@@ -246,15 +255,23 @@ def test_claim_due_schedule_creates_runs_and_advances(monkeypatch) -> None:
     session.execute.return_value = rows
     runs = iter((SimpleNamespace(id=uuid4()), SimpleNamespace(id=uuid4())))
     monkeypatch.setattr(
-        "app.collection.orchestration.find_due_schedules_async",
-        AsyncMock(return_value=[schedule]),
+        "app.collection.orchestration._select_due_schedules_for_batch",
+        AsyncMock(return_value=[(schedule, user_id)]),
     )
     monkeypatch.setattr(
         "app.collection.orchestration.start_collection_run",
         AsyncMock(side_effect=lambda *_a, **_k: next(runs)),
     )
 
-    claims = asyncio.run(claim_due_collections(session, now=NOW))
+    claims = asyncio.run(
+        claim_due_collections(
+            session,
+            now=NOW,
+            user_cooldown_min_seconds=0,
+            user_cooldown_max_seconds=0,
+            store_min_interval_seconds=0,
+        )
+    )
 
     assert [claim.source_code for claim in claims] == ["kabum", "pichau"]
     assert schedule.last_run_at == NOW
@@ -263,9 +280,16 @@ def test_claim_due_schedule_creates_runs_and_advances(monkeypatch) -> None:
 
 
 def test_claim_due_collections_skips_mission_already_running() -> None:
+    """TASK-062 original: missão com `CollectionRun` já `RUNNING` não pode
+    ser reclamada de novo -- nenhuma claim, nenhum run novo. Mesma troca de
+    `find_due_schedules_async` -> `_select_due_schedules_for_batch` do
+    teste acima; fairness/cooldown/throttle neutralizados (não são o
+    objeto deste teste, e nem chegam a rodar aqui já que nenhuma claim é
+    produzida)."""
     from app.missions.models import MissionSchedule
 
     mission_id = uuid4()
+    user_id = uuid4()
     schedule = MissionSchedule(
         id=uuid4(),
         mission_id=mission_id,
@@ -279,8 +303,16 @@ def test_claim_due_collections_skips_mission_already_running() -> None:
     async def _run():
         import app.collection.orchestration as module
 
-        module.find_due_schedules_async = AsyncMock(return_value=[schedule])
-        return await claim_due_collections(session, now=NOW)
+        module._select_due_schedules_for_batch = AsyncMock(
+            return_value=[(schedule, user_id)]
+        )
+        return await claim_due_collections(
+            session,
+            now=NOW,
+            user_cooldown_min_seconds=0,
+            user_cooldown_max_seconds=0,
+            store_min_interval_seconds=0,
+        )
 
     claims = asyncio.run(_run())
 

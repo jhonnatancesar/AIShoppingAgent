@@ -8,7 +8,7 @@ from uuid import NAMESPACE_URL, UUID, uuid5
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.orm import Session
 
 from app.admin.service_ops import (
@@ -30,7 +30,14 @@ from app.authentication.passwords import (
     hash_password,
     validate_password,
 )
-from app.collection.models import CollectionRun, CollectionRunStatus
+from app.collection.models import (
+    CollectionQueueConfig,
+    CollectionRun,
+    CollectionRunStatus,
+    StoreThrottleState,
+    UserCollectionQueueState,
+)
+from app.collection.queue_config import COLLECTION_QUEUE_CONFIG_ID, resolve_queue_config
 from app.core.config import Settings, get_settings
 from app.core.errors import ApiError
 from app.database.dependency import get_session
@@ -155,6 +162,67 @@ class ServiceActionRequest(BaseModel):
     service: ManagedService
     operation: Literal["start", "restart"]
     confirmation: bool
+    reason: str = Field(min_length=3, max_length=500)
+
+
+class QueueConfigOut(BaseModel):
+    """TASK-108: valor efetivo (após aplicar override, se houver) e o
+    override persistido em si (`None` = usando o default de `Settings`)
+    -- o ADMIN precisa ver os dois para saber se está vendo o default de
+    fábrica ou um valor que ele mesmo configurou."""
+
+    max_concurrent_user_batches: int
+    max_concurrent_user_batches_override: int | None
+    user_cooldown_min_seconds: float
+    user_cooldown_min_seconds_override: float | None
+    user_cooldown_max_seconds: float
+    user_cooldown_max_seconds_override: float | None
+    store_min_interval_seconds: float
+    store_min_interval_seconds_override: float | None
+
+
+class QueueUserStateOut(BaseModel):
+    user_id: UUID
+    display_name: str
+    is_processing_now: bool
+    queue_position: int | None = None
+    last_processed_at: datetime | None = None
+    next_eligible_at: datetime | None = None
+    cooldown_active: bool = False
+
+
+class StoreThrottleOut(BaseModel):
+    store_id: UUID
+    code: str
+    name: str
+    next_allowed_at: datetime | None
+    throttled: bool
+
+
+class QueueDashboardResponse(BaseModel):
+    generated_at: datetime
+    config: QueueConfigOut
+    users: list[QueueUserStateOut]
+    stores: list[StoreThrottleOut]
+
+
+class UpdateQueueConfigRequest(BaseModel):
+    # TASK-108: tri-state via `model_fields_set`, mesmo padrão dos
+    # overrides de cota por usuário (TASK-107) -- ausente = não mexe,
+    # presente com valor = define o override, presente como `null`
+    # explícito = limpa o override (volta ao default de `Settings`).
+    max_concurrent_user_batches_override: Annotated[int | None, Field(ge=1, le=4)] = (
+        None
+    )
+    user_cooldown_min_seconds_override: Annotated[
+        float | None, Field(gt=0, le=600)
+    ] = None
+    user_cooldown_max_seconds_override: Annotated[
+        float | None, Field(gt=0, le=600)
+    ] = None
+    store_min_interval_seconds_override: Annotated[
+        float | None, Field(gt=0, le=120)
+    ] = None
     reason: str = Field(min_length=3, max_length=500)
 
 
@@ -705,3 +773,212 @@ def api_keys_status(_: User = Depends(require_admin_web_session)) -> dict[str, o
         "issuance_enabled": False,
         "message": "Em breve / desativado",
     }
+
+
+def _resolved_queue_config_out(
+    config_row: CollectionQueueConfig | None, settings: Settings
+) -> QueueConfigOut:
+    resolved = resolve_queue_config(
+        config_row,
+        default_max_concurrent_user_batches=settings.max_concurrent_user_batches,
+        default_user_cooldown_min_seconds=settings.user_cooldown_min_seconds,
+        default_user_cooldown_max_seconds=settings.user_cooldown_max_seconds,
+        default_store_min_interval_seconds=settings.store_min_interval_seconds,
+    )
+    return QueueConfigOut(
+        max_concurrent_user_batches=resolved.max_concurrent_user_batches,
+        max_concurrent_user_batches_override=(
+            config_row.max_concurrent_user_batches_override if config_row else None
+        ),
+        user_cooldown_min_seconds=resolved.user_cooldown_min_seconds,
+        user_cooldown_min_seconds_override=(
+            config_row.user_cooldown_min_seconds_override if config_row else None
+        ),
+        user_cooldown_max_seconds=resolved.user_cooldown_max_seconds,
+        user_cooldown_max_seconds_override=(
+            config_row.user_cooldown_max_seconds_override if config_row else None
+        ),
+        store_min_interval_seconds=resolved.store_min_interval_seconds,
+        store_min_interval_seconds_override=(
+            config_row.store_min_interval_seconds_override if config_row else None
+        ),
+    )
+
+
+@router.get("/queue", response_model=QueueDashboardResponse)
+def queue_dashboard(
+    session: Session = Depends(get_session),
+    _: User = Depends(require_admin_web_session),
+    settings: Settings = Depends(get_settings),
+) -> QueueDashboardResponse:
+    """TASK-108: visão da fila justa por usuário e do pacing global por
+    loja -- somente leitura, mesmos dados que `run_batch` usaria no
+    próximo ciclo (config resolvida, `UserCollectionQueueState`,
+    `StoreThrottleState`)."""
+    now = utc_now()
+    config_row = session.get(CollectionQueueConfig, COLLECTION_QUEUE_CONFIG_ID)
+    config_out = _resolved_queue_config_out(config_row, settings)
+
+    running_user_ids = set(
+        session.scalars(
+            select(Mission.user_id)
+            .join(CollectionRun, CollectionRun.mission_id == Mission.id)
+            .where(CollectionRun.status == CollectionRunStatus.RUNNING)
+            .distinct()
+        )
+    )
+    due_user_ids = {
+        row[0]
+        for row in session.execute(
+            select(Mission.user_id)
+            .join(MissionSchedule, MissionSchedule.mission_id == Mission.id)
+            .where(
+                MissionSchedule.is_enabled.is_(True),
+                MissionSchedule.next_run_at <= now,
+                Mission.status == MissionStatus.ACTIVE,
+                or_(Mission.expires_at.is_(None), Mission.expires_at > now),
+            )
+            .distinct()
+        ).all()
+    }
+    waiting_user_ids = due_user_ids - running_user_ids
+    all_user_ids = running_user_ids | waiting_user_ids
+
+    queue_states = (
+        {
+            state.user_id: state
+            for state in session.scalars(
+                select(UserCollectionQueueState).where(
+                    UserCollectionQueueState.user_id.in_(all_user_ids)
+                )
+            )
+        }
+        if all_user_ids
+        else {}
+    )
+    display_names = (
+        {
+            user.id: user.display_name
+            for user in session.scalars(select(User).where(User.id.in_(all_user_ids)))
+        }
+        if all_user_ids
+        else {}
+    )
+
+    def _fairness_sort_key(user_id: UUID) -> tuple[int, object]:
+        state = queue_states.get(user_id)
+        if state is None or state.last_processed_at is None:
+            return (0, str(user_id))
+        return (1, state.last_processed_at, str(user_id))
+
+    def _to_user_state_out(
+        user_id: UUID, *, is_processing_now: bool, queue_position: int | None
+    ) -> QueueUserStateOut:
+        state = queue_states.get(user_id)
+        next_eligible_at = state.next_eligible_at if state else None
+        return QueueUserStateOut(
+            user_id=user_id,
+            display_name=display_names.get(user_id, "?"),
+            is_processing_now=is_processing_now,
+            queue_position=queue_position,
+            last_processed_at=state.last_processed_at if state else None,
+            next_eligible_at=next_eligible_at,
+            cooldown_active=bool(next_eligible_at and next_eligible_at > now),
+        )
+
+    users_out = [
+        _to_user_state_out(user_id, is_processing_now=True, queue_position=None)
+        for user_id in sorted(running_user_ids, key=str)
+    ]
+    users_out.extend(
+        _to_user_state_out(user_id, is_processing_now=False, queue_position=position)
+        for position, user_id in enumerate(
+            sorted(waiting_user_ids, key=_fairness_sort_key), start=1
+        )
+    )
+
+    stores_out = []
+    for store in session.scalars(select(Store).order_by(Store.name, Store.id)):
+        throttle = session.get(StoreThrottleState, store.id)
+        next_allowed_at = throttle.next_allowed_at if throttle else None
+        stores_out.append(
+            StoreThrottleOut(
+                store_id=store.id,
+                code=store.code,
+                name=store.name,
+                next_allowed_at=next_allowed_at,
+                throttled=bool(next_allowed_at and next_allowed_at > now),
+            )
+        )
+
+    return QueueDashboardResponse(
+        generated_at=now, config=config_out, users=users_out, stores=stores_out
+    )
+
+
+@router.patch("/queue/config", response_model=QueueConfigOut)
+def update_queue_config(
+    payload: UpdateQueueConfigRequest,
+    session: Session = Depends(get_session),
+    actor: User = Depends(require_admin_web_session),
+    settings: Settings = Depends(get_settings),
+) -> QueueConfigOut:
+    """TASK-108: overrides persistidos, tri-state (ver
+    `UpdateQueueConfigRequest`). Lido de novo a cada `run_batch` -- vale
+    a partir do próximo ciclo do worker, sem restart."""
+    config_row = session.get(CollectionQueueConfig, COLLECTION_QUEUE_CONFIG_ID)
+    if config_row is None:
+        config_row = CollectionQueueConfig(id=COLLECTION_QUEUE_CONFIG_ID)
+        session.add(config_row)
+    fields_set = payload.model_fields_set
+    if "max_concurrent_user_batches_override" in fields_set:
+        config_row.max_concurrent_user_batches_override = (
+            payload.max_concurrent_user_batches_override
+        )
+    if "user_cooldown_min_seconds_override" in fields_set:
+        config_row.user_cooldown_min_seconds_override = (
+            payload.user_cooldown_min_seconds_override
+        )
+    if "user_cooldown_max_seconds_override" in fields_set:
+        config_row.user_cooldown_max_seconds_override = (
+            payload.user_cooldown_max_seconds_override
+        )
+    if "store_min_interval_seconds_override" in fields_set:
+        config_row.store_min_interval_seconds_override = (
+            payload.store_min_interval_seconds_override
+        )
+    # Validação contra os valores EFETIVOS resultantes (override novo ou
+    # default de `Settings`), não só o payload isolado -- um PATCH que só
+    # mexe no máximo, por exemplo, ainda precisa respeitar um mínimo já
+    # persistido de uma chamada anterior.
+    effective = _resolved_queue_config_out(config_row, settings)
+    if effective.user_cooldown_max_seconds < effective.user_cooldown_min_seconds:
+        raise ApiError(
+            status_code=422,
+            code="invalid_cooldown_range",
+            message="Cooldown máximo não pode ser menor que o mínimo.",
+        )
+    _audit(
+        session,
+        actor,
+        "admin.queue_config.updated",
+        "collection_queue_config",
+        uuid5(NAMESPACE_URL, "collection_queue_config"),
+        {
+            "max_concurrent_user_batches_override": (
+                config_row.max_concurrent_user_batches_override
+            ),
+            "user_cooldown_min_seconds_override": (
+                config_row.user_cooldown_min_seconds_override
+            ),
+            "user_cooldown_max_seconds_override": (
+                config_row.user_cooldown_max_seconds_override
+            ),
+            "store_min_interval_seconds_override": (
+                config_row.store_min_interval_seconds_override
+            ),
+            "reason": payload.reason,
+        },
+    )
+    session.commit()
+    return effective

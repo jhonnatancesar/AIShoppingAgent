@@ -30,6 +30,18 @@ if os.getenv("AISHOPPING_INTEGRATION_RUN_ID"):
     Settings.model_config["env_file"] = None
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _dedicated_test_edge():
+    """Sobrescreve o fixture homônimo de `tests/conftest.py` (TASK-109,
+    fechamento parte 3) -- nenhum teste de integração abre
+    `BrowserSession`. Rodar aquele fixture aqui quebraria de propósito:
+    ele lança um processo (Edge) via `asyncio.create_subprocess_exec`,
+    que não funciona sob `WindowsSelectorEventLoopPolicy` (forçado acima,
+    exigido pelo psycopg assíncrono da própria suíte de integração) --
+    `NotImplementedError` confirmado ao vivo antes desta correção."""
+    yield
+
+
 @dataclass(frozen=True, slots=True)
 class IntegrationDatabase:
     name: str
