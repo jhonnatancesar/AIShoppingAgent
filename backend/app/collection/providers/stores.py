@@ -118,6 +118,14 @@ def _parse_pichau_installment_row(text: str) -> RawInstallmentOption | None:
 
 
 class PichauProvider(PlaywrightStoreProvider):
+    """TASK-109: Edge/CDP como transporte da busca, com fallback pro
+    Playwright gerenciado (que continua funcionando na Pichau) igual à
+    Amazon/Kabum. Diferente delas, a Pichau distingue busca legitimamente
+    vazia de bloqueio/erro (`empty_result_locator`) -- reaproveita
+    `EdgeCdpTransport.open_page` (só conecta/navega, sem decidir nada de
+    negócio) para continuar usando exatamente `_wait_for_results_or_empty`
+    já existente, a mesma lógica já usada com o Playwright gerenciado."""
+
     source_code, result_selector = "pichau", 'a[data-cy="list-product"]'
     # TASK-075 (correção 2): domcontentloaded demora 22-38s (às vezes >45s)
     # na Pichau por causa de terceiros (analytics/ads) alheios ao conteúdo
@@ -125,11 +133,46 @@ class PichauProvider(PlaywrightStoreProvider):
     # pelo seletor/estado vazio reflete o readiness real da página.
     navigation_wait_until = "commit"
 
+    def __init__(
+        self,
+        *args,
+        cdp_transport: EdgeCdpTransport | None = None,
+        **kwargs,
+    ) -> None:
+        super().__init__(*args, cdp_transport=cdp_transport, **kwargs)
+
     def build_url(self, query: str) -> str:
         return f"https://www.pichau.com.br/search?q={quote_plus(query)}"
 
     def empty_result_locator(self, page: Page) -> Locator:
         return page.get_by_text(_EMPTY_RESULT_TEXT)
+
+    async def _collect_once(self, request: CollectionRequest) -> CollectionResult:
+        if self._cdp_transport is None:
+            return await super()._collect_once(request)
+        started_at = self._clock()
+        try:
+            async with self._cdp_transport.open_page(
+                self.build_url(request.search_query)
+            ) as page:
+                empty_locator = self.empty_result_locator(page)
+                try:
+                    readiness = await self._wait_for_results_or_empty(
+                        page, empty_locator
+                    )
+                except Exception as error:
+                    raise ProviderBlockedError(self.source_code, None) from error
+                if readiness == "empty":
+                    return CollectionResult(
+                        self.source_code, started_at, self._clock(), ()
+                    )
+                offers = await self.extract(page, self._clock())
+                if not offers:
+                    raise ProviderBlockedError(self.source_code, None)
+                offers = await self._resolve_unknown_availability(page, offers)
+        except EdgeCdpTransportError:
+            return await super()._collect_once(request)
+        return CollectionResult(self.source_code, started_at, self._clock(), offers)
 
     async def extract(
         self, page: Page, collected_at: datetime
@@ -197,8 +240,7 @@ class TerabyteProvider(PlaywrightStoreProvider):
         cdp_transport: EdgeCdpTransport | None = None,
         **kwargs,
     ) -> None:
-        super().__init__(*args, **kwargs)
-        self._cdp_transport = cdp_transport
+        super().__init__(*args, cdp_transport=cdp_transport, **kwargs)
 
     def build_url(self, query: str) -> str:
         return f"https://www.terabyteshop.com.br/busca?str={quote_plus(query)}"
@@ -303,8 +345,7 @@ class AmazonProvider(PlaywrightStoreProvider):
         cdp_transport: EdgeCdpTransport | None = None,
         **kwargs,
     ) -> None:
-        super().__init__(*args, **kwargs)
-        self._cdp_transport = cdp_transport
+        super().__init__(*args, cdp_transport=cdp_transport, **kwargs)
 
     def build_url(self, query: str) -> str:
         return f"https://www.amazon.com.br/s?k={quote_plus(query)}"
@@ -390,8 +431,7 @@ class KabumProvider(PlaywrightStoreProvider):
         cdp_transport: EdgeCdpTransport | None = None,
         **kwargs,
     ) -> None:
-        super().__init__(*args, **kwargs)
-        self._cdp_transport = cdp_transport
+        super().__init__(*args, cdp_transport=cdp_transport, **kwargs)
 
     def build_url(self, query: str) -> str:
         slug = quote(query.strip().replace(" ", "-"))
@@ -501,8 +541,7 @@ class MercadoLivreProvider(PlaywrightStoreProvider):
         cdp_transport: EdgeCdpTransport | None = None,
         **kwargs,
     ) -> None:
-        super().__init__(*args, **kwargs)
-        self._cdp_transport = cdp_transport
+        super().__init__(*args, cdp_transport=cdp_transport, **kwargs)
 
     def build_url(self, query: str) -> str:
         slug = re.sub(r"\s+", "-", query.strip())

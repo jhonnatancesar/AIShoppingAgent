@@ -1,5 +1,6 @@
 import asyncio
 import json
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import uuid4
@@ -2337,6 +2338,193 @@ def test_pichau_neither_state_within_timeout_fails_per_existing_policy(
 
     with pytest.raises(ProviderBlockedError):
         asyncio.run(provider.collect(request))
+
+
+class _FakeCdpTransport:
+    """Dublê de `EdgeCdpTransport.open_page` para os testes de CDP da Pichau."""
+
+    def __init__(self, page):
+        self._page = page
+
+    @asynccontextmanager
+    async def open_page(self, url):
+        yield self._page
+
+
+def test_pichau_cdp_results_release_collection(monkeypatch) -> None:
+    """TASK-109: mesma distinção resultado/vazio/bloqueio, agora via
+    `EdgeCdpTransport.open_page` -- Playwright gerenciado nunca é tentado."""
+
+    class ImmediateFirst:
+        async def wait_for(self, **kwargs):
+            return None
+
+    class ImmediateLocator:
+        first = ImmediateFirst()
+
+    class HangingFirst:
+        async def wait_for(self, **kwargs):
+            await asyncio.Event().wait()
+
+    class HangingLocator:
+        first = HangingFirst()
+
+    class Page:
+        def locator(self, selector):
+            return ImmediateLocator()
+
+        def get_by_text(self, text, **kwargs):
+            return HangingLocator()
+
+    offers = (
+        RawCollectedOffer(
+            source_code="pichau",
+            url="https://x/gpu",
+            title="GPU",
+            collected_at=NOW,
+            raw_price="R$ 10,00",
+            raw_currency="BRL",
+        ),
+    )
+
+    async def forbidden_primary(self, request):
+        raise AssertionError("Playwright must not be attempted when CDP succeeds")
+
+    monkeypatch.setattr(PlaywrightStoreProvider, "_collect_once", forbidden_primary)
+    provider = PichauProvider(
+        clock=lambda: NOW,
+        availability_fallback_max_candidates=0,
+        cdp_transport=_FakeCdpTransport(Page()),
+    )
+
+    async def _extract(page, collected_at):
+        return offers
+
+    monkeypatch.setattr(provider, "extract", _extract)
+
+    result = asyncio.run(
+        provider.collect(CollectionRequest(uuid4(), "pichau", "GPU", NOW))
+    )
+
+    assert result.offers == offers
+
+
+def test_pichau_cdp_zero_results_releases_valid_empty_collection(monkeypatch) -> None:
+    """Busca legitimamente vazia via CDP: coleta válida com zero ofertas,
+    extract nunca roda -- mesma política do caminho Playwright."""
+
+    class HangingFirst:
+        async def wait_for(self, **kwargs):
+            await asyncio.Event().wait()
+
+    class HangingLocator:
+        first = HangingFirst()
+
+    class ImmediateFirst:
+        async def wait_for(self, **kwargs):
+            return None
+
+    class ImmediateLocator:
+        first = ImmediateFirst()
+
+    class Page:
+        def locator(self, selector):
+            return HangingLocator()
+
+        def get_by_text(self, text, **kwargs):
+            return ImmediateLocator()
+
+    provider = PichauProvider(
+        clock=lambda: NOW,
+        availability_fallback_max_candidates=0,
+        cdp_transport=_FakeCdpTransport(Page()),
+    )
+
+    async def _extract_should_not_run(page, collected_at):
+        raise AssertionError("extract nao deve rodar quando o estado eh vazio")
+
+    monkeypatch.setattr(provider, "extract", _extract_should_not_run)
+
+    result = asyncio.run(
+        provider.collect(
+            CollectionRequest(uuid4(), "pichau", "zzz-nao-existe", NOW)
+        )
+    )
+
+    assert result.offers == ()
+
+
+def test_pichau_cdp_neither_state_raises_blocked_not_silent_empty(
+    monkeypatch,
+) -> None:
+    """Bloqueio/erro via CDP continua distinto de zero resultados: nem
+    cards nem o estado vazio aparecem -> ProviderBlockedError, nunca uma
+    coleção vazia silenciosa."""
+
+    class FailingFirst:
+        async def wait_for(self, **kwargs):
+            raise PlaywrightTimeoutError("timeout")
+
+    class FailingLocator:
+        first = FailingFirst()
+
+    class Page:
+        def locator(self, selector):
+            return FailingLocator()
+
+        def get_by_text(self, text, **kwargs):
+            return FailingLocator()
+
+    provider = PichauProvider(
+        clock=lambda: NOW,
+        availability_fallback_max_candidates=0,
+        cdp_transport=_FakeCdpTransport(Page()),
+    )
+
+    async def _extract_should_not_run(page, collected_at):
+        raise AssertionError("extract nao deve rodar quando nenhum estado aparece")
+
+    monkeypatch.setattr(provider, "extract", _extract_should_not_run)
+
+    with pytest.raises(ProviderBlockedError):
+        asyncio.run(
+            provider.collect(CollectionRequest(uuid4(), "pichau", "GPU", NOW))
+        )
+
+
+def test_pichau_falls_back_to_playwright_when_cdp_transport_fails(
+    monkeypatch,
+) -> None:
+    """Falha de transporte (não de negócio) via CDP ainda cai pro
+    Playwright gerenciado, igual à Amazon/Kabum/ML."""
+    expected = RawCollectedOffer(
+        source_code="pichau",
+        url="https://x/gpu",
+        title="GPU",
+        collected_at=NOW,
+        raw_price="R$ 10,00",
+    )
+
+    async def successful_primary(self, request):
+        from app.collection import CollectionResult
+
+        return CollectionResult("pichau", NOW, NOW, (expected,))
+
+    monkeypatch.setattr(PlaywrightStoreProvider, "_collect_once", successful_primary)
+
+    class FailingTransport:
+        @asynccontextmanager
+        async def open_page(self, url):
+            raise EdgeCdpTransportError("CDP failed")
+            yield  # pragma: no cover - torna a função um gerador
+
+    provider = PichauProvider(cdp_transport=FailingTransport())
+
+    result = asyncio.run(
+        provider.collect(CollectionRequest(uuid4(), "pichau", "GPU", NOW))
+    )
+
+    assert result.offers == (expected,)
 
 
 def test_other_providers_keep_domcontentloaded_and_no_empty_state_hook() -> None:

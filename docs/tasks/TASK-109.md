@@ -3,9 +3,11 @@
 Status: **FASE 1 concluída e aprovada no DEV (Ops Agent + supervisão do
 worker via Task Scheduler). FASE 2 concluída no DEV (worker nativo com
 Edge, ciclo real de coleta da Magalu provado ponta a ponta, incluindo
-recovery). FASE 3 em andamento: Terabyte/Magalu/Amazon/KaBuM!/Mercado
-Livre validados em Edge no DEV; Pichau parada (achado real, aguardando
-decisão -- ver seção FASE 3). Nenhum deploy feito.**
+recovery). FASE 3 concluída no DEV para as 6 lojas + enriquecimento de
+detalhe (busca e enriquecimento das 6 lojas via Edge/CDP, zero Chromium
+observado). Chromium ainda não pode ser removido: `StoreProductIdentityResolver`
+(TASK-083) continua um caminho real que abre Chromium gerenciado, fora
+do escopo desta rodada. Nenhum deploy feito.**
 
 ## Objetivo
 
@@ -369,6 +371,62 @@ Pichau reaproveise `PlaywrightStoreProvider._wait_for_results_or_empty`
 já existente (mesma lógica usada hoje com Playwright gerenciado) contra
 uma página CDP -- sem duplicar a lógica de distinção em código
 Pichau-specific.
+
+## FASE 3 (continuação) — Pichau + enriquecimento de detalhe (concluída no DEV)
+
+**Pichau:** ganhou `cdp_transport`, mesmo padrão de fallback de
+Amazon/Kabum. Diferente delas, a distinção "zero resultados legítimo"
+vs. "bloqueio/erro" (`empty_result_locator`) precisava ser preservada --
+resolvido generalizando `EdgeCdpTransport` com um método de nível mais
+baixo, `open_blank_page()`/`open_page()` (conecta+navega, devolve a
+`Page` pronta, nenhuma decisão de negócio), permitindo que a Pichau
+reaproveite `_wait_for_results_or_empty` (base class) sem duplicar
+lógica. Validado ao vivo: busca com resultados reais persistidos, busca
+legitimamente vazia (`zzzqxw...`) retorna coleção vazia válida sem
+exceção, e um teste dedicado confirma que bloqueio/timeout continua
+levantando `ProviderBlockedError` (nunca uma coleção vazia silenciosa)
+-- 4 testes novos cobrindo os 3 cenários + fallback pro Playwright em
+falha de transporte.
+
+**Enriquecimento de detalhe migrado:** `enrich_marketplace_parties`/
+`enrich_installment_options`/`enrich_offer_details` (base class,
+compartilhados por todos os providers) trocaram `BrowserSession` fixo
+por `_open_detail_page()` -- via Edge/CDP (`cdp_transport.open_blank_page()`)
+quando configurado, senão o mesmo Playwright gerenciado de sempre.
+`cdp_transport` centralizado no `__init__` de `PlaywrightStoreProvider`
+em vez de cada subclasse guardar o próprio; hooks `resolve_*` (parser)
+100% preservados, só a origem da `Page` muda. Validado ao vivo, ciclo
+completo via missão real, com monitoramento contínuo de processos
+durante toda a execução: Amazon (`resolve_marketplace_parties`), Kabum
+(idem) e Mercado Livre (`resolve_marketplace_parties`+`resolve_offer_condition`)
+com `seller_kind`/`fulfillment_kind` reais persistidos; Pichau
+(`resolve_installment_options`) com parcelamento real da página
+individual mesclado -- **nenhum `chrome.exe` apareceu em nenhum dos
+quatro ciclos**, Edge seguiu único e estável.
+
+**Pacing entre navegações de detalhe (pedido à parte, mesma rodada):**
+`_pace_before_next_detail_request` -- intervalo curto e aleatório
+(0.6–1.6s) entre navegações sequenciais dentro do mesmo lote de
+enriquecimento (nunca antes da primeira), para não concentrar rajadas
+de requisições idênticas contra a mesma origem, independente de o
+navegador em si ser detectado como automatizado ou não. Não afeta o
+intervalo entre missões/lojas (isso já é governado pelo agendamento).
+
+**Achado do audit (bloqueador real para a remoção do Chromium):**
+`app/collection/identity_resolution.py` (`StoreProductIdentityResolver`,
+TASK-083) constrói instâncias PRÓPRIAS e dedicadas de `KabumProvider`/
+`AmazonProvider` (`_build_default_providers()`) sem `cdp_transport` --
+sempre Playwright gerenciado, independente de `edge_cdp_url` estar
+configurado. É usado pelo `CollectionOrchestrator` real
+(`identity_resolver=StoreProductIdentityResolver()` em `worker.py`)
+para resolver identidade de produto (Kabum -> Amazon) em missões
+`PRODUCT_FAMILY`. Não foi migrado nesta rodada -- não estava no escopo
+pedido (hooks de enriquecimento), é um mecanismo genuinamente separado
+(orçamento/timeout/circuit-breaker próprios, "nunca as instâncias da
+coleta normal" por design), e mudá-lo exigiria decisão própria sobre
+como injetar `cdp_transport` sem violar esse isolamento deliberado.
+**Continua sendo um caminho real que abre Chromium gerenciado** -- por
+isso o Chromium ainda não pode ser considerado desnecessário.
 
 ## FASE 2 — worker nativo com Edge (concluída no DEV)
 

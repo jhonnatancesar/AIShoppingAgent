@@ -3,8 +3,10 @@
 import asyncio
 import contextlib
 import json
+import random
 import re
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -30,6 +32,7 @@ from app.collection.errors import (
     ProviderNavigationError,
 )
 from app.collection.normalization import PriceNormalizer
+from app.collection.providers.edge_cdp_transport import EdgeCdpTransport
 from app.core.resilience import (
     CIRCUITS,
     CircuitOpenError,
@@ -43,6 +46,14 @@ from app.observability.metrics import observe_resilience_event
 Clock = Callable[[], datetime]
 _HAS_DIGIT = re.compile(r"\d")
 _BLOCKED_STATUSES = frozenset({401, 403, 429})
+# TASK-109: intervalo curto e com variação entre navegações sequenciais de
+# detalhe (enriquecimento) -- reduz o padrão de rajada de requisições
+# idênticas contra a mesma origem, mesmo quando o navegador em si (Edge ou
+# Chromium) não é detectado como automatizado. Só entre candidatos da MESMA
+# oferta em lote -- não afeta o intervalo entre missões/lojas, já governado
+# pelo agendamento da orquestração.
+_DETAIL_REQUEST_MIN_DELAY_SECONDS = 0.6
+_DETAIL_REQUEST_MAX_DELAY_SECONDS = 1.6
 
 
 class PlaywrightStoreProvider:
@@ -71,6 +82,7 @@ class PlaywrightStoreProvider:
         availability_fallback_max_candidates: int = 3,
         marketplace_party_max_candidates: int = 3,
         installment_option_max_candidates: int = 3,
+        cdp_transport: EdgeCdpTransport | None = None,
     ) -> None:
         if max_offers <= 0:
             raise ValueError("max_offers must be positive")
@@ -86,6 +98,13 @@ class PlaywrightStoreProvider:
             raise ValueError("circuit_namespace must not be blank")
         self.settings = settings or BrowserSettings()
         self.max_offers = max_offers
+        # TASK-109: mesmo transporte Edge/CDP usado (ou não) pela busca --
+        # centralizado aqui pra que o enriquecimento de detalhe
+        # (`enrich_marketplace_parties`/`enrich_installment_options`/
+        # `enrich_offer_details`) reaproveite a mesma página em vez de
+        # abrir Chromium gerenciado separado. Cada subclasse que aceita
+        # `cdp_transport` no próprio construtor repassa pra cá.
+        self._cdp_transport = cdp_transport
         self._clock = clock or (lambda: datetime.now(UTC))
         self._retry_policy = retry_policy or RetryPolicy()
         self._availability_fallback_max_candidates = (
@@ -204,6 +223,30 @@ class PlaywrightStoreProvider:
                 return (average.strip(), count.strip())
         return None
 
+    @asynccontextmanager
+    async def _open_detail_page(self) -> AsyncIterator[Page]:
+        """Página dedicada ao enriquecimento de detalhe (uma navegação por
+        oferta, TASK-109): via Edge/CDP quando `cdp_transport` está
+        configurado, senão o mesmo Playwright gerenciado de sempre. Os
+        hooks `resolve_*` recebem a `Page` já pronta e nunca sabem qual
+        dos dois caminhos foi usado."""
+        if self._cdp_transport is not None:
+            async with self._cdp_transport.open_blank_page() as page:
+                yield page
+            return
+        async with BrowserSession(self.settings) as session:
+            yield await session.new_page()
+
+    async def _pace_before_next_detail_request(self, position: int) -> None:
+        """Sem atraso na primeira navegação; um intervalo curto e variável
+        entre as seguintes (TASK-109)."""
+        if position > 0:
+            await asyncio.sleep(
+                random.uniform(
+                    _DETAIL_REQUEST_MIN_DELAY_SECONDS, _DETAIL_REQUEST_MAX_DELAY_SECONDS
+                )
+            )
+
     async def enrich_marketplace_parties(
         self, offers: tuple[RawCollectedOffer, ...]
     ) -> tuple[RawCollectedOffer, ...]:
@@ -226,9 +269,9 @@ class PlaywrightStoreProvider:
         resolved: dict[
             str, tuple[MarketplacePartyKind, MarketplacePartyKind, str | None]
         ] = {}
-        async with BrowserSession(self.settings) as session:
-            page = await session.new_page()
-            for offer in candidates:
+        async with self._open_detail_page() as page:
+            for position, offer in enumerate(candidates):
+                await self._pace_before_next_detail_request(position)
                 try:
                     response = await page.goto(offer.url, wait_until="domcontentloaded")
                 except Exception:
@@ -314,9 +357,9 @@ class PlaywrightStoreProvider:
         if not candidates:
             return offers
         resolved: dict[str, tuple[RawInstallmentOption, ...]] = {}
-        async with BrowserSession(self.settings) as session:
-            page = await session.new_page()
-            for offer in candidates:
+        async with self._open_detail_page() as page:
+            for position, offer in enumerate(candidates):
+                await self._pace_before_next_detail_request(position)
                 try:
                     response = await page.goto(offer.url, wait_until="domcontentloaded")
                 except Exception:
@@ -412,9 +455,9 @@ class PlaywrightStoreProvider:
                 str | None,
             ],
         ] = {}
-        async with BrowserSession(self.settings) as session:
-            page = await session.new_page()
+        async with self._open_detail_page() as page:
             for position, offer in enumerate(candidates):
+                await self._pace_before_next_detail_request(position)
                 try:
                     response = await page.goto(offer.url, wait_until="domcontentloaded")
                 except Exception:

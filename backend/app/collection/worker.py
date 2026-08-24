@@ -20,6 +20,7 @@ from app.collection.providers import (
     KabumProvider,
     MagaluProvider,
     MercadoLivreProvider,
+    PichauProvider,
     TerabyteProvider,
 )
 from app.collection.providers.edge_cdp_supervisor import (
@@ -154,12 +155,16 @@ def build_collection_adapter(settings: Settings) -> CollectionAdapter:
                     settings.magalu_cdp_document_timeout_seconds * 1000
                 ),
             )
-        # TASK-109: Amazon e Kabum ganham o mesmo transporte Edge/CDP da
-        # Terabyte, mas com fallback -- ao contrário da Terabyte (Playwright
-        # comprovadamente bloqueado), o Chromium gerenciado continua
-        # funcionando aqui, então sem `edge_cdp_url` configurado o provider
-        # usa Playwright normalmente (`_collect_once` decide).
-        if provider_type in (AmazonProvider, KabumProvider) and settings.edge_cdp_url:
+        # TASK-109: Amazon, Kabum e Pichau ganham o mesmo transporte
+        # Edge/CDP da Terabyte, mas com fallback -- ao contrário da
+        # Terabyte (Playwright comprovadamente bloqueado), o Chromium
+        # gerenciado continua funcionando nas três, então sem
+        # `edge_cdp_url` configurado o provider usa Playwright normalmente
+        # (`_collect_once` decide).
+        if (
+            provider_type in (AmazonProvider, KabumProvider, PichauProvider)
+            and settings.edge_cdp_url
+        ):
             provider_kwargs["cdp_transport"] = EdgeCdpTransport(
                 settings.edge_cdp_url,
                 connect_timeout_ms=int(
