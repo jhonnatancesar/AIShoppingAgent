@@ -99,6 +99,13 @@
   fechou. Nenhum dos ~40 testes precisou de reescrita (interface de
   `BrowserSession` inalterada de novo). `EdgeCdpSupervisor.stop()`
   (produção, sempre um único `asyncio.run()`/loop) não muda.
+- **Aprovação e publicação (2026-08-24):** usuário aprovou tecnicamente a
+  TASK-109 completa após revisão do diff. Commits publicados em
+  `origin/main` (12 commits desde `docs(worker): formaliza TASK-109`,
+  `c16c9af`, até o fechamento, parte 3). TASK-108 (`task/108-fair-queue-wip`)
+  permanece isolada na própria branch, nada dela entrou em `main`.
+  Deploy em produção continua fora de escopo -- feito só quando uma TASK
+  de deploy dedicada for aberta.
 
 ## DEC-095 — TASK-108: fila justa por usuário, cooldown individual, sem monopolização
 

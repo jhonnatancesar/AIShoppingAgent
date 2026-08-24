@@ -1,6 +1,13 @@
 # TASK-109 — Migrar o collection_worker para Windows nativo com Edge
 
-Status: **FASE 1 concluída e aprovada no DEV (Ops Agent + supervisão do
+Status: **CONCLUÍDA — aprovada tecnicamente pelo usuário em 2026-08-24,
+publicada em `origin/main`. Deploy em produção ainda não feito (fora do
+escopo desta TASK); produção continua nos sete serviços Docker até uma
+TASK de deploy dedicada.**
+
+Histórico das fases:
+
+FASE 1 concluída e aprovada no DEV (Ops Agent + supervisão do
 worker via Task Scheduler). FASE 2 concluída no DEV (worker nativo com
 Edge, ciclo real de coleta da Magalu provado ponta a ponta, incluindo
 recovery). FASE 3 concluída no DEV: 6 lojas + enriquecimento de detalhe
