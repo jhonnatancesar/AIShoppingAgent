@@ -46,14 +46,12 @@ from app.observability.metrics import observe_resilience_event
 Clock = Callable[[], datetime]
 _HAS_DIGIT = re.compile(r"\d")
 _BLOCKED_STATUSES = frozenset({401, 403, 429})
-# TASK-109: intervalo curto e com variação entre navegações sequenciais de
-# detalhe (enriquecimento) -- reduz o padrão de rajada de requisições
-# idênticas contra a mesma origem, mesmo quando o navegador em si (Edge ou
-# Chromium) não é detectado como automatizado. Só entre candidatos da MESMA
-# oferta em lote -- não afeta o intervalo entre missões/lojas, já governado
-# pelo agendamento da orquestração.
-_DETAIL_REQUEST_MIN_DELAY_SECONDS = 0.6
-_DETAIL_REQUEST_MAX_DELAY_SECONDS = 1.6
+# TASK-109: default de fábrica do pacing entre navegações sequenciais de
+# detalhe -- só usado quando o chamador não passa
+# `detail_request_min/max_delay_seconds` (ex.: `Settings`, via
+# `build_collection_adapter`). Ver `_pace_before_next_detail_request`.
+_DEFAULT_DETAIL_REQUEST_MIN_DELAY_SECONDS = 0.6
+_DEFAULT_DETAIL_REQUEST_MAX_DELAY_SECONDS = 1.6
 
 
 class PlaywrightStoreProvider:
@@ -83,6 +81,12 @@ class PlaywrightStoreProvider:
         marketplace_party_max_candidates: int = 3,
         installment_option_max_candidates: int = 3,
         cdp_transport: EdgeCdpTransport | None = None,
+        detail_request_min_delay_seconds: float = (
+            _DEFAULT_DETAIL_REQUEST_MIN_DELAY_SECONDS
+        ),
+        detail_request_max_delay_seconds: float = (
+            _DEFAULT_DETAIL_REQUEST_MAX_DELAY_SECONDS
+        ),
     ) -> None:
         if max_offers <= 0:
             raise ValueError("max_offers must be positive")
@@ -96,8 +100,16 @@ class PlaywrightStoreProvider:
             raise ValueError("installment_option_max_candidates must not be negative")
         if not circuit_namespace.strip():
             raise ValueError("circuit_namespace must not be blank")
+        if detail_request_min_delay_seconds < 0:
+            raise ValueError("detail_request_min_delay_seconds must not be negative")
+        if detail_request_max_delay_seconds < detail_request_min_delay_seconds:
+            raise ValueError(
+                "detail_request_max_delay_seconds must not be smaller than min"
+            )
         self.settings = settings or BrowserSettings()
         self.max_offers = max_offers
+        self._detail_request_min_delay_seconds = detail_request_min_delay_seconds
+        self._detail_request_max_delay_seconds = detail_request_max_delay_seconds
         # TASK-109: mesmo transporte Edge/CDP usado (ou não) pela busca --
         # centralizado aqui pra que o enriquecimento de detalhe
         # (`enrich_marketplace_parties`/`enrich_installment_options`/
@@ -239,11 +251,13 @@ class PlaywrightStoreProvider:
 
     async def _pace_before_next_detail_request(self, position: int) -> None:
         """Sem atraso na primeira navegação; um intervalo curto e variável
-        entre as seguintes (TASK-109)."""
+        entre as seguintes (TASK-109), configurável por
+        `detail_request_min/max_delay_seconds`."""
         if position > 0:
             await asyncio.sleep(
                 random.uniform(
-                    _DETAIL_REQUEST_MIN_DELAY_SECONDS, _DETAIL_REQUEST_MAX_DELAY_SECONDS
+                    self._detail_request_min_delay_seconds,
+                    self._detail_request_max_delay_seconds,
                 )
             )
 

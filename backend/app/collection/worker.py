@@ -109,6 +109,12 @@ def build_collection_adapter(settings: Settings) -> CollectionAdapter:
             "availability_fallback_max_candidates": (
                 settings.availability_fallback_max_candidates
             ),
+            "detail_request_min_delay_seconds": (
+                settings.detail_request_min_delay_seconds
+            ),
+            "detail_request_max_delay_seconds": (
+                settings.detail_request_max_delay_seconds
+            ),
         }
         if provider_type is MagaluProvider:
             provider_kwargs["search_transport"] = build_magalu_search_transport(
@@ -223,7 +229,7 @@ async def run_worker(
         # coleta normal registrada em `build_collection_adapter` acima --
         # namespace de circuit breaker, volume e timeout próprios (ver
         # `StoreProductIdentityResolver`).
-        identity_resolver=StoreProductIdentityResolver(),
+        identity_resolver=StoreProductIdentityResolver(edge_cdp_url=settings.edge_cdp_url),
         schedule_interval_minutes=settings.collection_schedule_interval_minutes,
         schedule_stagger_seconds=settings.collection_schedule_stagger_seconds,
         stale_run_minutes=settings.collection_stale_run_minutes,

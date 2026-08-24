@@ -3,11 +3,16 @@
 Status: **FASE 1 concluída e aprovada no DEV (Ops Agent + supervisão do
 worker via Task Scheduler). FASE 2 concluída no DEV (worker nativo com
 Edge, ciclo real de coleta da Magalu provado ponta a ponta, incluindo
-recovery). FASE 3 concluída no DEV para as 6 lojas + enriquecimento de
-detalhe (busca e enriquecimento das 6 lojas via Edge/CDP, zero Chromium
-observado). Chromium ainda não pode ser removido: `StoreProductIdentityResolver`
-(TASK-083) continua um caminho real que abre Chromium gerenciado, fora
-do escopo desta rodada. Nenhum deploy feito.**
+recovery). FASE 3 concluída no DEV: 6 lojas + enriquecimento de detalhe
++ `StoreProductIdentityResolver` (TASK-083) via Edge/CDP; fallback pra
+Chromium removido de Mercado Livre e Pichau (falha do CDP não cai mais
+de volta pro Chromium). Auditoria final: único ponto do backend inteiro
+que ainda lança Chromium gerenciado é `BrowserSession`
+(`app/collection/browser.py`), e só é alcançado quando `edge_cdp_url`
+não está configurado -- com a configuração real do worker Windows, zero
+Chromium em qualquer caminho. Migração de browser tecnicamente completa;
+remoção física dos binaries/dependências ainda não feita (fora desta
+rodada). Nenhum deploy feito.**
 
 ## Objetivo
 
@@ -371,6 +376,63 @@ Pichau reaproveise `PlaywrightStoreProvider._wait_for_results_or_empty`
 já existente (mesma lógica usada hoje com Playwright gerenciado) contra
 uma página CDP -- sem duplicar a lógica de distinção em código
 Pichau-specific.
+
+## FASE 3 (fechamento) — IdentityResolver + remoção dos fallbacks + audit final (concluída no DEV)
+
+**`StoreProductIdentityResolver` (TASK-083) migrado, isolamento preservado:**
+`_build_default_providers(edge_cdp_url)` ganha um `EdgeCdpTransport`
+próprio (timeout/instância isolados, `_CDP_CONNECT_TIMEOUT_MS` dedicado)
+quando `edge_cdp_url` é passado -- mesmo Edge supervisionado da coleta
+normal (CDP aceita múltiplas conexões simultâneas, seguro reutilizar),
+mas nunca a mesma `EdgeCdpTransport`/instâncias de provider da coleta
+normal. `StoreProductIdentityResolver(edge_cdp_url=...)` propaga só para
+os providers padrão -- quem passa `providers` explicitamente (testes)
+continua no controle total. `worker.py` passa `settings.edge_cdp_url`.
+Validado ao vivo: resolução real Kabum->Amazon (`7800X3D` resolvido via
+Kabum, zero Chromium; modelos inexistentes no catálogo real retornam
+`None` corretamente, comportamento pré-existente, não regressão).
+
+**Fallback pra Chromium removido (Mercado Livre e Pichau):** essas duas
+eram as únicas com `except EdgeCdpTransportError: return await
+super()._collect_once(request)` -- Amazon e Kabum já não tinham essa
+rede de segurança (implementadas diretamente sem ela, TASK-109 rodada
+anterior). Removido: com `cdp_transport` configurado, uma falha do CDP
+em si agora propaga como falha normal (retry/circuit-breaker existentes
+decidem, nunca reabre o Chromium). Sem `cdp_transport` configurado
+(dev/ambiente sem Edge), o comportamento é inalterado -- Playwright
+continua sendo usado. Dois testes reescritos para a nova política
+(`test_mercado_livre_cdp_failure_never_falls_back_to_playwright`,
+`test_pichau_cdp_failure_never_falls_back_to_playwright`).
+
+**Pacing centralizado e configurável:** `detail_request_min/max_delay_seconds`
+viraram parâmetros de `PlaywrightStoreProvider.__init__` (defaults de
+fábrica preservados: 0.6-1.6s) e campos de `Settings`
+(`AISHOPPING_DETAIL_REQUEST_MIN/MAX_DELAY_SECONDS`), passados a todos os
+providers via `build_collection_adapter`. Nenhum número mágico
+duplicado -- um único ponto (`_pace_before_next_detail_request`) lê os
+valores da instância.
+
+**Auditoria final obrigatória** (busca completa por `async_playwright`,
+`chromium.launch`, `launch(`, `PlaywrightStoreProvider` em todo o
+backend):
+
+| Ocorrência | Classificação |
+|---|---|
+| `browser.py:47` (`BrowserSession`, único `.chromium.launch(` do backend inteiro) | Ainda lança Chromium gerenciado -- mas só alcançável com `cdp_transport is None` (sem `edge_cdp_url` configurado) |
+| `edge_cdp_supervisor.py` (`async_playwright()` x2) | Controla Edge/CDP -- inicia/fecha o Edge supervisionado, nunca Chromium |
+| `edge_cdp_transport.py` (`async_playwright()`) | Controla Edge/CDP -- `open_blank_page`/`open_page` |
+| `magalu_transport.py` (`async_playwright()`) | Controla Edge/CDP -- `CdpMagaluSearchTransport.fetch_html` |
+| `scripts/*.py` | Nenhum launch direto -- tudo passa pela mesma abstração de provider já auditada |
+
+Único caminho real restante que abre Chromium: `BrowserSession`, e só
+quando `edge_cdp_url` não está configurado. Com a configuração real do
+worker Windows nativo (`AISHOPPING_EDGE_CDP_URL` setado, que é a própria
+premissa desta TASK), nenhum dos 6 providers nem o
+`StoreProductIdentityResolver` chegam a essa linha -- zero Chromium em
+operação normal. `BrowserSession`/Playwright biblioteca continuam
+existindo (controla Edge via CDP em vários pontos, e é a rede de
+segurança para ambientes sem Edge configurado) -- só o Chromium GERENCIADO
+deixa de ser necessário.
 
 ## FASE 3 (continuação) — Pichau + enriquecimento de detalhe (concluída no DEV)
 

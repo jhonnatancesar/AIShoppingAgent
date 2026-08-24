@@ -118,9 +118,10 @@ def _parse_pichau_installment_row(text: str) -> RawInstallmentOption | None:
 
 
 class PichauProvider(PlaywrightStoreProvider):
-    """TASK-109: Edge/CDP como transporte da busca, com fallback pro
-    Playwright gerenciado (que continua funcionando na Pichau) igual à
-    Amazon/Kabum. Diferente delas, a Pichau distingue busca legitimamente
+    """TASK-109: Edge/CDP como transporte da busca. Playwright gerenciado
+    só entra sem `cdp_transport` configurado (dev/ambiente sem Edge) --
+    uma falha do CDP em si nunca cai de volta pro Chromium gerenciado.
+    Diferente de Amazon/Kabum, a Pichau distingue busca legitimamente
     vazia de bloqueio/erro (`empty_result_locator`) -- reaproveita
     `EdgeCdpTransport.open_page` (só conecta/navega, sem decidir nada de
     negócio) para continuar usando exatamente `_wait_for_results_or_empty`
@@ -148,30 +149,32 @@ class PichauProvider(PlaywrightStoreProvider):
         return page.get_by_text(_EMPTY_RESULT_TEXT)
 
     async def _collect_once(self, request: CollectionRequest) -> CollectionResult:
+        """TASK-109: sem `cdp_transport` configurado, Playwright gerenciado
+        (dev/ambiente sem Edge). Configurado, é o único transporte -- uma
+        falha do CDP em si (`EdgeCdpTransportError`) nunca cai de volta pro
+        Chromium gerenciado; propaga como qualquer outra falha, tratada
+        pelo retry/circuit-breaker já existente em `collect()`."""
         if self._cdp_transport is None:
             return await super()._collect_once(request)
         started_at = self._clock()
-        try:
-            async with self._cdp_transport.open_page(
-                self.build_url(request.search_query)
-            ) as page:
-                empty_locator = self.empty_result_locator(page)
-                try:
-                    readiness = await self._wait_for_results_or_empty(
-                        page, empty_locator
-                    )
-                except Exception as error:
-                    raise ProviderBlockedError(self.source_code, None) from error
-                if readiness == "empty":
-                    return CollectionResult(
-                        self.source_code, started_at, self._clock(), ()
-                    )
-                offers = await self.extract(page, self._clock())
-                if not offers:
-                    raise ProviderBlockedError(self.source_code, None)
-                offers = await self._resolve_unknown_availability(page, offers)
-        except EdgeCdpTransportError:
-            return await super()._collect_once(request)
+        async with self._cdp_transport.open_page(
+            self.build_url(request.search_query)
+        ) as page:
+            empty_locator = self.empty_result_locator(page)
+            try:
+                readiness = await self._wait_for_results_or_empty(
+                    page, empty_locator
+                )
+            except Exception as error:
+                raise ProviderBlockedError(self.source_code, None) from error
+            if readiness == "empty":
+                return CollectionResult(
+                    self.source_code, started_at, self._clock(), ()
+                )
+            offers = await self.extract(page, self._clock())
+            if not offers:
+                raise ProviderBlockedError(self.source_code, None)
+            offers = await self._resolve_unknown_availability(page, offers)
         return CollectionResult(self.source_code, started_at, self._clock(), offers)
 
     async def extract(
@@ -526,10 +529,12 @@ def _mercado_livre_condition(value: object, title: object) -> str:
 class MercadoLivreProvider(PlaywrightStoreProvider):
     """Provider Mercado Livre; Edge/CDP é o transporte primário (TASK-109).
 
-    Playwright gerenciado vira rede de segurança -- só é tentado se o CDP
-    falhar (ou se `cdp_transport` não estiver configurado) -- inverte a
-    prioridade original (TASK-104B: CDP só depois do Playwright falhar),
-    mas preserva o mesmo transporte de reserva em vez de removê-lo."""
+    Playwright gerenciado só é usado quando `cdp_transport` não está
+    configurado (dev/ambiente sem Edge) -- inverte a prioridade original
+    (TASK-104B: CDP só depois do Playwright falhar). Uma falha do CDP em
+    si, com `cdp_transport` configurado, nunca cai de volta pro Chromium
+    gerenciado (TASK-109) -- vira falha normal, tratada pelo
+    retry/circuit-breaker já existente."""
 
     source_code = "mercadolivre"
     result_selector = "li.ui-search-layout__item:has(a.poly-component__title)"
@@ -548,17 +553,19 @@ class MercadoLivreProvider(PlaywrightStoreProvider):
         return f"https://lista.mercadolivre.com.br/{quote(slug)}"
 
     async def _collect_once(self, request: CollectionRequest) -> CollectionResult:
+        """TASK-109: sem `cdp_transport` configurado, Playwright gerenciado
+        (dev/ambiente sem Edge). Configurado, é o único transporte -- uma
+        falha do CDP em si (`EdgeCdpTransportError`) nunca cai de volta pro
+        Chromium gerenciado; propaga como qualquer outra falha, tratada
+        pelo retry/circuit-breaker já existente em `collect()`."""
         if self._cdp_transport is None:
             return await super()._collect_once(request)
         started_at = self._clock()
-        try:
-            offers = await self._cdp_transport.run(
-                self.build_url(request.search_query),
-                readiness_selector=self.result_selector,
-                extract=self._extract_via_cdp_page,
-            )
-        except EdgeCdpTransportError:
-            return await super()._collect_once(request)
+        offers = await self._cdp_transport.run(
+            self.build_url(request.search_query),
+            readiness_selector=self.result_selector,
+            extract=self._extract_via_cdp_page,
+        )
         return CollectionResult(self.source_code, started_at, self._clock(), offers)
 
     async def _extract_via_cdp_page(self, page: Page) -> tuple[RawCollectedOffer, ...]:

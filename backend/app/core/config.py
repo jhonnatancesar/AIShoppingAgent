@@ -196,6 +196,11 @@ class Settings(BaseSettings):
     circuit_failure_threshold: int = Field(default=5, ge=1, le=20)
     circuit_open_seconds: float = Field(default=30.0, gt=0, le=300)
     availability_fallback_max_candidates: int = Field(default=3, ge=0, le=10)
+    # TASK-109: intervalo curto e variável entre navegações sequenciais de
+    # enriquecimento de detalhe (uma por oferta) -- reduz o padrão de
+    # rajada de requisições idênticas contra a mesma origem.
+    detail_request_min_delay_seconds: float = Field(default=0.6, ge=0, le=30)
+    detail_request_max_delay_seconds: float = Field(default=1.6, ge=0, le=30)
     event_consumer_max_attempts: int = Field(default=5, ge=1, le=20)
     event_retry_base_seconds: float = Field(default=60.0, gt=0, le=3600)
     event_retry_cap_seconds: float = Field(default=900.0, gt=0, le=86400)
@@ -240,6 +245,10 @@ class Settings(BaseSettings):
         """Resolve uma única fonte por segredo e proíbe ENV direto em produção."""
         if self.retry_max_delay_seconds < self.retry_base_delay_seconds:
             raise ValueError("retry max delay must not be smaller than base delay")
+        if self.detail_request_max_delay_seconds < self.detail_request_min_delay_seconds:
+            raise ValueError(
+                "detail request max delay must not be smaller than min delay"
+            )
         if self.event_retry_cap_seconds < self.event_retry_base_seconds:
             raise ValueError(
                 "event retry cap must not be smaller than event retry base"

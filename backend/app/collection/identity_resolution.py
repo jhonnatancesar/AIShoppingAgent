@@ -25,6 +25,7 @@ from app.collection.contracts import (
     ResolvedProductIdentity,
 )
 from app.collection.model_matching import model_search_pattern, title_matches_model
+from app.collection.providers.edge_cdp_transport import EdgeCdpTransport
 from app.collection.providers.stores import AmazonProvider, KabumProvider
 from app.core.resilience import RetryPolicy
 from app.database.time import utc_now
@@ -43,23 +44,43 @@ _NAVIGATION_TIMEOUT_MS = 6_000
 _ACTION_TIMEOUT_MS = 5_000
 _PER_PROVIDER_TIMEOUT_SECONDS = 8.0
 _CIRCUIT_NAMESPACE = "identity"
+# TASK-109: timeout de conexão CDP dedicado -- Edge já supervisionado e
+# em loopback, não precisa do mesmo orçamento de `_NAVIGATION_TIMEOUT_MS`.
+_CDP_CONNECT_TIMEOUT_MS = 3_000
 
 
-def _build_default_providers() -> tuple[CollectionProvider, ...]:
+def _build_default_providers(
+    edge_cdp_url: str | None = None,
+) -> tuple[CollectionProvider, ...]:
     """Kabum (primário) -> Amazon (secundário), nunca Pichau/Terabyte
     (headed/Xvfb, custo de execução maior que o orçamento desta
-    resolução comporta -- ver auditoria da TASK-083)."""
+    resolução comporta -- ver auditoria da TASK-083).
+
+    TASK-109: quando `edge_cdp_url` é fornecido, os dois ganham seu
+    próprio `EdgeCdpTransport` -- mesmo Edge/CDP compartilhado da coleta
+    normal (reutilizar a mesma instância supervisionada é seguro, CDP
+    aceita múltiplas conexões simultâneas), mas com timeout/instância
+    isolados desta resolução, nunca a `EdgeCdpTransport` da coleta
+    normal em si. Sem `edge_cdp_url`, o comportamento é exatamente o
+    mesmo de antes (Playwright gerenciado)."""
     settings = BrowserSettings(
         navigation_timeout_ms=_NAVIGATION_TIMEOUT_MS,
         action_timeout_ms=_ACTION_TIMEOUT_MS,
     )
     retry_policy = RetryPolicy(max_attempts=1)
-    kwargs = {
+    kwargs: dict[str, object] = {
         "max_offers": _MAX_CANDIDATES,
         "retry_policy": retry_policy,
         "availability_fallback_max_candidates": 0,
         "circuit_namespace": _CIRCUIT_NAMESPACE,
     }
+    if edge_cdp_url is not None:
+        kwargs["cdp_transport"] = EdgeCdpTransport(
+            edge_cdp_url,
+            connect_timeout_ms=_CDP_CONNECT_TIMEOUT_MS,
+            navigation_timeout_ms=_NAVIGATION_TIMEOUT_MS,
+            document_timeout_ms=_ACTION_TIMEOUT_MS,
+        )
     return (
         KabumProvider(settings, **kwargs),
         AmazonProvider(settings, **kwargs),
@@ -81,11 +102,17 @@ class StoreProductIdentityResolver:
         providers: Sequence[CollectionProvider] | None = None,
         *,
         per_provider_timeout_seconds: float = _PER_PROVIDER_TIMEOUT_SECONDS,
+        edge_cdp_url: str | None = None,
     ) -> None:
         if per_provider_timeout_seconds <= 0:
             raise ValueError("per_provider_timeout_seconds must be positive")
+        # TASK-109: `edge_cdp_url` só se aplica aos providers padrão --
+        # quem passa `providers` explicitamente (ex.: testes) já controla
+        # o transporte de cada um por conta própria.
         self._providers: tuple[CollectionProvider, ...] = (
-            tuple(providers) if providers is not None else _build_default_providers()
+            tuple(providers)
+            if providers is not None
+            else _build_default_providers(edge_cdp_url)
         )
         self._per_provider_timeout_seconds = per_provider_timeout_seconds
         # TASK-083: orçamento global = soma dos orçamentos individuais --

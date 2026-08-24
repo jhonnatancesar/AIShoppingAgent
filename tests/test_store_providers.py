@@ -290,36 +290,32 @@ def test_mercado_livre_edge_is_primary_and_playwright_never_touched(
     assert transport.calls == 1
 
 
-def test_mercado_livre_falls_back_to_playwright_when_cdp_fails(monkeypatch) -> None:
-    """CDP continua com uma rede de segurança: se falhar, o Playwright
-    gerenciado (que continua funcionando na ML, ao contrário da Terabyte)
-    ainda é tentado."""
-    expected = RawCollectedOffer(
-        source_code="mercadolivre",
-        url="https://produto.mercadolivre.com.br/MLB-1",
-        title="Produto",
-        collected_at=NOW,
-        raw_price="R$ 100,00",
-    )
+def test_mercado_livre_cdp_failure_never_falls_back_to_playwright(
+    monkeypatch,
+) -> None:
+    """TASK-109: com `cdp_transport` configurado, uma falha do CDP em si
+    nunca cai de volta pro Chromium gerenciado -- propaga como qualquer
+    outra falha (retry/circuit-breaker normais decidem o resto)."""
 
-    async def successful_primary(self, request):
-        from app.collection import CollectionResult
+    async def forbidden_primary(self, request):
+        raise AssertionError("Playwright must not be attempted when CDP is configured")
 
-        return CollectionResult("mercadolivre", NOW, NOW, (expected,))
-
-    monkeypatch.setattr(PlaywrightStoreProvider, "_collect_once", successful_primary)
+    monkeypatch.setattr(PlaywrightStoreProvider, "_collect_once", forbidden_primary)
 
     class FailingTransport:
         async def run(self, *args, **kwargs):
             raise EdgeCdpTransportError("CDP failed")
 
-    provider = MercadoLivreProvider(cdp_transport=FailingTransport())
-
-    result = asyncio.run(
-        provider.collect(CollectionRequest(uuid4(), "mercadolivre", "Produto", NOW))
+    provider = MercadoLivreProvider(
+        cdp_transport=FailingTransport(), retry_policy=RetryPolicy(max_attempts=1)
     )
 
-    assert result.offers == (expected,)
+    with pytest.raises(EdgeCdpTransportError):
+        asyncio.run(
+            provider.collect(
+                CollectionRequest(uuid4(), "mercadolivre", "Produto", NOW)
+            )
+        )
 
 
 def test_mercado_livre_without_cdp_transport_uses_playwright(monkeypatch) -> None:
@@ -2492,25 +2488,14 @@ def test_pichau_cdp_neither_state_raises_blocked_not_silent_empty(
         )
 
 
-def test_pichau_falls_back_to_playwright_when_cdp_transport_fails(
-    monkeypatch,
-) -> None:
-    """Falha de transporte (não de negócio) via CDP ainda cai pro
-    Playwright gerenciado, igual à Amazon/Kabum/ML."""
-    expected = RawCollectedOffer(
-        source_code="pichau",
-        url="https://x/gpu",
-        title="GPU",
-        collected_at=NOW,
-        raw_price="R$ 10,00",
-    )
+def test_pichau_cdp_failure_never_falls_back_to_playwright(monkeypatch) -> None:
+    """TASK-109: com `cdp_transport` configurado, uma falha de transporte
+    (não de negócio) via CDP nunca cai de volta pro Chromium gerenciado."""
 
-    async def successful_primary(self, request):
-        from app.collection import CollectionResult
+    async def forbidden_primary(self, request):
+        raise AssertionError("Playwright must not be attempted when CDP is configured")
 
-        return CollectionResult("pichau", NOW, NOW, (expected,))
-
-    monkeypatch.setattr(PlaywrightStoreProvider, "_collect_once", successful_primary)
+    monkeypatch.setattr(PlaywrightStoreProvider, "_collect_once", forbidden_primary)
 
     class FailingTransport:
         @asynccontextmanager
@@ -2518,13 +2503,14 @@ def test_pichau_falls_back_to_playwright_when_cdp_transport_fails(
             raise EdgeCdpTransportError("CDP failed")
             yield  # pragma: no cover - torna a função um gerador
 
-    provider = PichauProvider(cdp_transport=FailingTransport())
-
-    result = asyncio.run(
-        provider.collect(CollectionRequest(uuid4(), "pichau", "GPU", NOW))
+    provider = PichauProvider(
+        cdp_transport=FailingTransport(), retry_policy=RetryPolicy(max_attempts=1)
     )
 
-    assert result.offers == (expected,)
+    with pytest.raises(EdgeCdpTransportError):
+        asyncio.run(
+            provider.collect(CollectionRequest(uuid4(), "pichau", "GPU", NOW))
+        )
 
 
 def test_other_providers_keep_domcontentloaded_and_no_empty_state_hook() -> None:
