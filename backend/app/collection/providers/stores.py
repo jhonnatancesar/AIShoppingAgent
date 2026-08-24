@@ -118,14 +118,13 @@ def _parse_pichau_installment_row(text: str) -> RawInstallmentOption | None:
 
 
 class PichauProvider(PlaywrightStoreProvider):
-    """TASK-109: Edge/CDP como transporte da busca. Playwright gerenciado
-    só entra sem `cdp_transport` configurado (dev/ambiente sem Edge) --
-    uma falha do CDP em si nunca cai de volta pro Chromium gerenciado.
-    Diferente de Amazon/Kabum, a Pichau distingue busca legitimamente
-    vazia de bloqueio/erro (`empty_result_locator`) -- reaproveita
-    `EdgeCdpTransport.open_page` (só conecta/navega, sem decidir nada de
-    negócio) para continuar usando exatamente `_wait_for_results_or_empty`
-    já existente, a mesma lógica já usada com o Playwright gerenciado."""
+    """TASK-109: Edge/CDP é o único transporte -- sem `cdp_transport`
+    configurado, falha explícita, nunca Chromium gerenciado (fechamento
+    da migração de browser). Diferente de Amazon/Kabum, a Pichau
+    distingue busca legitimamente vazia de bloqueio/erro
+    (`empty_result_locator`) -- reaproveita `EdgeCdpTransport.open_page`
+    (só conecta/navega, sem decidir nada de negócio) para continuar
+    usando exatamente `_wait_for_results_or_empty` já existente."""
 
     source_code, result_selector = "pichau", 'a[data-cy="list-product"]'
     # TASK-075 (correção 2): domcontentloaded demora 22-38s (às vezes >45s)
@@ -149,13 +148,12 @@ class PichauProvider(PlaywrightStoreProvider):
         return page.get_by_text(_EMPTY_RESULT_TEXT)
 
     async def _collect_once(self, request: CollectionRequest) -> CollectionResult:
-        """TASK-109: sem `cdp_transport` configurado, Playwright gerenciado
-        (dev/ambiente sem Edge). Configurado, é o único transporte -- uma
-        falha do CDP em si (`EdgeCdpTransportError`) nunca cai de volta pro
-        Chromium gerenciado; propaga como qualquer outra falha, tratada
-        pelo retry/circuit-breaker já existente em `collect()`."""
+        """TASK-109: `cdp_transport` é obrigatório -- sem ele, falha
+        explícita (nunca Chromium gerenciado). Uma falha do CDP em si
+        (`EdgeCdpTransportError`) propaga como qualquer outra falha,
+        tratada pelo retry/circuit-breaker já existente em `collect()`."""
         if self._cdp_transport is None:
-            return await super()._collect_once(request)
+            raise EdgeCdpTransportError("Pichau CDP transport is not configured")
         started_at = self._clock()
         async with self._cdp_transport.open_page(
             self.build_url(request.search_query)
@@ -355,7 +353,7 @@ class AmazonProvider(PlaywrightStoreProvider):
 
     async def _collect_once(self, request: CollectionRequest) -> CollectionResult:
         if self._cdp_transport is None:
-            return await super()._collect_once(request)
+            raise EdgeCdpTransportError("Amazon CDP transport is not configured")
         started_at = self._clock()
         offers = await self._cdp_transport.run(
             self.build_url(request.search_query),
@@ -445,7 +443,7 @@ class KabumProvider(PlaywrightStoreProvider):
 
     async def _collect_once(self, request: CollectionRequest) -> CollectionResult:
         if self._cdp_transport is None:
-            return await super()._collect_once(request)
+            raise EdgeCdpTransportError("Kabum CDP transport is not configured")
         started_at = self._clock()
         offers = await self._cdp_transport.run(
             self.build_url(request.search_query),
@@ -527,14 +525,12 @@ def _mercado_livre_condition(value: object, title: object) -> str:
 
 
 class MercadoLivreProvider(PlaywrightStoreProvider):
-    """Provider Mercado Livre; Edge/CDP é o transporte primário (TASK-109).
+    """Provider Mercado Livre; Edge/CDP é o único transporte (TASK-109).
 
-    Playwright gerenciado só é usado quando `cdp_transport` não está
-    configurado (dev/ambiente sem Edge) -- inverte a prioridade original
-    (TASK-104B: CDP só depois do Playwright falhar). Uma falha do CDP em
-    si, com `cdp_transport` configurado, nunca cai de volta pro Chromium
-    gerenciado (TASK-109) -- vira falha normal, tratada pelo
-    retry/circuit-breaker já existente."""
+    Sem `cdp_transport` configurado, falha explícita -- nunca Chromium
+    gerenciado (fechamento da migração de browser). Uma falha do CDP em
+    si vira falha normal, tratada pelo retry/circuit-breaker já
+    existente."""
 
     source_code = "mercadolivre"
     result_selector = "li.ui-search-layout__item:has(a.poly-component__title)"
@@ -553,13 +549,14 @@ class MercadoLivreProvider(PlaywrightStoreProvider):
         return f"https://lista.mercadolivre.com.br/{quote(slug)}"
 
     async def _collect_once(self, request: CollectionRequest) -> CollectionResult:
-        """TASK-109: sem `cdp_transport` configurado, Playwright gerenciado
-        (dev/ambiente sem Edge). Configurado, é o único transporte -- uma
-        falha do CDP em si (`EdgeCdpTransportError`) nunca cai de volta pro
-        Chromium gerenciado; propaga como qualquer outra falha, tratada
-        pelo retry/circuit-breaker já existente em `collect()`."""
+        """TASK-109: `cdp_transport` é obrigatório -- sem ele, falha
+        explícita (nunca Chromium gerenciado). Uma falha do CDP em si
+        (`EdgeCdpTransportError`) propaga como qualquer outra falha,
+        tratada pelo retry/circuit-breaker já existente em `collect()`."""
         if self._cdp_transport is None:
-            return await super()._collect_once(request)
+            raise EdgeCdpTransportError(
+                "Mercado Livre CDP transport is not configured"
+            )
         started_at = self._clock()
         offers = await self._cdp_transport.run(
             self.build_url(request.search_query),

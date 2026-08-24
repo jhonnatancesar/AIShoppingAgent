@@ -1,84 +1,74 @@
-# Playwright base
+# Playwright: Edge/CDP em produção, Chromium só em teste
 
-A TASK-024 adicionou a infraestrutura de navegador usada pelos Store Providers
-implementados na TASK-055. A base fica em `app.collection.browser`; seletores,
-URLs e regras específicas permanecem isolados em `app.collection.providers`.
+A TASK-024 adicionou a infraestrutura de navegador original (Chromium
+gerenciado, `BrowserSession`). A TASK-109 (fechamento da migração de
+browser, 2026-08) trocou o transporte de produção: hoje **nenhum Store
+Provider abre Chromium gerenciado**. Todos os seis (Amazon, Kabum, Magalu,
+Mercado Livre, Pichau, Terabyte) navegam exclusivamente via
+`Playwright.chromium.connect_over_cdp()` contra um Microsoft Edge normal,
+real, supervisionado -- nunca via `Playwright.chromium.launch()`.
 
-## Componentes
+## Dois papéis distintos para Playwright
+
+- **Produção (`app.collection.providers`)**: só `connect_over_cdp()`. Sem
+  `cdp_transport` configurado, cada provider falha explícito
+  (`EdgeCdpTransportError`, tratado pelo retry/circuit-breaker normal) --
+  nunca abre Chromium como fallback silencioso. Ver
+  [Runtime Windows do collection_worker](windows-collection-worker.md)
+  para a arquitetura completa do transporte.
+- **Testes (`app.collection.browser.BrowserSession`)**: continua existindo,
+  intocada, só como infraestrutura de teste hermética -- obter um `Page`
+  real e local (`page.set_content(html)`, sem rede) para exercitar
+  `.extract()`/parsing de HTML estático em `tests/test_store_providers.py`
+  e `tests/test_playwright_browser.py`. Nenhum destes testes representa
+  comportamento de coleta real; nenhum navega para uma URL externa.
+
+## Componentes (`app.collection.browser`, uso de teste)
 
 - `BrowserSettings` define execução headless, timeouts positivos e locale.
 - `BrowserSession` inicia Playwright e Chromium de forma assíncrona.
-- Cada sessão cria um contexto isolado, bloqueia downloads por padrão e oferece
-  páginas somente enquanto o contexto estiver ativo.
-- Contexto, navegador e processo Playwright são encerrados mesmo quando a abertura
-  falha ou o bloco assíncrono termina com erro.
+- Contexto, navegador e processo Playwright são encerrados mesmo quando a
+  abertura falha ou o bloco assíncrono termina com erro.
 
-## Instalação local
+## Instalação local para rodar a suíte de testes
 
-Use exclusivamente o Python oficial da máquina:
+O pacote `playwright` continua em `backend/requirements.txt` (produção
+importa tipos de `playwright.async_api`, mesmo sem nunca lançar um
+browser). O binário do Chromium só é necessário para rodar a suíte de
+testes local/CI -- **não faz parte da imagem Docker de produção** (o
+`Dockerfile` não instala mais `playwright install chromium`; nenhum
+serviço Docker restante -- `api`, `telegram_notifier`, `ops_controller` --
+abre navegador):
 
 ```powershell
 python -m pip install -r backend/requirements-dev.txt
 python -m playwright install chromium
 ```
 
-O segundo comando instala somente o navegador gerenciado pelo Playwright. A imagem
-Docker executa `playwright install --with-deps chromium` durante o build para incluir
-também as bibliotecas necessárias no Linux.
-
-O smoke test determinístico pode ser executado com `scripts/playwright_smoke.py`,
-mantendo `backend` no caminho de importação. Ele usa somente HTML local e não acessa
-fontes externas.
-
 ## Limites
 
-A base não contorna proteções, não normaliza resultados e não persiste coletas.
-Pichau, Terabyte, Amazon e Kabum foram implementados na TASK-055. Normalização e
-persistência permanecem nas TASKs 025 e 026.
+A base de teste não contorna proteções, não normaliza resultados e não
+persiste coletas -- só HTML estático local.
 
-## Ubuntu Server sem interface gráfica
+## Edge/CDP: transporte único de todos os Store Providers
 
-A imagem inicia `Xvfb` no display virtual `:99` antes da API. Isso permite abrir
-Chromium headed sem desktop ou monitor no host. O display pode ser alterado com
-`AISHOPPING_XVFB_DISPLAY`.
-
-Depois de construir a imagem, valide cada origem dentro do Linux real:
-
-```bash
-docker compose run --rm api python -m scripts.validate_store_providers amazon
-docker compose run --rm api python -m scripts.validate_store_providers kabum
-docker compose run --rm api python -m scripts.validate_store_providers pichau
-docker compose run --rm api python -m scripts.validate_store_providers terabyte
-```
-
-Pichau e Terabyte usam headed por padrão no validador; Amazon e Kabum usam
-headless. `--headed` e `--headless` permitem diagnóstico explícito. Bloqueio ou
-mudança de markup produz erro e não autoriza stealth, CAPTCHA solver ou evasão.
-
-## Edge/CDP: transporte compartilhado por Magalu, Mercado Livre e Terabyte
-
-A TASK-104A não acopla o provider ao Edge. `MagaluProvider` recebe a porta
-`MagaluSearchTransport`, que apenas devolve o HTML da busca; o parser SSR,
-normalização, ranking, Web e Telegram não conhecem o transporte.
-
-Quando `AISHOPPING_EDGE_CDP_URL` é configurada, o worker inicia e mantém um
-Edge normal dedicado por supervisor, aguarda o `#__NEXT_DATA__` final e se
-desconecta sem encerrar o navegador. A URL aceita exclusivamente HTTP loopback
-(`127.0.0.1`, `localhost` ou `::1`) com porta explícita. `0.0.0.0`, IP de rede,
-credenciais e porta pública falham no startup. O worker e o Edge precisam rodar
-no mesmo host/network namespace; Docker não recebe socket ou privilégio novo.
-O nome antigo, `AISHOPPING_MAGALU_CDP_URL`, continua funcionando por
+Quando `AISHOPPING_EDGE_CDP_URL` está configurada (sempre, no
+collection_worker nativo Windows), o `EdgeCdpSupervisor` mantém um Edge
+normal dedicado, sob demanda (TASK-109: lease/idle-timeout, ver
+[Runtime Windows](windows-collection-worker.md)). A URL aceita
+exclusivamente HTTP loopback (`127.0.0.1`, `localhost` ou `::1`) com porta
+explícita -- `0.0.0.0`, IP de rede, credenciais e porta pública falham no
+startup. O nome antigo, `AISHOPPING_MAGALU_CDP_URL`, continua aceito por
 compatibilidade.
 
-O mesmo Edge supervisionado, uma única variável, é reaproveitado por três
-providers, cada um com seu próprio papel (TASK-104B/TASK-105): transporte
-primário e único da Magalu e da Terabyte (nenhuma delas tenta Playwright
-depois -- a Terabyte porque `DEC-070` comprovou bloqueio Cloudflare
-persistente do Chromium gerenciado), e fallback de último recurso do Mercado
-Livre, só depois do Playwright primário falhar.
+Sem `AISHOPPING_EDGE_CDP_URL` configurada, cada provider falha rápido e
+isolado (`EdgeCdpTransportError`) -- não existe mais nenhum fallback para
+Chromium gerenciado ou Xvfb (o `collection_worker` não roda mais em
+Docker/Linux; o guia Ubuntu/Xvfb ficou histórico, ver
+`docs/tasks/TASK-109.md`).
 
-Exemplo de validação local; o supervisor inicia o Edge com endereço loopback,
-porta escolhida e perfil dedicado:
+Exemplo de validação manual local (Windows, com um Edge dedicado já
+supervisionado ou iniciado à parte):
 
 ```powershell
 python -m scripts.validate_store_providers magalu `
@@ -86,10 +76,5 @@ python -m scripts.validate_store_providers magalu `
   --edge-cdp-url http://127.0.0.1:9223
 ```
 
-Nesta versão não existe fallback HTTP ou Playwright para a busca Magalu nem
-para a Terabyte: sem CDP, com Edge indisponível ou após timeout, cada uma
-dessas origens falha rápido e isolada. Conexão, navegação, documento e
-leitura do HTML têm limites independentes. Um futuro serviço Windows/
-supervisor troca somente o adapter de transporte; não refaz regras de
-negócio. Não usar perfil pessoal, stealth, alteração de fingerprint, CAPTCHA
+Não usar perfil pessoal, stealth, alteração de fingerprint, CAPTCHA
 solver, proxy ou cópia de cookies.

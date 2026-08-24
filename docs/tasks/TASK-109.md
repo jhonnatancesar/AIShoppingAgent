@@ -4,15 +4,20 @@ Status: **FASE 1 concluída e aprovada no DEV (Ops Agent + supervisão do
 worker via Task Scheduler). FASE 2 concluída no DEV (worker nativo com
 Edge, ciclo real de coleta da Magalu provado ponta a ponta, incluindo
 recovery). FASE 3 concluída no DEV: 6 lojas + enriquecimento de detalhe
-+ `StoreProductIdentityResolver` (TASK-083) via Edge/CDP; fallback pra
-Chromium removido de Mercado Livre e Pichau (falha do CDP não cai mais
-de volta pro Chromium). Auditoria final: único ponto do backend inteiro
-que ainda lança Chromium gerenciado é `BrowserSession`
-(`app/collection/browser.py`), e só é alcançado quando `edge_cdp_url`
-não está configurado -- com a configuração real do worker Windows, zero
-Chromium em qualquer caminho. Migração de browser tecnicamente completa;
-remoção física dos binaries/dependências ainda não feita (fora desta
-rodada). Nenhum deploy feito.**
++ `StoreProductIdentityResolver` (TASK-083) via Edge/CDP; lifecycle sob
+demanda do Edge (lease/idle-timeout). FASE 4 (fechamento da migração)
+concluída no DEV: `BrowserSession`/Chromium removidos de todo caminho
+real de coleta (nenhum provider abre Chromium gerenciado, nunca mais
+como fallback -- falha explícita, `EdgeCdpTransportError`);
+`BrowserSession` permanece só como infraestrutura de teste hermética
+(HTML parsing local, sem rede); `collection_worker` removido do
+`compose.yaml`; Dockerfile parou de instalar Chromium/Xvfb;
+`ops_controller` integrado ao Windows Ops Agent
+(`WindowsOpsAgentAdapter`). Documentação nova/atualizada:
+`docs/architecture/windows-collection-worker.md`,
+`docs/architecture/playwright.md`,
+`docs/architecture/service-operations.md`. Nenhum deploy feito --
+produção continua nos sete serviços Docker.**
 
 ## Objetivo
 
@@ -615,3 +620,109 @@ mecanismo da FASE 1, sem regressão. Edge reaproveitado após o restart
 recovery também foi coletada e persistida com sucesso (8 observações),
 provando que o worker recuperado volta a coletar de verdade, não só que
 o processo volta a existir.
+
+## FASE 4 (fechamento da migração) — remoção do BrowserSession, compose, Ops Controller, docs (concluída no DEV)
+
+**Auditoria do `BrowserSession` (`app/collection/browser.py`):** consumidores
+reais mapeados em duas categorias, não uma:
+
+1. **Produção (`app/collection/providers/base.py`/`stores.py`)** -- o único
+   consumidor real de `chromium.launch()` no caminho de coleta. Removido
+   por completo: `_open_detail_page()` agora só usa
+   `self._cdp_transport.open_blank_page()`, e levanta
+   `EdgeCdpTransportError(f"{source_code} CDP transport is not
+   configured")` sem `cdp_transport`; a implementação base de
+   `_collect_once()` (que abria `BrowserSession`) virou
+   `raise NotImplementedError` (cada loja já implementa a própria via
+   CDP); Pichau/Amazon/Kabum/Mercado Livre (Terabyte já estava correta
+   desde a rodada anterior) trocaram
+   `return await super()._collect_once(request)` por
+   `raise EdgeCdpTransportError("<Loja> CDP transport is not
+   configured")`. Resultado: **nenhum provider abre Chromium gerenciado
+   em nenhuma circunstância**, configurado ou não -- sem CDP, falha
+   explícita e isolada (tratada pelo retry/circuit-breaker normal, nunca
+   reabre Chromium), nunca mais um fallback silencioso.
+2. **Teste (`tests/test_store_providers.py`, `tests/test_playwright_browser.py`)**
+   -- consumidor real, distinto e legítimo: ~40 testes usam
+   `BrowserSession` só para obter um `Page` real e local
+   (`page.set_content(html)`, sem rede) e exercitar `.extract()`/parsing
+   de HTML estático -- nada a ver com a decisão Chromium-vs-CDP. Decisão:
+   **`BrowserSession`/`BrowserSettings` não foram removidos** -- continuam
+   existindo, intocados, só como infraestrutura de teste hermética.
+   Cerca de 20 testes que monkeypatchavam
+   `"app.collection.providers.base.BrowserSession"` para simular o
+   fallback de enriquecimento (agora removido) foram reescritos para
+   injetar um `cdp_transport` fake (`_FakeCdpTransport.open_blank_page`)
+   em vez de um `BrowserSession` fake; os que só afirmavam "Chromium
+   nunca deve abrir" tiveram o monkeypatch removido (a garantia agora é
+   estrutural, não mais um mock que levanta exceção).
+
+**Auditoria final repetida (mesmo método da rodada anterior -- busca
+completa por `async_playwright`, `chromium.launch`, `launch(`):** zero
+ocorrências de `chromium.launch()` fora de `app/collection/browser.py`
+(a classe de teste em si). Nenhum caminho de coleta real -- configurado
+ou não -- alcança Chromium.
+
+**`compose.yaml`:** serviço `collection_worker` removido por completo
+(build, environment, secrets, healthcheck). `database`, `api`,
+`telegram_notifier`, `ops_controller`, `docker-socket-proxy`,
+observabilidade inalterados.
+
+**`Dockerfile`:** parou de instalar o binário do Chromium
+(`playwright install --with-deps chromium`) e a infraestrutura de Xvfb
+(`/tmp/.X11-unix`, `backend/docker-entrypoint.sh` removido, `ENTRYPOINT`
+virou `CMD` direto) -- nenhum serviço Docker restante abre navegador. O
+pacote Python `playwright` continua em `requirements.txt` (tipos
+importados por `app.collection`, mesmo sem nunca lançar um browser). O
+binário do Chromium continua necessário só para rodar a suíte de testes
+local/CI, fora da imagem de produção (ver
+`docs/architecture/playwright.md`).
+
+**`ops_controller.py`:** novo `WindowsOpsAgentAdapter`, ao lado do
+`DockerOpsAdapter` já existente -- dispatch por `LogicalService`
+(`collection_worker` -> Windows Ops Agent via HTTP loopback assinado
+em `http://host.docker.internal:8021`, configurável por
+`WINDOWS_OPS_AGENT_URL`; `telegram_notifier` -> Docker, inalterado).
+Resolve o "ponto em aberto" do preflight (`DEC-096`): mesmo esquema
+HMAC+timestamp+nonce já usado pelo `ops_controller`, allowlist fechada
+(3 rotas fixas do Ops Agent, sem shell/comando genérico), estado nativo
+(`Get-ScheduledTask.State`) traduzido para o mesmo vocabulário que o
+Docker já usava (`running`/`stopped`/`unavailable`/`unknown`). Novo
+secret (`windows_ops_agent_secret`, `compose.yaml`) precisa do mesmo
+valor gerado pelo Ops Agent em
+`C:\ProgramData\AIShoppingAgent\secrets\ops-agent-secret` -- cópia
+manual, os dois lados não sincronizam sozinhos.
+
+**Documentação:** `docs/architecture/windows-collection-worker.md`
+(novo -- arquitetura completa do runtime DEV: Python, asyncpg,
+PostgreSQL via IPv4, Edge/perfil dedicado, Task Scheduler, Ops Agent,
+secrets em ProgramData, variáveis, `edge_idle_timeout_seconds`);
+`docs/architecture/playwright.md` reescrito (papel duplo de Playwright:
+CDP em produção, Chromium só em teste); `docs/architecture/service-operations.md`
+atualizado (dois adapters do `ops_controller`).
+`docs/installation/windows-server.md` **intocado de propósito** -- ainda
+descreve a produção real (sete serviços Docker, incluindo
+`collection_worker`); atualizar esse guia é tarefa do deploy desta
+migração, fora do escopo desta rodada.
+
+**Validação:** só suíte focada (`test_store_providers.py`,
+`test_store_provider_installments.py`, `test_collection_worker.py`,
+`test_admin_operations.py`) + import/config -- sem nova coleta real, sem
+suíte completa (pedido explícito do usuário).
+
+**Limpeza do runtime DEV (pedido à parte, mesma janela):** Ops Agent
+(serviço `AIShoppingAgentOpsAgent`) parado sem sucesso por falta de
+elevação (fica pendente, comandos documentados acima); Task Scheduler
+`AIShoppingAgent-CollectionWorker` parada/desabilitada/removida; processo
+nativo do worker e toda a árvore do Edge dedicado encerrados. Pedido
+explícito do usuário: **não reinstalar nem reiniciar nada disso agora**
+-- a limpeza é definitiva até nova instrução.
+
+**Ainda não feito (fora do pedido desta rodada):** deploy em produção;
+atualização de `docs/installation/windows-server.md` para a nova
+arquitetura; criação de um venv dedicado para o worker Windows (roda no
+Python oficial da máquina, sem virtualenv, ver
+`docs/architecture/windows-collection-worker.md`); padronização do
+mecanismo de secrets locais do worker (hoje só "arquivo local, fora do
+Git/chat", sem cofre/ACL formalizados como o do Ops Agent);
+reinstalação do Ops Agent/Task Scheduler/worker/Edge na máquina DEV.

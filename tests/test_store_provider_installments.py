@@ -202,19 +202,12 @@ async def test_terabyte_enrich_installment_options_never_opens_browser_session(
 ) -> None:
     """Prova em tempo de execução (não só por identidade de método): com
     o hook ausente, `enrich_installment_options` retorna as ofertas
-    intocadas sem sequer abrir uma `BrowserSession` -- 1 navegação (a
-    busca) por execução, nunca 1 + até 3."""
-    opened = False
-
-    class _ExplodingBrowserSession(BrowserSession):
-        async def __aenter__(self) -> _ExplodingBrowserSession:
-            nonlocal opened
-            opened = True
-            raise AssertionError("Terabyte não deveria abrir BrowserSession algum")
-
-    monkeypatch.setattr(
-        "app.collection.providers.base.BrowserSession", _ExplodingBrowserSession
-    )
+    intocadas sem sequer abrir uma página de detalhe -- 1 navegação (a
+    busca) por execução, nunca 1 + até 3. TASK-109 (fechamento da migração
+    de browser): `_open_detail_page` nem abre mais `BrowserSession` como
+    fallback -- sem `cdp_transport`, ela lançaria `EdgeCdpTransportError`;
+    a garantia estrutural de que a Terabyte nunca chega lá continua sendo
+    a ausência de `resolve_installment_options` sobrescrito."""
     provider = TerabyteProvider()
     offer = RawCollectedOffer(
         source_code="terabyte",
@@ -236,7 +229,6 @@ async def test_terabyte_enrich_installment_options_never_opens_browser_session(
 
     result = await provider.enrich_installment_options((offer,))
 
-    assert opened is False
     assert result == (offer,)
     assert result[0].installment_options == offer.installment_options
 

@@ -12,11 +12,9 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
-from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import Locator, Page
-from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
-from app.collection.browser import BrowserSession, BrowserSettings
+from app.collection.browser import BrowserSettings
 from app.collection.contracts import (
     CollectionRequest,
     CollectionResult,
@@ -32,7 +30,10 @@ from app.collection.errors import (
     ProviderNavigationError,
 )
 from app.collection.normalization import PriceNormalizer
-from app.collection.providers.edge_cdp_transport import EdgeCdpTransport
+from app.collection.providers.edge_cdp_transport import (
+    EdgeCdpTransport,
+    EdgeCdpTransportError,
+)
 from app.core.resilience import (
     CIRCUITS,
     CircuitOpenError,
@@ -144,6 +145,15 @@ class PlaywrightStoreProvider:
     ) -> tuple[RawCollectedOffer, ...]:
         raise NotImplementedError
 
+    async def _collect_once(self, request: CollectionRequest) -> CollectionResult:
+        """Cada loja implementa a própria busca via Edge/CDP
+        (`self._cdp_transport`, TASK-109). Não há mais implementação
+        genérica aqui -- o antigo caminho comum abria Chromium gerenciado
+        (`BrowserSession`) como fallback; removido no fechamento da
+        migração de browser (TASK-109) para que nenhum provider possa
+        lançar Chromium."""
+        raise NotImplementedError
+
     async def resolve_product_availability(self, page: Page) -> str | None:
         """Evidência de disponibilidade na página individual (fallback).
 
@@ -238,16 +248,16 @@ class PlaywrightStoreProvider:
     @asynccontextmanager
     async def _open_detail_page(self) -> AsyncIterator[Page]:
         """Página dedicada ao enriquecimento de detalhe (uma navegação por
-        oferta, TASK-109): via Edge/CDP quando `cdp_transport` está
-        configurado, senão o mesmo Playwright gerenciado de sempre. Os
-        hooks `resolve_*` recebem a `Page` já pronta e nunca sabem qual
-        dos dois caminhos foi usado."""
-        if self._cdp_transport is not None:
-            async with self._cdp_transport.open_blank_page() as page:
-                yield page
-            return
-        async with BrowserSession(self.settings) as session:
-            yield await session.new_page()
+        oferta, TASK-109): sempre via Edge/CDP. Sem `cdp_transport`
+        configurado, falha explícita -- nunca abre Chromium gerenciado
+        como fallback (fechamento da migração de browser, TASK-109). Os
+        hooks `resolve_*` recebem a `Page` já pronta."""
+        if self._cdp_transport is None:
+            raise EdgeCdpTransportError(
+                f"{self.source_code} CDP transport is not configured"
+            )
+        async with self._cdp_transport.open_blank_page() as page:
+            yield page
 
     async def _pace_before_next_detail_request(self, position: int) -> None:
         """Sem atraso na primeira navegação; um intervalo curto e variável
@@ -644,59 +654,6 @@ class PlaywrightStoreProvider:
             is_transient=lambda error: isinstance(error, ProviderNavigationError),
             on_retry=lambda: observe_resilience_event("store", "retry"),
         )
-
-    async def _collect_once(self, request: CollectionRequest) -> CollectionResult:
-        started_at = self._clock()
-        async with BrowserSession(self.settings) as session:
-            page = await session.new_page()
-            try:
-                response = await page.goto(
-                    self.build_url(request.search_query),
-                    wait_until=self.navigation_wait_until,
-                )
-            except PlaywrightTimeoutError, PlaywrightError:
-                raise ProviderNavigationError(self.source_code, None) from None
-            if response is None or response.status == 408 or response.status >= 500:
-                raise ProviderNavigationError(
-                    self.source_code, response.status if response else None
-                )
-            if response.status in _BLOCKED_STATUSES:
-                raise ProviderBlockedError(self.source_code, response.status)
-
-            empty_locator = self.empty_result_locator(page)
-            if empty_locator is None:
-                try:
-                    await page.locator(self.result_selector).first.wait_for(
-                        state="attached",
-                        timeout=(
-                            self.settings.navigation_timeout_ms
-                            if self.result_wait_uses_navigation_timeout
-                            else self.settings.action_timeout_ms
-                        ),
-                    )
-                except Exception as error:
-                    raise ProviderBlockedError(
-                        self.source_code, response.status
-                    ) from error
-            else:
-                try:
-                    readiness = await self._wait_for_results_or_empty(
-                        page, empty_locator
-                    )
-                except Exception as error:
-                    raise ProviderBlockedError(
-                        self.source_code, response.status
-                    ) from error
-                if readiness == "empty":
-                    return CollectionResult(
-                        self.source_code, started_at, self._clock(), ()
-                    )
-
-            offers = await self.extract(page, self._clock())
-            if not offers:
-                raise ProviderBlockedError(self.source_code, response.status)
-            offers = await self._resolve_unknown_availability(page, offers)
-        return CollectionResult(self.source_code, started_at, self._clock(), offers)
 
     async def _wait_for_results_or_empty(
         self, page: Page, empty_locator: Locator

@@ -10,6 +10,7 @@ from app.collection import (
     AmazonProvider,
     BrowserSession,
     CollectionRequest,
+    CollectionResult,
     KabumProvider,
     MagaluProvider,
     MarketplacePartyKind,
@@ -318,30 +319,19 @@ def test_mercado_livre_cdp_failure_never_falls_back_to_playwright(
         )
 
 
-def test_mercado_livre_without_cdp_transport_uses_playwright(monkeypatch) -> None:
-    """Sem `edge_cdp_url` configurado, comportamento inalterado: Playwright
-    gerenciado continua sendo usado normalmente."""
-    expected = RawCollectedOffer(
-        source_code="mercadolivre",
-        url="https://produto.mercadolivre.com.br/MLB-1",
-        title="Produto",
-        collected_at=NOW,
-        raw_price="R$ 100,00",
-    )
+def test_mercado_livre_without_cdp_transport_fails_isolated_without_navigation() -> (
+    None
+):
+    """TASK-109 (fechamento da migração): sem `cdp_transport` configurado,
+    falha explícita -- nunca abre Chromium gerenciado como fallback."""
+    provider = MercadoLivreProvider(retry_policy=RetryPolicy(max_attempts=1))
 
-    async def successful_primary(self, request):
-        from app.collection import CollectionResult
-
-        return CollectionResult("mercadolivre", NOW, NOW, (expected,))
-
-    monkeypatch.setattr(PlaywrightStoreProvider, "_collect_once", successful_primary)
-    provider = MercadoLivreProvider()
-
-    result = asyncio.run(
-        provider.collect(CollectionRequest(uuid4(), "mercadolivre", "Produto", NOW))
-    )
-
-    assert result.offers == (expected,)
+    with pytest.raises(EdgeCdpTransportError, match="not configured"):
+        asyncio.run(
+            provider.collect(
+                CollectionRequest(uuid4(), "mercadolivre", "Produto", NOW)
+            )
+        )
 
 
 def test_terabyte_uses_cdp_transport_as_primary_and_extracts_multiple_offers(
@@ -501,13 +491,6 @@ def test_magalu_search_uses_ssr_json_and_returns_multiple_without_playwright(
             assert url.startswith("https://www.magazineluiza.com.br/busca/")
             return html
 
-    class ForbiddenSession:
-        def __init__(self, settings):
-            raise AssertionError("Playwright must not run when SSR JSON is valid")
-
-    monkeypatch.setattr(
-        "app.collection.providers.base.BrowserSession", ForbiddenSession
-    )
     provider = MagaluProvider(
         clock=lambda: NOW,
         search_transport=StaticTransport(),
@@ -551,11 +534,6 @@ def test_magalu_transport_failure_does_not_use_playwright_fallback(monkeypatch) 
 
 
 def test_magalu_does_not_open_managed_browser_for_detail_enrichment(monkeypatch) -> None:
-    class Session:
-        def __init__(self, settings):
-            raise AssertionError("Magalu detail must remain on the CDP SSR result")
-
-    monkeypatch.setattr("app.collection.providers.base.BrowserSession", Session)
     offer = RawCollectedOffer(
         source_code="magalu",
         url="https://www.magazineluiza.com.br/produto/p/basic/",
@@ -1000,6 +978,47 @@ def test_offers_from_rows_skips_cards_without_numeric_price() -> None:
     assert [offer.url for offer in offers] == ["https://x/c"]
 
 
+class _CdpSearchCollectMixin(PlaywrightStoreProvider):
+    """TASK-109: réplica mínima, só para teste, do antigo fluxo genérico de
+    busca de `PlaywrightStoreProvider._collect_once` (removido no
+    fechamento da migração de browser -- cada provider real agora
+    implementa a própria busca via `self._cdp_transport`). Os testes de
+    `_resolve_unknown_availability`/retry/bloqueio abaixo continuam
+    exercitando exatamente a mesma lógica, só trocando `BrowserSession`
+    por `self._cdp_transport` (`_FakeCdpTransport`, definida mais abaixo
+    neste arquivo)."""
+
+    async def _collect_once(self, request: CollectionRequest) -> CollectionResult:
+        started_at = self._clock()
+        async with self._cdp_transport.open_blank_page() as page:
+            try:
+                response = await page.goto(
+                    self.build_url(request.search_query),
+                    wait_until=self.navigation_wait_until,
+                )
+            except PlaywrightTimeoutError:
+                raise ProviderNavigationError(self.source_code, None) from None
+            if response is None or response.status == 408 or response.status >= 500:
+                raise ProviderNavigationError(
+                    self.source_code, response.status if response else None
+                )
+            if response.status in {401, 403, 429}:
+                raise ProviderBlockedError(self.source_code, response.status)
+            try:
+                await page.locator(self.result_selector).first.wait_for(
+                    state="attached", timeout=1000
+                )
+            except Exception as error:
+                raise ProviderBlockedError(
+                    self.source_code, response.status
+                ) from error
+            offers = await self.extract(page, self._clock())
+            if not offers:
+                raise ProviderBlockedError(self.source_code, response.status)
+            offers = await self._resolve_unknown_availability(page, offers)
+        return CollectionResult(self.source_code, started_at, self._clock(), offers)
+
+
 def test_fallback_resolves_only_top_k_unknown_by_price_ascending(monkeypatch) -> None:
     goto_calls: list[str] = []
 
@@ -1069,20 +1088,7 @@ def test_fallback_resolves_only_top_k_unknown_by_price_ascending(monkeypatch) ->
         def locator(self, selector):
             return Locator()
 
-    class Session:
-        def __init__(self, settings):
-            pass
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *args):
-            return None
-
-        async def new_page(self):
-            return Page()
-
-    class FallbackProvider(PlaywrightStoreProvider):
+    class FallbackProvider(_CdpSearchCollectMixin):
         source_code = "fk"
         result_selector = ".offer"
 
@@ -1095,10 +1101,11 @@ def test_fallback_resolves_only_top_k_unknown_by_price_ascending(monkeypatch) ->
         async def resolve_product_availability(self, page):
             return None if goto_calls[-1].endswith("/d") else "Disponível"
 
-    monkeypatch.setattr("app.collection.providers.base.BrowserSession", Session)
     request = CollectionRequest(uuid4(), "fk", "GPU", NOW)
     provider = FallbackProvider(
-        clock=lambda: NOW, availability_fallback_max_candidates=3
+        clock=lambda: NOW,
+        availability_fallback_max_candidates=3,
+        cdp_transport=_FakeCdpTransport(Page()),
     )
 
     result = asyncio.run(provider.collect(request))
@@ -1165,20 +1172,7 @@ def test_fallback_isolates_failure_and_still_resolves_next_candidate(
         def locator(self, selector):
             return Locator()
 
-    class Session:
-        def __init__(self, settings):
-            pass
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *args):
-            return None
-
-        async def new_page(self):
-            return Page()
-
-    class FlakyFallbackProvider(PlaywrightStoreProvider):
+    class FlakyFallbackProvider(_CdpSearchCollectMixin):
         source_code = "fk2"
         result_selector = ".offer"
 
@@ -1191,9 +1185,10 @@ def test_fallback_isolates_failure_and_still_resolves_next_candidate(
         async def resolve_product_availability(self, page):
             return "Disponível"
 
-    monkeypatch.setattr("app.collection.providers.base.BrowserSession", Session)
     request = CollectionRequest(uuid4(), "fk2", "GPU", NOW)
-    provider = FlakyFallbackProvider(clock=lambda: NOW)
+    provider = FlakyFallbackProvider(
+        clock=lambda: NOW, cdp_transport=_FakeCdpTransport(Page())
+    )
 
     result = asyncio.run(provider.collect(request))
 
@@ -1261,20 +1256,7 @@ def test_fallback_stops_entire_cycle_on_blocked_status(monkeypatch) -> None:
         def locator(self, selector):
             return Locator()
 
-    class Session:
-        def __init__(self, settings):
-            pass
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *args):
-            return None
-
-        async def new_page(self):
-            return Page()
-
-    class BlockedFallbackProvider(PlaywrightStoreProvider):
+    class BlockedFallbackProvider(_CdpSearchCollectMixin):
         source_code = "fk3"
         result_selector = ".offer"
 
@@ -1287,10 +1269,11 @@ def test_fallback_stops_entire_cycle_on_blocked_status(monkeypatch) -> None:
         async def resolve_product_availability(self, page):
             return "Disponível"
 
-    monkeypatch.setattr("app.collection.providers.base.BrowserSession", Session)
     request = CollectionRequest(uuid4(), "fk3", "GPU", NOW)
     provider = BlockedFallbackProvider(
-        clock=lambda: NOW, availability_fallback_max_candidates=3
+        clock=lambda: NOW,
+        availability_fallback_max_candidates=3,
+        cdp_transport=_FakeCdpTransport(Page()),
     )
 
     result = asyncio.run(provider.collect(request))
@@ -1339,22 +1322,10 @@ def test_fallback_skips_navigation_when_provider_has_no_product_page_hook(
         def locator(self, selector):
             return Locator()
 
-    class Session:
-        def __init__(self, settings):
-            pass
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *args):
-            return None
-
-        async def new_page(self):
-            return Page()
-
-    monkeypatch.setattr("app.collection.providers.base.BrowserSession", Session)
     request = CollectionRequest(uuid4(), "amazon", "GPU", NOW)
-    provider = AmazonProvider(clock=lambda: NOW)
+    provider = AmazonProvider(
+        clock=lambda: NOW, cdp_transport=_FakeCdpTransport(Page())
+    )
     monkeypatch.setattr(
         provider, "extract", lambda page, collected_at: _async_offers(offers)
     )
@@ -1508,19 +1479,6 @@ def test_installment_enrichment_is_bounded_sorted_and_sequential(monkeypatch) ->
             visited.append(url)
             return Response()
 
-    class Session:
-        def __init__(self, settings):
-            pass
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *args):
-            return None
-
-        async def new_page(self):
-            return Page()
-
     class Provider(PichauProvider):
         async def resolve_installment_options(self, page):
             return (
@@ -1531,7 +1489,6 @@ def test_installment_enrichment_is_bounded_sorted_and_sequential(monkeypatch) ->
                 ),
             )
 
-    monkeypatch.setattr("app.collection.providers.base.BrowserSession", Session)
     offers = tuple(
         RawCollectedOffer(
             source_code="pichau",
@@ -1544,7 +1501,11 @@ def test_installment_enrichment_is_bounded_sorted_and_sequential(monkeypatch) ->
         for price in (40, 10, 30, 20)
     )
 
-    enriched = asyncio.run(Provider().enrich_installment_options(offers))
+    enriched = asyncio.run(
+        Provider(cdp_transport=_FakeCdpTransport(Page())).enrich_installment_options(
+            offers
+        )
+    )
 
     assert visited == [
         "https://example.invalid/10",
@@ -1566,20 +1527,6 @@ def test_installment_enrichment_stops_after_block(monkeypatch) -> None:
             visited.append(url)
             return Response()
 
-    class Session:
-        def __init__(self, settings):
-            pass
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *args):
-            return None
-
-        async def new_page(self):
-            return Page()
-
-    monkeypatch.setattr("app.collection.providers.base.BrowserSession", Session)
     offers = tuple(
         RawCollectedOffer(
             source_code="pichau",
@@ -1592,7 +1539,11 @@ def test_installment_enrichment_stops_after_block(monkeypatch) -> None:
         for index in (1, 2, 3)
     )
 
-    enriched = asyncio.run(PichauProvider().enrich_installment_options(offers))
+    enriched = asyncio.run(
+        PichauProvider(
+            cdp_transport=_FakeCdpTransport(Page())
+        ).enrich_installment_options(offers)
+    )
 
     assert visited == ["https://example.invalid/1"]
     assert all(item.installment_options == () for item in enriched)
@@ -1628,24 +1579,10 @@ def test_marketplace_enrichment_is_bounded_sorted_and_sequential(monkeypatch) ->
             visited.append(url)
             return Response()
 
-    class Session:
-        def __init__(self, settings):
-            pass
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *args):
-            return None
-
-        async def new_page(self):
-            return Page()
-
     class Provider(AmazonProvider):
         async def resolve_marketplace_parties(self, page):
             return (MarketplacePartyKind.PLATFORM, MarketplacePartyKind.PLATFORM)
 
-    monkeypatch.setattr("app.collection.providers.base.BrowserSession", Session)
     offers = tuple(
         RawCollectedOffer(
             source_code="amazon",
@@ -1658,7 +1595,11 @@ def test_marketplace_enrichment_is_bounded_sorted_and_sequential(monkeypatch) ->
         for price in (40, 10, 30, 20)
     )
 
-    enriched = asyncio.run(Provider().enrich_marketplace_parties(offers))
+    enriched = asyncio.run(
+        Provider(cdp_transport=_FakeCdpTransport(Page())).enrich_marketplace_parties(
+            offers
+        )
+    )
 
     assert visited == [
         "https://example.invalid/10",
@@ -1683,19 +1624,6 @@ def test_unified_detail_enrichment_opens_each_offer_only_once(monkeypatch) -> No
         async def goto(self, url, **kwargs):
             visited.append(url)
             return Response()
-
-    class Session:
-        def __init__(self, settings):
-            pass
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *args):
-            return None
-
-        async def new_page(self):
-            return Page()
 
     class Provider(PlaywrightStoreProvider):
         source_code = "future_store"
@@ -1722,7 +1650,6 @@ def test_unified_detail_enrichment_opens_each_offer_only_once(monkeypatch) -> No
         async def resolve_offer_rating(self, page):
             return ("4.7", "82")
 
-    monkeypatch.setattr("app.collection.providers.base.BrowserSession", Session)
     offer = RawCollectedOffer(
         source_code="future_store",
         url="https://example.invalid/product",
@@ -1732,7 +1659,11 @@ def test_unified_detail_enrichment_opens_each_offer_only_once(monkeypatch) -> No
         raw_currency="BRL",
     )
 
-    enriched = asyncio.run(Provider().enrich_offer_details((offer,)))[0]
+    enriched = asyncio.run(
+        Provider(cdp_transport=_FakeCdpTransport(Page())).enrich_offer_details(
+            (offer,)
+        )
+    )[0]
 
     assert visited == [offer.url]
     assert enriched.seller_kind is MarketplacePartyKind.PLATFORM
@@ -1744,13 +1675,6 @@ def test_unified_detail_enrichment_opens_each_offer_only_once(monkeypatch) -> No
 
 
 def test_terabyte_unified_detail_enrichment_never_opens_page(monkeypatch) -> None:
-    class ForbiddenSession:
-        def __init__(self, settings):
-            raise AssertionError("Terabyte must not open product pages")
-
-    monkeypatch.setattr(
-        "app.collection.providers.base.BrowserSession", ForbiddenSession
-    )
     offer = RawCollectedOffer(
         source_code="terabyte",
         url="https://example.invalid/product",
@@ -1774,20 +1698,6 @@ def test_marketplace_enrichment_stops_after_block(monkeypatch) -> None:
             visited.append(url)
             return Response()
 
-    class Session:
-        def __init__(self, settings):
-            pass
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *args):
-            return None
-
-        async def new_page(self):
-            return Page()
-
-    monkeypatch.setattr("app.collection.providers.base.BrowserSession", Session)
     offers = tuple(
         RawCollectedOffer(
             source_code="amazon",
@@ -1800,7 +1710,11 @@ def test_marketplace_enrichment_stops_after_block(monkeypatch) -> None:
         for index in (1, 2, 3)
     )
 
-    enriched = asyncio.run(AmazonProvider().enrich_marketplace_parties(offers))
+    enriched = asyncio.run(
+        AmazonProvider(cdp_transport=_FakeCdpTransport(Page())).enrich_marketplace_parties(
+            offers
+        )
+    )
 
     assert visited == ["https://example.invalid/1"]
     assert all(item.seller_kind is None for item in enriched)
@@ -1867,20 +1781,7 @@ def test_fallback_disabled_when_max_candidates_is_zero(monkeypatch) -> None:
         def locator(self, selector):
             return Locator()
 
-    class Session:
-        def __init__(self, settings):
-            pass
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *args):
-            return None
-
-        async def new_page(self):
-            return Page()
-
-    class ZeroKProvider(PlaywrightStoreProvider):
+    class ZeroKProvider(_CdpSearchCollectMixin):
         source_code = "fk4"
         result_selector = ".offer"
 
@@ -1893,9 +1794,12 @@ def test_fallback_disabled_when_max_candidates_is_zero(monkeypatch) -> None:
         async def resolve_product_availability(self, page):
             return "Disponível"
 
-    monkeypatch.setattr("app.collection.providers.base.BrowserSession", Session)
     request = CollectionRequest(uuid4(), "fk4", "GPU", NOW)
-    provider = ZeroKProvider(clock=lambda: NOW, availability_fallback_max_candidates=0)
+    provider = ZeroKProvider(
+        clock=lambda: NOW,
+        availability_fallback_max_candidates=0,
+        cdp_transport=_FakeCdpTransport(Page()),
+    )
 
     result = asyncio.run(provider.collect(request))
 
@@ -1937,20 +1841,7 @@ def test_fallback_noop_when_no_unknown_candidates(monkeypatch) -> None:
         def locator(self, selector):
             return Locator()
 
-    class Session:
-        def __init__(self, settings):
-            pass
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *args):
-            return None
-
-        async def new_page(self):
-            return Page()
-
-    class NoUnknownProvider(PlaywrightStoreProvider):
+    class NoUnknownProvider(_CdpSearchCollectMixin):
         source_code = "fk5"
         result_selector = ".offer"
 
@@ -1963,9 +1854,10 @@ def test_fallback_noop_when_no_unknown_candidates(monkeypatch) -> None:
         async def resolve_product_availability(self, page):
             return "Disponível"
 
-    monkeypatch.setattr("app.collection.providers.base.BrowserSession", Session)
     request = CollectionRequest(uuid4(), "fk5", "GPU", NOW)
-    provider = NoUnknownProvider(clock=lambda: NOW)
+    provider = NoUnknownProvider(
+        clock=lambda: NOW, cdp_transport=_FakeCdpTransport(Page())
+    )
 
     result = asyncio.run(provider.collect(request))
 
@@ -2005,20 +1897,7 @@ def test_fallback_treats_resolve_product_availability_exception_as_unresolved(
         def locator(self, selector):
             return Locator()
 
-    class Session:
-        def __init__(self, settings):
-            pass
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *args):
-            return None
-
-        async def new_page(self):
-            return Page()
-
-    class RaisingResolveProvider(PlaywrightStoreProvider):
+    class RaisingResolveProvider(_CdpSearchCollectMixin):
         source_code = "fk6"
         result_selector = ".offer"
 
@@ -2031,9 +1910,10 @@ def test_fallback_treats_resolve_product_availability_exception_as_unresolved(
         async def resolve_product_availability(self, page):
             raise RuntimeError("evidencia inesperada quebrou a extracao")
 
-    monkeypatch.setattr("app.collection.providers.base.BrowserSession", Session)
     request = CollectionRequest(uuid4(), "fk6", "GPU", NOW)
-    provider = RaisingResolveProvider(clock=lambda: NOW)
+    provider = RaisingResolveProvider(
+        clock=lambda: NOW, cdp_transport=_FakeCdpTransport(Page())
+    )
 
     result = asyncio.run(provider.collect(request))
 
@@ -2071,20 +1951,7 @@ def test_provider_rejects_silent_empty_collection(monkeypatch) -> None:
         def locator(self, selector):
             return Locator()
 
-    class Session:
-        def __init__(self, settings):
-            pass
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *args):
-            return None
-
-        async def new_page(self):
-            return Page()
-
-    class EmptyProvider(PlaywrightStoreProvider):
+    class EmptyProvider(_CdpSearchCollectMixin):
         source_code = "empty"
         result_selector = ".offer"
 
@@ -2094,11 +1961,14 @@ def test_provider_rejects_silent_empty_collection(monkeypatch) -> None:
         async def extract(self, page, collected_at):
             return ()
 
-    monkeypatch.setattr("app.collection.providers.base.BrowserSession", Session)
     request = CollectionRequest(uuid4(), "empty", "GPU", NOW)
 
     with pytest.raises(ProviderBlockedError):
-        asyncio.run(EmptyProvider(clock=lambda: NOW).collect(request))
+        asyncio.run(
+            EmptyProvider(
+                clock=lambda: NOW, cdp_transport=_FakeCdpTransport(Page())
+            ).collect(request)
+        )
 
 
 def test_provider_retries_safe_navigation_timeout_only(monkeypatch) -> None:
@@ -2110,20 +1980,7 @@ def test_provider_retries_safe_navigation_timeout_only(monkeypatch) -> None:
             calls += 1
             raise PlaywrightTimeoutError("timeout")
 
-    class Session:
-        def __init__(self, settings):
-            pass
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *args):
-            return None
-
-        async def new_page(self):
-            return Page()
-
-    class TimeoutProvider(PlaywrightStoreProvider):
+    class TimeoutProvider(_CdpSearchCollectMixin):
         source_code = "timeout"
         result_selector = ".offer"
 
@@ -2133,10 +1990,10 @@ def test_provider_retries_safe_navigation_timeout_only(monkeypatch) -> None:
         async def extract(self, page, collected_at):
             raise AssertionError("navigation failure must happen before extraction")
 
-    monkeypatch.setattr("app.collection.providers.base.BrowserSession", Session)
     request = CollectionRequest(uuid4(), "timeout", "GPU", NOW)
     provider = TimeoutProvider(
         clock=lambda: NOW,
+        cdp_transport=_FakeCdpTransport(Page()),
         retry_policy=RetryPolicy(
             max_attempts=3,
             base_delay_seconds=0.001,
@@ -2150,194 +2007,11 @@ def test_provider_retries_safe_navigation_timeout_only(monkeypatch) -> None:
     assert calls == 3
 
 
-def test_pichau_navigates_with_commit_and_cards_release_collection(
-    monkeypatch,
-) -> None:
-    """TASK-075 (correção 2): domcontentloaded demora demais na Pichau; a
-    navegação usa "commit" e a coleta segue assim que os cards aparecem,
-    sem esperar pelo estado de "zero resultados" (que nunca chega aqui)."""
-    goto_kwargs: list[dict] = []
-
-    class Response:
-        status = 200
-
-    class HangingFirst:
-        async def wait_for(self, **kwargs):
-            await asyncio.Event().wait()
-
-    class HangingLocator:
-        first = HangingFirst()
-
-    class ImmediateFirst:
-        async def wait_for(self, **kwargs):
-            return None
-
-    class ImmediateLocator:
-        first = ImmediateFirst()
-
-    class Page:
-        async def goto(self, url, **kwargs):
-            goto_kwargs.append(kwargs)
-            return Response()
-
-        def locator(self, selector):
-            return ImmediateLocator()
-
-        def get_by_text(self, text, **kwargs):
-            return HangingLocator()
-
-    class Session:
-        def __init__(self, settings):
-            pass
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *args):
-            return None
-
-        async def new_page(self):
-            return Page()
-
-    offers = (
-        RawCollectedOffer(
-            source_code="pichau",
-            url="https://x/gpu",
-            title="GPU",
-            collected_at=NOW,
-            raw_price="R$ 10,00",
-            raw_currency="BRL",
-            raw_availability=None,
-        ),
-    )
-
-    monkeypatch.setattr("app.collection.providers.base.BrowserSession", Session)
-    request = CollectionRequest(uuid4(), "pichau", "GPU", NOW)
-    provider = PichauProvider(clock=lambda: NOW, availability_fallback_max_candidates=0)
-
-    async def _extract(page, collected_at):
-        return offers
-
-    monkeypatch.setattr(provider, "extract", _extract)
-
-    result = asyncio.run(provider.collect(request))
-
-    assert goto_kwargs[0]["wait_until"] == "commit"
-    assert result.offers == offers
-
-
-def test_pichau_zero_results_releases_valid_empty_collection(monkeypatch) -> None:
-    """Busca válida sem produtos não vira provider_unavailable: coleta
-    válida com zero ofertas, extract nunca roda."""
-
-    class Response:
-        status = 200
-
-    class HangingFirst:
-        async def wait_for(self, **kwargs):
-            await asyncio.Event().wait()
-
-    class HangingLocator:
-        first = HangingFirst()
-
-    class ImmediateFirst:
-        async def wait_for(self, **kwargs):
-            return None
-
-    class ImmediateLocator:
-        first = ImmediateFirst()
-
-    class Page:
-        async def goto(self, url, **kwargs):
-            return Response()
-
-        def locator(self, selector):
-            return HangingLocator()
-
-        def get_by_text(self, text, **kwargs):
-            return ImmediateLocator()
-
-    class Session:
-        def __init__(self, settings):
-            pass
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *args):
-            return None
-
-        async def new_page(self):
-            return Page()
-
-    monkeypatch.setattr("app.collection.providers.base.BrowserSession", Session)
-    request = CollectionRequest(uuid4(), "pichau", "zzz-nao-existe", NOW)
-    provider = PichauProvider(clock=lambda: NOW, availability_fallback_max_candidates=0)
-
-    async def _extract_should_not_run(page, collected_at):
-        raise AssertionError("extract nao deve rodar quando o estado eh vazio")
-
-    monkeypatch.setattr(provider, "extract", _extract_should_not_run)
-
-    result = asyncio.run(provider.collect(request))
-
-    assert result.offers == ()
-
-
-def test_pichau_neither_state_within_timeout_fails_per_existing_policy(
-    monkeypatch,
-) -> None:
-    """Se nem cards nem o estado vazio aparecerem, a política de falha
-    continua a mesma de hoje (ProviderBlockedError), não um novo tipo."""
-
-    class Response:
-        status = 200
-
-    class FailingFirst:
-        async def wait_for(self, **kwargs):
-            raise PlaywrightTimeoutError("timeout")
-
-    class FailingLocator:
-        first = FailingFirst()
-
-    class Page:
-        async def goto(self, url, **kwargs):
-            return Response()
-
-        def locator(self, selector):
-            return FailingLocator()
-
-        def get_by_text(self, text, **kwargs):
-            return FailingLocator()
-
-    class Session:
-        def __init__(self, settings):
-            pass
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *args):
-            return None
-
-        async def new_page(self):
-            return Page()
-
-    monkeypatch.setattr("app.collection.providers.base.BrowserSession", Session)
-    request = CollectionRequest(uuid4(), "pichau", "GPU", NOW)
-    provider = PichauProvider(clock=lambda: NOW, availability_fallback_max_candidates=0)
-
-    async def _extract_should_not_run(page, collected_at):
-        raise AssertionError("extract nao deve rodar quando nenhum estado aparece")
-
-    monkeypatch.setattr(provider, "extract", _extract_should_not_run)
-
-    with pytest.raises(ProviderBlockedError):
-        asyncio.run(provider.collect(request))
-
-
 class _FakeCdpTransport:
-    """Dublê de `EdgeCdpTransport.open_page` para os testes de CDP da Pichau."""
+    """Dublê de `EdgeCdpTransport.open_page`/`open_blank_page` -- reaproveitado
+    tanto pelos testes de CDP de busca (Pichau) quanto pelos de enriquecimento
+    de detalhe (`_open_detail_page`, TASK-109: fechamento da migração de
+    browser removeu o fallback de `BrowserSession`)."""
 
     def __init__(self, page):
         self._page = page
@@ -2345,6 +2019,19 @@ class _FakeCdpTransport:
     @asynccontextmanager
     async def open_page(self, url):
         yield self._page
+
+    @asynccontextmanager
+    async def open_blank_page(self):
+        yield self._page
+
+    async def run(self, url, *, readiness_selector, extract):
+        """Dublê de `EdgeCdpTransport.run` -- usado pelos providers reais
+        (Amazon/KaBuM!/Terabyte) cuja busca navega e extrai num único
+        passo. Ao contrário de `open_page`, chama `page.goto(url)`
+        explicitamente para que os testes que contam navegações
+        (`goto_calls`) continuem corretos."""
+        await self._page.goto(url)
+        return await extract(self._page)
 
 
 def test_pichau_cdp_results_release_collection(monkeypatch) -> None:

@@ -36,6 +36,28 @@
   Windows bloqueada (não desconectada) não documentado ainda.
 - **Fora de escopo:** implementação, deploy, remoção do Chromium antes
   da validação completa das seis lojas.
+- **Fechamento (2026-08-23):** as seis lojas confirmadas via Edge/CDP;
+  `BrowserSession`/Chromium removidos de todo caminho real de coleta
+  (`app/collection/providers/base.py`/`stores.py`) -- sem `cdp_transport`
+  configurado, cada provider falha explícito (`EdgeCdpTransportError`),
+  nunca mais abre Chromium gerenciado como fallback silencioso.
+  `BrowserSession` permanece só como infraestrutura de teste hermética
+  (obter um `Page` real para parsing de HTML estático local, sem rede),
+  decisão tomada durante o audit ao constatar que ~40 testes a usam
+  exatamente para isso, sem relação com o fallback de coleta removido.
+  `collection_worker` saiu do `compose.yaml`; Dockerfile parou de instalar
+  Chromium/Xvfb (nenhum serviço Docker restante abre navegador); binário
+  do Chromium continua necessário só para rodar a suíte de testes
+  local/CI (`playwright install chromium`), fora da imagem de produção.
+  `ops_controller` ganhou `WindowsOpsAgentAdapter`, resolvendo o "ponto em
+  aberto" do canal de status/controle: HTTP loopback assinado
+  (HMAC+timestamp+nonce) via `host.docker.internal`, mesmo esquema já
+  usado pelo `DockerOpsAdapter`, sem shell genérico. Documentação nova:
+  `docs/architecture/windows-collection-worker.md` (arquitetura completa
+  do runtime DEV) e `docs/architecture/playwright.md`/
+  `docs/architecture/service-operations.md` atualizados. Nenhum deploy
+  feito -- produção continua nos sete serviços Docker
+  (`docs/installation/windows-server.md` inalterado de propósito).
 
 ## DEC-095 — TASK-108: fila justa por usuário, cooldown individual, sem monopolização
 

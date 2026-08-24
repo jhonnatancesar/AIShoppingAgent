@@ -157,8 +157,16 @@ services:
     environment:
       DOCKER_HOST: http://docker-socket-proxy:2375
       OPS_CONTROLLER_SECRET_FILE: /run/secrets/ops_controller_secret
+      # TASK-109 (fechamento): `collection_worker` não existe mais como
+      # container -- status/start/restart passam pelo Windows Ops Agent
+      # (ops_agent/collection_worker_ops_agent.py), HTTP loopback assinado
+      # (HMAC+timestamp+nonce) na própria máquina Windows. `host.docker.internal`
+      # é resolvido pelo Docker Desktop for Windows para o host, inclusive
+      # portas em 127.0.0.1 do host (sem `extra_hosts`/rede nova).
+      WINDOWS_OPS_AGENT_URL: ${WINDOWS_OPS_AGENT_URL:-http://host.docker.internal:8021}
+      WINDOWS_OPS_AGENT_SECRET_FILE: /run/secrets/windows_ops_agent_secret
     expose: ["8010"]
-    secrets: [ops_controller_secret]
+    secrets: [ops_controller_secret, windows_ops_agent_secret]
     networks: [default, docker_ops]
     depends_on: [docker-socket-proxy]
     restart: unless-stopped
@@ -179,88 +187,13 @@ services:
     networks: [docker_ops]
     restart: unless-stopped
 
-  collection_worker:
-    logging: *bounded-logging
-    image: aishoppingagent-app:local
-    build:
-      # TASK-091 (endurecimento de 2026-08-21): contexto na raiz do
-      # repositório -- o Dockerfile precisa enxergar `backend/` e
-      # `frontend/` para o estágio de build do frontend (Node só em
-      # build-time). Os três serviços continuam a mesma imagem única.
-      context: .
-      dockerfile: Dockerfile
-    # TASK-081: PID 1 do container roda o worker Python direto, sem
-    # semantica de init -- processos internos do Chromium (renderer/GPU/
-    # crashpad_handler) ficam orfaos apos reparenting e nunca sao colhidos
-    # apos browser.close() do Playwright, acumulando como zumbis. init:
-    # true delega o PID 1 para o init embutido do Docker (tini), que colhe
-    # esses processos corretamente. Só neste servico -- nenhum outro lança
-    # Chromium/Playwright.
-    init: true
-    environment:
-      AISHOPPING_ENVIRONMENT: ${AISHOPPING_ENVIRONMENT:-development}
-      AISHOPPING_LOG_LEVEL: ${AISHOPPING_LOG_LEVEL:-INFO}
-      AISHOPPING_DATABASE_HOST: database
-      AISHOPPING_DATABASE_PORT: 5432
-      AISHOPPING_DATABASE_NAME: ${POSTGRES_DB:-aishoppingagent}
-      AISHOPPING_DATABASE_USER: ${POSTGRES_USER:-aishoppingagent}
-      AISHOPPING_DATABASE_PASSWORD_FILE: /run/secrets/postgres_password
-      # TASK-063: normalização de título e classificação de relevância
-      # (mission x oferta) via AIProviderManager. Perfil ADMIN/DEV (mesma
-      # chave já usada pela api para essa cascata) -- não usa a chave/cota
-      # do perfil USER, reservada a conversas reais no Telegram. Nenhum
-      # outro secret (token do bot, segredo do webhook, chave Gemini USER)
-      # é concedido a este serviço.
-      AISHOPPING_GEMINI_API_KEY_ADMIN_DEV_FILE: /run/secrets/gemini_api_key_admin_dev
-      AISHOPPING_GROQ_API_KEY_FILE: /run/secrets/groq_api_key
-      AISHOPPING_OBSERVABILITY_ENABLED: "true"
-      AISHOPPING_OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://otel-collector:4318/v1/traces
-      AISHOPPING_TRACE_SAMPLE_RATIO: ${AISHOPPING_TRACE_SAMPLE_RATIO:-1.0}
-      AISHOPPING_EXTERNAL_HTTP_TIMEOUT_SECONDS: ${AISHOPPING_EXTERNAL_HTTP_TIMEOUT_SECONDS:-10}
-      # TASK-075 (correção): timeout de navegação do Playwright, próprio --
-      # só o collection_worker abre página (Playwright); api/telegram_notifier
-      # não navegam, por isso não recebem esta variável.
-      AISHOPPING_BROWSER_NAVIGATION_TIMEOUT_SECONDS: ${AISHOPPING_BROWSER_NAVIGATION_TIMEOUT_SECONDS:-45}
-      AISHOPPING_SAFE_RETRY_MAX_ATTEMPTS: ${AISHOPPING_SAFE_RETRY_MAX_ATTEMPTS:-3}
-      AISHOPPING_RETRY_BASE_DELAY_SECONDS: ${AISHOPPING_RETRY_BASE_DELAY_SECONDS:-0.25}
-      AISHOPPING_RETRY_MAX_DELAY_SECONDS: ${AISHOPPING_RETRY_MAX_DELAY_SECONDS:-5}
-      AISHOPPING_RETRY_AFTER_CAP_SECONDS: ${AISHOPPING_RETRY_AFTER_CAP_SECONDS:-30}
-      AISHOPPING_CIRCUIT_FAILURE_THRESHOLD: ${AISHOPPING_CIRCUIT_FAILURE_THRESHOLD:-5}
-      AISHOPPING_CIRCUIT_OPEN_SECONDS: ${AISHOPPING_CIRCUIT_OPEN_SECONDS:-30}
-      AISHOPPING_WORKER_FAILURE_BACKOFF_SECONDS: ${AISHOPPING_WORKER_FAILURE_BACKOFF_SECONDS:-5}
-      AISHOPPING_COLLECTION_POLL_SECONDS: ${AISHOPPING_COLLECTION_POLL_SECONDS:-15}
-      AISHOPPING_COLLECTION_BATCH_SIZE: ${AISHOPPING_COLLECTION_BATCH_SIZE:-25}
-      # DEC-046: 30 min é a implantação temporária com 8 GB de RAM; o alvo
-      # da V1 é 15 min após o upgrade para 16 GB (docs/architecture/mission-schedules.md).
-      AISHOPPING_COLLECTION_SCHEDULE_INTERVAL_MINUTES: ${AISHOPPING_COLLECTION_SCHEDULE_INTERVAL_MINUTES:-30}
-      AISHOPPING_COLLECTION_SCHEDULE_STAGGER_SECONDS: ${AISHOPPING_COLLECTION_SCHEDULE_STAGGER_SECONDS:-300}
-      AISHOPPING_COLLECTION_STALE_RUN_MINUTES: ${AISHOPPING_COLLECTION_STALE_RUN_MINUTES:-10}
-      # DEC-046: 2 é temporário enquanto o servidor tiver 8 GB de RAM (reduz
-      # o pico de até 4 Chromium simultâneos pela metade); volta a 4 após o
-      # upgrade para 16 GB, mediante validação de CPU/RAM.
-      AISHOPPING_COLLECTION_MAX_CONCURRENCY: ${AISHOPPING_COLLECTION_MAX_CONCURRENCY:-2}
-      AISHOPPING_WORKER_METRICS_PORT: 9464
-    command: ["python", "-m", "app.collection.worker"]
-    expose:
-      - "9464"
-    secrets:
-      - postgres_password
-      - gemini_api_key_admin_dev
-      - groq_api_key
-    depends_on:
-      database:
-        condition: service_healthy
-    restart: unless-stopped
-    healthcheck:
-      test:
-        - CMD
-        - python
-        - -c
-        - "import urllib.request; urllib.request.urlopen('http://localhost:9464/metrics', timeout=2)"
-      interval: 10s
-      timeout: 3s
-      retries: 5
-      start_period: 5s
+  # `collection_worker` saiu do Docker (TASK-109): roda nativo no Windows
+  # (processo Python + Microsoft Edge real via CDP), fora deste
+  # compose.yaml. Ver docs/architecture/windows-collection-worker.md para
+  # a arquitetura completa e docs/tasks/TASK-109.md para o histórico da
+  # migração. `ops_controller` continua expondo status/start/restart para
+  # ele -- via o Windows Ops Agent (HTTP loopback assinado), não mais via
+  # Docker.
 
   database:
     logging: *bounded-logging
@@ -364,3 +297,11 @@ secrets:
     file: ${AISHOPPING_SECRETS_DIR:-./.secrets}/telegram_webhook_secret
   ops_controller_secret:
     file: ${AISHOPPING_SECRETS_DIR:-./.secrets}/ops_controller_secret
+  windows_ops_agent_secret:
+    # TASK-109: mesmo valor gerado/lido pelo Windows Ops Agent em
+    # C:\ProgramData\AIShoppingAgent\secrets\ops-agent-secret (gerado
+    # automaticamente no primeiro start do serviço, ver
+    # ops_agent/collection_worker_ops_agent.py:_load_or_create_secret).
+    # Precisa ser copiado manualmente para este arquivo -- os dois lados
+    # não sincronizam sozinhos, e o valor nunca deve passar por chat/Git.
+    file: ${AISHOPPING_SECRETS_DIR:-./.secrets}/windows_ops_agent_secret

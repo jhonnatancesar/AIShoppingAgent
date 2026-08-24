@@ -17,13 +17,27 @@ para o diretório e `0600` para cada arquivo.
 | Token do bot Telegram | `telegram_bot_token` | sim | não | sim | não |
 | Segredo do webhook | `telegram_webhook_secret` | sim | não | não | não |
 | Assinatura do controlador operacional | `ops_controller_secret` | sim | não | não | não |
+| Assinatura do Windows Ops Agent | `windows_ops_agent_secret` | não | não | não | não |
 
-O `collection_worker` (TASK-063) usa a chave Gemini ADMIN/DEV — a mesma
-cascata premium/Groq/gratuito já usada pela `api` (nunca a chave/cota do
-perfil `USER`, reservada a conversas reais no Telegram) — só para
-normalizar título de exibição e classificar a correspondência
-missão↔oferta antes de um alerta. Não recebe token do bot, segredo do
-webhook nem a chave Gemini `USER`.
+A coluna "Collection Worker" descreve o que o worker nativo Windows
+precisa (TASK-109: não é mais um serviço Docker, não monta `/run/secrets`
+-- os mesmos secrets chegam por arquivo local no host, fora do Git/chat,
+ver `docs/architecture/windows-collection-worker.md`). O worker (TASK-063)
+usa a chave Gemini ADMIN/DEV — a mesma cascata premium/Groq/gratuito já
+usada pela `api` (nunca a chave/cota do perfil `USER`, reservada a
+conversas reais no Telegram) — só para normalizar título de exibição e
+classificar a correspondência missão↔oferta antes de um alerta. Não
+recebe token do bot, segredo do webhook nem a chave Gemini `USER`.
+
+`windows_ops_agent_secret` (TASK-109, fechamento) é consumido só pelo
+`ops_controller` (Docker), para assinar chamadas ao Windows Ops Agent
+(`http://host.docker.internal:8021`) -- precisa ser exatamente o mesmo
+valor já gerado pelo Ops Agent em
+`C:\ProgramData\AIShoppingAgent\secrets\ops-agent-secret`; os dois lados
+não sincronizam sozinhos, copiar manualmente. `ops_controller_secret` e
+`windows_ops_agent_secret` são os únicos dois secrets que o próprio
+`ops_controller` monta (a coluna "API" acima cobre só quem CHAMA o
+controller, assinando a requisição -- não quem a recebe).
 
 `POSTGRES_USER`, nomes de banco, URLs e nomes de modelo não são tratados como
 secrets. Senhas de usuário e tokens de ação da TASK-061 permanecem no banco
