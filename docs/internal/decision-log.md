@@ -1,5 +1,69 @@
 # Decision Log
 
+## DEC-097 — Dedupe da TASK-093 explícito na fonte; avaliação de alerta é etapa derivada da coleta
+
+- **Data:** 2026-08-24.
+- **Classificação:** Correção de bug arquitetural (não TASK-108, achado
+  durante a retomada da TASK-108 — trabalho mantido em commit separado).
+- **Bug confirmado:** a TASK-093 permite legitimamente reaproveitar a
+  mesma `PriceObservation` quando o estado comercial de uma oferta não
+  muda entre duas coletas. `_persist_phase_c` reconstruía `current`/
+  `previous` a partir de `pending.observation_id`/`previous_observation_id`
+  e comparava via `evaluate_price_alerts(...)` sem saber se essa
+  reutilização tinha acontecido — quando o reaproveitamento coincidia com
+  a própria observação anterior da missão (`current.id == previous.id`),
+  o guard de `app/alerts/evaluator.py::_validate_entities`
+  (`"observations must be distinct"`, corretíssimo e mantido intocado)
+  disparava `PriceAlertEvaluationError`, capturada pelo `except Exception`
+  genérico de `_process_claim` — que marcava o `CollectionRun` inteiro
+  como `FAILED`, mesmo com a coleta e a persistência da Fase A já
+  corretas e já commitadas. Confirmado com prova empírica (worktree
+  isolado contra `origin/main` limpo, antes de qualquer código da
+  TASK-108) em dois testes de integração legados
+  (`test_source_backoff_lifecycle_across_batches`,
+  `test_prelist_ready_fires_once_then_errata_corrects_a_cheaper_late_offer`)
+  que recoletam a mesma oferta sem mudança de preço.
+- **Decisão 1 — dedupe explícito na fonte:** `_persist_phase_a` (onde a
+  TASK-093 decide `observation`/reaproveitamento) agora calcula e devolve
+  explicitamente, por oferta pendente (`_PendingOffer`):
+  `observation_created: bool` (uma linha nova foi persistida vs.
+  reaproveitada) e `alert_comparison: PriceObservationComparison`
+  (`FIRST_OBSERVATION` / `CHANGED` / `UNCHANGED_REUSED`). `_persist_phase_c`
+  nunca mais infere isso comparando IDs reconstruídos por acidente — só
+  lê o campo.
+- **Decisão 2 — contrato de 3 casos para o evaluator:** primeira
+  observação (`previous is None`) mantém a semântica já existente
+  (evaluator recebe `previous=None`, pode gerar `PRICE_TARGET_REACHED` já
+  na primeira leitura); mudança real (`CHANGED`, IDs distintos) chama o
+  evaluator normalmente; estado reaproveitado (`UNCHANGED_REUSED`) **não
+  chama o evaluator** — não é uma nova comparação, é reconfirmação do
+  mesmo estado já avaliado antes por aquela missão, resultado normal, zero
+  alertas, não é erro.
+- **Decisão 3 — avaliação de alerta é etapa derivada, não atômica à
+  coleta:** a oferta já foi coletada e persistida corretamente (Fase A,
+  transação própria já commitada) antes de a Fase C sequer tentar avaliar
+  alertas. Um erro real e inesperado do evaluator (não o caso estrutural
+  do item 2, resolvido na fonte) passou a ficar isolado por oferta —
+  `try/except` ao redor só da chamada a `evaluate_price_alerts`, log
+  estruturado (`price_alert_evaluation_failed`, mesmo padrão já usado
+  para falha de enriquecimento em `_process_claim`), sem publicar
+  eventos falsos e sem propagar a exceção. `finish_collection_run(...,
+  SUCCEEDED, ...)`, reset de backoff e avaliação de pré-lista continuam
+  rodando normalmente mesmo se uma oferta específica tiver erro de
+  avaliação de alerta.
+- **Auditoria de callers:** `evaluate_price_alerts` tem exatamente um
+  chamador em código de produção (`_persist_phase_c`); nenhum outro
+  caminho compara `PriceObservation`s ou infere mudança por IDs.
+- **Fora de escopo desta correção:** TASK-108 (fila justa/throttle por
+  loja/config ADMIN) permanece em commit separado, testes próprios
+  intocados por este fix. Achado à parte, não relacionado: dois testes
+  unitários de `test_collection_orchestration_async.py`
+  (`test_claim_due_schedule_creates_runs_and_advances`,
+  `test_claim_due_collections_skips_mission_already_running`) referenciam
+  `find_due_schedules_async`, renomeada para `_select_due_schedules_for_batch`
+  pela própria TASK-108 — quebra de teste do escopo da TASK-108, não desta
+  correção; sinalizado, não corrigido aqui.
+
 ## DEC-096 — TASK-109: migrar collection_worker para Windows nativo com Edge
 
 - **Data:** 2026-08-22.

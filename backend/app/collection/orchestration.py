@@ -9,6 +9,7 @@ transações jamais mantém um `await` externo (IA, HTTP, Playwright) aberto.
 """
 
 import asyncio
+import enum
 import logging
 import traceback
 from collections.abc import Mapping, Sequence
@@ -715,6 +716,34 @@ def _limit_intermediate_candidates(offers: tuple, *, limit: int) -> tuple:
         ),
     )
     return tuple(ordered[:limit])
+class PriceObservationComparison(enum.Enum):
+    """Resultado explícito do dedupe da TASK-093, na fonte (Fase A), para o
+    contrato de avaliação de alerta de preço da Fase C -- descreve a relação
+    entre a observação atual da oferta e a observação anterior DESTA missão
+    (não entre a atual e a última observação global da oferta, que é um
+    dedupe ortogonal). Fase C nunca mais deve inferir isso comparando UUIDs
+    reconstruídos por acidente; ela só lê este campo.
+
+    FIRST_OBSERVATION: não existe observação anterior desta missão para esta
+    oferta -- semântica de primeira observação (evaluator recebe
+    ``previous=None``).
+
+    CHANGED: existe observação anterior desta missão e ela é uma linha
+    diferente da observação atual -- comparação real, evaluator roda normal.
+
+    UNCHANGED_REUSED: existe observação anterior desta missão e ela É a
+    mesma linha que a observação atual (a Fase A reaproveitou a última
+    observação global por estado comercial idêntico, e essa reaproveitada
+    também é a última observação já vista por esta missão). Não é uma nova
+    comparação -- é reconfirmação do mesmo estado já avaliado antes. Não
+    chamar o evaluator; resultado normal, zero alertas, não é erro.
+    """
+
+    FIRST_OBSERVATION = "first_observation"
+    CHANGED = "changed"
+    UNCHANGED_REUSED = "unchanged_reused"
+
+
 @dataclass(frozen=True, slots=True)
 class _PendingOffer:
     """Uma oferta já persistida na Fase A; o que falta decidir na Fase B."""
@@ -729,6 +758,8 @@ class _PendingOffer:
     raw_title: str
     needs_relevance: bool
     needs_display_name: bool
+    observation_created: bool
+    alert_comparison: PriceObservationComparison
     previous_observation_id: UUID | None
     previous_amount: Decimal | None
     previous_currency: str | None
@@ -949,6 +980,19 @@ async def _persist_phase_a(
                     await session.flush()
             offer.last_seen_at = item.raw_offer.collected_at
 
+            # Correção arquitetural (dedupe da TASK-093 x contrato de
+            # alertas, DEC-097): fonte única de verdade do dedupe, calculada
+            # aqui -- junto da lógica que efetivamente decide `observation`
+            # -- para a Fase C nunca mais deduzir isso comparando IDs
+            # reconstruídos por acidente.
+            observation_created = not redundant
+            if previous is None:
+                alert_comparison = PriceObservationComparison.FIRST_OBSERVATION
+            elif previous.id == observation.id:
+                alert_comparison = PriceObservationComparison.UNCHANGED_REUSED
+            else:
+                alert_comparison = PriceObservationComparison.CHANGED
+
             if (
                 previous is not None
                 and previous.availability != observation.availability
@@ -993,6 +1037,8 @@ async def _persist_phase_a(
                         existing_relevance is None and forced_relevance is None
                     ),
                     needs_display_name=product.display_name is None,
+                    observation_created=observation_created,
+                    alert_comparison=alert_comparison,
                     forced_relevance=forced_relevance,
                     previous_observation_id=previous.id
                     if previous is not None
@@ -1145,13 +1191,26 @@ async def _persist_phase_c(
                 if product is not None and product.display_name is None:
                     product.display_name = ai_outcome.display_title
 
-            if relevance is OfferRelevance.MATCH and await _product_selected_for_mission(
-                session,
-                mission_id=mission.id,
-                product_id=pending.product_id,
-                request_kind=current_criteria.request_kind,
-                selection_mode=current_criteria.variant_selection_mode,
+            if (
+                relevance is OfferRelevance.MATCH
+                and pending.alert_comparison
+                is not PriceObservationComparison.UNCHANGED_REUSED
+                and await _product_selected_for_mission(
+                    session,
+                    mission_id=mission.id,
+                    product_id=pending.product_id,
+                    request_kind=current_criteria.request_kind,
+                    selection_mode=current_criteria.variant_selection_mode,
+                )
             ):
+                # UNCHANGED_REUSED nunca chega aqui (guard acima): a Fase A
+                # já disse explicitamente que não há nova comparação a
+                # fazer -- estado comercial reconfirmado idêntico ao já
+                # avaliado antes para esta missão. Resultado normal, zero
+                # alertas, sem chamar o evaluator. Só FIRST_OBSERVATION e
+                # CHANGED chegam aqui, e ambos garantem `current.id !=
+                # previous.id` (quando previous existe), preservando o
+                # guard de distinção do evaluator (app/alerts/evaluator.py).
                 current = PriceObservation(
                     id=pending.observation_id,
                     offer_id=pending.offer_id,
@@ -1176,9 +1235,31 @@ async def _persist_phase_c(
                     target_amount=outcome.target_amount,
                     target_currency=outcome.target_currency,
                 )
-                for candidate in evaluate_price_alerts(
-                    alert_mission, alert_criteria, current, previous
-                ):
+                try:
+                    candidates = evaluate_price_alerts(
+                        alert_mission, alert_criteria, current, previous
+                    )
+                except Exception:
+                    # Avaliação/notificação de alerta é uma etapa derivada
+                    # da coleta, não parte atômica dela: a oferta já foi
+                    # coletada e persistida corretamente (Fase A, transação
+                    # própria já commitada) e a classificação de relevância
+                    # desta oferta já foi persistida acima nesta mesma
+                    # transação. Um erro real do evaluator (dado
+                    # inconsistente, bug) não deve falsificar o resultado
+                    # da coleta nem derrubar o CollectionRun inteiro --
+                    # isola-se aqui, loga, e segue para a próxima oferta.
+                    logger.warning(
+                        "price_alert_evaluation_failed",
+                        extra={
+                            "mission_id": str(mission.id),
+                            "offer_id": str(pending.offer_id),
+                            "observation_id": str(pending.observation_id),
+                        },
+                        exc_info=True,
+                    )
+                    candidates = ()
+                for candidate in candidates:
                     await publish_event_async(
                         session,
                         event_type=candidate.event_type,

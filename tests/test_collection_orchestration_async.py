@@ -52,6 +52,7 @@ from app.collection.orchestration import (
     _PhaseAOutcome,
     _prelist_commercial_key,
     _PrelistCandidate,
+    PriceObservationComparison,
     _record_failure,
     _reset_source_backoff,
     _resolve_offer,
@@ -752,6 +753,8 @@ def test_run_phase_b_calls_ai_only_for_pending_flags() -> None:
         raw_title="Título bruto",
         needs_relevance=True,
         needs_display_name=False,
+        observation_created=True,
+        alert_comparison=PriceObservationComparison.FIRST_OBSERVATION,
         previous_observation_id=None,
         previous_amount=None,
         previous_currency=None,
@@ -858,6 +861,8 @@ def test_persist_phase_c_persists_relevance_and_finishes_run(monkeypatch) -> Non
         raw_title="Título bruto",
         needs_relevance=True,
         needs_display_name=True,
+        observation_created=True,
+        alert_comparison=PriceObservationComparison.FIRST_OBSERVATION,
         previous_observation_id=None,
         previous_amount=None,
         previous_currency=None,
@@ -887,6 +892,173 @@ def test_persist_phase_c_persists_relevance_and_finishes_run(monkeypatch) -> Non
     evaluate_prelist.assert_awaited_once()
     # 1 alerta (PRICE_TARGET_REACHED nao se aplica sem target) + 1 COLLECTION_COMPLETED_V1
     assert publish.await_count >= 1
+
+
+def test_persist_phase_c_reused_observation_skips_evaluator_and_run_succeeds(
+    monkeypatch,
+) -> None:
+    """Correção arquitetural (bugfix pós-TASK-093): `UNCHANGED_REUSED` é a
+    fonte de verdade vinda da Fase A -- Fase C nunca chama o evaluator para
+    reconfirmar o mesmo estado comercial já avaliado antes por esta missão.
+    Não é uma segunda comparação, então não pode gerar `PriceAlertEvaluationError`
+    (guard de `app/alerts/evaluator.py` continua intocado) nem alerta nenhum,
+    e o CollectionRun segue SUCCEEDED normalmente."""
+    mission_id, run_id, store_id, offer_id, product_id, observation_id = (
+        uuid4(),
+        uuid4(),
+        uuid4(),
+        uuid4(),
+        uuid4(),
+        uuid4(),
+    )
+    mission = SimpleNamespace(id=mission_id, status=MissionStatus.ACTIVE)
+    run = SimpleNamespace(
+        id=run_id,
+        mission_id=mission_id,
+        store_id=store_id,
+        status=CollectionRunStatus.RUNNING,
+    )
+    session = _mock_async_session()
+    current_criteria = SimpleNamespace(
+        request_kind="generic_category",
+        variant_selection_mode=VariantSelectionMode.NOT_REQUIRED,
+    )
+    session.scalar.side_effect = [mission, run, current_criteria]
+    finish = AsyncMock()
+    monkeypatch.setattr("app.collection.orchestration.finish_collection_run", finish)
+    monkeypatch.setattr(
+        "app.collection.orchestration._reset_source_backoff", AsyncMock()
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration._evaluate_mission_prelist", AsyncMock()
+    )
+    monkeypatch.setattr("app.collection.orchestration.publish_event_async", AsyncMock())
+    evaluator = MagicMock(side_effect=AssertionError("evaluator não deveria ser chamado"))
+    monkeypatch.setattr("app.collection.orchestration.evaluate_price_alerts", evaluator)
+    pending = _PendingOffer(
+        offer_id=offer_id,
+        product_id=product_id,
+        # mesmo id em observation_id e previous_observation_id: exatamente o
+        # cenário que antes derrubava o CollectionRun (guard "observations
+        # must be distinct" do evaluator), agora impedido na fonte.
+        observation_id=observation_id,
+        amount=Decimal("1900"),
+        currency="BRL",
+        availability=Availability.AVAILABLE,
+        observed_at=NOW,
+        raw_title="Título bruto",
+        needs_relevance=False,
+        needs_display_name=False,
+        forced_relevance=OfferRelevance.MATCH,
+        observation_created=False,
+        alert_comparison=PriceObservationComparison.UNCHANGED_REUSED,
+        previous_observation_id=observation_id,
+        previous_amount=Decimal("1900"),
+        previous_currency="BRL",
+        previous_availability=Availability.AVAILABLE,
+        previous_observed_at=NOW - timedelta(hours=1),
+    )
+    outcome = _PhaseAOutcome(
+        run_id=run_id,
+        mission_id=mission_id,
+        store_id=store_id,
+        mission_search_query="GPU",
+        target_amount=Decimal("2000"),
+        target_currency="BRL",
+        completed_at=NOW,
+        offers=(pending,),
+    )
+
+    result = asyncio.run(_persist_phase_c(_session_factory(session), outcome, ()))
+
+    assert result is True
+    evaluator.assert_not_called()
+    finish.assert_awaited_once_with(
+        session, run_id, CollectionRunStatus.SUCCEEDED, finished_at=NOW
+    )
+
+
+def test_persist_phase_c_isolates_alert_evaluator_error_and_run_still_succeeds(
+    monkeypatch, caplog
+) -> None:
+    """Item 3 da correção arquitetural: avaliação de alerta é uma etapa
+    derivada da coleta, não parte atômica dela. Um erro real e inesperado
+    do evaluator (dado inconsistente, bug -- não o caso estrutural de
+    `UNCHANGED_REUSED`, coberto à parte) não pode falsificar o resultado de
+    uma coleta já persistida corretamente: fica isolado, logado, e o
+    CollectionRun ainda finaliza SUCCEEDED."""
+    mission_id, run_id, store_id, offer_id, product_id = (
+        uuid4(),
+        uuid4(),
+        uuid4(),
+        uuid4(),
+        uuid4(),
+    )
+    mission = SimpleNamespace(id=mission_id, status=MissionStatus.ACTIVE)
+    run = SimpleNamespace(
+        id=run_id,
+        mission_id=mission_id,
+        store_id=store_id,
+        status=CollectionRunStatus.RUNNING,
+    )
+    session = _mock_async_session()
+    current_criteria = SimpleNamespace(
+        request_kind="generic_category",
+        variant_selection_mode=VariantSelectionMode.NOT_REQUIRED,
+    )
+    session.scalar.side_effect = [mission, run, current_criteria]
+    finish = AsyncMock()
+    monkeypatch.setattr("app.collection.orchestration.finish_collection_run", finish)
+    monkeypatch.setattr(
+        "app.collection.orchestration._reset_source_backoff", AsyncMock()
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration._evaluate_mission_prelist", AsyncMock()
+    )
+    monkeypatch.setattr("app.collection.orchestration.publish_event_async", AsyncMock())
+    monkeypatch.setattr(
+        "app.collection.orchestration.evaluate_price_alerts",
+        MagicMock(side_effect=RuntimeError("dado inconsistente inesperado")),
+    )
+    pending = _PendingOffer(
+        offer_id=offer_id,
+        product_id=product_id,
+        observation_id=uuid4(),
+        amount=Decimal("1500"),
+        currency="BRL",
+        availability=Availability.AVAILABLE,
+        observed_at=NOW,
+        raw_title="Título bruto",
+        needs_relevance=False,
+        needs_display_name=False,
+        forced_relevance=OfferRelevance.MATCH,
+        observation_created=True,
+        alert_comparison=PriceObservationComparison.CHANGED,
+        previous_observation_id=uuid4(),
+        previous_amount=Decimal("1900"),
+        previous_currency="BRL",
+        previous_availability=Availability.AVAILABLE,
+        previous_observed_at=NOW - timedelta(hours=1),
+    )
+    outcome = _PhaseAOutcome(
+        run_id=run_id,
+        mission_id=mission_id,
+        store_id=store_id,
+        mission_search_query="GPU",
+        target_amount=None,
+        target_currency=None,
+        completed_at=NOW,
+        offers=(pending,),
+    )
+
+    with caplog.at_level("WARNING", logger="app.collection.orchestration"):
+        result = asyncio.run(_persist_phase_c(_session_factory(session), outcome, ()))
+
+    assert result is True
+    finish.assert_awaited_once_with(
+        session, run_id, CollectionRunStatus.SUCCEEDED, finished_at=NOW
+    )
+    assert "price_alert_evaluation_failed" in caplog.text
 
 
 # ---------------------------------------------------------------------------
