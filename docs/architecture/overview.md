@@ -9,10 +9,13 @@ modelos e fallback permanecem nas tarefas de implementação dos perfis.
 
 A implementação atual contém o monólito FastAPI, módulos persistentes de
 catálogo, auditoria e missões e uma fronteira assíncrona de coleta.
-`app.collection` despacha pedidos por fonte, transporta resultados brutos e
-oferece uma sessão Playwright/Chromium isolada. Pichau, Terabyte, Amazon e
-Kabum possuem providers concretos; normalização e persistência permanecem em
-módulos separados.
+`app.collection` despacha pedidos por fonte e transporta resultados brutos;
+cada Store Provider navega via Playwright controlando um Microsoft Edge real
+por CDP (`EdgeCdpTransport`/`EdgeCdpSupervisor`, TASK-109) -- nunca Chromium
+gerenciado. Ver `docs/architecture/providers.md` (lista de fontes) e
+`docs/architecture/windows-collection-worker.md` (runtime do
+`collection_worker`); normalização e persistência permanecem em módulos
+separados.
 
 As interfaces HTTP seguem `docs/development/api-conventions.md`. Endpoints de negócio serão versionados sob `/api/v1`; endpoints operacionais permanecem fora desse prefixo.
 

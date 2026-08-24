@@ -16,8 +16,12 @@ como fallback -- falha explícita, `EdgeCdpTransportError`);
 (`WindowsOpsAgentAdapter`). Documentação nova/atualizada:
 `docs/architecture/windows-collection-worker.md`,
 `docs/architecture/playwright.md`,
-`docs/architecture/service-operations.md`. Nenhum deploy feito --
-produção continua nos sete serviços Docker.**
+`docs/architecture/service-operations.md`. FASE 5 (fechamento, parte 2)
+concluída no DEV: `BrowserSession` (só teste) passou a lançar o Microsoft
+Edge da máquina em vez de Chromium do Playwright -- **zero binário de
+Chromium em qualquer parte do projeto**, produção e teste na mesma
+direção arquitetural. Nenhum deploy feito -- produção continua nos sete
+serviços Docker.**
 
 ## Objetivo
 
@@ -726,3 +730,53 @@ Python oficial da máquina, sem virtualenv, ver
 mecanismo de secrets locais do worker (hoje só "arquivo local, fora do
 Git/chat", sem cofre/ACL formalizados como o do Ops Agent);
 reinstalação do Ops Agent/Task Scheduler/worker/Edge na máquina DEV.
+
+## FASE 5 (fechamento, parte 2) — zero Chromium também nos testes (concluída no DEV)
+
+**Pedido do usuário:** a rodada anterior manteve o binário do Chromium
+instalado só para a suíte de testes (`BrowserSession` usada por ~40
+testes de parsing de HTML local). O usuário não considerou isso
+suficiente: quis zero Chromium no projeto inteiro, produção e teste na
+mesma direção arquitetural (Edge).
+
+**Auditoria dos ~40 testes:** nenhum precisava de um "browser real" no
+sentido de rede/anti-bot -- todos eram `page.set_content(html)` local,
+sem `page.goto()` a URL externa nenhuma (confirmado por busca completa).
+Categoria 2 do pedido ("testes que realmente precisam de browser real")
+ficou vazia; não houve necessidade de adaptar nenhum teste para Edge/CDP
+via supervisor -- só trocar o navegador que `BrowserSession` lança.
+
+**Mudança:** `BrowserSession.__aenter__` (`app/collection/browser.py`)
+passou a chamar `self._playwright.chromium.launch(executable_path=...)`
+apontando pro Microsoft Edge descoberto na máquina, em vez de baixar/usar
+o Chromium do Playwright -- Playwright continua sendo a biblioteca de
+automação (é o mesmo namespace `.chromium` que já drivava Edge via
+`connect_over_cdp()` em produção; aqui só lança o processo em vez de
+conectar num já supervisionado), só o navegador de fato muda. Nenhum dos
+~40 testes precisou de reescrita -- a interface de `BrowserSession` não
+mudou, só a implementação interna.
+
+**Descoberta do executável extraída para fora do pacote `providers`:**
+`discover_edge_executable`/`EdgeExecutableNotFoundError` moveram de
+`edge_cdp_supervisor.py` para um módulo novo,
+`app/collection/edge_discovery.py` -- `browser.py` não é um provider e
+importar de dentro de `app.collection.providers` criava import circular
+(`providers/__init__.py` -> `stores.py` -> `base.py` -> `browser.py`,
+enquanto `browser.py` ainda estava sendo carregado). `EdgeCdpSupervisor`
+continua com a mesma função pública `discover_edge_executable`
+(embrulha a nova, traduz `EdgeExecutableNotFoundError` para
+`EdgeCdpSupervisorError`, contrato inalterado para quem já usa o
+supervisor).
+
+**Documentação corrigida:** todo `python -m playwright install chromium`
+removido de `README.md`, `docs/development/dependencies.md`,
+`docs/development/local-pipeline.md`; `docs/architecture/playwright.md`
+e `docs/architecture/windows-collection-worker.md` reescritos para "zero
+Chromium, sempre Edge, produção e teste"; `docs/architecture/overview.md`
+corrigida (não descrevia mais Edge/CDP).
+
+**Validação:** suíte focada (`test_playwright_browser.py`,
+`test_store_providers.py`, `test_store_provider_installments.py`,
+`test_edge_cdp_supervisor.py`, `test_collection_worker.py`) -- 128
+testes, todos passando com Edge real abrindo em vez de Chromium. Sem
+coleta real, sem deploy, sem push.

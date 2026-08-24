@@ -1,4 +1,5 @@
-"""Testes da infraestrutura Playwright, incluindo Chromium real."""
+"""Testes da infraestrutura Playwright, incluindo o Edge real da máquina
+(TASK-109, fechamento -- nunca Chromium)."""
 
 import asyncio
 
@@ -23,7 +24,7 @@ def test_session_requires_an_active_context() -> None:
         asyncio.run(session.new_page())
 
 
-def test_chromium_opens_local_page_and_closes_session() -> None:
+def test_edge_opens_local_page_and_closes_session() -> None:
     async def exercise_browser() -> BrowserSession:
         session = BrowserSession(
             BrowserSettings(
@@ -50,8 +51,9 @@ def test_session_stops_playwright_when_browser_launch_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class FailingChromium:
-        async def launch(self, *, headless: bool) -> None:
+        async def launch(self, *, headless: bool, executable_path: str) -> None:
             assert headless is True
+            assert executable_path
             raise OSError("browser launch failed")
 
     class FakePlaywright:

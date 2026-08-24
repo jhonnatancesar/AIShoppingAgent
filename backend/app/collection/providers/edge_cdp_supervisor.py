@@ -35,6 +35,10 @@ import psutil
 from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import async_playwright
 
+from app.collection.edge_discovery import (
+    EdgeExecutableNotFoundError,
+    discover_edge_executable as _discover_edge_executable,
+)
 from app.collection.providers.edge_cdp_endpoint import validate_loopback_cdp_endpoint
 
 logger = logging.getLogger("app.collection.edge_cdp_supervisor")
@@ -50,24 +54,16 @@ class EdgeCdpSupervisorError(RuntimeError):
 
 
 def discover_edge_executable(explicit_path: Path | None = None) -> Path:
-    """Localiza somente instalações normais do Microsoft Edge."""
-    if explicit_path is not None:
-        candidate = explicit_path.expanduser().resolve()
-        if candidate.is_file():
-            return candidate
-        raise EdgeCdpSupervisorError("configured Edge executable was not found")
+    """Localiza somente instalações normais do Microsoft Edge.
 
-    candidates: list[Path] = []
-    for variable in ("PROGRAMFILES(X86)", "PROGRAMFILES", "LOCALAPPDATA"):
-        root = os.environ.get(variable)
-        if root:
-            candidates.append(
-                Path(root) / "Microsoft" / "Edge" / "Application" / "msedge.exe"
-            )
-    for candidate in candidates:
-        if candidate.is_file():
-            return candidate.resolve()
-    raise EdgeCdpSupervisorError("Microsoft Edge executable was not found")
+    TASK-109 (fechamento): a busca em si mora em `edge_cdp_endpoint.py`
+    (compartilhada com `BrowserSession`, que não é supervisionada) --
+    aqui só traduz a falha para `EdgeCdpSupervisorError`, contrato já
+    usado pelos chamadores existentes (`build_edge_supervisor` etc.)."""
+    try:
+        return _discover_edge_executable(explicit_path)
+    except EdgeExecutableNotFoundError as error:
+        raise EdgeCdpSupervisorError(str(error)) from error
 
 
 def default_edge_profile_dir() -> Path:

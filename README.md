@@ -121,7 +121,6 @@ partir da raiz do projeto:
 
 ```powershell
 python -m pip install -r backend/requirements-dev.txt
-python -m playwright install chromium
 python -m ruff check .
 python -m ruff format --check .
 python -m pytest

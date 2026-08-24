@@ -1,49 +1,61 @@
-# Playwright: Edge/CDP em produção, Chromium só em teste
+# Playwright: sempre Edge, nunca Chromium
 
 A TASK-024 adicionou a infraestrutura de navegador original (Chromium
 gerenciado, `BrowserSession`). A TASK-109 (fechamento da migração de
-browser, 2026-08) trocou o transporte de produção: hoje **nenhum Store
-Provider abre Chromium gerenciado**. Todos os seis (Amazon, Kabum, Magalu,
-Mercado Livre, Pichau, Terabyte) navegam exclusivamente via
-`Playwright.chromium.connect_over_cdp()` contra um Microsoft Edge normal,
-real, supervisionado -- nunca via `Playwright.chromium.launch()`.
+browser, 2026-08) trocou o navegador em **toda** parte do projeto: hoje
+**nada abre Chromium** -- nem em produção, nem na suíte de testes. Zero
+binário de Chromium é baixado, instalado ou executado neste projeto.
+Produção e teste apontam para o mesmo navegador real, o Microsoft Edge já
+instalado na máquina.
 
-## Dois papéis distintos para Playwright
+## Dois papéis, um único navegador
 
-- **Produção (`app.collection.providers`)**: só `connect_over_cdp()`. Sem
-  `cdp_transport` configurado, cada provider falha explícito
-  (`EdgeCdpTransportError`, tratado pelo retry/circuit-breaker normal) --
-  nunca abre Chromium como fallback silencioso. Ver
-  [Runtime Windows do collection_worker](windows-collection-worker.md)
-  para a arquitetura completa do transporte.
-- **Testes (`app.collection.browser.BrowserSession`)**: continua existindo,
-  intocada, só como infraestrutura de teste hermética -- obter um `Page`
+- **Produção (`app.collection.providers`)**: todos os seis Store
+  Providers (Amazon, Kabum, Magalu, Mercado Livre, Pichau, Terabyte)
+  navegam exclusivamente via `Playwright.chromium.connect_over_cdp()`
+  contra um Edge normal, real, supervisionado
+  (`EdgeCdpSupervisor`/`EdgeCdpTransport`). Sem `cdp_transport`
+  configurado, cada provider falha explícito (`EdgeCdpTransportError`,
+  tratado pelo retry/circuit-breaker normal) -- nunca abre um navegador
+  como fallback silencioso. Ver
+  [Runtime Windows do collection_worker](windows-collection-worker.md).
+- **Testes (`app.collection.browser.BrowserSession`)**: continua
+  existindo, só como infraestrutura de teste hermética -- obter um `Page`
   real e local (`page.set_content(html)`, sem rede) para exercitar
   `.extract()`/parsing de HTML estático em `tests/test_store_providers.py`
   e `tests/test_playwright_browser.py`. Nenhum destes testes representa
-  comportamento de coleta real; nenhum navega para uma URL externa.
+  coleta real; nenhum navega para uma URL externa. Desde o fechamento da
+  TASK-109, `BrowserSession` lança o **mesmo Edge instalado no sistema**
+  (`Playwright.chromium.launch(executable_path=...)`, descoberta em
+  `app.collection.edge_discovery.discover_edge_executable` -- a mesma
+  usada pelo `EdgeCdpSupervisor` de produção), nunca um Chromium baixado
+  pelo Playwright.
 
 ## Componentes (`app.collection.browser`, uso de teste)
 
 - `BrowserSettings` define execução headless, timeouts positivos e locale.
-- `BrowserSession` inicia Playwright e Chromium de forma assíncrona.
+- `BrowserSession` inicia Playwright e o Edge da máquina de forma
+  assíncrona.
 - Contexto, navegador e processo Playwright são encerrados mesmo quando a
   abertura falha ou o bloco assíncrono termina com erro.
 
-## Instalação local para rodar a suíte de testes
+## Instalação local
 
-O pacote `playwright` continua em `backend/requirements.txt` (produção
-importa tipos de `playwright.async_api`, mesmo sem nunca lançar um
-browser). O binário do Chromium só é necessário para rodar a suíte de
-testes local/CI -- **não faz parte da imagem Docker de produção** (o
-`Dockerfile` não instala mais `playwright install chromium`; nenhum
-serviço Docker restante -- `api`, `telegram_notifier`, `ops_controller` --
-abre navegador):
+O pacote `playwright` continua em `backend/requirements.txt` (produção e
+teste importam tipos de `playwright.async_api` e falam CDP através dele).
+**Não existe `python -m playwright install chromium` em nenhum passo
+deste projeto** -- nenhum binário de navegador é baixado. A única
+dependência externa é o Microsoft Edge já instalado no sistema
+operacional (Windows), necessário para: (1) o `collection_worker`
+real e (2) rodar a suíte de testes local/CI completa.
 
 ```powershell
 python -m pip install -r backend/requirements-dev.txt
-python -m playwright install chromium
 ```
+
+Sem Edge instalado, `BrowserSession`/os testes que dependem dela falham
+com `EdgeExecutableNotFoundError` -- mensagem clara, nunca um download
+silencioso de outro navegador.
 
 ## Limites
 

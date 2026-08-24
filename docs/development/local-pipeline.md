@@ -8,14 +8,16 @@ Instale as dependências de desenvolvimento após autorização:
 
 ```powershell
 python -m pip install -r backend/requirements-dev.txt
-python -m playwright install chromium
 ```
 
 Python e Docker Compose devem estar disponíveis conforme
 `docs/development/dependencies.md`. No Windows, o pipeline resolve também a instalação
 oficial por usuário do Docker Desktop quando o processo atual ainda não herdou
 o PATH persistente. O Docker Engine não precisa estar ativo para validar o
-arquivo Compose.
+arquivo Compose. A suíte de testes precisa do Microsoft Edge instalado na
+máquina (`app.collection.browser.BrowserSession`, TASK-109) — não instala
+nem baixa nenhum navegador; nenhum passo do pipeline roda
+`playwright install`.
 
 ## Execução
 

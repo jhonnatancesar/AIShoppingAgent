@@ -127,24 +127,35 @@ estão em `docs/architecture/resilience.md` e nas variáveis dos arquivos `.env.
 
 As versões validadas na TASK-011 foram SQLAlchemy 2.0.51, Alembic 1.18.5 e Psycopg 3.3.4. O extra binário do Psycopg evita exigir uma instalação separada de `libpq` e possui suporte validado a Python 3.14 e PostgreSQL 18.
 
-Playwright 1.62.0 e Chromium 151.0.7922.34 foram validados na TASK-024. O pacote
-Python e o navegador são instalações distintas; após instalar os requisitos, execute
-`python -m playwright install chromium`. No Docker, o build instala Chromium e suas
-dependências Linux automaticamente.
+Playwright 1.62.0 foi validado na TASK-024; Chromium 151.0.7922.34 também foi,
+naquela época, mas deixou de ser uma dependência do projeto na TASK-109
+(fechamento, 2026-08-23) — ver abaixo. O pacote Python (`playwright`) continua
+necessário (tipos importados por `app.collection`, e é ele quem fala CDP com o
+Edge), mas nenhum binário de navegador baixado pelo Playwright é instalado ou
+executado em lugar nenhum do projeto, produção ou teste.
 
-Para a TASK-104A, Microsoft Edge é a dependência do único transporte
-operacional Magalu no runtime Windows. O Edge não é biblioteca Python nem entra
-na imagem. O worker o inicia e recupera por supervisor local, com perfil
-dedicado e CDP restrito a loopback; configure
-`AISHOPPING_EDGE_CDP_URL=http://127.0.0.1:<porta>` no processo do
-`collection_worker`. Sem essa variável, a Magalu falha rápido e isoladamente.
-Nunca publique a porta, use `0.0.0.0`, perfil pessoal,
-cookies copiados ou flags de stealth/fingerprint.
+Desde a TASK-104A (Magalu) e generalizado pela TASK-109 (todos os Store
+Providers), a única dependência de navegador é o **Microsoft Edge já
+instalado no sistema operacional** — nunca baixado pelo Playwright, nunca uma
+biblioteca Python, nunca parte da imagem Docker. Em produção
+(`collection_worker` nativo Windows), o worker o inicia e recupera sob
+demanda por supervisor local (`EdgeCdpSupervisor`), com perfil dedicado e CDP
+restrito a loopback; configure `AISHOPPING_EDGE_CDP_URL=http://127.0.0.1:<porta>`
+no processo do `collection_worker` — sem essa variável, cada Store Provider
+falha rápido e isoladamente (nunca abre um navegador como fallback). Em
+desenvolvimento/CI, a suíte de testes usa o mesmo Edge do sistema
+(`app.collection.browser.BrowserSession`, só para obter um `Page` real e
+testar parsing de HTML local — nunca acessa a rede) via
+`Playwright.chromium.launch(executable_path=...)` apontando para o Edge
+descoberto automaticamente (`app.collection.edge_discovery`) — não existe
+`python -m playwright install chromium` em nenhum passo deste projeto. Nunca
+publique a porta CDP, use `0.0.0.0`, perfil pessoal, cookies copiados ou
+flags de stealth/fingerprint.
 
 TASK-105 reaproveita esse mesmo Edge/CDP como transporte primário e único da
 Terabyte (Playwright gerenciado ficou comprovadamente bloqueado pelo
-Cloudflare, `DEC-070`) e como fallback já existente do Mercado Livre — uma
-única variável, um único Edge supervisionado, três providers. A variável
+Cloudflare, `DEC-070`) e da Amazon/Kabum/Pichau/Mercado Livre (TASK-109) — uma
+única variável, um único Edge supervisionado, todos os providers. A variável
 antiga `AISHOPPING_MAGALU_CDP_URL` continua funcionando por compatibilidade,
 mas `AISHOPPING_EDGE_CDP_URL` é o nome atual.
 
@@ -171,7 +182,6 @@ Após autorização para instalação, validar lint e formatação a partir da r
 
 ```powershell
 python -m pip install -r backend/requirements-dev.txt
-python -m playwright install chromium
 python -m ruff check .
 python -m ruff format --check .
 python -m pytest

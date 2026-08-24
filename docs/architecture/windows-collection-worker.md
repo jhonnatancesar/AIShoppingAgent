@@ -42,9 +42,11 @@ python -m pip install -r backend/requirements.txt
 ```
 
 `playwright` (o pacote Python) é necessário -- o worker usa
-`Playwright.chromium.connect_over_cdp()`, nunca `chromium.launch()`. O
-binário do Chromium **não é necessário** para o worker em si (só para
-rodar a suíte de testes local, ver `docs/architecture/playwright.md`).
+`Playwright.chromium.connect_over_cdp()` contra o Edge supervisionado.
+**Nenhum binário de Chromium é baixado, instalado ou executado em
+nenhuma parte deste projeto** -- produção e suíte de testes local usam o
+mesmo Microsoft Edge instalado no sistema (ver
+`docs/architecture/playwright.md`).
 
 ## Banco de dados: asyncpg, não psycopg
 

@@ -38,6 +38,15 @@ SECRET_SOURCES = {
         PROJECT_ROOT / "backend" / ".env",
         "AISHOPPING_OPS_CONTROLLER_SECRET",
     ),
+    # TASK-109 (fechamento): nunca gerado aqui -- precisa ser exatamente o
+    # mesmo valor já gerado pelo Windows Ops Agent em
+    # C:\ProgramData\AIShoppingAgent\secrets\ops-agent-secret (ver
+    # docs/architecture/windows-collection-worker.md). `init` sempre
+    # pede para colar o valor (input oculto), nunca gera um novo.
+    "windows_ops_agent_secret": (
+        PROJECT_ROOT / "backend" / ".env",
+        "AISHOPPING_WINDOWS_OPS_AGENT_SECRET",
+    ),
 }
 _MAX_SECRET_BYTES = 16 * 1024
 

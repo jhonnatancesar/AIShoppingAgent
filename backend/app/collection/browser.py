@@ -1,4 +1,15 @@
-"""Infraestrutura base de navegador para os futuros Store Providers."""
+"""Infraestrutura de navegador só para teste (TASK-109, fechamento).
+
+Nenhum Store Provider real usa mais isto -- a coleta de produção navega
+exclusivamente via `EdgeCdpTransport`/`connect_over_cdp()` contra o Edge
+supervisionado (`app/collection/providers/edge_cdp_supervisor.py`). O que
+resta aqui existe só para dar a testes locais um `Page` real, sem rede
+(`page.set_content(html)`), para exercitar parsing de HTML -- por isso
+`BrowserSession` também lança o Microsoft Edge já instalado na máquina
+(`discover_edge_executable`, mesma descoberta usada pelo supervisor),
+nunca um Chromium baixado pelo Playwright: zero binário de Chromium em
+todo o projeto, produção e teste apontam para o mesmo navegador real.
+"""
 
 from dataclasses import dataclass
 
@@ -9,6 +20,8 @@ from playwright.async_api import (
     Playwright,
     async_playwright,
 )
+
+from app.collection.edge_discovery import discover_edge_executable
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,7 +43,8 @@ class BrowserSettings:
 
 
 class BrowserSession:
-    """Gerencia Playwright, Chromium e um contexto isolado por coleta."""
+    """Gerencia Playwright, o Edge instalado na máquina e um contexto
+    isolado -- só para teste (ver docstring do módulo)."""
 
     def __init__(self, settings: BrowserSettings | None = None) -> None:
         self.settings = settings or BrowserSettings()
@@ -45,7 +59,8 @@ class BrowserSession:
         self._playwright = await async_playwright().start()
         try:
             self._browser = await self._playwright.chromium.launch(
-                headless=self.settings.headless
+                headless=self.settings.headless,
+                executable_path=str(discover_edge_executable()),
             )
             self._context = await self._browser.new_context(
                 accept_downloads=False,

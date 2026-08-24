@@ -58,6 +58,22 @@
   `docs/architecture/service-operations.md` atualizados. Nenhum deploy
   feito -- produção continua nos sete serviços Docker
   (`docs/installation/windows-server.md` inalterado de propósito).
+- **Fechamento, parte 2 (2026-08-24):** usuário pediu zero Chromium
+  também na suíte de testes (não só na coleta real). Auditoria dos ~40
+  testes que ainda usavam `BrowserSession`: todos eram parsing de HTML
+  local (`page.set_content`), nenhum navegava para URL externa --
+  categoria "precisa de browser real" ficou vazia. `BrowserSession`
+  passou a lançar o Microsoft Edge da máquina
+  (`Playwright.chromium.launch(executable_path=...)`) em vez do Chromium
+  baixado pelo Playwright; nenhum teste precisou de reescrita (interface
+  inalterada). `discover_edge_executable` extraído para
+  `app/collection/edge_discovery.py` (fora do pacote `providers`, evita
+  import circular com `browser.py`). `python -m playwright install
+  chromium` removido de todos os passos de setup (`README.md`,
+  `docs/development/dependencies.md`,
+  `docs/development/local-pipeline.md`). Resultado: zero binário de
+  Chromium em qualquer lugar do projeto, produção e teste na mesma
+  direção arquitetural (Edge).
 
 ## DEC-095 — TASK-108: fila justa por usuário, cooldown individual, sem monopolização
 
