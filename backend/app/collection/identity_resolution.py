@@ -25,6 +25,7 @@ from app.collection.contracts import (
     ResolvedProductIdentity,
 )
 from app.collection.model_matching import model_search_pattern, title_matches_model
+from app.collection.providers.edge_cdp_supervisor import EdgeCdpSupervisor
 from app.collection.providers.edge_cdp_transport import EdgeCdpTransport
 from app.collection.providers.stores import AmazonProvider, KabumProvider
 from app.core.resilience import RetryPolicy
@@ -51,6 +52,7 @@ _CDP_CONNECT_TIMEOUT_MS = 3_000
 
 def _build_default_providers(
     edge_cdp_url: str | None = None,
+    edge_supervisor: EdgeCdpSupervisor | None = None,
 ) -> tuple[CollectionProvider, ...]:
     """Kabum (primário) -> Amazon (secundário), nunca Pichau/Terabyte
     (headed/Xvfb, custo de execução maior que o orçamento desta
@@ -61,8 +63,10 @@ def _build_default_providers(
     normal (reutilizar a mesma instância supervisionada é seguro, CDP
     aceita múltiplas conexões simultâneas), mas com timeout/instância
     isolados desta resolução, nunca a `EdgeCdpTransport` da coleta
-    normal em si. Sem `edge_cdp_url`, o comportamento é exatamente o
-    mesmo de antes (Playwright gerenciado)."""
+    normal em si. `edge_supervisor` (o mesmo objeto do worker) é só pra
+    que cada resolução pegue sua própria lease do lifecycle sob demanda
+    -- não muda orçamento/isolamento nenhum. Sem `edge_cdp_url`, o
+    comportamento é exatamente o mesmo de antes (Playwright gerenciado)."""
     settings = BrowserSettings(
         navigation_timeout_ms=_NAVIGATION_TIMEOUT_MS,
         action_timeout_ms=_ACTION_TIMEOUT_MS,
@@ -80,6 +84,7 @@ def _build_default_providers(
             connect_timeout_ms=_CDP_CONNECT_TIMEOUT_MS,
             navigation_timeout_ms=_NAVIGATION_TIMEOUT_MS,
             document_timeout_ms=_ACTION_TIMEOUT_MS,
+            supervisor=edge_supervisor,
         )
     return (
         KabumProvider(settings, **kwargs),
@@ -103,16 +108,17 @@ class StoreProductIdentityResolver:
         *,
         per_provider_timeout_seconds: float = _PER_PROVIDER_TIMEOUT_SECONDS,
         edge_cdp_url: str | None = None,
+        edge_supervisor: EdgeCdpSupervisor | None = None,
     ) -> None:
         if per_provider_timeout_seconds <= 0:
             raise ValueError("per_provider_timeout_seconds must be positive")
-        # TASK-109: `edge_cdp_url` só se aplica aos providers padrão --
-        # quem passa `providers` explicitamente (ex.: testes) já controla
-        # o transporte de cada um por conta própria.
+        # TASK-109: `edge_cdp_url`/`edge_supervisor` só se aplicam aos
+        # providers padrão -- quem passa `providers` explicitamente (ex.:
+        # testes) já controla o transporte de cada um por conta própria.
         self._providers: tuple[CollectionProvider, ...] = (
             tuple(providers)
             if providers is not None
-            else _build_default_providers(edge_cdp_url)
+            else _build_default_providers(edge_cdp_url, edge_supervisor)
         )
         self._per_provider_timeout_seconds = per_provider_timeout_seconds
         # TASK-083: orçamento global = soma dos orçamentos individuais --

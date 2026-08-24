@@ -490,6 +490,77 @@ como injetar `cdp_transport` sem violar esse isolamento deliberado.
 **Continua sendo um caminho real que abre Chromium gerenciado** -- por
 isso o Chromium ainda não pode ser considerado desnecessário.
 
+## FASE 3 (lifecycle sob demanda) — EdgeCdpSupervisor com lease/idle-timeout (concluída no DEV)
+
+**Problema relatado pelo usuário:** o `EdgeCdpSupervisor` mantinha o Edge
+permanentemente vivo desde o início do worker (lançado em `run_worker`,
+nunca encerrado até o processo do worker terminar); fechar o Edge
+manualmente, mesmo sem nenhuma coleta em andamento, disparava o monitor
+de recuperação e reabria o processo. Comportamento final desejado:
+lifecycle sob demanda -- Edge só sobe quando algum consumidor
+(coleta/enriquecimento/`StoreProductIdentityResolver`) realmente
+precisar, reaproveitado durante uso concorrente, encerrado normalmente
+após um período configurável sem nenhum uso ativo, e sem relançar
+sozinho depois de um encerramento por ociosidade.
+
+**Implementação -- contagem de leases centralizada no `EdgeCdpSupervisor`:**
+API pública nova, `lease()` (`@asynccontextmanager`), substitui o antigo
+par `start()`/`stop()` eager. `_active_leases` (contador, nunca
+negativo) é incrementado/decrementado sob `_lifecycle_lock`
+(`asyncio.Lock`); só a transição 0→1 lança/adota o Edge e liga o
+monitor de recuperação, só a transição 1→0 desliga o monitor e inicia o
+timer de ociosidade (`_idle_timeout_watch`, `idle_timeout_seconds`,
+default `DEFAULT_EDGE_IDLE_TIMEOUT_SECONDS = 180.0`, novo campo
+`Settings.edge_idle_timeout_seconds`, sem número mágico solto). Se o
+timeout expira sem nenhuma lease nova, o Edge é encerrado
+(`_close_dedicated_browser`/`_terminate_launcher`) e o supervisor volta
+a ficar dormente -- sem monitor, sem processo -- até a próxima `lease()`
+real. Providers continuam sem conhecer lifecycle: `EdgeCdpTransport.open_blank_page()`
+e `CdpMagaluSearchTransport.fetch_html()` adquirem/liberam a lease
+internamente via `AsyncExitStack`, de forma transparente, quando um
+`supervisor` é injetado (threading feito em `worker.py` --
+`build_edge_supervisor` agora só constrói o objeto, nunca inicia o Edge
+-- e em `identity_resolution.py`, que passa o mesmo supervisor do
+worker para o `StoreProductIdentityResolver` sem alterar nenhum
+orçamento/isolamento da TASK-083: cada resolução ainda usa instâncias
+de provider próprias, só a lease do Edge compartilhado é comum).
+
+**Duas condições de corrida identificadas e corrigidas durante o
+design** (nenhuma delas chegou a se manifestar em teste -- evitadas por
+raciocínio antes de escrever o teste que as provaria):
+1. Cancelamento "fire-and-forget" do monitor/timer permitiria que um
+   `_start_monitor()` subsequente visse a tarefa antiga ainda não
+   `done()` e deixasse de criar uma nova. Corrigido tornando
+   `_stop_monitor`/`_cancel_idle_timer` `async` e aguardando
+   (`await task`, capturando `CancelledError`) antes de retornar.
+2. Uma `lease()` nova chegando exatamente no instante em que o timer de
+   ociosidade dispara poderia "adotar" um Edge que já está sendo
+   fechado. Corrigido mantendo `_lifecycle_lock` preso durante TODA a
+   sequência de encerramento por ociosidade (não só a checagem de
+   estado) -- uma `lease()` concorrente espera o encerramento terminar
+   antes de relançar, em vez de arriscar interferir nele.
+
+**Validação -- sem coleta real, conforme pedido explicitamente:**
+`tests/test_edge_cdp_supervisor.py` (6 testes novos, dublês para
+`_ensure_running`/`_cdp_ready`/`_close_dedicated_browser`/
+`_terminate_launcher`, timeouts curtos (dezenas de ms) em vez dos 180s
+reais, nenhum Edge/processo/rede de verdade) cobre: lançamento sob
+demanda na primeira lease; reuso sem relançar em leases
+aninhadas/sequenciais dentro do mesmo lote; encerramento após o timeout
+de ociosidade configurado; nenhum relançamento entre o encerramento por
+ociosidade e a próxima lease real; fechamento manual durante ociosidade
+(antes do timeout) não causa relançamento imediato; Edge "morto" durante
+uso ativo é recuperado pelo monitor. Suíte focada
+(`test_collection_worker.py`+`test_store_providers.py`+
+`test_edge_cdp_supervisor.py`) -- 107 testes, sem regressão.
+
+**Resultado (formato solicitado):**
+- Edge abre sob demanda: sim
+- reutiliza durante batch: sim
+- fecha após 180s idle (configurável, `edge_idle_timeout_seconds`): sim
+- fechado durante idle não reabre: sim
+- morto durante uso recupera: sim
+
 ## FASE 2 — worker nativo com Edge (concluída no DEV)
 
 Confirmado por leitura de código que a "generalização do supervisor

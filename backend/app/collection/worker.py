@@ -54,31 +54,33 @@ logger = logging.getLogger("app.collection.worker")
 _HEADED_SOURCES = frozenset({"pichau", "terabyte", "magalu", "mercadolivre"})
 
 
-async def start_edge_supervisor(
-    settings: Settings,
-) -> EdgeCdpSupervisor | None:
-    """Falha do Edge compartilhado nunca impede o worker das outras origens."""
+def build_edge_supervisor(settings: Settings) -> EdgeCdpSupervisor | None:
+    """Só constrói o supervisor -- nunca inicia o Edge (TASK-109, lifecycle
+    sob demanda). O processo do Edge só sobe no primeiro `lease()` real,
+    disparado por algum consumidor (busca, enriquecimento, identity
+    resolver)."""
     if settings.edge_cdp_url is None:
         return None
     try:
-        supervisor = EdgeCdpSupervisor(
+        return EdgeCdpSupervisor(
             settings.edge_cdp_url,
             executable=settings.edge_executable,
             profile_dir=settings.edge_profile_dir,
             startup_timeout_seconds=settings.edge_startup_timeout_seconds,
             probe_interval_seconds=settings.edge_probe_interval_seconds,
+            idle_timeout_seconds=settings.edge_idle_timeout_seconds,
         )
-        await supervisor.start()
     except EdgeCdpSupervisorError as error:
         logger.warning(
             "edge_cdp_unavailable",
             extra={"supervisor_failure": type(error).__name__},
         )
         return None
-    return supervisor
 
 
-def build_collection_adapter(settings: Settings) -> CollectionAdapter:
+def build_collection_adapter(
+    settings: Settings, edge_supervisor: EdgeCdpSupervisor | None = None
+) -> CollectionAdapter:
     retry_policy = RetryPolicy(
         max_attempts=settings.safe_retry_max_attempts,
         base_delay_seconds=settings.retry_base_delay_seconds,
@@ -129,6 +131,7 @@ def build_collection_adapter(settings: Settings) -> CollectionAdapter:
                     settings.magalu_cdp_document_timeout_seconds * 1000
                 ),
                 html_timeout_ms=int(settings.magalu_cdp_html_timeout_seconds * 1000),
+                supervisor=edge_supervisor,
             )
         if provider_type is MercadoLivreProvider and settings.edge_cdp_url:
             provider_kwargs["cdp_transport"] = EdgeCdpTransport(
@@ -142,6 +145,7 @@ def build_collection_adapter(settings: Settings) -> CollectionAdapter:
                 document_timeout_ms=int(
                     settings.magalu_cdp_document_timeout_seconds * 1000
                 ),
+                supervisor=edge_supervisor,
             )
         # TASK-105: mesmo endpoint/infra CDP da Magalu -- sem supervisor,
         # porta ou perfil de Edge próprios para a Terabyte. Sem
@@ -160,6 +164,7 @@ def build_collection_adapter(settings: Settings) -> CollectionAdapter:
                 document_timeout_ms=int(
                     settings.magalu_cdp_document_timeout_seconds * 1000
                 ),
+                supervisor=edge_supervisor,
             )
         # TASK-109: Amazon, Kabum e Pichau ganham o mesmo transporte
         # Edge/CDP da Terabyte, mas com fallback -- ao contrário da
@@ -182,6 +187,7 @@ def build_collection_adapter(settings: Settings) -> CollectionAdapter:
                 document_timeout_ms=int(
                     settings.magalu_cdp_document_timeout_seconds * 1000
                 ),
+                supervisor=edge_supervisor,
             )
         providers.append(
             provider_type(
@@ -207,7 +213,7 @@ async def run_worker(
         raise ValueError("poll_seconds must be positive")
     if not 1 <= limit <= 1000:
         raise ValueError("batch_size must be between 1 and 1000")
-    edge_supervisor = await start_edge_supervisor(settings)
+    edge_supervisor = build_edge_supervisor(settings)
 
     # TASK-079: engine assíncrono dedicado -- nenhuma chamada bloqueante do
     # SQLAlchemy/psycopg roda direto na thread do event loop neste
@@ -223,13 +229,16 @@ async def run_worker(
     session_factory = create_async_session_factory(engine)
     orchestrator = CollectionOrchestrator(
         session_factory,
-        build_collection_adapter(settings),
+        build_collection_adapter(settings, edge_supervisor),
         ai_manager=build_admin_dev_ai_provider_manager(settings),
         # TASK-083: instâncias dedicadas (Kabum -> Amazon), nunca as da
         # coleta normal registrada em `build_collection_adapter` acima --
         # namespace de circuit breaker, volume e timeout próprios (ver
-        # `StoreProductIdentityResolver`).
-        identity_resolver=StoreProductIdentityResolver(edge_cdp_url=settings.edge_cdp_url),
+        # `StoreProductIdentityResolver`). Mesmo `edge_supervisor`
+        # compartilhado (TASK-109) -- lease própria, timeout próprio.
+        identity_resolver=StoreProductIdentityResolver(
+            edge_cdp_url=settings.edge_cdp_url, edge_supervisor=edge_supervisor
+        ),
         schedule_interval_minutes=settings.collection_schedule_interval_minutes,
         schedule_stagger_seconds=settings.collection_schedule_stagger_seconds,
         stale_run_minutes=settings.collection_stale_run_minutes,

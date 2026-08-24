@@ -185,6 +185,9 @@ class Settings(BaseSettings):
             "AISHOPPING_MAGALU_EDGE_PROBE_INTERVAL_SECONDS",
         ),
     )
+    # TASK-109: lifecycle sob demanda -- tempo sem nenhuma lease ativa
+    # antes do EdgeCdpSupervisor encerrar o Edge dedicado normalmente.
+    edge_idle_timeout_seconds: float = Field(default=180.0, gt=0, le=3600)
     magalu_cdp_connect_timeout_seconds: float = Field(default=5.0, gt=0, le=30)
     magalu_cdp_navigation_timeout_seconds: float = Field(default=20.0, gt=0, le=60)
     magalu_cdp_document_timeout_seconds: float = Field(default=10.0, gt=0, le=30)

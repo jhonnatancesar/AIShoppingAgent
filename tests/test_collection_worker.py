@@ -11,8 +11,8 @@ from app.collection.providers.edge_cdp_transport import EdgeCdpTransport
 from app.collection.providers.magalu_transport import CdpMagaluSearchTransport
 from app.collection.worker import (
     build_collection_adapter,
+    build_edge_supervisor,
     run_worker,
-    start_edge_supervisor,
 )
 from app.core.config import Settings
 from app.observability.metrics import mark_worker_started, observe_worker_failure
@@ -110,6 +110,10 @@ def test_build_adapter_leaves_terabyte_cdp_unset_without_configured_endpoint() -
 
 
 def test_unavailable_edge_does_not_block_worker_setup(monkeypatch) -> None:
+    """TASK-109: `build_edge_supervisor` só constrói (nunca inicia o Edge
+    de verdade) -- uma falha de construção ainda não deve travar o
+    worker."""
+
     class UnavailableSupervisor:
         def __init__(self, *args, **kwargs):
             from app.collection.providers.edge_cdp_supervisor import (
@@ -123,7 +127,32 @@ def test_unavailable_edge_does_not_block_worker_setup(monkeypatch) -> None:
     )
     settings = Settings(edge_cdp_url="http://127.0.0.1:9223", _env_file=None)
 
-    assert asyncio.run(start_edge_supervisor(settings)) is None
+    assert build_edge_supervisor(settings) is None
+
+
+def test_edge_supervisor_construction_never_launches_edge(monkeypatch) -> None:
+    """TASK-109: `build_edge_supervisor` nunca chama `lease()`/inicia o
+    processo -- só constrói o objeto. Lifecycle sob demanda real."""
+    launched = False
+
+    class RecordingSupervisor:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def lease(self):  # pragma: no cover - nunca deve ser chamado
+            nonlocal launched
+            launched = True
+            raise AssertionError("lease() must not run during construction")
+
+    monkeypatch.setattr(
+        "app.collection.worker.EdgeCdpSupervisor", RecordingSupervisor
+    )
+    settings = Settings(edge_cdp_url="http://127.0.0.1:9223", _env_file=None)
+
+    supervisor = build_edge_supervisor(settings)
+
+    assert supervisor is not None
+    assert launched is False
 
 
 def test_collection_worker_is_an_allowlisted_metric_dimension() -> None:

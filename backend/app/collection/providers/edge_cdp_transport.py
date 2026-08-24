@@ -2,7 +2,7 @@
 
 import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from typing import TypeVar
 
 from playwright.async_api import Error as PlaywrightError
@@ -10,6 +10,10 @@ from playwright.async_api import Page, async_playwright
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 from app.collection.providers.edge_cdp_endpoint import validate_loopback_cdp_endpoint
+from app.collection.providers.edge_cdp_supervisor import (
+    EdgeCdpSupervisor,
+    EdgeCdpSupervisorError,
+)
 
 ResultT = TypeVar("ResultT")
 
@@ -37,6 +41,7 @@ class EdgeCdpTransport:
         connect_timeout_ms: int = 5_000,
         navigation_timeout_ms: int = 20_000,
         document_timeout_ms: int = 10_000,
+        supervisor: EdgeCdpSupervisor | None = None,
     ) -> None:
         self.endpoint = validate_loopback_cdp_endpoint(endpoint)
         if min(
@@ -46,6 +51,11 @@ class EdgeCdpTransport:
         self._connect_timeout_ms = connect_timeout_ms
         self._navigation_timeout_ms = navigation_timeout_ms
         self._document_timeout_ms = document_timeout_ms
+        # TASK-109: lifecycle sob demanda -- quando um `EdgeCdpSupervisor`
+        # é injetado, cada conexão CDP pega uma lease dele automaticamente
+        # (o provider nunca sabe disso). Sem supervisor (ex.: scripts de
+        # validação manual), conecta direto no endpoint como antes.
+        self._supervisor = supervisor
 
     @asynccontextmanager
     async def open_blank_page(self) -> AsyncIterator[Page]:
@@ -53,32 +63,40 @@ class EdgeCdpTransport:
         para quem precisa fazer suas próprias navegações sequenciais
         (ex.: enriquecimento de detalhe, uma por oferta, TASK-109).
         Nenhuma decisão de negócio acontece aqui, só conexão/limpeza."""
-        playwright = None
-        page = None
-        try:
-            playwright = await async_playwright().start()
-            browser = await playwright.chromium.connect_over_cdp(
-                self.endpoint, timeout=self._connect_timeout_ms
-            )
-            if not browser.contexts:
-                raise EdgeCdpTransportError("CDP browser has no context")
-            page = await browser.contexts[0].new_page()
-            page.set_default_timeout(self._document_timeout_ms)
-            yield page
-        except asyncio.CancelledError:
-            raise
-        except EdgeCdpTransportError:
-            raise
-        except (PlaywrightError, PlaywrightTimeoutError) as error:
-            raise EdgeCdpTransportError("CDP fallback failed") from error
-        finally:
-            if page is not None:
+        async with AsyncExitStack() as stack:
+            if self._supervisor is not None:
                 try:
-                    await page.close()
-                except PlaywrightError:
-                    pass
-            if playwright is not None:
-                await playwright.stop()
+                    await stack.enter_async_context(self._supervisor.lease())
+                except EdgeCdpSupervisorError as error:
+                    raise EdgeCdpTransportError(
+                        "CDP fallback failed"
+                    ) from error
+            playwright = None
+            page = None
+            try:
+                playwright = await async_playwright().start()
+                browser = await playwright.chromium.connect_over_cdp(
+                    self.endpoint, timeout=self._connect_timeout_ms
+                )
+                if not browser.contexts:
+                    raise EdgeCdpTransportError("CDP browser has no context")
+                page = await browser.contexts[0].new_page()
+                page.set_default_timeout(self._document_timeout_ms)
+                yield page
+            except asyncio.CancelledError:
+                raise
+            except EdgeCdpTransportError:
+                raise
+            except (PlaywrightError, PlaywrightTimeoutError) as error:
+                raise EdgeCdpTransportError("CDP fallback failed") from error
+            finally:
+                if page is not None:
+                    try:
+                        await page.close()
+                    except PlaywrightError:
+                        pass
+                if playwright is not None:
+                    await playwright.stop()
 
     @asynccontextmanager
     async def open_page(self, url: str) -> AsyncIterator[Page]:

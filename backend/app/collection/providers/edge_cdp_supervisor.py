@@ -2,18 +2,31 @@
 
 TASK-109: generalizado a partir do antigo `MagaluEdgeSupervisor` -- o Edge
 supervisionado aqui é infraestrutura do `collection_worker`, não de uma
-loja específica (Magalu, Terabyte, Mercado Livre e futuros providers só
-reaproveitam o mesmo processo/perfil/CDP já supervisionado). Esta classe
-não conhece nenhuma loja: inicia o Edge, gerencia perfil dedicado, expõe
-CDP, monitora liveness, recupera automaticamente e evita processos
-duplicados/órfãos -- nada além disso.
+loja específica (Magalu, Terabyte, Mercado Livre, Amazon, Kabum, Pichau e
+o `StoreProductIdentityResolver` só reaproveitam o mesmo processo/perfil/
+CDP já supervisionado). Esta classe não conhece nenhuma loja: inicia o
+Edge sob demanda, gerencia perfil dedicado, expõe CDP, monitora liveness
+enquanto há uso ativo, recupera automaticamente durante uso, encerra por
+idle quando não há mais uso, e evita processos duplicados/órfãos -- nada
+além disso.
+
+Lifecycle sob demanda (TASK-109): o Edge só é iniciado no primeiro
+`lease()`; enquanto houver pelo menos uma lease ativa, um monitor recupera
+o Edge automaticamente se ele morrer; quando a última lease é liberada, um
+timer de ociosidade começa (`idle_timeout_seconds`) -- se nenhuma lease
+nova chegar antes do timeout, o Edge é encerrado normalmente e o
+supervisor volta a ficar dormente (sem monitor, sem processo) até a
+próxima necessidade real. Fechar o Edge manualmente enquanto ocioso (sem
+lease ativa) nunca causa relançamento imediato -- só a próxima `lease()`
+relança, sob demanda, exatamente como o próprio timeout já faria.
 """
 
 import asyncio
 import logging
 import os
 import tempfile
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
+from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -25,6 +38,11 @@ from playwright.async_api import async_playwright
 from app.collection.providers.edge_cdp_endpoint import validate_loopback_cdp_endpoint
 
 logger = logging.getLogger("app.collection.edge_cdp_supervisor")
+
+# TASK-109: default de fábrica do tempo de ociosidade -- só usado quando o
+# chamador não passa `idle_timeout_seconds` (ex.: `Settings`, via
+# `build_edge_supervisor`). Nunca lido diretamente fora do `__init__`.
+DEFAULT_EDGE_IDLE_TIMEOUT_SECONDS = 180.0
 
 
 class EdgeCdpSupervisorError(RuntimeError):
@@ -65,7 +83,7 @@ def default_edge_profile_dir() -> Path:
 
 
 class EdgeCdpSupervisor:
-    """Mantém um Edge dedicado disponível em CDP loopback durante o worker."""
+    """Mantém um Edge dedicado disponível em CDP loopback sob demanda."""
 
     def __init__(
         self,
@@ -76,6 +94,7 @@ class EdgeCdpSupervisor:
         startup_timeout_seconds: float = 30.0,
         probe_interval_seconds: float = 1.0,
         restart_delay_seconds: float = 1.0,
+        idle_timeout_seconds: float = DEFAULT_EDGE_IDLE_TIMEOUT_SECONDS,
         extra_args: Sequence[str] = (),
     ) -> None:
         self.endpoint = validate_loopback_cdp_endpoint(endpoint)
@@ -89,17 +108,27 @@ class EdgeCdpSupervisor:
             raise ValueError("supervisor timeouts must be positive")
         if restart_delay_seconds < 0:
             raise ValueError("restart delay must not be negative")
+        if idle_timeout_seconds <= 0:
+            raise ValueError("idle_timeout_seconds must be positive")
         self._executable = discover_edge_executable(executable)
         self._profile_dir = (profile_dir or default_edge_profile_dir()).resolve()
         self._startup_timeout_seconds = startup_timeout_seconds
         self._probe_interval_seconds = probe_interval_seconds
         self._restart_delay_seconds = restart_delay_seconds
+        self._idle_timeout_seconds = idle_timeout_seconds
         self._extra_args = tuple(extra_args)
         self._process: asyncio.subprocess.Process | None = None
         self._monitor_task: asyncio.Task[None] | None = None
+        self._idle_timer_task: asyncio.Task[None] | None = None
         self._lifecycle_lock = asyncio.Lock()
-        self._stopping = False
         self._started_process = False
+        # TASK-109: contador de uso ativo -- nunca negativo. >0 mantém o
+        # monitor de recuperação ligado; a transição pra 0 dispara o timer
+        # de ociosidade. Não é um lock de exclusão mútua (múltiplos
+        # consumidores usam o mesmo Edge ao mesmo tempo, cada um com sua
+        # própria página/conexão CDP), só uma contagem de "alguém precisa
+        # que o Edge continue vivo agora".
+        self._active_leases = 0
 
     @property
     def profile_dir(self) -> Path:
@@ -109,34 +138,56 @@ class EdgeCdpSupervisor:
     def process_id(self) -> int | None:
         return self._process.pid if self._process is not None else None
 
-    async def start(self) -> None:
-        """Inicia o Edge quando ausente e ativa recuperação contínua."""
+    @property
+    def active_leases(self) -> int:
+        return self._active_leases
+
+    @asynccontextmanager
+    async def lease(self) -> AsyncIterator[None]:
+        """Empresta o Edge dedicado pela duração do bloco `async with`.
+
+        Providers nunca chamam isto diretamente (TASK-109): quem usa é
+        `EdgeCdpTransport`/`CdpMagaluSearchTransport`, transparente para o
+        provider. Primeira lease ativa inicia o Edge (se ausente/adota se
+        já existir) e liga o monitor de recuperação; última lease liberada
+        começa a contagem de ociosidade. Nunca decide nada de negócio, só
+        lifecycle do processo."""
+        await self._acquire()
+        try:
+            yield
+        finally:
+            await self._release()
+
+    async def _acquire(self) -> None:
         async with self._lifecycle_lock:
-            if self._monitor_task is not None and not self._monitor_task.done():
+            self._active_leases += 1
+            if self._active_leases > 1:
                 return
-            self._stopping = False
+            await self._cancel_idle_timer()
             if await self._cdp_ready() and not self._started_process:
                 if await self._find_dedicated_edge_process() is None:
+                    self._active_leases -= 1
                     raise EdgeCdpSupervisorError(
                         "configured CDP port is owned by another Edge profile"
                     )
                 self._started_process = True
             await self._ensure_running()
-            self._monitor_task = asyncio.create_task(
-                self._monitor(), name="edge-cdp-supervisor"
-            )
+            self._start_monitor()
+
+    async def _release(self) -> None:
+        async with self._lifecycle_lock:
+            self._active_leases = max(0, self._active_leases - 1)
+            if self._active_leases > 0:
+                return
+            await self._stop_monitor()
+            self._start_idle_timer()
 
     async def stop(self) -> None:
-        """Encerra a supervisão; nunca é chamado entre coletas."""
-        self._stopping = True
-        task = self._monitor_task
-        self._monitor_task = None
-        if task is not None:
-            task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
+        """Encerramento definitivo do worker -- nunca chamado entre leases."""
+        async with self._lifecycle_lock:
+            self._active_leases = 0
+            await self._stop_monitor()
+            await self._cancel_idle_timer()
         await self._close_dedicated_browser()
         await self._terminate_launcher()
 
@@ -150,12 +201,68 @@ class EdgeCdpSupervisor:
             await asyncio.sleep(min(self._probe_interval_seconds, 0.25))
         raise EdgeCdpSupervisorError("Edge CDP did not become ready")
 
+    def _start_monitor(self) -> None:
+        if self._monitor_task is None or self._monitor_task.done():
+            self._monitor_task = asyncio.create_task(
+                self._monitor(), name="edge-cdp-supervisor"
+            )
+
+    async def _stop_monitor(self) -> None:
+        """Cancela e espera terminar antes de devolver -- garante que
+        `_start_monitor` nunca veja a tarefa antiga ainda "não terminada"
+        e deixe de criar uma nova por engano."""
+        task = self._monitor_task
+        self._monitor_task = None
+        if task is not None:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+    def _start_idle_timer(self) -> None:
+        if self._idle_timer_task is None or self._idle_timer_task.done():
+            self._idle_timer_task = asyncio.create_task(
+                self._idle_timeout_watch(), name="edge-cdp-idle-timer"
+            )
+
+    async def _cancel_idle_timer(self) -> None:
+        task = self._idle_timer_task
+        self._idle_timer_task = None
+        if task is not None:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+    async def _idle_timeout_watch(self) -> None:
+        """Só encerra o Edge se ninguém pegou uma lease nova nesse meio
+        tempo -- reconfere `_active_leases` sob o lock antes de agir, nunca
+        confia só em ter sobrevivido ao `sleep` sem ser cancelado. O
+        encerramento em si também roda com o lock preso: uma `lease()`
+        nova que chegue exatamente nesse instante espera o encerramento
+        terminar antes de relançar, em vez de arriscar adotar um processo
+        que já está sendo fechado."""
+        try:
+            await asyncio.sleep(self._idle_timeout_seconds)
+        except asyncio.CancelledError:
+            return
+        async with self._lifecycle_lock:
+            if self._active_leases > 0:
+                return
+            self._idle_timer_task = None
+            self._started_process = False
+            logger.info("edge_cdp_idle_timeout")
+            await self._close_dedicated_browser()
+            await self._terminate_launcher()
+
     async def _monitor(self) -> None:
-        while not self._stopping:
+        while True:
             try:
                 if not await self._cdp_ready():
                     async with self._lifecycle_lock:
-                        if not self._stopping and not await self._cdp_ready():
+                        if self._active_leases > 0 and not await self._cdp_ready():
                             await self._ensure_running()
             except asyncio.CancelledError:
                 raise
