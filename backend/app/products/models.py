@@ -83,3 +83,61 @@ class Product(Base):
         onupdate=utc_now,
         server_default=func.now(),
     )
+
+
+class ProductIdentityAlias(Base):
+    """Alias canônico e determinístico do Product Identity Engine (TASK-112).
+
+    Resolve variação de escrita de valor de atributo (ex.: "ASUSTeK"/"Asus"
+    -> "asus") sem exigir mudança de código/algoritmo -- crescimento de
+    conhecimento é inserir linha nova, nunca redesenho. `status="candidate"`
+    é conhecimento ainda não promovido (a IA pode sugerir uma linha assim,
+    mas nunca a ativa sozinha); só `status="active"` participa da geração de
+    `monitoring_key` (`app.products.identity.resolve_monitoring_identity`).
+    Promoção é sempre uma ação determinística/humana, nunca automática.
+    """
+
+    __tablename__ = "product_identity_aliases"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('active', 'candidate')",
+            name="ck_product_identity_aliases_status_values",
+        ),
+        CheckConstraint("btrim(category) <> ''", name="ck_product_identity_aliases_category_not_blank"),
+        CheckConstraint(
+            "btrim(attribute_name) <> ''", name="ck_product_identity_aliases_attribute_not_blank"
+        ),
+        CheckConstraint(
+            "btrim(raw_value_normalized) <> ''",
+            name="ck_product_identity_aliases_raw_value_not_blank",
+        ),
+        CheckConstraint(
+            "btrim(canonical_value) <> ''", name="ck_product_identity_aliases_canonical_value_not_blank"
+        ),
+        Index(
+            "uq_product_identity_aliases_scope",
+            "category",
+            "attribute_name",
+            "raw_value_normalized",
+            unique=True,
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        primary_key=True,
+        default=uuid4,
+    )
+    category: Mapped[str] = mapped_column(String(80), nullable=False)
+    attribute_name: Mapped[str] = mapped_column(String(80), nullable=False)
+    raw_value_normalized: Mapped[str] = mapped_column(String(160), nullable=False)
+    canonical_value: Mapped[str] = mapped_column(String(160), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="active", server_default="active"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+        server_default=func.now(),
+    )
