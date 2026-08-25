@@ -90,10 +90,20 @@ def test_privacy_command_is_registered_and_does_not_overpromise() -> None:
     assert "conformidade" not in notice.casefold()
 
 
-def test_deidentify_account_scrubs_mutable_data_and_preserves_safe_audit() -> None:
+def test_deidentify_account_scrubs_mutable_data_and_preserves_safe_audit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # TASK-112 (fase 2): reconcile do vínculo com MonitoringItem tem
+    # cobertura própria (tests/integration/test_shared_monitoring.py,
+    # contra PostgreSQL real) -- este teste verifica só a desidentificação
+    # em si; a sessão fake aqui (_PrivacySession) não implementa o que o
+    # reconcile precisa (session.get/begin_nested), por design.
+    monkeypatch.setattr(
+        "app.privacy.service.reconcile_mission_monitoring_item", lambda *_a, **_k: None
+    )
     user = _user()
     mission = SimpleNamespace(id=uuid4(), title="Busca da Pessoa Canary")
-    criteria = SimpleNamespace(search_query="privacy-canary notebook")
+    criteria = SimpleNamespace(search_query="privacy-canary notebook", mission_id=mission.id)
     schedule = SimpleNamespace(is_enabled=True)
     session = _PrivacySession(
         user,

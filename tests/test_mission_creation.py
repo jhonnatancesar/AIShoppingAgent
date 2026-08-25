@@ -20,6 +20,28 @@ from app.users.models import User, UserRole
 NOW = datetime(2026, 8, 7, 12, 0, tzinfo=UTC)
 
 
+@pytest.fixture(autouse=True)
+def _no_shared_monitoring(monkeypatch):
+    """TASK-112 (fase 2): este arquivo testa a criação/ativação da missão
+    em si -- o vínculo com `MonitoringItem` tem cobertura própria
+    (`tests/integration/test_shared_monitoring.py`, contra PostgreSQL
+    real). `_session()` abaixo usa uma sequência posicional de
+    `session.scalar` desenhada para `transition_mission`; sem este no-op,
+    a consulta nova do vínculo (antes da transição) desalinharia essa
+    sequência para todo teste, por motivo alheio ao que está sendo
+    testado."""
+    monkeypatch.setattr(
+        "app.missions.service.reconcile_mission_monitoring_item", lambda *_a, **_k: None
+    )
+    monkeypatch.setattr(
+        "app.missions.service.activate_monitoring_item_stores", lambda *_a, **_k: None
+    )
+    monkeypatch.setattr(
+        "app.missions.service.deactivate_monitoring_item_stores_if_unneeded",
+        lambda *_a, **_k: None,
+    )
+
+
 class _FakeStore:
     def __init__(self, code: str) -> None:
         self.code = code

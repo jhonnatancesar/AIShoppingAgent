@@ -251,7 +251,47 @@ def classify_product_request(text: str) -> ProductRequestIdentity:
 # arquivo (ver docstring do módulo).
 # ---------------------------------------------------------------------------
 
-MONITORING_KEY_VERSION = 1
+MONITORING_KEY_VERSION = 2
+"""v2 (TASK-112, correção de escopo): a chave passou a levar `scope`
+explícito (`MonitoringScope`) -- v1 nunca tinha isso, então nunca poderia
+distinguir "iPhone 17 Pro 256GB" (specific) de "iPhone 17, qualquer
+variante" (family), risco real de colisão. Nada em produção dependia do
+formato v1 ainda (nunca commitado/publicado com dado real), então o bump
+é limpo, sem backfill de chave antiga necessário."""
+
+
+class MonitoringScope(StrEnum):
+    """Granularidade da `monitoring_key` (TASK-112).
+
+    `SPECIFIC`: produto/variante exata -- todo atributo bloqueante da
+    categoria precisa estar resolvido (valor real, nunca `ANY`).
+
+    `FAMILY`: "qualquer variante desta família" -- escolha deliberada do
+    usuário (`VariantSelectionMode.ALL`) de NÃO restringir mais do que já
+    tinha restringido. Nunca exige atributo bloqueante resolvido (é
+    justamente o que a escolha dispensa), mas preserva qualquer
+    `variant`/atributo que o texto especificou de fato (ex.: "iPhone 17
+    Pro" mantém `variant=pro`; "RTX 5070 Ti ASUS" mantém
+    `board_brand=asus`) -- só o que não foi mencionado vira `ANY`. Nunca
+    apaga uma restrição real só porque o escopo é family, nunca inventa
+    uma que o usuário não pediu.
+
+    `GENERIC`: reservado para uma categoria reconhecida por algum
+    mecanismo determinístico futuro que ainda assim não comporta
+    variante/atributo nenhum (nem específico, nem "qualquer"). Não
+    alcançável hoje: `_parse` só reconhece uma categoria através de
+    `_CATEGORY_REGISTRY`/`_EXTRACTORS`, e toda categoria reconhecida hoje
+    tem `family`/`model` resolvíveis (vira `SPECIFIC` ou `FAMILY`, nunca
+    fica sem nenhum dos dois). Texto que nenhum extractor reconhece
+    (`_parse` devolve `None`, `ProductRequestKind.GENERIC_CATEGORY` da
+    TASK-097) continua fail-closed sempre -- contrato explícito, não
+    esquecido: nunca gera `monitoring_key` nenhuma, `scope` nenhum, sob o
+    registry atual.
+    """
+
+    SPECIFIC = "specific"
+    FAMILY = "family"
+    GENERIC = "generic"
 
 
 @dataclass(frozen=True, slots=True)
@@ -535,14 +575,21 @@ class MonitoringIdentity:
     TASK-097): nunca chama IA, nunca decide "parecido o suficiente" --
     duas chamadas com textos que normalizam para a mesma estrutura sempre
     devolvem a mesma `monitoring_key`; qualquer diferença estrutural real
-    (inclusive `ANY` vs. valor restrito) sempre devolve chaves diferentes.
+    (inclusive `ANY` vs. valor restrito, inclusive `scope` diferente)
+    sempre devolve chaves diferentes. `scope` (`MonitoringScope`) nunca
+    fica implícito -- faz parte da própria chave, então "iPhone 17 Pro
+    256GB" (specific) nunca colide com "iPhone 17, qualquer variante"
+    (family), mesmo compartilhando category/brand/family/model.
     """
 
+    scope: MonitoringScope
     category: str
     brand: str
     family: str
     model: str
-    variant: str | None
+    variant: str
+    """Sempre a string canônica `"ANY"` quando não especificado -- nunca
+    `None`/ausência (mesma regra de `attributes`)."""
     attributes: tuple[tuple[str, str], ...]
     monitoring_key: str
 
@@ -563,6 +610,95 @@ def _canonical_attribute(
     return _slug(canonical)
 
 
+def _build_monitoring_identity(
+    *,
+    scope: MonitoringScope,
+    category: str,
+    brand: str,
+    family: str,
+    model: str,
+    variant: str | None,
+    attribute_values: Mapping[str, str],
+    aliases: Mapping[tuple[str, str, str], str],
+) -> MonitoringIdentity | None:
+    """Núcleo único do algoritmo de `monitoring_key` (TASK-112) -- usado
+    por toda fonte de entrada possível (texto via `_parse` em escopo
+    specific ou family, ou identidade já estruturada/resolvida via
+    TASK-097 em escopo specific). Nunca existe um segundo algoritmo de
+    chave: todas as entradas convergem para cá antes de qualquer hash.
+
+    Regra única de resolução de `variant`/atributos, a MESMA para
+    qualquer `scope` (correção -- a versão anterior forçava `ANY`
+    incondicionalmente em `scope=FAMILY`, apagando restrições que o
+    usuário tinha de fato pedido, ex.: "iPhone 17 128GB" em modo
+    "qualquer variante" perderia o 128GB): todo valor que o CHAMADOR
+    identificou explicitamente no pedido (presente em `attribute_values`/
+    `variant`) é preservado; só o que NÃO foi especificado vira `ANY`.
+    Nunca inventa restrição nem apaga uma já pedida.
+
+    `ANY` é sempre um valor CANÔNICO explícito (a string `"ANY"`), nunca
+    `None`/ausência -- vale para `attributes` (já sempre foi assim) e
+    também para `variant` (correção): internamente um `variant` ausente
+    chega aqui como `None` (conveniência do chamador), mas o valor
+    devolvido em `MonitoringIdentity.variant` e usado no hash é sempre
+    `"ANY"` nesse caso, nunca `None`. Callers/serialização (`canonical_
+    identity`, ADMIN) nunca precisam interpretar ausência como "qualquer"
+    -- o payload já diz isso explicitamente.
+
+    A ÚNICA diferença entre escopos é se a AUSÊNCIA de um atributo
+    bloqueante é aceitável:
+
+    `scope=SPECIFIC`: todo atributo bloqueante da categoria precisa
+    estar em `attribute_values` (fail-closed se faltar) -- comportamento
+    inalterado desde a fase 1/2 original.
+
+    `scope=FAMILY`: bloqueante nunca precisa estar resolvido (é
+    justamente o que "qualquer variante" dispensa) -- se o usuário não
+    especificou, vira `ANY` como qualquer outro atributo ausente; se
+    especificou (ex.: "128GB" mesmo em modo "qualquer variante" -- caso
+    hoje só alcançável chamando o motor diretamente, já que o fluxo real
+    de missão só oferece "ALL" quando o atributo bloqueante está ausente),
+    o valor é preservado normalmente, nunca descartado.
+    """
+    category_def = _CATEGORY_BY_NAME.get(category)
+    if category_def is None:
+        return None
+    if scope is MonitoringScope.SPECIFIC:
+        if not category_def.blocking_attribute_names().issubset(attribute_values):
+            return None
+
+    brand_c = _canonical_attribute(category, "brand", brand, aliases)
+    family_c = _slug(family)
+    model_c = _canonical_attribute(category, "model", model, aliases)
+
+    # "ANY" é sempre o valor canônico explícito de ausência -- nunca None,
+    # nunca omitido do hash (mesma regra que `attributes` já seguia).
+    variant_c = _slug(variant) if variant else "ANY"
+    attributes = tuple(
+        (
+            attr.name,
+            _canonical_attribute(category, attr.name, attribute_values[attr.name], aliases)
+            if attr.name in attribute_values
+            else "ANY",
+        )
+        for attr in category_def.attributes
+    )
+
+    parts = [f"v{MONITORING_KEY_VERSION}", scope.value, category, brand_c, family_c, model_c, variant_c]
+    parts.extend(f"{name}={value}" for name, value in attributes)
+    digest = sha256("|".join(parts).encode("utf-8")).hexdigest()
+    return MonitoringIdentity(
+        scope=scope,
+        category=category,
+        brand=brand_c,
+        family=family_c,
+        model=model_c,
+        variant=variant_c,
+        attributes=attributes,
+        monitoring_key=f"v{MONITORING_KEY_VERSION}:{digest}",
+    )
+
+
 def resolve_monitoring_identity(
     text: str,
     *,
@@ -580,45 +716,119 @@ def resolve_monitoring_identity(
     `AttributeDefinition.blocking` desta camada. Nesses casos a missão
     correspondente nunca compartilha coleta com nenhuma outra (TASK-112)
     -- continua com a sua própria, exatamente como hoje.
+
+    Escopo sempre `SPECIFIC` -- fonte de entrada 1 de 3 (texto). Quando a
+    missão já tem uma variante específica *selecionada/confirmada*
+    (TASK-097), o chamador deve preferir
+    `resolve_monitoring_identity_for_resolved_product` (fonte 2 de 3) --
+    texto continua sendo a fonte certa só enquanto for a informação mais
+    específica disponível. Quando a missão deliberadamente monitora
+    "qualquer variante" (`VariantSelectionMode.ALL`), o chamador deve
+    usar `resolve_monitoring_identity_for_family` (fonte 3 de 3, escopo
+    `FAMILY`) -- nunca esta função, que sempre exige o atributo
+    bloqueante resolvido.
     """
     parsed = _parse(text)
     if parsed is None:
         return None
-    category = _CATEGORY_BY_NAME.get(parsed.category)
-    if category is None:
+    if parsed.category not in _CATEGORY_BY_NAME:
         return None
     found = dict(parsed.attributes)
     if not parsed.required_attributes.issubset(found):
         return None
-    if not category.blocking_attribute_names().issubset(found):
-        return None
-
-    brand = _canonical_attribute(parsed.category, "brand", parsed.brand, aliases)
-    family = _slug(parsed.family)
-    model = _canonical_attribute(parsed.category, "model", parsed.model, aliases)
-    variant = _slug(parsed.variant) if parsed.variant else None
-
-    attributes = tuple(
-        (
-            attr.name,
-            _canonical_attribute(parsed.category, attr.name, found[attr.name], aliases)
-            if attr.name in found
-            else "ANY",
-        )
-        for attr in category.attributes
+    return _build_monitoring_identity(
+        scope=MonitoringScope.SPECIFIC,
+        category=parsed.category,
+        brand=parsed.brand,
+        family=parsed.family,
+        model=parsed.model,
+        variant=parsed.variant,
+        attribute_values=found,
+        aliases=aliases,
     )
 
-    parts = [f"v{MONITORING_KEY_VERSION}", parsed.category, brand, family, model]
-    if variant:
-        parts.append(variant)
-    parts.extend(f"{name}={value}" for name, value in attributes)
-    digest = sha256("|".join(parts).encode("utf-8")).hexdigest()
-    return MonitoringIdentity(
+
+def resolve_monitoring_identity_for_family(
+    text: str,
+    *,
+    aliases: Mapping[tuple[str, str, str], str] = MappingProxyType({}),
+) -> MonitoringIdentity | None:
+    """Escopo `FAMILY` (TASK-112) -- "qualquer variante desta família",
+    escolha deliberada do usuário (`VariantSelectionMode.ALL`), nunca uma
+    tentativa frustrada de resolver o específico.
+
+    Preserva TUDO que o texto especificou explicitamente (variante
+    quando o usuário escreveu "Pro"/"Plus"/... -- `parsed.variant_
+    explicit`; qualquer atributo que `_parse` tenha extraído, ex.
+    `board_brand` de GPU); só o que não foi especificado vira `ANY`
+    (`_build_monitoring_identity`, regra única, mesma para todo escopo).
+    Nunca exige atributo BLOQUEANTE (é justamente o que "qualquer
+    variante" dispensa) -- ausência dele não falha fechado aqui, mas se
+    ele estiver presente no texto, é preservado normalmente, nunca
+    descartado só porque o escopo é family.
+
+    Fail-closed do mesmo jeito que as outras fontes: `None` quando
+    nenhuma categoria é reconhecida (`_parse`) ou a categoria reconhecida
+    não está em `_CATEGORY_REGISTRY`. Nunca chamado para `SPECIFIC_
+    PRODUCT`/`GENERIC_CATEGORY` -- só faz sentido quando o chamador já
+    sabe (`MissionCriteria.variant_selection_mode == ALL`) que o usuário
+    escolheu deliberadamente não restringir a variante ALÉM do que já
+    tinha especificado.
+    """
+    parsed = _parse(text)
+    if parsed is None:
+        return None
+    if parsed.category not in _CATEGORY_BY_NAME:
+        return None
+    return _build_monitoring_identity(
+        scope=MonitoringScope.FAMILY,
         category=parsed.category,
+        brand=parsed.brand,
+        family=parsed.family,
+        model=parsed.model,
+        variant=parsed.variant if parsed.variant_explicit else None,
+        attribute_values=dict(parsed.attributes),
+        aliases=aliases,
+    )
+
+
+def resolve_monitoring_identity_for_resolved_product(
+    *,
+    category: str | None,
+    brand: str | None,
+    family: str | None,
+    model: str | None,
+    variant: str | None,
+    attributes: Mapping[str, str],
+    aliases: Mapping[tuple[str, str, str], str] = MappingProxyType({}),
+) -> MonitoringIdentity | None:
+    """Mesmo algoritmo/formato de `resolve_monitoring_identity` (núcleo
+    compartilhado em `_build_monitoring_identity`), mas a partir de uma
+    identidade JÁ estruturada e resolvida -- nunca reparseia texto.
+
+    Escopo sempre `SPECIFIC`. Fonte de entrada 2 de 3 (TASK-112, correção
+    de precedência): usada
+    quando a missão tem uma variante de `Product` explicitamente
+    *selecionada* (`MissionProductSelection`, `VariantSelectionMode.
+    SELECTED`) ou *confirmada* -- essas colunas (`Product.category`/
+    `brand`/`family`/`model`/`variant`/`attributes`) já vêm do mesmo
+    `resolve_product_variant` que também alimenta `_ParsedFamily`
+    (TASK-097), então convergem para a MESMA `monitoring_key` que o
+    texto equivalente produziria -- não é uma segunda fonte de verdade,
+    é a mesma, só sem precisar reparsear.
+
+    `category`/`brand`/`family`/`model` ausentes (produto sem identidade
+    resolvida) devolve `None`, fail-closed, igual a texto não reconhecido.
+    """
+    if category is None or brand is None or family is None or model is None:
+        return None
+    return _build_monitoring_identity(
+        scope=MonitoringScope.SPECIFIC,
+        category=category,
         brand=brand,
         family=family,
         model=model,
         variant=variant,
-        attributes=attributes,
-        monitoring_key=f"v{MONITORING_KEY_VERSION}:{digest}",
+        attribute_values=attributes,
+        aliases=aliases,
     )

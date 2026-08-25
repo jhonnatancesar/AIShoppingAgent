@@ -33,6 +33,36 @@ from app.users.models import User, UserRole
 NOW = datetime(2026, 8, 2, 15, 0, tzinfo=UTC)
 
 
+@pytest.fixture(autouse=True)
+def _no_shared_monitoring(monkeypatch):
+    """TASK-112 (fase 2): este arquivo testa o ciclo de vida da missão em
+    si (`transition_mission_async`/`create_mission_from_criteria_async`/
+    `set_mission_product_selection_async`/`promote_confirmed_product_
+    identity_async`) -- o vínculo com `MonitoringItem` tem cobertura
+    própria (`tests/integration/test_shared_monitoring.py`, contra
+    PostgreSQL real). Os mocks de sessão aqui (`MagicMock`/`AsyncMock`
+    posicionais) não têm `session.get`/`session.scalars` configurados
+    para o vínculo novo -- sem este no-op, todo teste que passa por
+    qualquer um desses quebraria por motivo completamente alheio ao que
+    está sendo testado."""
+
+    async def _noop_link(*_args: object, **_kwargs: object) -> None:
+        return None
+
+    async def _noop(*_args: object, **_kwargs: object) -> None:
+        return None
+
+    monkeypatch.setattr(
+        "app.missions.service.reconcile_mission_monitoring_item_async", _noop_link
+    )
+    monkeypatch.setattr(
+        "app.missions.service.activate_monitoring_item_stores_async", _noop
+    )
+    monkeypatch.setattr(
+        "app.missions.service.deactivate_monitoring_item_stores_if_unneeded_async", _noop
+    )
+
+
 def _mission(
     status: MissionStatus = MissionStatus.DRAFT,
     *,

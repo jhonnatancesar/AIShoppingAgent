@@ -21,6 +21,7 @@ from sqlalchemy import (
     desc,
     func,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PostgreSQLUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -276,6 +277,136 @@ class MissionCriteria(Base):
         nullable=False,
         default=utc_now,
         server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+        onupdate=utc_now,
+        server_default=func.now(),
+    )
+
+
+class MonitoringItem(Base):
+    """Item de monitoramento compartilhável (TASK-112, fase 2).
+
+    Nasce da `monitoring_key` resolvida pelo Product Identity Engine
+    (fase 1, `app.products.identity.resolve_monitoring_identity`) --
+    determinística, sem IA na decisão. Deliberadamente **não** é `Offer`
+    (resultado de coleta, por loja) nem `Product` (identidade cross-loja
+    da TASK-097, que só existe depois de alguma coleta real): existe
+    desde a criação da missão, antes de qualquer coleta acontecer.
+    """
+
+    __tablename__ = "monitoring_items"
+    __table_args__ = (
+        CheckConstraint(
+            "identity_version > 0", name="ck_monitoring_items_identity_version_positive"
+        ),
+        Index("uq_monitoring_items_monitoring_key", "monitoring_key", unique=True),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4
+    )
+    monitoring_key: Mapped[str] = mapped_column(String(160), nullable=False)
+    identity_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    canonical_identity: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+        onupdate=utc_now,
+        server_default=func.now(),
+    )
+
+
+class MissionMonitoringItem(Base):
+    """Vínculo N:1 entre `Mission` e `MonitoringItem` (TASK-112, fase 2).
+
+    Uma missão só pertence a um item por vez -- `mission_id` é a própria
+    chave primária, sem tabela de junção N:N. Deliberadamente sem
+    estado/status próprio: se o vínculo "conta" para a necessidade real
+    de coleta é sempre derivado de `Mission.status` no momento da
+    consulta (`app.missions.monitoring`), nunca um flag redundante que
+    precisaria ser mantido em dia à parte.
+    """
+
+    __tablename__ = "mission_monitoring_items"
+
+    mission_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("missions.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    monitoring_item_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("monitoring_items.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now, server_default=func.now()
+    )
+
+
+class MonitoringItemStore(Base):
+    """Necessidade real de coleta por `(item, loja)` (TASK-112, fase 2).
+
+    Substitui, na granularidade compartilhada, o papel de agenda
+    (`MissionSchedule`) e de backoff (`MissionSource.next_eligible_at`/
+    `consecutive_blocks`, DEC-046) que hoje existem por missão.
+    `MissionSource` continua existindo sem nenhuma mudança de forma --
+    é a preferência do usuário e conta cota (TASK-107); esta tabela é só
+    a necessidade AGREGADA de coleta entre todas as missões vinculadas.
+
+    Nada aqui é lido por nenhum scheduler ainda (fase 3, fan-out/coleta
+    compartilhada) -- só documenta a necessidade. `is_enabled` é mantido
+    pelo lifecycle de missão (`app.missions.monitoring`): fica `True`
+    enquanto ao menos uma missão `ACTIVE` vinculada ao mesmo item exigir
+    esta loja, `False` quando a última sair -- histórico
+    (`next_run_at`/`next_eligible_at`/`consecutive_blocks`) nunca é
+    apagado, só para de ser avançado.
+    """
+
+    __tablename__ = "monitoring_item_stores"
+    __table_args__ = (
+        CheckConstraint(
+            "consecutive_blocks >= 0",
+            name="ck_monitoring_item_stores_consecutive_blocks_non_negative",
+        ),
+    )
+
+    monitoring_item_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("monitoring_items.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    store_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("stores.id", ondelete="RESTRICT"),
+        primary_key=True,
+    )
+    is_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default="true"
+    )
+    next_run_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_run_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    next_eligible_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    consecutive_blocks: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now, server_default=func.now()
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

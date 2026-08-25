@@ -11,7 +11,9 @@ from hashlib import sha256
 
 from app.products.identity import (
     MONITORING_KEY_VERSION,
+    MonitoringScope,
     resolve_monitoring_identity,
+    resolve_monitoring_identity_for_family,
 )
 
 
@@ -204,10 +206,13 @@ def test_monitoring_key_is_a_stable_golden_hash_for_a_fixed_input() -> None:
     que silenciosamente deixaria de vincular missões antigas."""
     resolved = resolve_monitoring_identity("RTX 5070 Ti")
     assert resolved is not None
-    expected_digest = sha256(
-        b"v1|gpu|nvidia|geforce-rtx|5070-ti|board_brand=ANY|vram=ANY"
-    ).hexdigest()
-    assert resolved.monitoring_key == f"v1:{expected_digest}"
+    assert resolved.scope is MonitoringScope.SPECIFIC
+    canonical = (
+        f"v{MONITORING_KEY_VERSION}|{MonitoringScope.SPECIFIC.value}"
+        "|gpu|nvidia|geforce-rtx|5070-ti|ANY|board_brand=ANY|vram=ANY"
+    )
+    expected_digest = sha256(canonical.encode("utf-8")).hexdigest()
+    assert resolved.monitoring_key == f"v{MONITORING_KEY_VERSION}:{expected_digest}"
 
 
 def test_repeated_calls_are_pure_and_deterministic() -> None:
@@ -244,4 +249,104 @@ def test_smartphone_missing_blocking_attribute_fails_closed() -> None:
 
 def test_unknown_category_never_resolves() -> None:
     assert resolve_monitoring_identity("cadeira gamer reclinável azul") is None
+
+
+# ---------------------------------------------------------------------------
+# scope=FAMILY -- VariantSelectionMode.ALL ("qualquer variante"), TASK-112
+# fase 2 fechamento do caso PRODUCT_FAMILY
+# ---------------------------------------------------------------------------
+
+
+def test_family_scope_equivalent_texts_converge_to_the_same_key() -> None:
+    """Duas Missions em modo ALL para o mesmo texto de família devem
+    convergir -- é exatamente essa convergência que permite compartilhar
+    a mesma necessidade de coleta (Shared Monitoring)."""
+    first = resolve_monitoring_identity_for_family("iPhone 17 Pro")
+    second = resolve_monitoring_identity_for_family("iphone 17 pro")
+
+    assert first is not None and second is not None
+    assert first.scope is MonitoringScope.FAMILY
+    assert first.monitoring_key == second.monitoring_key
+
+
+def test_family_scope_preserves_explicit_variant_but_defaults_unspecified_attribute_to_any() -> None:
+    """Correção: modo ALL NUNCA apaga o que o usuário de fato pediu.
+    'Pro' foi escrito explicitamente -- continua restrito a Pro. Storage
+    não foi mencionado -- vira ANY, nunca um valor inventado."""
+    resolved = resolve_monitoring_identity_for_family("iPhone 17 Pro")
+    assert resolved is not None
+    assert resolved.variant == "pro"
+    assert dict(resolved.attributes) == {"storage_gb": "ANY"}
+
+
+def test_family_scope_preserves_explicit_blocking_attribute_when_present() -> None:
+    """'ALL' só dispensa a EXIGÊNCIA do atributo bloqueante -- se o
+    usuário mesmo assim especificou 128GB, isso é uma restrição real e
+    tem que ser preservada, nunca descartada por causa do escopo."""
+    resolved = resolve_monitoring_identity_for_family("iPhone 17 128GB")
+    assert resolved is not None
+    assert dict(resolved.attributes)["storage_gb"] == "128"
+
+
+def test_family_scope_explicit_and_unspecified_storage_never_share_a_key() -> None:
+    with_storage = resolve_monitoring_identity_for_family("iPhone 17 128GB")
+    without_storage = resolve_monitoring_identity_for_family("iPhone 17")
+
+    assert with_storage is not None and without_storage is not None
+    assert dict(with_storage.attributes)["storage_gb"] == "128"
+    assert dict(without_storage.attributes)["storage_gb"] == "ANY"
+    assert with_storage.monitoring_key != without_storage.monitoring_key
+
+
+def test_family_scope_equivalent_explicit_storage_texts_converge() -> None:
+    first = resolve_monitoring_identity_for_family("iPhone 17 128GB")
+    second = resolve_monitoring_identity_for_family("iPhone 17 128 GB")
+
+    assert first is not None and second is not None
+    assert first.monitoring_key == second.monitoring_key
+
+
+def test_family_scope_gpu_bare_defaults_board_brand_to_any() -> None:
+    resolved = resolve_monitoring_identity_for_family("RTX 5070 Ti")
+    assert resolved is not None
+    assert dict(resolved.attributes)["board_brand"] == "ANY"
+
+
+def test_family_scope_gpu_explicit_board_brand_is_preserved_and_never_shares_key() -> None:
+    """Mesma regra do pedido: 'RTX 5070 Ti' -> board_brand ANY; 'RTX 5070
+    Ti ASUS' -> board_brand=asus, chave diferente -- mesmo em modo ALL."""
+    bare = resolve_monitoring_identity_for_family("RTX 5070 Ti")
+    asus = resolve_monitoring_identity_for_family("RTX 5070 Ti ASUS")
+
+    assert bare is not None and asus is not None
+    assert dict(asus.attributes)["board_brand"] == "asus"
+    assert bare.monitoring_key != asus.monitoring_key
+
+
+def test_family_scope_never_collides_with_specific_scope_same_family() -> None:
+    """'iPhone 17 Pro 256GB' (specific) e 'iPhone 17 Pro' (family) NUNCA
+    podem compartilhar monitoring_key -- são intenções de coleta
+    diferentes (uma variante fixa vs qualquer variante da família)."""
+    specific = resolve_monitoring_identity("iPhone 17 Pro 256GB")
+    family = resolve_monitoring_identity_for_family("iPhone 17 Pro")
+
+    assert specific is not None and family is not None
+    assert specific.scope is MonitoringScope.SPECIFIC
+    assert family.scope is MonitoringScope.FAMILY
+    assert specific.monitoring_key != family.monitoring_key
+
+
+def test_family_scope_skips_the_blocking_attribute_check() -> None:
+    """Em scope=SPECIFIC, 'iPhone 17 Pro' sem storage_gb falha fechado
+    (test_smartphone_missing_blocking_attribute_fails_closed). Em
+    scope=FAMILY, a ausência de storage_gb é justamente o significado de
+    'qualquer variante' -- resolve normalmente, nunca falha por isso."""
+    assert resolve_monitoring_identity("iPhone 17 Pro") is None
+    resolved = resolve_monitoring_identity_for_family("iPhone 17 Pro")
+    assert resolved is not None
+    assert dict(resolved.attributes)["storage_gb"] == "ANY"
+
+
+def test_family_scope_unknown_category_never_resolves() -> None:
+    assert resolve_monitoring_identity_for_family("cadeira gamer reclinável azul") is None
     assert resolve_monitoring_identity("caneta esferográfica azul") is None

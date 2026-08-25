@@ -1,10 +1,43 @@
 # TASK-112 — Vincular missões que monitoram o mesmo item, sem duplicar coleta
 
-Status: **Desenho arquitetural revisado (2026-08-24) — base passa a ser
-um motor genérico de identidade de produtos (Product Identity Engine),
-expandindo `app/products/identity.py` (TASK-097), em vez de extractors
-pontuais por categoria. Aguardando aprovação para implementar. Nenhum
-código escrito.**
+Status: **Fase 1 concluída e commitada (`1dca734`) — Product Identity
+Engine genérico. Fase 2 concluída (2026-08-25), aguardando commit:
+modelo `MonitoringItem`/`MissionMonitoringItem`/`MonitoringItemStore`;
+vínculo/relink/desvínculo centralizados em `reconcile_mission_
+monitoring_item(_async)` (`app/missions/monitoring.py`), chamado por
+todo caller que pode alterar identidade relevante (criação, seleção de
+variante, confirmação pós-coleta, desidentificação de conta); identidade
+EFETIVA da missão resolvida com precedência (variante de `Product`
+selecionada > `VariantSelectionMode.ALL` > texto), mesmo algoritmo de
+`monitoring_key` para as três fontes
+(`app.products.identity._build_monitoring_identity`); `monitoring_key`
+agora carrega `scope` explícito (`SPECIFIC`/`FAMILY`/`GENERIC` --
+`MonitoringScope`, `MONITORING_KEY_VERSION` v2) para que "variante
+específica" e "qualquer variante da família" nunca colidam mesmo
+descrevendo a mesma família de produto; `VariantSelectionMode.ALL`
+("qualquer variante") agora também gera Shared Monitoring, escopo
+`FAMILY` -- regra corrigida em 2026-08-25 (achado do usuário: a versão
+anterior forçava `ANY` incondicionalmente e apagava restrição real, ex.
+"iPhone 17 128GB" em modo ALL perderia o 128GB): a ÚNICA diferença de
+`SPECIFIC` é que atributo bloqueante ausente não falha fechado; toda
+restrição que o texto de fato especificou (variante "Pro"/"Plus"/...,
+`board_brand`, `storage_gb` etc.) é preservada normalmente, `ANY` é só
+para o que não foi mencionado -- `_build_monitoring_identity` usa a
+MESMA resolução de variant/atributos para todo escopo, só o gate de
+atributo bloqueante é exclusivo de `SPECIFIC`; `variant` nunca chega a
+`None` no payload canônico (correção adicional, mesma data) -- quando
+não especificado ou quando a categoria não tem conceito de variante
+(CPU/GPU), vira a string canônica `"ANY"`, igual a `attributes`, nunca
+ausência/`null`; `GENERIC_CATEGORY` mantém contrato fail-closed
+explícito (`MonitoringScope.GENERIC` reservado, hoje inalcançável --
+nenhuma `CategoryDefinition` atual permite montar identidade
+determinística suficiente sem um `model`/`family` resolvido pelo
+extractor); lifecycle pause/resume/cancel derivando `is_enabled` com
+serialização real por banco (`SELECT ... FOR UPDATE` + reconsulta
+pós-lock, ordenada por `store_id`) -- corrida de pause/cancel concorrente
+corrigida e coberta por teste de concorrência real. Sem fan-out/coleta
+compartilhada nem `fairness_owner`/TASK-108 (fase 3). Ver
+`docs/internal/decision-log.md` para o registro completo de decisões.**
 
 ## Objetivo
 

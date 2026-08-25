@@ -16,6 +16,7 @@ from app.authentication.models import (
     UserCredential,
 )
 from app.collection.models import CollectionRun, PriceObservation
+from app.database.time import utc_now
 from app.events.models import Event
 from app.missions.models import (
     Mission,
@@ -23,6 +24,7 @@ from app.missions.models import (
     MissionSchedule,
     MissionTransition,
 )
+from app.missions.monitoring import reconcile_mission_monitoring_item
 from app.purchase.models import PurchaseConfirmation
 from app.users.models import User, UserRole
 
@@ -143,8 +145,22 @@ def deidentify_account(
         if mission_ids
         else []
     )
+    deidentified_at = utc_now()
     for criteria in criteria_rows:
         criteria.search_query = DEIDENTIFIED_SEARCH_QUERY
+        # TASK-112 (fase 2, auditoria de callers): a agenda desta missão
+        # está sendo forçada para desligada (abaixo) independente do
+        # `Mission.status` literal -- `mission_is_active=False` reflete
+        # isso, não o enum. Texto desidentificado nunca resolve a
+        # nenhuma categoria conhecida, então isso sempre desvincula com
+        # segurança (nunca apaga o MonitoringItem em si nem seu histórico).
+        reconcile_mission_monitoring_item(
+            session,
+            mission_id=criteria.mission_id,
+            criteria=criteria,
+            mission_is_active=False,
+            now=deidentified_at,
+        )
     schedule_rows = (
         session.scalars(
             select(MissionSchedule).where(MissionSchedule.mission_id.in_(mission_ids))

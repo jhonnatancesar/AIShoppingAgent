@@ -31,6 +31,14 @@ from app.missions.models import (
     MissionTransition,
     VariantSelectionMode,
 )
+from app.missions.monitoring import (
+    activate_monitoring_item_stores,
+    activate_monitoring_item_stores_async,
+    deactivate_monitoring_item_stores_if_unneeded,
+    deactivate_monitoring_item_stores_if_unneeded_async,
+    reconcile_mission_monitoring_item,
+    reconcile_mission_monitoring_item_async,
+)
 from app.missions.schedule import staggered_next_run_at
 from app.offers.models import Offer
 from app.products.identity import ProductRequestKind, classify_product_request
@@ -183,6 +191,23 @@ async def set_mission_product_selection_async(
     mission.prelist_errata_sent = False
     mission.prelist_lowest_amount = None
     mission.prelist_lowest_currency = None
+    # TASK-112 (fase 2, correção de precedência): flush explícito ANTES do
+    # reconcile -- autoflush é sempre False neste projeto
+    # (app.database.session), então sem isso a leitura de
+    # MissionProductSelection dentro do reconcile não veria as linhas
+    # recém-adicionadas acima, nesta mesma transação.
+    await session.flush()
+    # Seleção de variante pode ser o momento em que uma missão
+    # PRODUCT_FAMILY antes ambígua passa a ter identidade suficiente para
+    # monitoring_key (ver auditoria de callers, docs/tasks/TASK-112.md) --
+    # reconcilia aqui, nunca duplica a lógica de vínculo/desvínculo.
+    await reconcile_mission_monitoring_item_async(
+        session,
+        mission_id=mission_id,
+        criteria=criteria,
+        mission_is_active=mission.status is MissionStatus.ACTIVE,
+        now=selected_at,
+    )
     await session.flush()
     return selected
 
@@ -310,6 +335,16 @@ def transition_mission(
         if schedule is not None:
             schedule.is_enabled = False
             schedule.updated_at = accepted_at
+    # TASK-112 (fase 2): necessidade agregada de coleta por (item, loja)
+    # segue o mesmo entra/sai de ACTIVE que já rege o resto do lifecycle
+    # -- cobre uniformemente qualquer chamador (admin, criação de missão
+    # via ACTIVATE interno, comandos diretos), não só a criação.
+    if next_status is MissionStatus.ACTIVE:
+        activate_monitoring_item_stores(session, mission_id=mission.id, now=accepted_at)
+    elif previous_status is MissionStatus.ACTIVE:
+        deactivate_monitoring_item_stores_if_unneeded(
+            session, mission_id=mission.id, now=accepted_at
+        )
     transition = MissionTransition(
         mission_id=mission.id,
         from_status=previous_status,
@@ -412,6 +447,15 @@ async def transition_mission_async(
         if schedule is not None:
             schedule.is_enabled = False
             schedule.updated_at = accepted_at
+    # TASK-112 (fase 2): ver comentário equivalente em transition_mission.
+    if next_status is MissionStatus.ACTIVE:
+        await activate_monitoring_item_stores_async(
+            session, mission_id=mission.id, now=accepted_at
+        )
+    elif previous_status is MissionStatus.ACTIVE:
+        await deactivate_monitoring_item_stores_if_unneeded_async(
+            session, mission_id=mission.id, now=accepted_at
+        )
     transition = MissionTransition(
         mission_id=mission.id,
         from_status=previous_status,
@@ -497,6 +541,18 @@ def create_mission_from_criteria(
         criteria, f"{search_query} {model}" if model else search_query
     )
     session.add(criteria)
+    # TASK-112 (fase 2): vincula (ou cria) o MonitoringItem compartilhado
+    # ANTES de ativar -- a missão ainda não está ACTIVE neste ponto
+    # (`mission_is_active=False`), então só cria o vínculo; ativar
+    # (abaixo) é o que efetivamente liga a necessidade de coleta por
+    # loja (`MonitoringItemStore`).
+    reconcile_mission_monitoring_item(
+        session,
+        mission_id=mission.id,
+        criteria=criteria,
+        mission_is_active=False,
+        now=requested_at,
+    )
 
     stores_by_code = {
         store.code: store
@@ -590,6 +646,14 @@ async def create_mission_from_criteria_async(
         criteria, f"{search_query} {model}" if model else search_query
     )
     session.add(criteria)
+    # TASK-112 (fase 2): ver comentário equivalente na versão síncrona.
+    await reconcile_mission_monitoring_item_async(
+        session,
+        mission_id=mission.id,
+        criteria=criteria,
+        mission_is_active=False,
+        now=requested_at,
+    )
 
     stores_by_code = {
         store.code: store
@@ -814,5 +878,16 @@ async def promote_confirmed_product_identity_async(
     mission.prelist_errata_sent = False
     mission.prelist_lowest_amount = None
     mission.prelist_lowest_currency = None
+    # TASK-112 (fase 2): search_query mudou -- pode ser exatamente o
+    # momento em que a identidade passa de não-compartilhável para
+    # compartilhável (ou muda de item), já que a confirmação externa é o
+    # texto mais confiável que a missão já teve.
+    await reconcile_mission_monitoring_item_async(
+        session,
+        mission_id=mission_id,
+        criteria=criteria,
+        mission_is_active=mission.status is MissionStatus.ACTIVE,
+        now=accepted_at,
+    )
     await session.flush()
     return True
