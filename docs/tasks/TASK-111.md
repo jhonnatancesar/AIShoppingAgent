@@ -1,6 +1,7 @@
 # TASK-111 — Corrigir asserção desatualizada em `test_product_identity.py`
 
-Status: **Concluída (2026-08-26), aguardando commit.** Corrigida como
+Status: **Concluída e commitada localmente (`471e898`, 2026-08-26);
+publicação em `origin/main` ainda pendente.** Corrigida como
 parte da rodada de correções da TASK-112 fase 3A (o assert desatualizado
 apareceu repetidamente na regressão dessa fase). `tests/integration/
 test_product_identity.py::test_same_variant_from_all_stores_reuses_one_global_product`

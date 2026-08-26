@@ -1,5 +1,160 @@
 # Decision Log
 
+## DEC-100 — TASK-112 fase 3A: coleta compartilhada durável com fan-out individual
+
+- **Data:** 2026-08-26.
+- **Classificação:** Nova capacidade (base: `DEC-098`/`DEC-099`). Commit
+  `471e898`.
+- **Decisão:** uma necessidade `(MonitoringItem, store)` executa UMA
+  coleta real (provider chamado 1x, `Offer`/`PriceObservation`
+  persistidos 1x -- nunca N vezes confiando no dedupe da TASK-093 como
+  rede de segurança) e distribui o resultado para as `Mission`s
+  vinculadas via fan-out individual. `CollectionCriteria` canônico
+  (`app.products.identity.canonical_collection_criteria`) nasce só de
+  `MonitoringItem.canonical_identity`, nunca do texto cru de nenhuma
+  Mission vinculada -- corrigido um bug de VRAM no extrator de GPU nessa
+  auditoria (`_gpu`/`_gpu_vram`): "RTX 5070 Ti" e "RTX 5070 Ti 16GB"
+  nunca compartilhavam `monitoring_key` corretamente antes da correção.
+- **`CollectionRun`/`CollectionRequest`:** `CollectionRun` ganha
+  `monitoring_item_id` + `CHECK ck_collection_runs_ownership_xor`
+  (`mission_id` XOR `monitoring_item_id`, nunca os dois, nunca nenhum).
+  `CollectionRequest` corrigido como contrato explícito (mesma regra
+  XOR), nenhum caller mais reaproveita `mission_id` para carregar um
+  `monitoring_item_id` (hack eliminado).
+- **Persistência comercial exatamente uma vez:** roda em
+  `_persist_shared_offers_and_finish`, nunca uma vez por Mission do
+  fan-out (correção de desenho intermediária desta fase -- a primeira
+  versão chamava a resolução comercial por Mission, um uso indevido do
+  dedupe da TASK-093/`DEC-097`, que deduplica ENTRE coletas no tempo,
+  não entre beneficiários da MESMA coleta). O fan-out reaproveita sem
+  alteração o pipeline já existente de checkpoint/pré-lista/alerta por
+  Mission (TASK-079).
+- **Fan-out durável e resumível:** `SharedCollectionOffer` (qual oferta/
+  observação pertenceu a qual coleta compartilhada, inclusive quando a
+  observação foi reaproveitada/redundante) e `SharedFanOutTask` (item de
+  trabalho durável por Mission) são criados ATOMICAMENTE na MESMA
+  transação que persiste `Offer`/`PriceObservation` e marca a
+  `CollectionRun` compartilhada `SUCCEEDED` -- ou tudo commita junto ou
+  nada commita (run continua `RUNNING`, seguro repetir o provider).
+  `resume_shared_collection_fan_out` retoma só tarefas pendentes sem
+  nunca rechamar o provider.
+- **Máquina de estados final do fan-out** (`SharedFanOutStatus`:
+  `pending`/`processing`/`done`/`skipped`/`attention_required`/
+  `terminal_failed`): erro nunca vira terminal sem prova -- só os dois
+  casos deterministicamente irrecuperáveis (`SharedFanOutTerminalError`:
+  Mission/critério sumiu, produto sumiu) viram `terminal_failed` de
+  imediato; qualquer outro erro é RETRYABLE por padrão, e esgotar
+  `_MAX_FAN_OUT_ATTEMPTS=5` tentativas reais vira `attention_required`
+  (auditável via `last_error`/`attempt_count`, reprocessável, nunca
+  perda silenciosa), nunca `terminal_failed` por essa via. Elegibilidade
+  da Mission (`_mission_still_eligible_for_fan_out`: existe, `ACTIVE`,
+  mesmo `MonitoringItem`, ainda tem `MissionSource` da loja) é
+  revalidada logo após o claim atômico da tarefa, antes de qualquer
+  efeito -- pause/cancel/relink entre a coleta e o fan-out marca a
+  tarefa `skipped`, nunca gera alerta indevido. Tarefa presa em
+  `processing` além do lease é recuperada automaticamente dentro de
+  `resume_shared_collection_fan_out` (primeiro passo, sempre), sem
+  intervenção manual. Notificação usa o outbox idempotente já existente
+  da TASK-080 (`claim_unconsumed_events_async`/
+  `record_consumption_attempt_async`), nunca um envio direto dentro do
+  processamento -- confirmado, não criado nesta fase.
+- **Concorrência:** claim real via `CollectionRun.monitoring_item_id` +
+  índice único parcial `uq_collection_runs_running_monitoring_item_store`
+  (mesma técnica já usada por `mission_id`), nunca mutex em memória --
+  dois workers nunca executam o mesmo `(MonitoringItem, store)`
+  simultaneamente. Claim da `SharedFanOutTask` também atômico (`UPDATE
+  ... WHERE status='pending' ...`).
+- **Migrations locais** `20260825_0001..0004` (head único, cadeia
+  linear, `downgrade()` reversível em todas), incluindo backfill
+  determinístico de `MissionOfferRelevance.last_observation_id` para
+  linhas pré-existentes (reconstruído a partir de `CollectionRun.
+  mission_id`).
+- **Fora de escopo, explicitamente adiado para a fase 3B:** integração
+  real com o scheduler de produção (quando/com que frequência chamar
+  `resume_shared_collection_fan_out`/`recover_stale_fan_out_tasks` em
+  produção -- hoje só chamadas isoladamente, testáveis, não plugadas em
+  nenhum loop real) e `fairness_owner`/fila justa por claim compartilhada
+  (TASK-108 revisada, mencionada no desenho original do roadmap).
+- **Achado incluído nesta fase, sem relação direta:** corrigido o teste
+  desatualizado da TASK-111 (`test_same_variant_from_all_stores_reuses_
+  one_global_product` esperava só 4 lojas, faltavam Magalu/Mercado
+  Livre) -- reapareceu na regressão desta fase, corrigido junto no mesmo
+  commit.
+
+## DEC-099 — TASK-112 fase 2: Shared Monitoring entre missões equivalentes
+
+- **Data:** 2026-08-25.
+- **Classificação:** Nova capacidade (base: `DEC-098`). Commit `5d05767`.
+- **Decisão:** `MonitoringItem`/`MissionMonitoringItem`/
+  `MonitoringItemStore` novos para que missões com a mesma
+  `monitoring_key` compartilhem a necessidade real de coleta, sem
+  duplicar agendamento por loja. Vínculo/relink/desvínculo centralizados
+  em `reconcile_mission_monitoring_item(_async)` (`app/missions/
+  monitoring.py`) -- único ponto de entrada para todo caller que pode
+  alterar a identidade relevante de uma missão (criação, seleção de
+  variante, confirmação pós-coleta, desidentificação de conta).
+- **Identidade efetiva e `scope`:** resolvida com precedência
+  determinística (`Product` selecionado > `VariantSelectionMode.ALL`/
+  família > texto), sempre pelo mesmo núcleo de hashing
+  (`_build_monitoring_identity`). `monitoring_key` sobe para v2 e passa
+  a levar `scope` explícito (`SPECIFIC`/`FAMILY`/`GENERIC` --
+  `MonitoringScope`) para que "variante específica" e "qualquer variante
+  da família" nunca colidam mesmo descrevendo a mesma família de
+  produto. `VariantSelectionMode.ALL` gera escopo `FAMILY` (correção
+  durante a própria fase: a versão anterior forçava `ANY`
+  incondicionalmente e apagava restrição real já especificada, ex.
+  "iPhone 17 128GB" em modo ALL perderia o 128GB) -- a única diferença
+  de `SPECIFIC` é que atributo bloqueante ausente não falha fechado;
+  toda restrição que o texto de fato especificou continua preservada.
+  `variant`/`attributes` nunca chegam a `None` no payload canônico --
+  sempre `"ANY"` explícito, nunca ausência/`null`. `GENERIC_CATEGORY`
+  mantém contrato fail-closed explícito (reservado, hoje inalcançável).
+- **Lifecycle:** pause/resume/cancel deriva `is_enabled` por (item,
+  loja) com serialização real (`SELECT ... FOR UPDATE` + reconsulta
+  pós-lock, lojas travadas em ordem determinística por `store_id`) --
+  corrige corrida onde duas missões pausando o mesmo vínculo quase ao
+  mesmo tempo poderiam deixar nenhuma desabilitar a loja compartilhada;
+  coberto por teste de concorrência real.
+- **Migration** aditiva, head `20260824_0003`.
+- **Fora de escopo, explicitamente adiado para a fase 3:** scheduler
+  compartilhado, fan-out e `fairness_owner`.
+
+## DEC-098 — TASK-112 fase 1: Product Identity Engine genérico com CPU/GPU
+
+- **Data:** 2026-08-25.
+- **Classificação:** Nova capacidade (evolução aditiva de `app/products/
+  identity.py`, TASK-097 -- `identity_key`/`family_key`,
+  `ProductRequestKind` e o comportamento de iPhone/Galaxy S continuam
+  intocados). Commit `1dca734`.
+- **Decisão:** motor de identidade determinístico e versionado via
+  `CategoryDefinition`/`AttributeDefinition` -- registry plugável,
+  atributo bloqueante (exige resolução, mesmo papel de `storage_gb`
+  hoje) vs default `ANY` (nunca bloqueia, sempre explícito na chave,
+  nunca omissão silenciosa). 23 categorias registradas; `cpu`/`gpu`/
+  `smartphone` com extractor de texto funcionando e testado, as demais
+  (tablet, notebook, desktop, monitor, tv, ram, ssd, hdd, motherboard,
+  psu, case, cooler, keyboard, mouse, headset, console, controller,
+  camera, router, printer) com ontologia declarada, inertes até
+  ganharem extractor.
+- **Extractors novos** (`_cpu`, `_gpu`) registrados no mesmo
+  `_EXTRACTORS` de sempre -- `resolve_product_variant`/
+  `classify_product_request` (produção real) passam a reconhecer CPU/
+  GPU também, de graça. `family` do CPU sempre derivado do 2º dígito do
+  código do modelo (esquema público da AMD, verificado Zen2-5:
+  9950X3D/7950X3D/5950X/3950X = Ryzen 9, X800X3D/X700X = Ryzen 7,
+  X600X = Ryzen 5) -- nunca do texto ao redor, para "9950x3d"/"ryzen
+  9950x3d"/"amd ryzen 9 9950x3d" convergirem para a mesma identidade.
+- **`resolve_monitoring_identity`:** `monitoring_key` versionada
+  (`v1:sha256`), só gerada depois da identidade canônica completa
+  (categoria + todo atributo bloqueante resolvido); fail-closed em
+  qualquer ambiguidade.
+- **`ProductIdentityAlias`** (migration `20260824_0002`): fundação
+  persistida e determinística de aliases (status `active`/`candidate`)
+  -- a IA nunca decide equivalência, só pode sugerir candidato; só alias
+  `active` participa da `monitoring_key`.
+- **Fora de escopo, explicitamente adiado para a fase 2:** Shared
+  Monitoring, fan-out, `fairness_owner`, backfill sobre TASK-108.
+
 ## DEC-097 — Dedupe da TASK-093 explícito na fonte; avaliação de alerta é etapa derivada da coleta
 
 - **Data:** 2026-08-24.

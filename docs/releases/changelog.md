@@ -1,5 +1,58 @@
 # Changelog
 
+*Nota: gap sem entrada entre 2026-08-22 e 2026-08-25 (TASK-105, TASK-107,
+TASK-108, TASK-109 concluídas nesse intervalo sem registro aqui) --
+ver `docs/internal/roadmap.md` para o histórico completo.*
+
+## 2026-08-26 — TASK-112 fase 3A: coleta compartilhada durável com fan-out individual (commitada localmente `471e898`, aguardando publicação em `origin/main`)
+
+- uma necessidade `(MonitoringItem, store)` executa UMA coleta real
+  (provider 1x, `Offer`/`PriceObservation` persistidos 1x) e distribui
+  o resultado para as Missions vinculadas via fan-out individual;
+- critério de coleta canônico deriva só de `MonitoringItem.canonical_
+  identity`, nunca do texto cru de nenhuma Mission (correção de VRAM no
+  extrator de GPU incluída);
+- `CollectionRun` ganha `monitoring_item_id` + `CHECK` XOR com
+  `mission_id`; `CollectionRequest` não usa mais `mission_id` como hack
+  de correlação;
+- fan-out durável e resumível (`SharedCollectionOffer`/
+  `SharedFanOutTask`, criados atomicamente com a persistência comercial),
+  máquina de estados completa (`pending`/`processing`/`done`/`skipped`/
+  `attention_required`/`terminal_failed`) -- erro nunca vira terminal
+  sem prova, elegibilidade da Mission revalidada antes do fan-out
+  (pause/cancel/relink invalida um fan-out pendente), recuperação
+  automática de tarefa presa, notificação via outbox idempotente já
+  existente da TASK-080;
+- migrations locais `20260825_0001..0004` (head único, lineares,
+  reversíveis);
+- corrige teste desatualizado da TASK-111 (assert de 4 lojas);
+- fase 3B (integração com o scheduler de produção, `fairness_owner`/
+  TASK-108) explicitamente fora de escopo, ainda não implementada;
+- decisão completa em `DEC-100`.
+
+## 2026-08-25 — TASK-112 fase 2: Shared Monitoring entre missões equivalentes (commitada localmente `5d05767`)
+
+- `MonitoringItem`/`MissionMonitoringItem`/`MonitoringItemStore` novos
+  -- missões com a mesma `monitoring_key` compartilham a necessidade
+  real de coleta, sem duplicar agendamento por loja;
+- vínculo/relink/desvínculo centralizados em `reconcile_mission_
+  monitoring_item(_async)`;
+- `monitoring_key` sobe para v2 com `scope` explícito (`SPECIFIC`/
+  `FAMILY`/`GENERIC`);
+- lifecycle pause/resume/cancel deriva `is_enabled` por (item, loja)
+  com serialização real via banco;
+- decisão completa em `DEC-099`.
+
+## 2026-08-25 — TASK-112 fase 1: Product Identity Engine genérico com CPU/GPU (commitada localmente `1dca734`)
+
+- registry plugável de categorias/atributos (23 categorias, CPU/GPU/
+  smartphone com extractor funcionando);
+- `resolve_monitoring_identity` gera `monitoring_key` versionada,
+  fail-closed em qualquer ambiguidade;
+- `ProductIdentityAlias` como fundação persistida e determinística de
+  aliases -- a IA nunca decide equivalência, só sugere candidato;
+- decisão completa em `DEC-098`.
+
 ## 2026-08-22 — TASK-104B: provider Mercado Livre (DEV, validação final pendente)
 
 - provider comum com múltiplas ofertas, seller/fulfillment independentes,

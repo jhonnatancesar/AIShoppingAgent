@@ -1,5 +1,58 @@
 # Project Context
 
+**Nota de manutenção (2026-08-26):** este arquivo ficou sem atualização
+entre a TASK-104B (2026-08-22) e a TASK-112 (2026-08-25/26) -- TASK-105,
+TASK-107, TASK-108, TASK-109 e TASK-111 foram concluídas nesse
+intervalo sem entrada aqui. Gap conhecido, não reconstruído
+retroativamente (mesmo padrão já aceito para a TASK-093, `DEC-076`);
+`docs/internal/roadmap.md` e `docs/internal/decision-log.md` têm o
+registro completo desse período.
+
+**Atualização 2026-08-26 (TASK-112 fase 3A concluída, commitada
+localmente `471e898`, `DEC-100`; publicação em `origin/main` ainda
+pendente):** coleta compartilhada durável entre missões que monitoram o
+mesmo `MonitoringItem`/loja. Uma necessidade `(MonitoringItem, store)`
+executa UMA coleta real (provider 1x, `Offer`/`PriceObservation`
+persistidos 1x) e distribui o resultado por fan-out individual de
+Mission -- nunca mais uma resolução comercial por Mission beneficiária.
+Critério de coleta canônico vem só de `MonitoringItem.canonical_
+identity`, nunca do texto cru de nenhuma Mission vinculada.
+`CollectionRun` ganha `monitoring_item_id` com `CHECK` XOR contra
+`mission_id`; `CollectionRequest` não reaproveita mais `mission_id` como
+hack de correlação. Fan-out é durável e resumível (`SharedCollectionOffer`
++ `SharedFanOutTask`, criados atomicamente junto da persistência
+comercial), com máquina de estados completa (`pending`/`processing`/
+`done`/`skipped`/`attention_required`/`terminal_failed`): erro nunca
+vira terminal sem prova, elegibilidade da Mission é revalidada antes do
+fan-out processar (pause/cancel/relink invalida um fan-out pendente sem
+gerar alerta indevido), tarefa presa é recuperada automaticamente, e a
+notificação usa o outbox idempotente já existente da TASK-080. Fase 3B
+(integração com o scheduler de produção e `fairness_owner`/TASK-108)
+explicitamente fora de escopo, ainda não implementada.
+
+**Atualização 2026-08-25 (TASK-112 fase 2 concluída, commitada
+localmente `5d05767`, `DEC-099`):** `MonitoringItem`/
+`MissionMonitoringItem`/`MonitoringItemStore` novos -- missões com a
+mesma `monitoring_key` compartilham a necessidade real de coleta, sem
+duplicar agendamento por loja. Vínculo/relink/desvínculo centralizados
+em `reconcile_mission_monitoring_item(_async)`. `monitoring_key` sobe
+para v2 e passa a levar `scope` explícito (`SPECIFIC`/`FAMILY`/
+`GENERIC`) para que "variante específica" e "qualquer variante da
+família" nunca colidam. Lifecycle pause/resume/cancel deriva
+`is_enabled` por (item, loja) com serialização real via banco. Sem
+scheduler compartilhado, fan-out ou `fairness_owner` ainda -- escopo
+reservado para a fase 3.
+
+**Atualização 2026-08-25 (TASK-112 fase 1 concluída, commitada
+localmente `1dca734`, `DEC-098`):** Product Identity Engine genérico,
+evolução aditiva de `app/products/identity.py` (TASK-097). Registry
+plugável de categorias/atributos (23 categorias registradas; CPU/GPU/
+smartphone com extractor funcionando), atributo bloqueante vs `ANY`
+explícito (nunca omissão silenciosa). `resolve_monitoring_identity`
+gera `monitoring_key` versionada e fail-closed em qualquer ambiguidade.
+`ProductIdentityAlias` como fundação persistida e determinística de
+aliases -- a IA nunca decide equivalência, só sugere candidato.
+
 **Atualização 2026-08-22 (TASK-104B implementada, validação externa final
 pendente):** Mercado Livre usa Playwright normal/headed como transporte
 primário e uma única tentativa Edge/CDP loopback como último recurso após

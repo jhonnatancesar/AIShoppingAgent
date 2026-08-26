@@ -37,8 +37,9 @@ serialização real por banco (`SELECT ... FOR UPDATE` + reconsulta
 pós-lock, ordenada por `store_id`) -- corrida de pause/cancel concorrente
 corrigida e coberta por teste de concorrência real.
 
-Fase 3A concluída (2026-08-26, rodada 4 de correções), aguardando
-commit: prova que UMA necessidade `(MonitoringItem, store)` executa UMA
+Fase 3A concluída e commitada localmente (`471e898`, 2026-08-26, rodada
+4 de correções; `DEC-100`); publicação em `origin/main` ainda pendente.
+Prova que UMA necessidade `(MonitoringItem, store)` executa UMA
 coleta real e distribui o resultado por fan-out individual de Mission.
 `CollectionCriteria` canônico (`app.products.identity.canonical_
 collection_criteria`) nasce só de `MonitoringItem.canonical_identity` --
