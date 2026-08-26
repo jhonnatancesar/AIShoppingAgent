@@ -284,7 +284,9 @@ def test_mercado_livre_edge_is_primary_and_playwright_never_touched(
     provider = MercadoLivreProvider(clock=lambda: NOW, cdp_transport=transport)
 
     result = asyncio.run(
-        provider.collect(CollectionRequest(uuid4(), "mercadolivre", "Produto", NOW))
+        provider.collect(CollectionRequest(
+            source_code="mercadolivre", search_query="Produto", requested_at=NOW, mission_id=uuid4()
+        ))
     )
 
     assert result.offers == offers
@@ -314,7 +316,9 @@ def test_mercado_livre_cdp_failure_never_falls_back_to_playwright(
     with pytest.raises(EdgeCdpTransportError):
         asyncio.run(
             provider.collect(
-                CollectionRequest(uuid4(), "mercadolivre", "Produto", NOW)
+                CollectionRequest(
+            source_code="mercadolivre", search_query="Produto", requested_at=NOW, mission_id=uuid4()
+        )
             )
         )
 
@@ -329,7 +333,9 @@ def test_mercado_livre_without_cdp_transport_fails_isolated_without_navigation()
     with pytest.raises(EdgeCdpTransportError, match="not configured"):
         asyncio.run(
             provider.collect(
-                CollectionRequest(uuid4(), "mercadolivre", "Produto", NOW)
+                CollectionRequest(
+            source_code="mercadolivre", search_query="Produto", requested_at=NOW, mission_id=uuid4()
+        )
             )
         )
 
@@ -379,7 +385,9 @@ def test_terabyte_uses_cdp_transport_as_primary_and_extracts_multiple_offers(
     provider = TerabyteProvider(clock=lambda: NOW, cdp_transport=transport)
 
     result = asyncio.run(
-        provider.collect(CollectionRequest(uuid4(), "terabyte", "RTX 5070", NOW))
+        provider.collect(CollectionRequest(
+            source_code="terabyte", search_query="RTX 5070", requested_at=NOW, mission_id=uuid4()
+        ))
     )
 
     assert result.offers == offers
@@ -405,7 +413,9 @@ def test_terabyte_never_falls_back_to_blocked_playwright_on_cdp_failure(
 
     with pytest.raises(EdgeCdpTransportError):
         asyncio.run(
-            provider.collect(CollectionRequest(uuid4(), "terabyte", "RTX 5070", NOW))
+            provider.collect(CollectionRequest(
+            source_code="terabyte", search_query="RTX 5070", requested_at=NOW, mission_id=uuid4()
+        ))
         )
 
 
@@ -416,7 +426,9 @@ def test_terabyte_without_cdp_transport_fails_isolated_without_navigation() -> N
 
     with pytest.raises(EdgeCdpTransportError, match="not configured"):
         asyncio.run(
-            provider.collect(CollectionRequest(uuid4(), "terabyte", "RTX 5070", NOW))
+            provider.collect(CollectionRequest(
+            source_code="terabyte", search_query="RTX 5070", requested_at=NOW, mission_id=uuid4()
+        ))
         )
 
 
@@ -443,7 +455,9 @@ def test_terabyte_reconnects_via_fresh_cdp_run_on_each_collection() -> None:
 
     transport = Transport()
     provider = TerabyteProvider(clock=lambda: NOW, cdp_transport=transport)
-    request = CollectionRequest(uuid4(), "terabyte", "RTX 5070", NOW)
+    request = CollectionRequest(
+            source_code="terabyte", search_query="RTX 5070", requested_at=NOW, mission_id=uuid4()
+        )
 
     asyncio.run(provider.collect(request))
     asyncio.run(provider.collect(request))
@@ -496,7 +510,9 @@ def test_magalu_search_uses_ssr_json_and_returns_multiple_without_playwright(
         search_transport=StaticTransport(),
         availability_fallback_max_candidates=0,
     )
-    request = CollectionRequest(uuid4(), "magalu", "Galaxy S24 Ultra", NOW)
+    request = CollectionRequest(
+            source_code="magalu", search_query="Galaxy S24 Ultra", requested_at=NOW, mission_id=uuid4()
+        )
 
     result = asyncio.run(provider.collect(request))
 
@@ -528,7 +544,9 @@ def test_magalu_transport_failure_does_not_use_playwright_fallback(monkeypatch) 
 
     with pytest.raises(MagaluSearchTransportError, match="CDP unavailable"):
         asyncio.run(
-            provider.collect(CollectionRequest(uuid4(), "magalu", "Produto", NOW))
+            provider.collect(CollectionRequest(
+            source_code="magalu", search_query="Produto", requested_at=NOW, mission_id=uuid4()
+        ))
         )
     assert calls == 1
 
@@ -1101,7 +1119,9 @@ def test_fallback_resolves_only_top_k_unknown_by_price_ascending(monkeypatch) ->
         async def resolve_product_availability(self, page):
             return None if goto_calls[-1].endswith("/d") else "Disponível"
 
-    request = CollectionRequest(uuid4(), "fk", "GPU", NOW)
+    request = CollectionRequest(
+            source_code="fk", search_query="GPU", requested_at=NOW, mission_id=uuid4()
+        )
     provider = FallbackProvider(
         clock=lambda: NOW,
         availability_fallback_max_candidates=3,
@@ -1185,7 +1205,9 @@ def test_fallback_isolates_failure_and_still_resolves_next_candidate(
         async def resolve_product_availability(self, page):
             return "Disponível"
 
-    request = CollectionRequest(uuid4(), "fk2", "GPU", NOW)
+    request = CollectionRequest(
+            source_code="fk2", search_query="GPU", requested_at=NOW, mission_id=uuid4()
+        )
     provider = FlakyFallbackProvider(
         clock=lambda: NOW, cdp_transport=_FakeCdpTransport(Page())
     )
@@ -1269,7 +1291,9 @@ def test_fallback_stops_entire_cycle_on_blocked_status(monkeypatch) -> None:
         async def resolve_product_availability(self, page):
             return "Disponível"
 
-    request = CollectionRequest(uuid4(), "fk3", "GPU", NOW)
+    request = CollectionRequest(
+            source_code="fk3", search_query="GPU", requested_at=NOW, mission_id=uuid4()
+        )
     provider = BlockedFallbackProvider(
         clock=lambda: NOW,
         availability_fallback_max_candidates=3,
@@ -1322,7 +1346,9 @@ def test_fallback_skips_navigation_when_provider_has_no_product_page_hook(
         def locator(self, selector):
             return Locator()
 
-    request = CollectionRequest(uuid4(), "amazon", "GPU", NOW)
+    request = CollectionRequest(
+            source_code="amazon", search_query="GPU", requested_at=NOW, mission_id=uuid4()
+        )
     provider = AmazonProvider(
         clock=lambda: NOW, cdp_transport=_FakeCdpTransport(Page())
     )
@@ -1794,7 +1820,9 @@ def test_fallback_disabled_when_max_candidates_is_zero(monkeypatch) -> None:
         async def resolve_product_availability(self, page):
             return "Disponível"
 
-    request = CollectionRequest(uuid4(), "fk4", "GPU", NOW)
+    request = CollectionRequest(
+            source_code="fk4", search_query="GPU", requested_at=NOW, mission_id=uuid4()
+        )
     provider = ZeroKProvider(
         clock=lambda: NOW,
         availability_fallback_max_candidates=0,
@@ -1854,7 +1882,9 @@ def test_fallback_noop_when_no_unknown_candidates(monkeypatch) -> None:
         async def resolve_product_availability(self, page):
             return "Disponível"
 
-    request = CollectionRequest(uuid4(), "fk5", "GPU", NOW)
+    request = CollectionRequest(
+            source_code="fk5", search_query="GPU", requested_at=NOW, mission_id=uuid4()
+        )
     provider = NoUnknownProvider(
         clock=lambda: NOW, cdp_transport=_FakeCdpTransport(Page())
     )
@@ -1910,7 +1940,9 @@ def test_fallback_treats_resolve_product_availability_exception_as_unresolved(
         async def resolve_product_availability(self, page):
             raise RuntimeError("evidencia inesperada quebrou a extracao")
 
-    request = CollectionRequest(uuid4(), "fk6", "GPU", NOW)
+    request = CollectionRequest(
+            source_code="fk6", search_query="GPU", requested_at=NOW, mission_id=uuid4()
+        )
     provider = RaisingResolveProvider(
         clock=lambda: NOW, cdp_transport=_FakeCdpTransport(Page())
     )
@@ -1961,7 +1993,9 @@ def test_provider_rejects_silent_empty_collection(monkeypatch) -> None:
         async def extract(self, page, collected_at):
             return ()
 
-    request = CollectionRequest(uuid4(), "empty", "GPU", NOW)
+    request = CollectionRequest(
+            source_code="empty", search_query="GPU", requested_at=NOW, mission_id=uuid4()
+        )
 
     with pytest.raises(ProviderBlockedError):
         asyncio.run(
@@ -1990,7 +2024,9 @@ def test_provider_retries_safe_navigation_timeout_only(monkeypatch) -> None:
         async def extract(self, page, collected_at):
             raise AssertionError("navigation failure must happen before extraction")
 
-    request = CollectionRequest(uuid4(), "timeout", "GPU", NOW)
+    request = CollectionRequest(
+            source_code="timeout", search_query="GPU", requested_at=NOW, mission_id=uuid4()
+        )
     provider = TimeoutProvider(
         clock=lambda: NOW,
         cdp_transport=_FakeCdpTransport(Page()),
@@ -2086,7 +2122,9 @@ def test_pichau_cdp_results_release_collection(monkeypatch) -> None:
     monkeypatch.setattr(provider, "extract", _extract)
 
     result = asyncio.run(
-        provider.collect(CollectionRequest(uuid4(), "pichau", "GPU", NOW))
+        provider.collect(CollectionRequest(
+            source_code="pichau", search_query="GPU", requested_at=NOW, mission_id=uuid4()
+        ))
     )
 
     assert result.offers == offers
@@ -2130,7 +2168,9 @@ def test_pichau_cdp_zero_results_releases_valid_empty_collection(monkeypatch) ->
 
     result = asyncio.run(
         provider.collect(
-            CollectionRequest(uuid4(), "pichau", "zzz-nao-existe", NOW)
+            CollectionRequest(
+            source_code="pichau", search_query="zzz-nao-existe", requested_at=NOW, mission_id=uuid4()
+        )
         )
     )
 
@@ -2171,7 +2211,9 @@ def test_pichau_cdp_neither_state_raises_blocked_not_silent_empty(
 
     with pytest.raises(ProviderBlockedError):
         asyncio.run(
-            provider.collect(CollectionRequest(uuid4(), "pichau", "GPU", NOW))
+            provider.collect(CollectionRequest(
+            source_code="pichau", search_query="GPU", requested_at=NOW, mission_id=uuid4()
+        ))
         )
 
 
@@ -2196,7 +2238,9 @@ def test_pichau_cdp_failure_never_falls_back_to_playwright(monkeypatch) -> None:
 
     with pytest.raises(EdgeCdpTransportError):
         asyncio.run(
-            provider.collect(CollectionRequest(uuid4(), "pichau", "GPU", NOW))
+            provider.collect(CollectionRequest(
+            source_code="pichau", search_query="GPU", requested_at=NOW, mission_id=uuid4()
+        ))
         )
 
 

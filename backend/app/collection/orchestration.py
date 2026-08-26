@@ -1383,12 +1383,22 @@ async def _persist_phase_c(
                         offer_id=pending.offer_id,
                         classification=pending.forced_relevance,
                         classified_at=utc_now(),
+                        # TASK-112 (fase 3A): última observação que esta
+                        # Mission processou -- fonte de "previous" na
+                        # coleta compartilhada (DEC-048), onde
+                        # `PriceObservation.collection_run_id` deixa de
+                        # apontar para uma run desta Mission. Populado em
+                        # todo caminho, inclusive missão única -- nunca
+                        # lido por ela, só pelo fan-out compartilhado
+                        # (`app.collection.shared_collection`).
+                        last_observation_id=pending.observation_id,
                     )
                     .on_conflict_do_update(
                         index_elements=list(_MISSION_OFFER_RELEVANCE_PK),
                         set_={
                             "classification": pending.forced_relevance,
                             "classified_at": utc_now(),
+                            "last_observation_id": pending.observation_id,
                         },
                     )
                 )
@@ -1402,9 +1412,19 @@ async def _persist_phase_c(
                             offer_id=pending.offer_id,
                             classification=relevance,
                             classified_at=utc_now(),
+                            last_observation_id=pending.observation_id,
                         )
-                        .on_conflict_do_nothing(
-                            index_elements=list(_MISSION_OFFER_RELEVANCE_PK)
+                        .on_conflict_do_update(
+                            index_elements=list(_MISSION_OFFER_RELEVANCE_PK),
+                            # Corrida com outra claim/processo que já
+                            # persistiu a MESMA classificação nesse
+                            # meio-tempo (comentário original) -- nunca
+                            # sobrescreve classification/classified_at
+                            # (preserva a intenção original), mas sempre
+                            # avança last_observation_id: mesmo quando a
+                            # classificação já existia, esta Mission
+                            # acabou de processar esta observação agora.
+                            set_={"last_observation_id": pending.observation_id},
                         )
                     )
             else:
@@ -1412,6 +1432,8 @@ async def _persist_phase_c(
                     MissionOfferRelevance, (mission.id, pending.offer_id)
                 )
                 relevance = cached.classification if cached is not None else None
+                if cached is not None:
+                    cached.last_observation_id = pending.observation_id
 
             if (
                 pending.needs_display_name

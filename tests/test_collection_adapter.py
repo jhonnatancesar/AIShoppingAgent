@@ -29,7 +29,9 @@ class FakeProvider:
 
 
 def request(source_code: str = "kabum") -> CollectionRequest:
-    return CollectionRequest(uuid4(), source_code, "RTX 5070", NOW)
+    return CollectionRequest(
+        source_code=source_code, search_query="RTX 5070", requested_at=NOW, mission_id=uuid4()
+    )
 
 
 def result(source_code: str = "kabum") -> CollectionResult:
@@ -118,11 +120,44 @@ def test_collects_only_selected_sources_and_rejects_duplicates() -> None:
         asyncio.run(adapter.collect_selected((request(), request())))
 
 
+def test_contract_requires_exactly_one_of_mission_id_or_monitoring_item_id() -> None:
+    """TASK-112 (fase 3A): sujeito da coleta nunca ambíguo -- Mission
+    própria (`mission_id`) OU necessidade compartilhada
+    (`monitoring_item_id`), nunca os dois, nunca nenhum."""
+    with pytest.raises(CollectionContractError):
+        CollectionRequest(
+            source_code="kabum", search_query="GPU", requested_at=NOW
+        )  # nenhum dos dois
+    with pytest.raises(CollectionContractError):
+        CollectionRequest(
+            source_code="kabum",
+            search_query="GPU",
+            requested_at=NOW,
+            mission_id=uuid4(),
+            monitoring_item_id=uuid4(),
+        )  # os dois
+    # exatamente um -- nunca levanta.
+    CollectionRequest(
+        source_code="kabum", search_query="GPU", requested_at=NOW, mission_id=uuid4()
+    )
+    CollectionRequest(
+        source_code="kabum",
+        search_query="GPU",
+        requested_at=NOW,
+        monitoring_item_id=uuid4(),
+    )
+
+
 def test_contract_rejects_blank_and_naive_values() -> None:
     with pytest.raises(CollectionContractError):
         request("")
     with pytest.raises(CollectionContractError):
-        CollectionRequest(uuid4(), "kabum", "GPU", datetime(2026, 8, 2))
+        CollectionRequest(
+            source_code="kabum",
+            search_query="GPU",
+            requested_at=datetime(2026, 8, 2),
+            mission_id=uuid4(),
+        )
 
 
 def test_result_rejects_inconsistent_timeline_and_offers() -> None:

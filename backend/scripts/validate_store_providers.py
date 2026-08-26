@@ -82,7 +82,12 @@ async def validate(
         max_offers=3,
         **provider_kwargs,
     )
-    request = CollectionRequest(uuid4(), source, query, datetime.now(UTC))
+    request = CollectionRequest(
+        source_code=source,
+        search_query=query,
+        requested_at=datetime.now(UTC),
+        mission_id=uuid4(),
+    )
     result = await provider.collect(request)
     normalized = PriceNormalizer().normalize_result(result)
     if not normalized.offers:

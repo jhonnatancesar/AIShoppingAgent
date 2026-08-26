@@ -53,6 +53,11 @@ class CollectionRun(Base):
             "finished_at IS NULL OR finished_at >= started_at",
             name="ck_collection_runs_time_order",
         ),
+        CheckConstraint(
+            "(mission_id IS NOT NULL AND monitoring_item_id IS NULL) OR "
+            "(mission_id IS NULL AND monitoring_item_id IS NOT NULL)",
+            name="ck_collection_runs_ownership_xor",
+        ),
         Index(
             "ix_collection_runs_mission_started_at", "mission_id", desc("started_at")
         ),
@@ -64,6 +69,13 @@ class CollectionRun(Base):
             unique=True,
             postgresql_where="status = 'running' AND mission_id IS NOT NULL",
         ),
+        Index(
+            "uq_collection_runs_running_monitoring_item_store",
+            "monitoring_item_id",
+            "store_id",
+            unique=True,
+            postgresql_where="status = 'running' AND monitoring_item_id IS NOT NULL",
+        ),
     )
     id: Mapped[UUID] = mapped_column(
         PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4
@@ -73,6 +85,18 @@ class CollectionRun(Base):
         ForeignKey("missions.id", ondelete="RESTRICT"),
         nullable=True,
     )
+    monitoring_item_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("monitoring_items.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    """TASK-112 (fase 3A): execução compartilhada por (item, loja) -- claim
+    persistente via a mesma técnica já usada por `mission_id`
+    (`uq_collection_runs_running_*`, IntegrityError na corrida = perdeu o
+    claim). `mission_id` continua `NULL` numa run compartilhada -- nenhuma
+    `PriceObservation` é gravada presa a ela; cada Mission elegível do
+    fan-out ganha sua PRÓPRIA run (`mission_id` preenchido,
+    `monitoring_item_id` nulo), exatamente como hoje."""
     store_id: Mapped[UUID] = mapped_column(
         PostgreSQLUUID(as_uuid=True),
         ForeignKey("stores.id", ondelete="RESTRICT"),
@@ -376,10 +400,196 @@ class MissionOfferRelevance(Base):
     classified_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )
+    last_observation_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("price_observations.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    """TASK-112 (fase 3A): última `PriceObservation` que esta Mission já
+    processou para esta oferta -- fonte de "previous" (DEC-048) na coleta
+    compartilhada, onde `PriceObservation.collection_run_id` aponta para a
+    `CollectionRun` do `MonitoringItem` (sem `mission_id`), nunca para uma
+    run de missão específica. Mantido também no caminho de missão única
+    (populado por `_persist_phase_c`), sem mudar nenhum comportamento
+    existente lá -- ninguém mais lê este campo fora do fan-out
+    compartilhado (`app.collection.shared_collection`)."""
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
         default=utc_now,
+        server_default=func.now(),
+    )
+
+
+class SharedCollectionOffer(Base):
+    """Registro durável de quais `Offer`s fizeram parte de UMA coleta
+    compartilhada (TASK-112, fase 3A, correção "fan-out durável").
+
+    Existe para que, se o processo morrer depois que a persistência
+    comercial já commitou mas antes do fan-out terminar, seja possível
+    reconstruir o resultado da coleta (`offer_id`/`observation_id` por
+    `collection_run_id`) SEM chamar o provider de novo -- inclusive
+    quando a `PriceObservation` foi reaproveitada (redundante, TASK-093)
+    e por isso não está presa a esta `collection_run_id` via
+    `PriceObservation.collection_run_id`. Nunca apagado; uma
+    `CollectionRun` (compartilhada) nunca é reprocessada depois de
+    `SUCCEEDED`.
+    """
+
+    __tablename__ = "shared_collection_offers"
+
+    collection_run_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("collection_runs.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    offer_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("offers.id", ondelete="RESTRICT"),
+        primary_key=True,
+    )
+    observation_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("price_observations.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+        server_default=func.now(),
+    )
+
+
+class SharedFanOutStatus(StrEnum):
+    """Máquina de estados de `SharedFanOutTask` (TASK-112, fase 3A,
+    correção de consistência -- rodada de classificação de erro).
+
+    `PENDING`: elegível para ser reivindicada -- nunca tentada ainda, OU
+    já tentada e liberada para nova tentativa (`next_retry_at` no
+    passado/nulo). `PROCESSING`: reivindicada por um worker
+    (`claimed_at` marca o início do lease) -- nunca dois workers
+    processam a mesma tarefa ao mesmo tempo (claim atômico via `UPDATE
+    ... WHERE status='pending'`, nunca mutex em memória); uma
+    `PROCESSING` presa além do timeout de lease é stale, recuperável via
+    `recover_stale_fan_out_tasks` (mesmo espírito de `recover_stale_
+    runs`). `DONE`: terminal, sucesso -- nunca mais reprocessada.
+
+    `SKIPPED`: terminal, mas NUNCA um erro -- a Mission deixou de ser
+    elegível para este fan-out entre a coleta comercial e o
+    processamento (pausada/cancelada/desvinculada do `MonitoringItem`/
+    perdeu a loja) -- revalidada deterministicamente ANTES de processar
+    (nunca depois de já ter alertado). Nunca notifica.
+
+    Falha de PROCESSAMENTO se divide em duas categorias -- nunca uma
+    falha transitória vira perda silenciosa só por ter acontecido
+    `_MAX_FAN_OUT_ATTEMPTS` vezes:
+
+    `ATTENTION_REQUIRED`: erro RETRYABLE (banco temporariamente
+    indisponível, timeout, IA/provider auxiliar indisponível, etc.) que
+    esgotou as tentativas automáticas (backoff via `next_retry_at`/
+    `attempt_count`) -- para de tentar sozinho (evita loop infinito), mas
+    continua auditável (`last_error`) e reprocessável manualmente (nada
+    no schema impede resetar para `pending`); nunca é a mesma coisa que
+    "definitivamente impossível".
+
+    `TERMINAL_FAILED`: erro determinístico (`SharedFanOutTerminalError`)
+    -- dados/estado tornam o processamento genuinamente impossível
+    (ex.: `MissionCriteria` não existe mais para a Mission reivindicada).
+    Vai direto para cá, sem gastar tentativas de retry (retry nunca
+    resolveria), mas continua auditável via `last_error`.
+    """
+
+    PENDING = "pending"
+    PROCESSING = "processing"
+    DONE = "done"
+    SKIPPED = "skipped"
+    ATTENTION_REQUIRED = "attention_required"
+    TERMINAL_FAILED = "terminal_failed"
+
+
+class SharedFanOutTask(Base):
+    """Necessidade durável de UMA Mission processar o resultado de UMA
+    coleta compartilhada (TASK-112, fase 3A, correção "fan-out durável"
+    + correção de consistência de retry/concorrência/lease).
+
+    Criada atomicamente junto da persistência comercial (mesma transação
+    que grava `SharedCollectionOffer` e marca a `CollectionRun`
+    `SUCCEEDED`) -- por isso, assim que a coleta comercial está
+    persistida, o banco já sabe exatamente quais Missions ainda precisam
+    processá-la. Um crash a qualquer momento depois disso nunca perde
+    essa informação: `app.collection.shared_collection.
+    resume_shared_collection_fan_out` retoma só tarefas elegíveis
+    (`pending` due, ou `processing` stale via recovery), nunca reprocessa
+    uma já `done`, nunca chama o provider de novo.
+
+    `attempt_count`/`last_error`/`next_retry_at` implementam retry com
+    backoff (`_MAX_FAN_OUT_ATTEMPTS`, `_fan_out_retry_delay_minutes`) --
+    falha transitória de banco/IA/processamento NUNCA fica `pending`
+    para sempre nem vira perda silenciosa: tenta de novo com atraso
+    crescente, e só depois de esgotar as tentativas fica
+    `terminal_failed` (auditável via `last_error`, nunca reprocessada
+    automaticamente a partir daí)."""
+
+    __tablename__ = "shared_fan_out_tasks"
+    __table_args__ = (
+        CheckConstraint(
+            "attempt_count >= 0",
+            name="ck_shared_fan_out_tasks_attempt_count_non_negative",
+        ),
+        Index(
+            "ix_shared_fan_out_tasks_pending",
+            "collection_run_id",
+            postgresql_where="status = 'pending'",
+        ),
+        Index(
+            "ix_shared_fan_out_tasks_processing_claimed_at",
+            "claimed_at",
+            postgresql_where="status = 'processing'",
+        ),
+    )
+
+    collection_run_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("collection_runs.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    mission_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("missions.id", ondelete="RESTRICT"),
+        primary_key=True,
+    )
+    status: Mapped[SharedFanOutStatus] = mapped_column(
+        Enum(
+            SharedFanOutStatus,
+            name="shared_fan_out_status",
+            values_callable=lambda values: [v.value for v in values],
+        ),
+        nullable=False,
+        default=SharedFanOutStatus.PENDING,
+        server_default=SharedFanOutStatus.PENDING.value,
+    )
+    attempt_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    last_error: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    next_retry_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    claimed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+        onupdate=utc_now,
         server_default=func.now(),
     )
 

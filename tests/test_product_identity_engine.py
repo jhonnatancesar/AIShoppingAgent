@@ -132,6 +132,50 @@ def test_gpu_different_board_brands_never_share_key() -> None:
     assert asus.monitoring_key != msi.monitoring_key
 
 
+def test_gpu_bare_text_never_erases_explicit_vram() -> None:
+    """Correção (fase 3A): antes desta correção, 'GB' nunca virava
+    atributo nenhum -- '16GB' era descartado em silêncio e 'RTX 5070 Ti'
+    vs 'RTX 5070 Ti 16GB' produziam a MESMA key, apagando uma restrição
+    real. Não existe hoje regra determinística que complete VRAM a partir
+    só do modelo (ao contrário do tier de CPU) -- um mesmo modelo pode
+    vender em mais de uma configuração real de VRAM -- então ausência
+    continua ANY, presença explícita é preservada, e as duas NUNCA
+    compartilham key."""
+    bare = resolve_monitoring_identity("RTX 5070 Ti")
+    explicit = resolve_monitoring_identity("RTX 5070 Ti 16GB")
+
+    assert bare is not None and explicit is not None
+    assert dict(bare.attributes)["vram"] == "ANY"
+    assert dict(explicit.attributes)["vram"] == "16"
+    assert bare.monitoring_key != explicit.monitoring_key
+
+
+def test_gpu_equivalent_vram_phrasings_converge() -> None:
+    first = resolve_monitoring_identity("RTX 5070 Ti 16GB")
+    second = resolve_monitoring_identity("RTX 5070 Ti 16 GB")
+
+    assert first is not None and second is not None
+    assert first.monitoring_key == second.monitoring_key
+
+
+def test_gpu_different_vram_values_never_share_key() -> None:
+    sixteen = resolve_monitoring_identity("RTX 5070 Ti 16GB")
+    twenty_four = resolve_monitoring_identity("RTX 5070 Ti 24GB")
+
+    assert sixteen is not None and twenty_four is not None
+    assert sixteen.monitoring_key != twenty_four.monitoring_key
+
+
+def test_gpu_vram_and_board_brand_are_independent_attributes() -> None:
+    """Duas restrições explícitas ao mesmo tempo -- cada uma preservada,
+    nenhuma apaga a outra."""
+    resolved = resolve_monitoring_identity("RTX 5070 Ti 16GB ASUS")
+    assert resolved is not None
+    attributes = dict(resolved.attributes)
+    assert attributes["vram"] == "16"
+    assert attributes["board_brand"] == "asus"
+
+
 # ---------------------------------------------------------------------------
 # ANY -- ausência explícita de restrição, nunca NULL acidental
 # ---------------------------------------------------------------------------

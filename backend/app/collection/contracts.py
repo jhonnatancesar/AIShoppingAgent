@@ -102,17 +102,31 @@ class RawInstallmentOption:
 
 @dataclass(frozen=True, slots=True)
 class CollectionRequest:
-    """Solicitação de coleta já restrita a uma fonte selecionada."""
+    """Solicitação de coleta já restrita a uma fonte selecionada.
 
-    mission_id: UUID
+    O sujeito da coleta é sempre exatamente um dos dois (TASK-112, fase
+    3A) -- nunca ambos, nunca nenhum: `mission_id` (coleta de uma única
+    Mission, caminho de sempre) OU `monitoring_item_id` (coleta
+    compartilhada por `(MonitoringItem, store)`, TASK-112). Providers/
+    adapters nunca leem nenhum dos dois (auditoria confirmada: nenhuma
+    referência a `request.mission_id`/`request.monitoring_item_id` fora
+    de `app.collection.orchestration`/`app.collection.shared_collection`)
+    -- servem só de correlação para quem persiste o resultado depois."""
+
     source_code: str
     search_query: str
     requested_at: datetime
+    mission_id: UUID | None = None
+    monitoring_item_id: UUID | None = None
 
     def __post_init__(self) -> None:
         _require_text(self.source_code, "source_code")
         _require_text(self.search_query, "search_query")
         _require_aware(self.requested_at, "requested_at")
+        if (self.mission_id is None) == (self.monitoring_item_id is None):
+            raise CollectionContractError(
+                "exactly one of mission_id or monitoring_item_id must be set"
+            )
 
 
 @dataclass(frozen=True, slots=True)

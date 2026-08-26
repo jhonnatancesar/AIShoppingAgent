@@ -1,7 +1,7 @@
 # TASK-112 — Vincular missões que monitoram o mesmo item, sem duplicar coleta
 
 Status: **Fase 1 concluída e commitada (`1dca734`) — Product Identity
-Engine genérico. Fase 2 concluída (2026-08-25), aguardando commit:
+Engine genérico. Fase 2 concluída e commitada (`5d05767`, 2026-08-25):
 modelo `MonitoringItem`/`MissionMonitoringItem`/`MonitoringItemStore`;
 vínculo/relink/desvínculo centralizados em `reconcile_mission_
 monitoring_item(_async)` (`app/missions/monitoring.py`), chamado por
@@ -35,8 +35,199 @@ determinística suficiente sem um `model`/`family` resolvido pelo
 extractor); lifecycle pause/resume/cancel derivando `is_enabled` com
 serialização real por banco (`SELECT ... FOR UPDATE` + reconsulta
 pós-lock, ordenada por `store_id`) -- corrida de pause/cancel concorrente
-corrigida e coberta por teste de concorrência real. Sem fan-out/coleta
-compartilhada nem `fairness_owner`/TASK-108 (fase 3). Ver
+corrigida e coberta por teste de concorrência real.
+
+Fase 3A concluída (2026-08-26, rodada 4 de correções), aguardando
+commit: prova que UMA necessidade `(MonitoringItem, store)` executa UMA
+coleta real e distribui o resultado por fan-out individual de Mission.
+`CollectionCriteria` canônico (`app.products.identity.canonical_
+collection_criteria`) nasce só de `MonitoringItem.canonical_identity` --
+nunca do texto cru de nenhuma Mission vinculada. Correção de VRAM no
+extrator de GPU (`_gpu`/`_gpu_vram`): "RTX 5070 Ti" (sem VRAM) e "RTX
+5070 Ti 16GB" (VRAM explícita) nunca compartilham `monitoring_key` --
+antes desta correção, "GB" nunca virava atributo nenhum e a restrição
+explícita era apagada em silêncio; não existe hoje regra determinística
+que complete VRAM a partir só do modelo (ao contrário do tier de CPU),
+já que um mesmo modelo pode vender em mais de uma configuração real.
+
+Persistência comercial (`_persist_shared_offers_and_finish`) roda
+EXATAMENTE UMA VEZ por chamada -- correção de desenho da rodada 2: a
+versão anterior chamava `_persist_phase_a` uma vez por Mission do
+fan-out, um uso indevido do dedupe TASK-093/DEC-097 (que deduplica ENTRE
+coletas no tempo, não entre beneficiários da MESMA coleta). O fan-out
+(`_build_mission_phase_a_outcome`) monta o mesmo `_PhaseAOutcome` que
+`_run_phase_b`/`_persist_phase_c` (TASK-079, reaproveitados sem nenhuma
+alteração de comportamento) já processam -- pré-lista, `MissionOfferRelevance`,
+alerta e reset de backoff por Mission continuam exatamente como no
+caminho de missão única. "Previous" por Mission (DEC-048) passou a vir
+de `MissionOfferRelevance.last_observation_id` (coluna nova, migration
+`20260825_0003`, populada também no caminho de missão única em
+`_persist_phase_c` -- pequena adição justificada, nunca lida por aquele
+caminho) em vez de `CollectionRun.mission_id`, que não existe mais para
+uma observação compartilhada. Migration `20260825_0003` inclui backfill
+determinístico de `last_observation_id` para linhas pré-existentes
+(reconstrói a partir da última `PriceObservation` via
+`CollectionRun.mission_id` -- mesmo dado que `_persist_phase_a` já usava
+antes desta coluna existir); coberto por teste que simula estado antigo
+representativo e confirma que o primeiro ciclo novo não redispara
+`PRICE_TARGET_REACHED`.
+
+Fan-out DURÁVEL e retomável (correção da rodada 3 -- risco real: crash
+entre a coleta comercial terminar e o fan-out terminar perderia
+Missions para sempre). `_persist_shared_offers_and_finish` grava, na
+MESMA transação que persiste `Offer`/`PriceObservation`, um registro
+durável de quais ofertas fizeram parte da coleta
+(`SharedCollectionOffer`, migration `20260825_0004` -- inclusive quando
+a observação foi reaproveitada/redundante, que por definição não fica
+presa a `collection_run_id`) e cria uma `SharedFanOutTask` (`pending`)
+por Mission elegível NAQUELE momento, e só então marca a `CollectionRun`
+compartilhada `SUCCEEDED` -- atômico: ou tudo commitou junto (run
+`SUCCEEDED` + ofertas + tarefas já duráveis) ou nada commitou (run
+continua `RUNNING`, seguro repetir o provider depois).
+`resume_shared_collection_fan_out` retoma só tarefas `pending`, das runs
+mais antigas para as mais novas, reconstruindo o resultado via
+`SharedCollectionOffer` -- NUNCA chama o provider de novo, NUNCA
+reprocessa uma Mission já `done`. `_process_pending_fan_out` é o único
+código de fan-out (usado pelo caminho fresco e pela retomada -- nunca
+dois jeitos diferentes). Provado com teste que processa A, simula crash
+antes de B/C, retoma e confirma: provider 1x total, persistência
+comercial 1x, A não repete, B/C processadas, checkpoints finais
+corretos.
+
+Consistência do próprio `SharedFanOutTask` (correção da rodada 3).
+Máquina de estados: `pending -> processing -> done` (feliz) ou
+`pending -> processing -> pending` (falha transitória/corrida, retry com
+backoff -- `attempt_count`/`next_retry_at`/`last_error`). Claim atômico
+(`_claim_fan_out_task`, `UPDATE ... WHERE status='pending' ...`, nunca
+mutex em memória) garante que duas workers nunca processam a mesma
+`(collection_run_id, mission_id)` ao mesmo tempo -- provado com teste de
+concorrência real (2 workers/conexões, `Barrier`, A+B+C pendentes, cada
+Mission processada por exatamente uma das duas). `processing` travado
+além do lease (`_FAN_OUT_PROCESSING_STALE_AFTER=10min`) é recuperável
+via `recover_stale_fan_out_tasks` (mesmo espírito de `recover_stale_
+runs`). Idempotência dos efeitos individuais sob crash NO MEIO do
+processamento (depois de `_persist_phase_c` já ter commitado, antes da
+tarefa virar `done`): confirmada como propriedade JÁ existente do
+desenho -- o retry encontra `MissionOfferRelevance.last_observation_id`
+já apontando para a observação desta coleta, o que faz `alert_
+comparison=UNCHANGED_REUSED` e pula a reavaliação de alerta -- provado
+com teste dedicado (`PRICE_TARGET_REACHED` continua em exatamente 1
+evento depois do retry, não 2), não só "provavelmente dedupe".
+
+Semântica final do fan-out durável (correção da rodada 4 -- 5 pontos
+concretos que a rodada 3 ainda não provava):
+
+1. **Classificação de erro nunca assume terminal sem prova.** Exceções
+   no fan-out são RETRYABLE por padrão (`_fail_fan_out_task_retryable`)
+   -- só `SharedFanOutTerminalError` (levantada apenas nos dois casos
+   genuinamente determinísticos de `_build_mission_phase_a_outcome`:
+   Mission/critério sumiu, produto sumiu) vai direto para
+   `terminal_failed` via `_fail_fan_out_task_terminal`, sem gastar
+   tentativas. `attempt_count` esgotado (`_MAX_FAN_OUT_ATTEMPTS=5`)
+   NUNCA mais vira `terminal_failed` sozinho -- vira `attention_
+   required`: auditável (`last_error`/`attempt_count`), reprocessável
+   (nada no schema impede resetar para `pending` manualmente -- provado
+   com teste), só parou de tentar sozinha para não fazer retry infinito.
+   `SharedFanOutStatus` ganhou os dois estados novos (`skipped`,
+   `attention_required`), 6 no total. Provado com dois testes dedicados:
+   erro determinístico vira `terminal_failed` já na 1ª tentativa (sem
+   gastar orçamento de retry); erro genérico (infra/IA simulada via
+   `_run_phase_b` envolvido) retenta com backoff e só vira `attention_
+   required` depois de esgotar as tentativas reais, nunca `terminal_
+   failed`.
+2. **Revalidação de elegibilidade antes de qualquer efeito**
+   (`_mission_still_eligible_for_fan_out`, chamada logo após o claim
+   atômico da tarefa, antes de `_start_mission_fan_out_run`): confirma
+   que a Mission ainda existe, está `ACTIVE`, ainda aponta para o MESMO
+   `MonitoringItem` (pega reconcile/relink) e ainda tem `MissionSource`
+   para aquela loja. Se não, a tarefa vira `skipped` (nunca erro, nunca
+   gera alerta/notificação) via `_skip_fan_out_task`; Mission retomada
+   depois é responsabilidade de uma coleta FUTURA, nunca revive um
+   fan-out antigo. Provado com 3 testes dedicados (pausada, cancelada,
+   religada para outro `MonitoringItem` entre a coleta e o fan-out --
+   cada um com B ainda ACTIVE como controle, processando normalmente).
+3. **Idempotência real de notificação**, não só do evento persistente:
+   o dispatcher de Telegram já usa o outbox idempotente pré-existente
+   (TASK-080, `app.events.consumption` -- `claim_unconsumed_events_
+   async`/`record_consumption_attempt_async`), nunca um envio direto
+   dentro do processamento. Provado usando o MESMO mecanismo real (sem
+   mock dele): depois de um crash simulado no meio do processamento de
+   uma Mission com alerta, seguido de retry, existe exatamente 1 `Event`
+   e exatamente 1 notificação reivindicável -- depois de consumida,
+   zero reivindicáveis de novo.
+4. **Integridade das tabelas novas confirmada no banco** (não só lendo o
+   model): `SharedFanOutTask` e `SharedCollectionOffer` já impedem
+   duplicação lógica pela própria PRIMARY KEY (`(collection_run_id,
+   mission_id)` e `(collection_run_id, offer_id)`) -- nenhuma mudança de
+   schema necessária, confirmado com teste de integridade dedicado para
+   cada tabela (`IntegrityError` numa segunda linha com a mesma chave).
+5. **Recuperação automática, sem intervenção manual**:
+   `resume_shared_collection_fan_out` chama `recover_stale_fan_out_
+   tasks` como PRIMEIRO passo, sempre -- quem chama esta função nunca
+   precisa lembrar de recuperar tarefas presas separadamente.
+   `recover_stale_fan_out_tasks` continua exposta e idempotente para
+   quem quiser chamar à parte também. Provado com teste dedicado que
+   NUNCA chama `recover_stale_fan_out_tasks` explicitamente -- só
+   `resume_shared_collection_fan_out`, e a tarefa presa é recuperada e
+   processada mesmo assim.
+
+Semântica de `CollectionRun.status == SUCCEEDED` (execução compartilhada)
+documentada explicitamente: significa só "a coleta comercial terminou",
+NUNCA "todas as Missions foram notificadas" -- isso é consultado via
+`SharedFanOutTask` (`pending`/`processing`/`done`/`skipped`/`attention_
+required`/`terminal_failed`) por `collection_run_id`.
+
+Recuperação de run compartilhada abandonada (crash entre o claim e o
+fim da coleta comercial, antes de `SUCCEEDED`): auditado -- `recover_
+stale_runs` (TASK-079, já genérico, nunca precisou de mudança) não
+filtra por `mission_id`, já reconhecia runs com `monitoring_item_id`
+desde que a coluna existe; `_evaluate_mission_prelist(session, None,
+...)` já era um no-op seguro para `mission_id=NULL`. Provado com teste:
+claim abandonado -> segunda tentativa concorrente rejeitada (slot nunca
+roda 2x) -> `recover_stale_runs` marca `FAILED` (nunca preso em
+`RUNNING`) -> quando o próximo ciclo natural vence (`next_run_at` já
+avançado pelo claim original -- recuperação não antecipa o ciclo, mesmo
+comportamento já existente para missão única, nenhuma política nova de
+retry inventada), uma nova execução ocorre exatamente uma vez.
+
+Claim/lock real via `CollectionRun.monitoring_item_id` (migration
+aditiva `20260825_0001`) + índice único parcial `uq_collection_runs_
+running_monitoring_item_store`, mesma técnica já usada por `mission_id`
+-- nunca mutex em memória; lock (`SELECT ... FOR UPDATE` em
+`MonitoringItemStore`) sempre adquirido ANTES do recheck de
+`is_enabled`/`next_run_at`/`next_eligible_at` e do claim, garantindo que
+um segundo worker só prossiga depois que o due slot já foi avançado pelo
+primeiro (provado com teste determinístico de "mesmo `now` nunca
+reclama duas vezes", além do teste de concorrência real já existente).
+`CollectionRun` ganhou `CHECK ck_collection_runs_ownership_xor`
+(migration `20260825_0002`): `mission_id` XOR `monitoring_item_id`,
+nunca os dois, nunca nenhum -- reforçado também em Python
+(`start_collection_run`). `CollectionRequest` corrigido (contrato, não
+mais hack): `mission_id`/`monitoring_item_id` opcionais com a mesma
+regra XOR validada em `__post_init__`; nenhum caller mais reaproveita
+`mission_id` para carregar um `monitoring_item_id`.
+
+Backoff/agenda movidos para `MonitoringItemStore` (`next_run_at`/
+`next_eligible_at`/`consecutive_blocks`); `MissionSource` intocado,
+continua preferência/cota do usuário (TASK-107). Auditoria confirmou que
+hoje TODA missão usa o mesmo intervalo global (`Settings.collection_
+schedule_interval_minutes`), sem exceção por missão -- contrato para
+variação futura documentado, não implementado (nada para testar contra
+hoje). Erro isolado por Mission no fan-out nunca marca a coleta
+compartilhada como falha nem afeta outras Missions -- reconfirmado após
+os dois refactors. Testado sinteticamente com 60 Missions compartilhando
+o mesmo `(MonitoringItem, store)`: checkpoint individual
+(`MissionOfferRelevance` uma linha por Mission), pré-lista individual
+sem duplicação entre ciclos, sem sinal de crescimento O(N²). TASK-111
+(assert de 4 lojas desatualizado, achado recorrente nesta regressão)
+corrigido junto.
+
+Sem scheduler principal (`claim_due_collections`/`CollectionOrchestrator`,
+intocados), sem fila justa/`fairness_owner`/TASK-108 (fase 3B) --
+`collect_monitoring_item_store`/`resume_shared_collection_fan_out` são
+chamadas isoladamente, caminho controlado/testável; FASE 3B decide
+QUANDO/COM QUE FREQUÊNCIA chamar `resume_shared_collection_fan_out` em
+produção -- ainda não integradas ao loop de produção. Ver
 `docs/internal/decision-log.md` para o registro completo de decisões.**
 
 ## Objetivo

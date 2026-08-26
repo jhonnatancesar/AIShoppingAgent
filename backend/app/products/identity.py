@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from hashlib import sha256
 from types import MappingProxyType
+from typing import Any
 
 
 class ProductRequestKind(StrEnum):
@@ -509,6 +510,12 @@ def _cpu(text: str) -> _ParsedFamily | None:
 
 _GPU_KEYWORD = re.compile(r"\bRTX\b|\bGEFORCE\b|\bNVIDIA\b")
 _GPU_MODEL = re.compile(r"\b(\d{4})\s*(TI|SUPER)?\b")
+# TASK-112 (fase 3A, correção): VRAM é 1-3 dígitos (4GB a 999GB, generoso)
+# -- nunca colide com o código do modelo (sempre 4 dígitos, `_GPU_MODEL`).
+# Sem isso, "16GB" era descartado em silêncio (nunca virava atributo),
+# apagando uma restrição que o usuário de fato pediu -- "RTX 5070 Ti" e
+# "RTX 5070 Ti 16GB" produziam a MESMA identidade, incorretamente.
+_GPU_VRAM = re.compile(r"(?<!\d)(\d{1,3})\s*GB(?![A-Z0-9])")
 # TASK-112: parceiros de placa (AIB) mais comuns no varejo BR -- lista
 # fechada de propósito (fail-closed: parceiro fora da lista vira ausente/
 # ANY, nunca um valor incorreto). Crescer esta lista não exige mudar o
@@ -534,6 +541,21 @@ def _gpu_board_brand(text: str) -> str | None:
     return None
 
 
+def _gpu_vram(text: str) -> str | None:
+    """Só aceita uma única capacidade plausível -- múltiplas são ambíguas,
+    mesmo espírito de `_storage_attribute`. Sem lista de "capacidades reais
+    de VRAM por modelo": ao contrário do tier de CPU (sempre derivável do
+    próprio código do SKU), um mesmo modelo de GPU pode existir em mais de
+    uma configuração real de VRAM no mercado -- não existe hoje uma regra
+    determinística para completar isso a partir só do modelo, então VRAM
+    ausente fica `ANY` (nunca inventado) e VRAM explícita é preservada
+    como uma restrição real (nunca descartada)."""
+    values = {int(value) for value in _GPU_VRAM.findall(text)}
+    if len(values) != 1:
+        return None
+    return str(values.pop())
+
+
 def _gpu(text: str) -> _ParsedFamily | None:
     """NVIDIA GeForce RTX -- único fabricante coberto nesta fase; AMD
     Radeon/Intel Arc entram pelo mesmo mecanismo depois. Aceita o número
@@ -549,7 +571,12 @@ def _gpu(text: str) -> _ParsedFamily | None:
         return None
     model = f"{number}-{suffix}" if suffix else number
     board_brand = _gpu_board_brand(text)
-    attributes = (("board_brand", board_brand.lower()),) if board_brand else ()
+    vram = _gpu_vram(text)
+    attributes: tuple[tuple[str, str], ...] = ()
+    if board_brand:
+        attributes += (("board_brand", board_brand.lower()),)
+    if vram:
+        attributes += (("vram", vram),)
     return _ParsedFamily(
         category="gpu",
         brand="nvidia",
@@ -832,3 +859,74 @@ def resolve_monitoring_identity_for_resolved_product(
         attribute_values=attributes,
         aliases=aliases,
     )
+
+
+# ---------------------------------------------------------------------------
+# CollectionCriteria (TASK-112, fase 3A): a busca que a coleta compartilhada
+# de fato executa numa loja NUNCA nasce do texto cru de nenhuma Mission
+# vinculada -- duas Missions com o mesmo monitoring_key podem ter textos
+# diferentes ("9950x3d" vs "ryzen 9950x3d"); usar o texto de uma delas
+# arbitrariamente privilegiaria essa Mission sem motivo e tornaria a busca
+# não-determinística (dependeria de qual Mission "chegou primeiro"). A
+# única fonte é a identidade canônica já resolvida (`MonitoringIdentity`/
+# `MonitoringItem.canonical_identity`) -- puro, síncrono, sem IA, sem
+# sessão de banco, mesmo espírito do resto deste módulo.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class CollectionCriteria:
+    """Critério de busca determinístico para UMA execução de coleta
+    compartilhada (`(MonitoringItem, store)`), derivado só da identidade
+    canônica. `search_query` é o texto enviado ao provider da loja;
+    `model` é o código do modelo para o mesmo filtro de segurança
+    (`app.collection.model_matching.title_matches_model`) que a TASK-075
+    já usa por missão -- aqui vindo do `model` canônico, nunca de
+    `MissionCriteria.model` de nenhuma Mission específica."""
+
+    search_query: str
+    model: str | None
+
+
+def _humanize_slug(value: str) -> str:
+    """Slugs (`_slug`) usam `-` como separador (`geforce-rtx`,
+    `ryzen-9`) -- bom para hash, ruim para digitar numa busca real
+    ("geforce rtx" busca melhor que "geforce-rtx" na prática, embora a
+    maioria dos buscadores tolere ambos). Reversão puramente cosmética,
+    nunca reintroduz informação que o slug não tinha."""
+    return value.replace("-", " ").strip()
+
+
+def canonical_collection_criteria(
+    canonical_identity: Mapping[str, Any],
+) -> CollectionCriteria:
+    """Reconstrói o `CollectionCriteria` a partir do payload canônico já
+    persistido em `MonitoringItem.canonical_identity`
+    (`app.missions.monitoring._canonical_identity_payload`) -- mesmo
+    formato produzido por `MonitoringIdentity` (`scope`/`category`/
+    `brand`/`family`/`model`/`variant`/`attributes`). Determinístico:
+    mesma identidade canônica sempre produz o mesmo `CollectionCriteria`,
+    nunca IA, nunca depende de qual Mission foi consultada.
+
+    `variant`/atributos em `"ANY"` (sem restrição, TASK-112) nunca entram
+    na busca -- são justamente a ausência de uma palavra a mais, não uma
+    palavra "ANY" literal. Valores restritos entram sempre, na mesma
+    ordem determinística de `_build_monitoring_identity` (brand, family,
+    model, variant, atributos na ordem declarada da categoria)."""
+    brand = str(canonical_identity["brand"])
+    family = str(canonical_identity["family"])
+    model = str(canonical_identity["model"])
+    variant = canonical_identity.get("variant")
+    attributes = canonical_identity.get("attributes") or {}
+
+    query_parts = [brand, family, model]
+    if variant and variant != "ANY":
+        query_parts.append(str(variant))
+    for value in attributes.values():
+        if value and value != "ANY":
+            query_parts.append(str(value))
+
+    search_query = " ".join(
+        _humanize_slug(part) for part in query_parts if part
+    ).strip()
+    return CollectionCriteria(search_query=search_query, model=model)

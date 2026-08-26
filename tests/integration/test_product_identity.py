@@ -21,11 +21,20 @@ def test_same_variant_from_all_stores_reuses_one_global_product(
     async def run() -> tuple[set, int]:
         async with integration_database.async_sessions.begin() as session:
             stores = tuple(await session.scalars(select(Store).order_by(Store.code)))
+            # TASK-111: o catálogo seed já inclui Magalu/Mercado Livre
+            # (TASK-104A/104B, migrations 20260822_0007/20260822_0008) --
+            # assert atualizado para as 6 lojas reais, não mais as 4
+            # originais da V1 de coleta. O teste em si continua sobre
+            # dedupe global de Product/Offer, agnóstico de quantas lojas
+            # existem -- rodar com todas as lojas cadastradas é o
+            # comportamento correto, nunca uma lista fixa desatualizada.
             assert {store.code for store in stores} == {
                 "amazon",
                 "kabum",
                 "pichau",
                 "terabyte",
+                "magalu",
+                "mercadolivre",
             }
             normalizer = PriceNormalizer()
             for store in stores:

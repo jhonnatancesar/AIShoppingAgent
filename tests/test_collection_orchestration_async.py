@@ -2121,6 +2121,18 @@ def test_scenario_m_confirmed_identity_is_promoted_to_the_mission(monkeypatch) -
     mission_id = uuid4()
     claims = _mission_claims(mission_id, search_query="9950X3D", model="9950X3D")
     _patch_phase_a(monkeypatch, claims)
+    # TASK-112 (fase 2): `promote_confirmed_product_identity_async` passou
+    # a chamar `reconcile_mission_monitoring_item_async` no fim -- essa
+    # chamada tem cobertura própria (`tests/integration/
+    # test_shared_monitoring.py`, contra PostgreSQL real); aqui a sessão
+    # mockada (`_mission_and_criteria_session`) só serve `Mission`/
+    # `MissionCriteria` para as duas leituras que este teste É sobre
+    # (promoção de search_query/title), então essa chamada extra é
+    # neutralizada (mesmo padrão de `tests/test_mission_service_async.py`).
+    monkeypatch.setattr(
+        "app.missions.service.reconcile_mission_monitoring_item_async",
+        AsyncMock(return_value=None),
+    )
     resolver = _FakeIdentityResolver(
         {
             "9950X3D": ResolvedProductIdentity(
@@ -2185,6 +2197,12 @@ def test_scenario_n_promotion_happens_once_per_mission_even_with_many_claims(
         sources=("kabum", "amazon", "pichau", "terabyte"),
     )
     _patch_phase_a(monkeypatch, claims)
+    # TASK-112 (fase 2): ver comentário equivalente em
+    # test_scenario_m_confirmed_identity_is_promoted_to_the_mission.
+    monkeypatch.setattr(
+        "app.missions.service.reconcile_mission_monitoring_item_async",
+        AsyncMock(return_value=None),
+    )
     resolver = _FakeIdentityResolver(
         {
             "9950X3D": ResolvedProductIdentity(
