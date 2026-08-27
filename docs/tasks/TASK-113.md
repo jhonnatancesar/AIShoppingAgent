@@ -3,13 +3,19 @@
 Status: **DESENHO FECHADO (2026-08-27) — pronta para implementação
 futura, nenhuma linha de código/migration escrita ainda.** O pré-flight
 (§32) foi executado (3 agentes de auditoria read-only) e revisado pelo
-usuário em duas rodadas de correção; o resultado final, já aprovado,
+usuário em três rodadas de correção; o resultado final, já aprovado,
 está em **§33 — Desenho final aprovado**, que é a fonte de verdade para
 implementação (supersede qualquer proposta conflitante em §1-31, que
 ficam como contexto/motivação original). Quando o usuário mandar
 executar esta TASK, **não repetir o pré-flight** — implementar
 diretamente a partir de §33, salvo achado concreto que contradiga o
-desenho. Ver §36/§37 para o histórico de registro/fechamento.
+desenho. Ver §36/§37/§38 para o histórico de registro/fechamento/correção.
+
+**Absorve o item 17 da V1.2** (`docs/internal/v1.2-scope.md`, "Menor
+preço histórico externo") — não é mais um item separado sem TASK; a
+pesquisa de histórico externo é parte do mesmo `MarketPriceAssessment`
+desta TASK (§33.13/§33.16/§33.18), com a mesma regra de nunca inventar
+valor/fonte/data sem evidência real que o item 17 já exigia.
 
 ## 1. Problema atual
 
@@ -367,11 +373,19 @@ comparação direta. Firecrawl results precisam passar por validação de
 identidade/relevância. Product Identity Engine continua determinístico.
 IA pode interpretar evidências, não autorizar merge de identidade.
 
-## 32. Pré-flight obrigatório quando esta TASK for executada
+## 32. Pré-flight — EXECUTADO EM 2026-08-27
 
-**Esta seção fica salva dentro da TASK.** Quando o usuário futuramente
-mandar executar esta TASK, NÃO começar implementando. Primeiro fazer o
-seguinte PRE-FLIGHT:
+**Seção HISTÓRICA.** Este roteiro já foi executado (3 agentes de
+auditoria read-only, código real citado por `arquivo:linha`) antes do
+fechamento do desenho — **não deve ser repetido durante a
+implementação**. Preservado abaixo (A-P e os 18 itens de resultado)
+como registro do que foi auditado, não como instrução ativa. O
+resultado consolidado e aprovado está em **§33** — a implementação
+futura começa diretamente por lá, salvo novo achado concreto que
+contradiga o desenho (nesse caso, reportar o achado antes de alterar
+arquitetura, não refazer o pré-flight inteiro).
+
+Roteiro executado:
 
 **A.** Auditar fluxo atual completo: Collection → `PriceObservationComparison`
 → evaluator → `MissionOfferRelevance` → alert decision → notification/
@@ -422,9 +436,11 @@ Firecrawl. Sem bypass de anti-bot.
 **P.** Levantar métricas/custo estimado: quantas chamadas Firecrawl/IA
 teríamos com as quotas atuais e com cache.
 
-### Resultado do pré-flight futuro
+### Resultado do pré-flight (entregue, consolidado em §33)
 
-Antes de implementar, quando a task for executada, apresentar:
+Os 18 pontos abaixo foram efetivamente entregues e revisados — não são
+mais uma lista de "o que apresentar no futuro", são o índice do que está
+em §33:
 
 1. causa raiz dos alertas ruins atuais;
 2. modelo atual de checkpoints;
@@ -445,16 +461,18 @@ Antes de implementar, quando a task for executada, apresentar:
 17. riscos reais;
 18. o que NÃO precisa ser alterado.
 
-**PARAR depois do preflight e aguardar aprovação explícita do usuário
-antes de implementar, A MENOS que o usuário mande explicitamente "faça a
-TASK completa sem parar".**
+**Regra vigente para a implementação futura**: começar diretamente pelo
+§33 (fonte de verdade), sem repetir este pré-flight. Só interromper e
+reportar antes de continuar se aparecer um achado concreto que
+contradiga o desenho aprovado — nunca por rotina.
 
 ## 33. Desenho final aprovado (fecha o pré-flight, 2026-08-27)
 
 Resultado consolidado após execução do §32 (3 agentes de auditoria
-read-only, código real citado por `arquivo:linha`) e duas rodadas de
-correção do usuário. **Esta seção é a fonte de verdade para
-implementação** — supersede qualquer proposta conflitante em §1-31.
+read-only, código real citado por `arquivo:linha`) e das rodadas de
+revisão/correção do usuário registradas em §36-§38. **Esta seção é a
+fonte de verdade para implementação** — supersede qualquer proposta
+conflitante em §1-31.
 
 ### 33.1 Identidade e chave de cache
 
@@ -496,8 +514,10 @@ Sem histórico append-only na V1.2 — uma única linha mutável por
 | `store_id` | FK `stores.id` RESTRICT, nullable | só auditoria/contexto — nunca parte da chave |
 | `classification` | enum `EXCELLENT_DEAL`/`GOOD_DEAL`/`NORMAL_PRICE`/`INSUFFICIENT_EVIDENCE` | |
 | `market_low`, `market_high` | Numeric(19,4), nullable | faixa de mercado atual |
-| `historical_low_external` | Numeric(19,4), nullable | quase sempre `NULL` — Firecrawl não fornece histórico confiável (§33.15) |
-| `confidence` | enum simples (`low`/`medium`/`high`) | ver §33.15 |
+| `historical_low_external` | Numeric(19,4), nullable | menor preço externo encontrado por busca DIRECIONADA a histórico (§33.18) — populado quando a busca achar evidência real; `NULL` só quando a busca não achar nada com fonte/data suficientes, nunca por presunção prévia |
+| `historical_low_source` | text (URL), nullable | link da evidência que sustenta `historical_low_external` — obrigatório sempre que o valor não for `NULL` |
+| `historical_low_observed_at` | date, nullable | data em que aquele preço foi observado/relatado pela fonte, quando a fonte informar; `NULL` só se a fonte não datar, nunca inventado |
+| `confidence` | enum simples (`low`/`medium`/`high`) | ver §33.15 — aplica-se à classificação de mercado atual (`market_low`/`market_high`), não ao `historical_low_external`, que é sempre apresentado com sua própria fonte/data, nunca com "confiança" agregada |
 | `evidence` | JSONB | resultados Firecrawl usados + resposta estruturada da IA |
 | `created_at`, `updated_at` | timestamptz | |
 | `expires_at` | timestamptz, nullable | TTL, ver §33.14 |
@@ -663,6 +683,19 @@ Dispara pesquisa externa quando **qualquer** destes for verdadeiro:
 
 IA nunca decide se Firecrawl é chamado.
 
+**Correção de desenho (rodada 3 de revisão)**: quando qualquer gatilho
+acima dispara, a pesquisa de mercado atual (`market_low`/`market_high`)
+e a pesquisa de histórico externo (`historical_low_external`) rodam
+**na mesma passada**, nunca como gatilhos separados — não existe um
+"gatilho de histórico" à parte, mais fraco ou opcional. Achado
+corrigido do pré-flight original: "Firecrawl não fornece histórico
+confiável" descrevia a FERRAMENTA (ela não tem uma base de dados de
+histórico própria, tipo Keepa), nunca a CAPACIDADE de busca — pedir
+para a Firecrawl pesquisar por menções de preço histórico (comparadores,
+fóruns, sites de acompanhamento de preço) é perfeitamente possível via
+query direcionada (§33.18), mesmo sem a Firecrawl manter essa base
+internamente.
+
 ### 33.14 Cache hit e refresh antecipado
 
 Antes de disparar Firecrawl: existe assessment `ready` e válido
@@ -688,11 +721,24 @@ relevante, sem sistema novo.
 
 ### 33.16 Evidência mínima do Firecrawl
 
-Para classificar `GOOD_DEAL`/`EXCELLENT_DEAL`: mínimo **2 evidências de
-preço comparáveis em 2 domínios distintos** (nunca 5 páginas do mesmo
-domínio contando como 5 mercados independentes). 1 fonte válida →
-`INSUFFICIENT_EVIDENCE`. 2 fontes → `confidence` no máximo `MEDIUM`. 3+
-fontes consistentes → pode retornar `HIGH`.
+Duas barras de evidência DIFERENTES, nunca confundidas:
+
+- **Classificação de mercado atual** (`market_low`/`market_high`,
+  `classification`): mínimo **2 evidências de preço comparáveis em 2
+  domínios distintos** (nunca 5 páginas do mesmo domínio contando como 5
+  mercados independentes). 1 fonte válida → `INSUFFICIENT_EVIDENCE`. 2
+  fontes → `confidence` no máximo `MEDIUM`. 3+ fontes consistentes →
+  pode retornar `HIGH`.
+- **`historical_low_external`**: basta **1 fonte** com preço + link +
+  data claramente extraíveis (§33.17) — não precisa do mesmo quórum de 2
+  domínios, porque o dado é sempre apresentado rotulado com sua própria
+  fonte/data individual (nunca com um `confidence` agregado, item 17 da
+  V1.2 já exigia isso: "a interface sempre diferencia claramente 'menor
+  registrado pelo AIShoppingAgent' de 'menor histórico externo'"). Sem
+  data explícita na fonte → ainda pode preencher `historical_low_
+  external`/`historical_low_source`, mas `historical_low_observed_at`
+  fica `NULL` (nunca inventar a data). Sem preço+link extraíveis →
+  `historical_low_external` fica `NULL`.
 
 ### 33.17 O que é "preço comparável"
 
@@ -706,21 +752,42 @@ texto; forma de pagamento comparável à base `PriceObservation.amount`
 `market_low`/`market_high`. IA interpreta evidência; Product Identity
 Engine continua decidindo identidade.
 
-### 33.18 Firecrawl: `/v2/search` + `scrape` básico condicional
+### 33.18 Firecrawl: duas buscas (mercado atual + histórico) + `scrape` básico condicional
 
-Endpoint não muda hoje (`/v2/search` continua o primeiro passo), mas o
-fluxo ganha um segundo passo condicional:
-1. `/v2/search` primeiro.
-2. Extrair evidências comparáveis (§33.17) dos resultados.
-3. Se ≥2 fontes válidas já apareceram → não precisa scrape adicional.
-4. Se <2 → permitir `scrape` **básico, não-stealth**, de no máximo 3 URLs
-   promissoras de domínios distintos retornados pela própria busca.
+Endpoint não muda hoje (`/v2/search` continua a base), mas o fluxo passa
+a ter **duas queries de busca sempre que o gatilho (§33.13) dispara**,
+nunca só uma:
 
-Regras absolutas, sem exceção: sem proxy evasivo, sem stealth, sem
-bypass anti-bot, sem CAPTCHA solving, só páginas públicas; 403/429/
-bloqueio → respeitar e desistir daquela fonte específica (nunca
-contornar). Se mesmo assim restar <2 preços comparáveis →
-`INSUFFICIENT_EVIDENCE`.
+1. **Query de mercado atual** — identidade canônica do produto
+   (`Product`/Product Identity Engine) + termos de preço/loja, igual ao
+   desenho original (para `market_low`/`market_high`/`classification`).
+2. **Query de histórico** (nova, corrige a rodada 3 de revisão) —
+   identidade canônica do produto + termos direcionados a histórico
+   ("menor preço", "histórico de preço", "price history", nomes de
+   comparadores/rastreadores de preço conhecidos quando fizer sentido)
+   — objetivo explícito de achar páginas que mencionem um preço mais
+   baixo no passado, com data, para popular `historical_low_external`/
+   `historical_low_source`/`historical_low_observed_at`.
+
+Depois das duas buscas:
+3. Extrair evidências comparáveis (§33.17) dos resultados de cada uma.
+4. Se a query de mercado atual já trouxe ≥2 fontes válidas em domínios
+   distintos → não precisa `scrape` adicional para ela.
+5. Se a query de histórico trouxe ≥1 fonte com preço+link+data
+   extraíveis → já basta para `historical_low_external` (§33.16).
+6. Se qualquer uma das duas ficar abaixo do próprio mínimo → permitir
+   `scrape` **básico, não-stealth**, de no máximo 3 URLs promissoras de
+   domínios distintos retornadas pela busca correspondente.
+
+Regras absolutas, sem exceção, para as duas buscas e para o `scrape`:
+sem proxy evasivo, sem stealth, sem bypass anti-bot, sem CAPTCHA
+solving, só páginas públicas; 403/429/bloqueio → respeitar e desistir
+daquela fonte específica (nunca contornar). Se mesmo assim a query de
+mercado atual ficar com <2 preços comparáveis → `INSUFFICIENT_EVIDENCE`
+para `classification`. Se a query de histórico não achar nada
+extraível → `historical_low_external` fica `NULL` — isso não é falha da
+pesquisa, é um resultado honesto quando a evidência realmente não existe
+publicamente.
 
 ### 33.19 Firecrawl: retry / circuit breaker
 
@@ -877,15 +944,61 @@ tocado.
 
 Depois do registro em backlog (§36), o pré-flight (§32) foi executado
 via 3 agentes de auditoria read-only (código real, citações
-`arquivo:linha`, nenhum arquivo de produção alterado) e passou por duas
-rodadas de correção do usuário sobre a síntese arquitetural — resultado
-final consolidado em **§33**, que agora é a fonte de verdade para
-implementação. Notas de "superseded" foram adicionadas em §4 e §12 onde
-a proposta original conflitava com a decisão final (chave de cache e
-granularidade do checkpoint de alerta).
+`arquivo:linha`, nenhum arquivo de produção alterado) e passou pelas
+rodadas de revisão/correção do usuário registradas abaixo (esta seção
+cobre a primeira delas; §38 registra uma correção posterior) sobre a
+síntese arquitetural — resultado final consolidado em **§33**, que agora
+é a fonte de verdade para implementação. Notas de "superseded" foram
+adicionadas em §4 e §12 onde a proposta original conflitava com a
+decisão final (chave de cache e granularidade do checkpoint de alerta).
 
 **Explicitamente NÃO feito nesta rodada de fechamento**: nenhuma
 implementação de código; nenhuma migration criada; nenhuma chamada real
 a Firecrawl/IA; nenhuma alteração em `evaluator.py`/Telegram; nenhum
 commit; nenhum push; nenhum deploy. Só os documentos (`docs/tasks/
 TASK-113.md`) foram alterados.
+
+## 38. Correção de desenho — pesquisa de histórico externo (2026-08-27, rodada 3)
+
+Achado real, apontado pelo usuário: o pré-flight original (item N) tinha
+concluído "Firecrawl não fornece histórico de preço confiável" e a
+síntese arquitetural (§33.2/§33.13/§33.16/§33.18, primeira versão)
+tratou isso como "então `historical_low_external` fica quase sempre
+`NULL`" — conclusão que não seguia da premissa. O achado do pré-flight
+era sobre a FERRAMENTA (Firecrawl não mantém uma base de histórico de
+preço própria, tipo Keepa) — nunca sobre a CAPACIDADE de busca (pedir
+para a Firecrawl pesquisar por páginas que mencionem preço histórico é
+perfeitamente possível). O item 17 da V1.2 ("menor preço histórico
+externo") também nunca tinha TASK própria e ficava sem cobertura real.
+
+Corrigido nesta rodada, sem reabrir o resto do desenho aprovado (§1-37
+continuam válidos, exceto onde citado abaixo):
+
+- **TASK-113 passa a absorver formalmente o item 17 da V1.2** — não é
+  mais um item "sem TASK" separado (nota adicionada no topo do arquivo).
+- **§33.13 (gatilho)**: pesquisa de mercado atual e pesquisa de
+  histórico externo rodam sempre juntas quando o gatilho dispara, nunca
+  como gatilhos separados.
+- **§33.2 (schema)**: `MarketPriceAssessment` ganha `historical_low_
+  source` (URL da evidência) e `historical_low_observed_at` (data,
+  quando a fonte informar) — o item 17 já exigia "valor, fonte, link/
+  evidência e data/contexto quando disponível", um campo numérico
+  sozinho não bastava.
+- **§33.16 (evidência mínima)**: duas barras distintas — classificação
+  de mercado atual continua exigindo 2 fontes/domínios; `historical_
+  low_external` precisa só de 1 fonte bem evidenciada (preço+link,
+  data quando disponível), nunca o mesmo quórum, porque é sempre
+  apresentado rotulado com sua própria fonte, nunca com confiança
+  agregada.
+- **§33.18 (fluxo Firecrawl)**: passa a ter DUAS queries de busca
+  (mercado atual + histórico direcionado), cada uma com seu próprio
+  critério de suficiência e seu próprio `scrape` condicional — mesmas
+  regras absolutas de nunca usar stealth/proxy evasivo/bypass, para as
+  duas.
+
+**Explicitamente NÃO feito nesta rodada**: nenhuma implementação;
+nenhuma migration criada; nenhuma chamada real a Firecrawl/IA; nenhum
+commit; nenhum push; nenhum deploy. Só `docs/tasks/TASK-113.md` foi
+alterado nesta correção (sincronização de `docs/internal/roadmap.md`/
+`v1.2-scope.md`/`README.md` para refletir a fusão do item 17 fica
+pendente, fora desta edição específica salvo pedido explícito).

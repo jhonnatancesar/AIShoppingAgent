@@ -1,5 +1,20 @@
 # Project Context
 
+**Atualização 2026-08-27 (correção do desenho da TASK-113 — histórico
+externo, §38, ainda sem commit):** depois do registro/fechamento inicial
+abaixo, o desenho da TASK-113 foi corrigido — a pesquisa de histórico
+externo de preço não fica mais assumida como praticamente inatingível;
+passa a rodar como uma busca Firecrawl dedicada, na MESMA passada que a
+pesquisa de mercado atual, dentro do mesmo `MarketPriceAssessment`
+(`docs/tasks/TASK-113.md`, §33.13/§33.16/§33.18/§38). Com isso, **a
+TASK-113 absorve formalmente o item 17 da V1.2** ("menor preço
+histórico externo", `docs/internal/v1.2-scope.md`) — deixou de ser item
+sem TASK própria. `§33` continua sendo a fonte de verdade para
+implementação; o pré-flight (§32) continua não devendo ser repetido.
+Implementação (código/migration) continua **não iniciada**. O
+fechamento inicial do desenho está commitado em `fecd804`; esta
+correção (§38) está só no working tree, **ainda sem commit**.
+
 **Atualização 2026-08-27 (registro + desenho fechado da TASK-113):**
 `docs/tasks/TASK-113.md` criada (avaliação inteligente de preço,
 pesquisa de mercado e qualidade dos alertas) — pré-flight (§32) executado
