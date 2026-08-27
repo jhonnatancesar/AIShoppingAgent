@@ -1,24 +1,24 @@
 # Tarefas
 
-**TASK-113 com desenho final fechado (2026-08-27), status PLANNED —
-nenhuma implementação iniciada:** avaliação inteligente de preço,
-pesquisa de mercado (Firecrawl + AI Provider Manager) e qualidade dos
-alertas — **absorve formalmente o item 17 da V1.2** ("menor preço
-histórico externo", `docs/internal/v1.2-scope.md`, não é mais item sem
-TASK). Separa histórico comercial, avaliação de oferta e decisão de
-alerta; evita alertas por queda relativa à observação anterior sem
-considerar o melhor preço já alertado, via checkpoint
-`MissionProductAlertState` por `(mission_id, product_id)`; evita
-Firecrawl/IA repetidos por Mission/usuário via `MarketPriceAssessment`
-cacheado por `product_id` (identidade exata do Product Identity Engine,
-TASK-097 — nunca `MonitoringItem` genérico) com single-flight crash-safe,
-incluindo busca Firecrawl dedicada a histórico externo de preço.
-Pré-flight (§32) já executado, revisado em várias rodadas de correção;
-**§33 é a fonte de verdade para a implementação futura**, mediante
-comando explícito ("faça a TASK-113"). Registro e desenho inicial
-commitados localmente (`fecd804`); a correção do histórico externo
-(§38) é posterior a esse commit e ainda está só no working tree. Ver
-`docs/tasks/TASK-113.md`.
+**TASK-113 concluída no DEV (2026-08-27):** avaliação inteligente de
+preço, pesquisa de mercado (Firecrawl + AI Provider Manager) e
+qualidade dos alertas — **absorve e implementa o item 17 da V1.2**
+("menor preço histórico externo", `docs/internal/v1.2-scope.md`, não é
+mais item sem TASK nem item pendente). Separa histórico comercial,
+avaliação de oferta e decisão de alerta; evita alertas por queda
+relativa à observação anterior sem considerar o melhor preço já
+alertado, via checkpoint `MissionProductAlertState` por `(mission_id,
+product_id)`; evita Firecrawl/IA repetidos por Mission/usuário via
+`MarketPriceAssessment` cacheado por `product_id` (identidade exata do
+Product Identity Engine, TASK-097 — nunca `MonitoringItem` genérico)
+com single-flight crash-safe, incluindo busca Firecrawl dedicada a
+histórico externo de preço. Implementação (código + migration
+`20260827_0001`) commitada localmente — commit principal `03b7370`,
+commit documental posterior `8ad5709`. `/v2/search` da Firecrawl
+validado ponta a ponta com chamada real à API de produção; `/v2/scrape`
+segue validado só contra documentação oficial e testes
+mockados/focados (não bloqueia a TASK). **Ainda sem push/deploy desta
+rodada acumulada — PROD continua intocada.** Ver `docs/tasks/TASK-113.md`.
 
 **Atividade atual (atualizada em 2026-08-27):** TASK-104A (Magalu) e
 TASK-104B (Mercado Livre) concluídas e publicadas em `origin/main`;
@@ -35,13 +35,12 @@ commitada localmente (`36351bd`), publicação pendente. TASK-111
 (asserção de teste) concluída, commitada localmente, publicação
 pendente. TASK-112 (vínculo de missões/coleta compartilhada, fases 1-3B)
 concluída, commitada localmente (fase 3B em `9f95351`), publicação
-pendente. TASK-113 (avaliação inteligente de preço, absorve o item 17 da
-V1.2) tem pré-flight executado e desenho fechado (`docs/tasks/
-TASK-113.md`, §33) — registro/desenho inicial commitados localmente
-(`fecd804`); correção posterior sobre pesquisa de histórico externo
-(§38) já incorporada ao desenho mas ainda sem commit — **implementação
-(código/migration) ainda não iniciada** em nenhum dos dois, aguardando
-comando explícito. TASK-098 continua reservada para o final da V1.2.
+pendente. TASK-113 (avaliação inteligente de preço, absorve e implementa
+o item 17 da V1.2) **concluída no DEV**, commitada localmente (`03b7370`
+implementação, `8ad5709` documentação/validação Firecrawl), publicação
+em `origin/main` pendente. **TASK-098 é a próxima TASK executável e o
+último item ativo da V1.2** — dependência (TASK-097) já satisfeita e
+publicada, sem preflight nem implementação iniciados ainda.
 
 **TASK-103 concluída e publicada (`610a997`):** comparação de Offers
 autorizadas do mesmo produto/variante global resolvido. Ver
