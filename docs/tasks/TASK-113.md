@@ -1228,3 +1228,70 @@ de circuit breaker sob 429 real, teste de carga); nenhuma chamada real
 à API da Firecrawl com chave verdadeira (só fakes/stubs -- o contrato
 exato do `/v2/scrape` não pôde ser confirmado contra a API real). Nenhum
 commit, push ou deploy.
+
+## 41. Histórico: episódio do valor placeholder na chave Firecrawl (2026-08-27, superado por §42)
+
+**Seção histórica -- não descreve o estado atual.** Registrada aqui só
+como episódio de auditoria; o estado atual (credencial válida) está em
+§42.
+
+Depois do commit `03b7370`, o usuário apontou que já existia um segredo
+Firecrawl registrado. Confirmado: `.secrets/firecrawl_api_key` existe
+(mesma convenção de arquivo já usada para Gemini/Groq/OpenRouter/
+Telegram/Postgres, caminho que `compose.yaml` já monta em
+`AISHOPPING_FIRECRAWL_API_KEY_FILE=/run/secrets/firecrawl_api_key`) --
+mas, NAQUELE MOMENTO, o conteúdo do arquivo era um valor placeholder,
+nunca uma credencial real (nenhum detalhe do valor registrado aqui, por
+segurança).
+
+Validação real feita com esse placeholder contra `POST /v2/search`
+(`app.search.firecrawl.FirecrawlSearchProvider.search`, mesma classe de
+produção, sem mock): resposta `401`/`403`, classificado corretamente
+como `firecrawl_authentication_failed` (não-retryable, sem tentativa
+repetida) -- confirma que a classificação de erro determinístico
+(§33.19, nunca retry para 401/403) funciona certo diante de uma
+rejeição real da API. Não provava nada sobre o contrato de sucesso
+naquele momento (isso veio depois, §42).
+
+`backend/.env` (uso nativo local, fora do Docker) não referencia o
+arquivo de secret -- nem `AISHOPPING_FIRECRAWL_API_KEY` nem
+`AISHOPPING_FIRECRAWL_API_KEY_FILE` estão setados lá. Nenhum arquivo de
+segredo foi alterado pelo código desta TASK em nenhum momento, nesta
+seção ou na seguinte.
+
+## 42. Estado atual: credencial Firecrawl válida, `/v2/search` validado ponta a ponta (2026-08-27)
+
+O usuário configurou uma credencial Firecrawl válida em
+`.secrets/firecrawl_api_key` (mecanismo de secret já existente,
+detalhes do valor nunca registrados em documentação, por segurança) e
+pediu nova busca. Repetida a MESMA validação do §41
+(`FirecrawlSearchProvider.search`, classe de produção, sem mock), agora
+com sucesso completo:
+
+- `success: true`, `status_code: 200`, `search_performed: true`;
+- `data.web[]` com 2 resultados reais (Amazon, KaBuM -- RTX 5070 Ti),
+  cada um com `title`/`url`/`description` no formato exatamente
+  esperado pelo parser (`parse_firecrawl_search_response`);
+- `request_id` e `credits_used=2` presentes, confirmando os campos de
+  nível superior do contrato oficial auditado em §40.
+
+**VALIDADO REALMENTE, contra a API de produção**: autenticação
+Firecrawl; `POST /v2/search`; parsing real da resposta de sucesso;
+todos os campos usados pelo cliente (`title`/`url`/`description`/
+`request_id`/`creditsUsed`). Isto fecha a última pendência genuína de
+§40 ("nenhuma chamada real à API da Firecrawl com chave verdadeira")
+para o endpoint `/v2/search` especificamente.
+
+**AINDA NÃO VALIDADO PONTA A PONTA**: `POST /v2/scrape` continua
+validado só por documentação oficial e testes mockados/focados (§40)
+-- não testado contra a API real nesta rodada porque o usuário pediu
+explicitamente só mais uma busca, não uma validação exaustiva dos dois
+endpoints. **Isso não bloqueia a TASK-113** -- o gatilho determinístico
+(§33.13) só aciona `/v2/scrape` como fallback quando `/v2/search`
+sozinho não atinge o quórum de evidência, e o parser já foi corrigido e
+testado (unitário) contra o contrato oficial documentado em §40.
+
+Nenhum detalhe da credencial (prefixo, tamanho, valor parcial ou
+completo, conteúdo do arquivo de secret) foi registrado em nenhuma
+destas duas seções -- só a confirmação de que uma credencial válida
+está configurada. Nenhum segredo foi impresso, alterado ou commitado.

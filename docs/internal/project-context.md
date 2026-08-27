@@ -1,5 +1,37 @@
 # Project Context
 
+**Estado ATUAL (2026-08-27) — TASK-113 commitada + credencial Firecrawl
+válida + `/v2/search` validado ponta a ponta:** a implementação descrita
+na entrada seguinte foi commitada localmente em `03b7370` ("TASK-113:
+implement intelligent price assessment and alert quality", 28 arquivos,
+`alembic check` e `ruff` limpos nos arquivos tocados) — aquela entrada
+ainda diz "ainda sem commit", o que já não é verdade; preservada como
+estava, esta entrada no topo é que reflete o estado real. **Nenhum
+push, nenhum deploy.**
+
+Uma credencial Firecrawl VÁLIDA está configurada em `.secrets/
+firecrawl_api_key` (mecanismo de secret já existente, mesmo padrão dos
+outros provedores) — nenhum detalhe do valor (prefixo, tamanho, valor
+parcial/completo) registrado aqui, por segurança. Validação real
+(produção, `FirecrawlSearchProvider.search`, sem mock) contra `POST
+/v2/search` confirmou `success: true`, 2 resultados reais (Amazon/
+KaBuM, RTX 5070 Ti) no formato exatamente esperado pelo parser,
+`request_id`/`credits_used` presentes — contrato de sucesso validado
+ponta a ponta contra a API real, não só contra documentação/mocks.
+`POST /v2/scrape` continua validado só por documentação oficial e
+testes mockados/focados, nunca contra a API real (não bloqueia a
+TASK-113 — só é usado como fallback quando `/v2/search` sozinho não
+atinge o quórum de evidência). Detalhe completo em `docs/tasks/
+TASK-113.md` §42.
+
+**Histórico (superado pela entrada acima)**: antes da credencial válida
+ser configurada, `.secrets/firecrawl_api_key` continha um valor
+placeholder — uma validação real contra `POST /v2/search` com esse
+placeholder recebeu `401`/`403`, classificado corretamente pelo cliente
+como `firecrawl_authentication_failed` (não-retryable). Confirmava só a
+classificação de erro determinístico, nunca o contrato de sucesso.
+Detalhe em `docs/tasks/TASK-113.md` §41 (seção histórica).
+
 **Atualização 2026-08-27 (TASK-113 implementada — código real, ainda sem
 commit):** implementação completa a partir de §33/`DEC-102`: dois
 modelos novos (`MarketPriceAssessment` em `app/market_research/models.py`,
