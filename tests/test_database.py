@@ -139,9 +139,17 @@ def test_metadata_contains_only_implemented_tables() -> None:
     entre TASK-108 e a fase 3A/3B da TASK-112 sem que ninguém a atualizasse
     -- confirmado que a defasagem já existia antes desta fase (baseline
     `471e898`), não é uma regressão introduzida aqui. Corrigida para o
-    conjunto real de tabelas hoje; `import app.main` garante que todo
-    módulo de modelo já foi carregado antes da asserção."""
-    import app.main  # noqa: F401 -- garante que toda tabela real já foi registrada
+    conjunto real de tabelas hoje (TASK-113 acrescentou
+    `market_price_assessments`/`mission_product_alert_state`).
+
+    Achado (correção pós-TASK-098): `import app.main` NÃO garante que todo
+    módulo de modelo tenha sido carregado -- confirmado em processo novo
+    que essas duas tabelas ficam ausentes de `Base.metadata.tables` só com
+    `app.main` importado (41 de 43, sem depender de nenhum outro teste ter
+    rodado antes). `app.database.model_registry` é o módulo que o próprio
+    projeto já documenta como "registro central... usado pelo Alembic" --
+    troca aqui pelo mesmo motivo, sem mudar a asserção em si."""
+    import app.database.model_registry  # noqa: F401 -- garante que toda tabela real já foi registrada
 
     assert set(Base.metadata.tables) == {
         "users",
@@ -188,4 +196,7 @@ def test_metadata_contains_only_implemented_tables() -> None:
         # TASK-112 fase 3B: política de cadência.
         "promotional_windows",
         "store_activity_state",
+        # TASK-113: avaliação inteligente de preço e checkpoint de alerta.
+        "market_price_assessments",
+        "mission_product_alert_state",
     }
