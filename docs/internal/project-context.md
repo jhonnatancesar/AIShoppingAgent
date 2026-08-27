@@ -1,7 +1,31 @@
 # Project Context
 
-**Atualização 2026-08-27 (TASK-112 fase 3B concluída, `DEC-101`; ainda
-sem commit):** `CollectionOrchestrator` (produção) passa a chamar
+**Atualização 2026-08-27 (registro + desenho fechado da TASK-113):**
+`docs/tasks/TASK-113.md` criada (avaliação inteligente de preço,
+pesquisa de mercado e qualidade dos alertas) — pré-flight (§32) executado
+via 3 agentes de auditoria read-only e revisado pelo usuário em duas
+rodadas de correção; §33 do arquivo é a fonte de verdade para
+implementação futura (chave por `product_id`, checkpoint
+`MissionProductAlertState` por `(mission_id, product_id)`,
+`MarketPriceAssessment` com single-flight crash-safe por lease,
+TTL/re-alert/material improvement determinísticos). Implementação ainda
+**não iniciada**. Documentação (`TASK-113.md`/`README.md`/`roadmap.md`)
+commitada localmente (`fecd804`).
+
+**Atualização 2026-08-27 (TASK-110 concluída):** `docs/architecture/
+providers.md` corrigido em duas frentes independentes da TASK-109:
+tabela de fontes selecionáveis passou a listar as 6 reais (Pichau/
+Terabyte/Amazon/Kabum/Magalu/Mercado Livre — Magalu e Mercado Livre
+estavam ausentes/como "Futuro"), e a descrição de transporte de
+navegador passou a refletir Edge/CDP nativo Windows (TASK-109), removendo
+a afirmação obsoleta de Chromium headed/Xvfb/Docker. Achado colateral
+registrado, não corrigido nesta TASK por estar fora do escopo dela:
+`CLAUDE.md` tinha a mesma desatualização (corrigida separadamente na
+rodada de divergências documentais desta mesma data). Commitado
+localmente (`36351bd`), só esse arquivo.
+
+**Atualização 2026-08-27 (TASK-112 fase 3B concluída e commitada
+localmente, `9f95351`, `DEC-101`):** `CollectionOrchestrator` (produção) passa a chamar
 `claim_due_work`, scheduler unificado que reserva fairness (lock real de
 `UserCollectionQueueState` via `FOR UPDATE SKIP LOCKED`, ordem de
 `user_id`, sempre antes de qualquer lock de loja -- não mais um token

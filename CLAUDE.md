@@ -15,7 +15,7 @@ Construir, de forma incremental, um agente de compras que pesquisa produtos, reg
 
 ## Escopo comercial da V1
 
-A V1 permitirá pesquisar Pichau, Terabyte, Amazon e Kabum, conforme seleção do usuário. Mercado Livre, Shopee e AliExpress serão apresentados pelo bot como ***Futuro***, sem seleção ou coleta. Cada fonte ativa exige Store Provider próprio; nenhuma fonte será descoberta ou integrada automaticamente.
+A V1 permite pesquisar Pichau, Terabyte, Amazon, Kabum, Magalu e Mercado Livre, conforme seleção do usuário (TASK-104A/TASK-104B, publicadas em `origin/main`). Shopee e AliExpress serão apresentados pelo bot como ***Futuro***, sem seleção ou coleta. Cada fonte ativa exige Store Provider próprio; nenhuma fonte será descoberta ou integrada automaticamente.
 
 ## Guardrails
 

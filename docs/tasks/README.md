@@ -14,12 +14,25 @@ Pré-flight (§32) já executado e revisado em duas rodadas; **§33 é a
 fonte de verdade para a implementação futura**, mediante comando
 explícito ("faça a TASK-113"). Ver `docs/tasks/TASK-113.md`.
 
-**Atividade atual:** TASK-104B (Mercado Livre) implementada no DEV e aguardando
-uma única validação real final pelo fallback Edge/CDP; depois vem a TASK-104C
-(Shopee). Cada loja tem provider e validação próprios, mas
-reutiliza integralmente o domínio e os consumidores comuns. Venda própria,
-parceiro e selo oficial seguem evidências distintas (`DEC-089`). Pesquisa de
-cupons fica depois; TASK-098 continua no final da V1.2.
+**Atividade atual (atualizada em 2026-08-27):** TASK-104A (Magalu) e
+TASK-104B (Mercado Livre) concluídas e publicadas em `origin/main`;
+TASK-104C (Shopee) segue **adiada** por bloqueio anti-bot confirmado
+mesmo autenticado (`DEC-092`), sem código de provider escrito. TASK-105
+(reativação da Terabyte via Edge/CDP) concluída e publicada. TASK-106
+(pesquisa de cupons) continua **em pausa** por decisão explícita do
+usuário — as dependências que a bloqueavam (TASK-107/TASK-108) já foram
+concluídas, retomada depende de novo pedido. TASK-107 (cotas) concluída e
+publicada. TASK-108 (fila justa/pacing) concluída, commitada localmente,
+publicação em `origin/main` pendente. TASK-109 (worker Windows nativo)
+concluída e publicada. TASK-110 (documentação de providers) concluída,
+commitada localmente (`36351bd`), publicação pendente. TASK-111
+(asserção de teste) concluída, commitada localmente, publicação
+pendente. TASK-112 (vínculo de missões/coleta compartilhada, fases 1-3B)
+concluída, commitada localmente (fase 3B em `9f95351`), publicação
+pendente. TASK-113 (avaliação inteligente de preço) tem pré-flight
+executado e desenho fechado (`docs/tasks/TASK-113.md`, §33), commitada
+localmente (`fecd804`) — **implementação ainda não iniciada**, aguardando
+comando explícito. TASK-098 continua reservada para o final da V1.2.
 
 **TASK-103 concluída e publicada (`610a997`):** comparação de Offers
 autorizadas do mesmo produto/variante global resolvido. Ver

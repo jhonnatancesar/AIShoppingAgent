@@ -52,9 +52,9 @@
 | Cotas e capacidade por usuário | TASK-107 | Concluída e publicada em `origin/main` (`ac34725`/`faa939c`/`83a9572`/`d61951a`); `max_active_missions=5`, `max_store_slots=18`, `max_daily_searches=30`, nunca pausa/cancela automaticamente, UX obrigatória com ações contextuais, override por ADMIN (`DEC-094`) |
 | Fila justa e controle de carga | TASK-108 | **Concluída (2026-08-24), commitada localmente; publicação em `origin/main` ainda pendente** — fila justa por usuário (cooldown 1–3 min, `DEC-095`) reaproveitada do WIP sobre a arquitetura final da TASK-109; nova camada de pacing GLOBAL por loja (`StoreThrottleState`, auditoria confirmou que não existia antes) e config persistida editável pelo ADMIN (`CollectionQueueConfig`, sem depender só de `.env`); os 2 testes de integração legados que falhavam por um bug pré-existente não relacionado (dedupe da TASK-093 x contrato de alertas) voltaram a passar após a correção separada `DEC-097` (`742dcf2`) |
 | Migrar collection_worker para Windows nativo com Edge | TASK-109 | **Concluída, aprovada e publicada em `origin/main`** — worker nativo Windows (Task Scheduler + Windows Ops Agent), Edge via CDP loopback direto (sem bridge) com lifecycle sob demanda (lease/idle-timeout), `collection_worker` removido do `compose.yaml`, `ops_controller` integrado ao Windows Ops Agent (`WindowsOpsAgentAdapter`); zero `.launch()` de qualquer tipo em todo o projeto — `BrowserSession` (só teste) conecta via `connect_over_cdp()` a um Edge dedicado da suíte (`tests/conftest.py`), mesma arquitetura de produção. Deploy em produção ainda não feito (`DEC-096`) |
-| Atualizar `docs/architecture/providers.md` | TASK-110 | Formalizada, não iniciada — lista de fontes desatualizada (falta Magalu/Mercado Livre) e descrição de transporte via Chromium/Xvfb/Docker, achado durante o audit de documentação da TASK-109, escopo independente dela |
+| Atualizar `docs/architecture/providers.md` | TASK-110 | **Concluída, commitada localmente (`36351bd`)** — tabela de fontes corrigida para as 6 reais (Pichau/Terabyte/Amazon/Kabum/Magalu/Mercado Livre), transporte de navegador corrigido para Edge/CDP nativo Windows (TASK-109), Chromium/Xvfb/Docker removido da descrição atual. Publicação em `origin/main` ainda pendente |
 | Corrigir asserção desatualizada em `test_product_identity.py` | TASK-111 | Concluída, commitada localmente (`471e898`, junto da TASK-112 fase 3A — achado recorrente na regressão dessa fase); publicação em `origin/main` ainda pendente. `test_same_variant_from_all_stores_reuses_one_global_product` agora espera as 6 lojas reais |
-| Vincular missões que monitoram o mesmo item, sem duplicar coleta | TASK-112 | **Fase 1 concluída, commitada localmente (`1dca734`, `DEC-098`)** — Product Identity Engine genérico (registry de categorias/atributos, 23 categorias, extractors de CPU/GPU/smartphone). **Fase 2 concluída, commitada localmente (`5d05767`, `DEC-099`)** — `MonitoringItem`/`MissionMonitoringItem`/`MonitoringItemStore`, `monitoring_key` v2 com `scope` explícito (`SPECIFIC`/`FAMILY`/`GENERIC`). **Fase 3A concluída, commitada localmente (`471e898`, `DEC-100`)** — coleta compartilhada durável: provider 1x, persistência comercial 1x, fan-out individual com máquina de estados completa (retryable nunca vira terminal sem prova, elegibilidade revalidada antes do fan-out, recuperação automática de tarefa presa, notificação via outbox idempotente da TASK-080). Publicação em `origin/main` ainda pendente (main local 3 commits à frente). **Fase 3B pendente** — integração com o scheduler de produção e `fairness_owner`/TASK-108, deliberadamente fora desta fase |
+| Vincular missões que monitoram o mesmo item, sem duplicar coleta | TASK-112 | **Fase 1 concluída, commitada localmente (`1dca734`, `DEC-098`)** — Product Identity Engine genérico (registry de categorias/atributos, 23 categorias, extractors de CPU/GPU/smartphone). **Fase 2 concluída, commitada localmente (`5d05767`, `DEC-099`)** — `MonitoringItem`/`MissionMonitoringItem`/`MonitoringItemStore`, `monitoring_key` v2 com `scope` explícito (`SPECIFIC`/`FAMILY`/`GENERIC`). **Fase 3A concluída, commitada localmente (`471e898`, `DEC-100`)** — coleta compartilhada durável: provider 1x, persistência comercial 1x, fan-out individual com máquina de estados completa (retryable nunca vira terminal sem prova, elegibilidade revalidada antes do fan-out, recuperação automática de tarefa presa, notificação via outbox idempotente da TASK-080). **Fase 3B concluída, commitada localmente (`9f95351`, `DEC-101`)** — `CollectionOrchestrator` de produção passa a chamar `claim_due_work`, scheduler unificado (fairness por lock real, cadência NORMAL/PROMO_CALENDAR/HIGH_ACTIVITY, agendamento legado por `MissionSource` em vez de `MissionSchedule` — correção estrutural pós-auditoria), single-flight compartilhado, fan-out durável. Suíte de integração 166/166. Publicação em `origin/main` ainda pendente (main local vários commits à frente) |
 | Estado operacional no Windows Server | manutenção 2026-08-16 | HEAD `0e90cf0` implantado; 7 serviços saudáveis; WSL2 limitado a 4 GB; somente schedules de missões ativas habilitados |
 | Expansão de fontes na V1.2 | TASK-104A/B/C | Magalu e Mercado Livre implementadas; Shopee adiada por bloqueio anti-bot; AliExpress permanece futuro (`DEC-080`/`DEC-089`/`DEC-092`) |
 | Avaliação inteligente de preço, pesquisa de mercado e qualidade dos alertas | TASK-113 | **Desenho final fechado (2026-08-27), nenhuma implementação iniciada.** Pré-flight (§32) executado e revisado; §33 (`docs/tasks/TASK-113.md`) é a fonte de verdade para implementação — chave por `product_id` (Product Identity Engine, TASK-097), checkpoint `MissionProductAlertState` por `(mission_id, product_id)`, `MarketPriceAssessment` com single-flight crash-safe (lease), TTL/re-alert/material improvement determinísticos, Firecrawl + AI Provider Manager, gatilho determinístico (nunca IA decidindo chamar IA). Pronta para implementação futura mediante comando explícito |
@@ -345,9 +345,12 @@ reorganizado por grupos; `/missao` novo com exemplos concretos; menu
 final atualizado. Ver `docs/tasks/TASK-078.md`. Só validação
 não-integração (suíte + ruff).
 
-Nenhum push/tag feito para nenhuma das quatro. Status individual das
-demais duas (080, 081) e da 084 não reverificado nesta rodada — ver o
-commit log e `docs/tasks/` de cada uma para o estado real mais recente.)
+Nenhum push/tag feito para nenhuma das quatro na época deste registro.
+**Atualização posterior**: TASK-080 (`docs/tasks/TASK-080.md`, commit
+`68d8528`) e TASK-081 (`docs/tasks/TASK-081.md`, commit `ac53902`) estão
+**concluídas e validadas em runtime**, ambas já publicadas em
+`origin/main` (confirmado por `git merge-base --is-ancestor`). TASK-084
+também concluída (ver linha própria da tabela acima).)
 → V1.2
 (evolução funcional, documento `docs/internal/v1.2-scope.md`; reorganizada em
 2026-08-21, ampliada e reordenada até a `DEC-082` para 18 itens
@@ -363,10 +366,13 @@ Helper e pesquisa de cupons — `DEC-053`/`DEC-054`/`DEC-056`/`DEC-080`);
 frete/parcelamento autenticado e ofertas em lives foram movidos para a V2;
 os itens de e-mail
 (opt-in no cadastro e notificações por e-mail) saíram da V1.2 e foram
-movidos para a V2 (`docs/internal/backlog.md`). Estado atual: itens 1 a 7
-concluídos e publicados no DEV; TASK-099 foi aprovada/publicada e o item 9 foi
-concluído/publicado como TASK-100. Minha conta foi implementada como TASK-101,
-aguardando revisão; o dashboard DEV/ADMIN é o próximo item.
-Comparação ficou no item 14 e
-TASK-098 permanece reservada como item 18.)
+movidos para a V2 (`docs/internal/backlog.md`). **Estado em 2026-08-27**
+(ver `docs/internal/v1.2-scope.md` e a tabela acima para o detalhe por
+TASK): itens 1-9 (TASK-091 a TASK-100), TASK-101 (minha conta), TASK-102
+(dashboard DEV/ADMIN) e TASK-103/item 14 (comparação entre lojas) —
+todos concluídos e publicados em `origin/main`. TASK-104A/B (novas
+lojas) publicadas; TASK-104C adiada. TASK-105/107/109 publicadas;
+TASK-108/110/111/112 concluídas e commitadas localmente, publicação
+pendente. TASK-106 em pausa; TASK-098 permanece reservada como último
+item (18).)
 → V2.
