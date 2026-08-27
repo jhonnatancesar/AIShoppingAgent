@@ -1,5 +1,11 @@
 import { api } from './client'
-import type { OfferComparison, OfferDetail, OfferListResponse } from './types'
+import type {
+  OfferComparison,
+  OfferDetail,
+  OfferListResponse,
+  PriceHistoryPeriod,
+  PriceHistoryResponse,
+} from './types'
 
 export interface OfferListFilters {
   q?: string
@@ -22,4 +28,8 @@ export const offersApi = {
   get: (offerId: string) => api.get<OfferDetail>(`/offers/${offerId}`),
   compare: (offerId: string) =>
     api.get<OfferComparison>(`/offers/${offerId}/comparison`),
+  priceHistory: (offerId: string, period: PriceHistoryPeriod) =>
+    api.get<PriceHistoryResponse>(
+      `/offers/${offerId}/price-history?period=${period}`,
+    ),
 }

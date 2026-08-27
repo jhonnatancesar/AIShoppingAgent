@@ -1,5 +1,6 @@
 """Detalhe de oferta da área USER (TASK-095)."""
 
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Annotated, Literal, NoReturn
 from uuid import UUID
@@ -23,11 +24,14 @@ from app.collection.normalization import Availability
 from app.core.errors import ApiError
 from app.database.dependency import get_web_async_session
 from app.offers.query import (
+    OfferPriceHistory,
+    PriceHistoryPeriod,
     UserOfferComparison,
     UserOfferDetail,
     UserOfferSummary,
     get_offer_comparison_for_user,
     get_offer_detail_for_user,
+    get_offer_price_history_for_user,
     list_user_offers,
 )
 from app.users.models import User
@@ -130,6 +134,38 @@ class OfferComparisonResponse(BaseModel):
     attributes: dict[str, str]
     comparable: bool
     offers: list[ComparisonOfferOut]
+
+
+class PriceHistoryPointOut(BaseModel):
+    date: date
+    amount: Decimal
+
+
+class PriceHistorySeriesOut(BaseModel):
+    store_id: UUID
+    store_code: str
+    store_name: str
+    points: list[PriceHistoryPointOut]
+
+
+class PriceHistoryMetricsOut(BaseModel):
+    current_amount: Decimal | None
+    min_amount: Decimal | None
+    max_amount: Decimal | None
+    average_amount: Decimal | None
+    variation_percent: Decimal | None
+
+
+class PriceHistoryResponse(BaseModel):
+    product_id: UUID
+    comparable: bool
+    reason: str | None
+    period: PriceHistoryPeriod
+    currency: str | None
+    period_from: datetime | None
+    period_to: datetime
+    series: list[PriceHistorySeriesOut]
+    metrics: PriceHistoryMetricsOut | None
 
 
 async def _deny_offer_unavailable(
@@ -377,6 +413,85 @@ async def compare_offer(
     if comparison is None:
         await _deny_offer_unavailable(session, user=user, offer_id=offer_id)
     return _as_comparison(comparison)
+
+
+def _as_price_history(history: OfferPriceHistory) -> PriceHistoryResponse:
+    return PriceHistoryResponse(
+        product_id=history.product_id,
+        comparable=history.comparable,
+        reason=history.reason,
+        period=history.period,
+        currency=history.currency,
+        period_from=history.period_from,
+        period_to=history.period_to,
+        series=[
+            PriceHistorySeriesOut(
+                store_id=series.store_id,
+                store_code=series.store_code,
+                store_name=series.store_name,
+                points=[
+                    PriceHistoryPointOut(date=point.day, amount=point.amount)
+                    for point in series.points
+                ],
+            )
+            for series in history.series
+        ],
+        metrics=(
+            PriceHistoryMetricsOut(
+                current_amount=history.metrics.current_amount,
+                min_amount=history.metrics.min_amount,
+                max_amount=history.metrics.max_amount,
+                average_amount=history.metrics.average_amount,
+                variation_percent=history.metrics.variation_percent,
+            )
+            if history.metrics is not None
+            else None
+        ),
+    )
+
+
+@router.get(
+    "/{offer_id}/price-history",
+    operation_id="get_user_offer_price_history",
+    summary="Histórico de preço do produto ancorado nesta oferta",
+    response_description=(
+        "Série diária por loja e métricas de mercado do Product associado a"
+        " esta Offer, autorizado pela mesma Offer. `period` inválido produz"
+        " 422 nativo do FastAPI (validação estrutural de query param), não"
+        ' o envelope `{"error": ...}` desta API.'
+    ),
+)
+async def get_user_offer_price_history(
+    offer_id: UUID,
+    period: PriceHistoryPeriod = "1m",
+    user: User = Depends(require_web_session),
+    session: AsyncSession = Depends(get_web_async_session),
+) -> PriceHistoryResponse:
+    try:
+        authorize(
+            session,
+            user,
+            Permission.MISSION_READ,
+            resource_type="offer",
+            resource_id=offer_id,
+        )
+    except AuthorizationDenied as error:
+        await session.commit()
+        raise ApiError(
+            status_code=status.HTTP_403_FORBIDDEN,
+            code="offer_access_denied",
+            message="Você não tem acesso a esta oferta.",
+        ) from error
+    history = await get_offer_price_history_for_user(
+        session,
+        offer_id=offer_id,
+        user_id=user.id,
+        period=period,
+        now=datetime.now(UTC),
+    )
+    if history is None:
+        await _deny_offer_unavailable(session, user=user, offer_id=offer_id)
+    return _as_price_history(history)
 
 
 @router.get(

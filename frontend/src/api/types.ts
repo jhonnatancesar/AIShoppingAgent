@@ -284,3 +284,38 @@ export interface ProductSearchResponse {
   offers: ProductSearchOffer[]
   variants: ProductSearchVariant[]
 }
+
+// TASK-098: histórico de preço do Product ancorado na Offer.
+export type PriceHistoryPeriod = '1d' | '7d' | '1m' | '6m' | '1a' | 'all'
+
+export interface PriceHistoryPoint {
+  date: string
+  amount: string
+}
+
+export interface PriceHistorySeries {
+  store_id: string
+  store_code: string
+  store_name: string
+  points: PriceHistoryPoint[]
+}
+
+export interface PriceHistoryMetrics {
+  current_amount: string | null
+  min_amount: string | null
+  max_amount: string | null
+  average_amount: string | null
+  variation_percent: string | null
+}
+
+export interface PriceHistoryResponse {
+  product_id: string
+  comparable: boolean
+  reason: string | null
+  period: PriceHistoryPeriod
+  currency: string | null
+  period_from: string | null
+  period_to: string
+  series: PriceHistorySeries[]
+  metrics: PriceHistoryMetrics | null
+}

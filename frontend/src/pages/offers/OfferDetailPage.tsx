@@ -9,6 +9,7 @@ import type {
   OfferComparison,
   OfferDetail,
 } from '../../api/types'
+import { PriceHistoryChart } from '../../components/PriceHistoryChart'
 
 const CONDITION_LABELS: Record<OfferCondition, string> = {
   new: 'Novo',
@@ -135,6 +136,8 @@ export function OfferDetailView({ offer, comparison }: { offer: OfferDetail; com
       </div>
 
       <ComparisonSection comparison={comparison} currentOfferId={offer.id} />
+
+      <PriceHistoryChart offerId={offer.id} />
 
       <div className="mission-section">
         <h2>Parcelamento</h2>

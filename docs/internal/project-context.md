@@ -1,6 +1,27 @@
 # Project Context
 
-**Estado ATUAL (2026-08-27) — TASK-113 commitada + credencial Firecrawl
+**Estado ATUAL (2026-08-27) — TASK-098 (último item da V1.2) concluída no
+DEV, publicação em `origin/main` pendente:** histórico e gráficos de preço por
+`Product`, ancorados em `Offer` (`GET /api/v1/offers/{offer_id}/price-history`),
+`backend/app/offers/query.py`/`backend/app/webapp/offers_router.py`, frontend
+`PriceHistoryChart.tsx` integrado em `OfferDetailPage.tsx`. Suíte de testes
+completa e verde: unitários de aritmética de período/métricas
+(`tests/test_offer_price_history.py`), contrato HTTP + SQL compilado
+(`tests/test_webapp_offers_router.py`), 10 cenários de integração contra
+PostgreSQL real (`tests/integration/test_offer_price_history.py`) e
+`EXPLAIN ANALYZE` contra volume sintético representativo confirmando que
+nenhum índice novo foi necessário
+(`tests/integration/test_offer_price_history_index_explain.py`). Durante os
+testes de integração, encontrado e corrigido um desvio do desenho aprovado
+antes de fechar a TASK: a resolução de moeda não priorizava a observação da
+própria `Offer` âncora antes de cair para outras `Offer`s do `Product`
+(corrigido em `_resolve_reference_currency`). Suíte completa do projeto
+(unitária + integração) rodou sem regressão. Detalhe completo em
+`docs/tasks/TASK-098.md` ("Registro de implementação") e
+`docs/architecture/price-history.md`. **Publicação em `origin/main`
+pendente. Sem deploy. PROD intocada.**
+
+**Estado anterior (2026-08-27) — TASK-113 commitada + credencial Firecrawl
 válida + `/v2/search` validado ponta a ponta:** a implementação descrita
 na entrada seguinte foi commitada localmente em `03b7370` ("TASK-113:
 implement intelligent price assessment and alert quality", 28 arquivos,

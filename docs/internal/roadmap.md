@@ -48,7 +48,7 @@
 | Store Provider Shopee | TASK-104C | Adiada; bloqueio anti-bot confirmado mesmo autenticado (Edge/CDP, login real, sessão persistente) — nenhum código de provider escrito (`DEC-092`) |
 | Reativação da Terabyte via Edge/CDP | TASK-105 | Concluída e publicada em `origin/main` (`31df942`); Cloudflare bloqueava só o Chromium gerenciado pelo Playwright — mesma infra CDP da Magalu reaproveitada como transporte primário/único, sem fallback Playwright; `stores.is_active` volta a `true` por migration (`20260822_0009`) |
 | Pesquisa de cupons | TASK-106 | **Em pausa por decisão do usuário (2026-08-22)** — arquitetura de subsistema independente já reorientada e preservada intocada (`DEC-093`), auditoria real (Amazon/Kabum/Magalu/ML) concluída; retomada fica para depois de TASK-107/108. Nenhum código escrito |
-| Histórico e gráficos por produto/variante | TASK-098 | Formalizada e reservada como último item da V1.2 (`DEC-081`/`DEC-082`) |
+| Histórico e gráficos por produto/variante | TASK-098 | **Concluída no DEV (2026-08-27)** — último item da V1.2 (`DEC-081`/`DEC-082`); backend, frontend e suíte de testes completa (unitários, integração PostgreSQL real, `EXPLAIN ANALYZE`); publicação em `origin/main` pendente, sem deploy |
 | Cotas e capacidade por usuário | TASK-107 | Concluída e publicada em `origin/main` (`ac34725`/`faa939c`/`83a9572`/`d61951a`); `max_active_missions=5`, `max_store_slots=18`, `max_daily_searches=30`, nunca pausa/cancela automaticamente, UX obrigatória com ações contextuais, override por ADMIN (`DEC-094`) |
 | Fila justa e controle de carga | TASK-108 | **Concluída (2026-08-24), commitada localmente; publicação em `origin/main` ainda pendente** — fila justa por usuário (cooldown 1–3 min, `DEC-095`) reaproveitada do WIP sobre a arquitetura final da TASK-109; nova camada de pacing GLOBAL por loja (`StoreThrottleState`, auditoria confirmou que não existia antes) e config persistida editável pelo ADMIN (`CollectionQueueConfig`, sem depender só de `.env`); os 2 testes de integração legados que falhavam por um bug pré-existente não relacionado (dedupe da TASK-093 x contrato de alertas) voltaram a passar após a correção separada `DEC-097` (`742dcf2`) |
 | Migrar collection_worker para Windows nativo com Edge | TASK-109 | **Concluída, aprovada e publicada em `origin/main`** — worker nativo Windows (Task Scheduler + Windows Ops Agent), Edge via CDP loopback direto (sem bridge) com lifecycle sob demanda (lease/idle-timeout), `collection_worker` removido do `compose.yaml`, `ops_controller` integrado ao Windows Ops Agent (`WindowsOpsAgentAdapter`); zero `.launch()` de qualquer tipo em todo o projeto — `BrowserSession` (só teste) conecta via `connect_over_cdp()` a um Edge dedicado da suíte (`tests/conftest.py`), mesma arquitetura de produção. Deploy em produção ainda não feito (`DEC-096`) |
@@ -374,6 +374,6 @@ todos concluídos e publicados em `origin/main`. TASK-104A/B (novas
 lojas) publicadas; TASK-104C adiada. TASK-105/107/109 publicadas;
 TASK-108/110/111/112/113 concluídas e commitadas localmente, publicação
 pendente (item 17 absorvido e implementado pela TASK-113). TASK-106 em
-pausa; **TASK-098 é a próxima TASK executável, último item ativo da
-V1.2 (18)**, dependência (TASK-097) já satisfeita.)
+pausa; **TASK-098 (último item ativo da V1.2, item 18) concluída no
+DEV**, publicação em `origin/main` pendente.)
 → V2.

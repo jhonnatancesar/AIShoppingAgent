@@ -18,9 +18,16 @@ from app.core.errors import register_api_error_handler
 from app.database.dependency import get_web_async_session
 from app.offers.models import Offer
 from app.offers.query import (
+    OfferPriceHistory,
+    PriceHistoryMetrics,
+    PriceHistoryPoint,
+    PriceHistorySeries,
     UserComparisonOffer,
     UserOfferComparison,
     UserOfferDetail,
+    _fetch_daily_low_points,
+    _resolve_current_amount,
+    _resolve_reference_currency,
     comparison_offers_statement,
     get_offer_detail_for_user,
     offer_for_user_statement,
@@ -206,6 +213,278 @@ def test_comparison_query_requires_same_product_and_user_owned_relevance() -> No
     assert f"missions.user_id = '{user_id}'" in sql
     assert "classification in ('match', 'possible_match')" in sql
     assert "no_match" not in sql
+
+
+def test_price_history_returns_series_and_metrics(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    detail = _detail()
+    store_id = detail.store.id
+    history = OfferPriceHistory(
+        product_id=detail.product.id,
+        comparable=True,
+        reason=None,
+        period="1m",
+        currency="BRL",
+        period_from=datetime(2026, 7, 23, 3, 0, tzinfo=UTC),
+        period_to=NOW,
+        series=(
+            PriceHistorySeries(
+                store_id=store_id,
+                store_code="amazon",
+                store_name="Amazon",
+                points=(
+                    PriceHistoryPoint(
+                        day=NOW.date(),
+                        amount=Decimal("4599.00"),
+                        observation_id=uuid4(),
+                        offer_id=detail.offer.id,
+                    ),
+                ),
+            ),
+        ),
+        metrics=PriceHistoryMetrics(
+            current_amount=Decimal("4599.00"),
+            min_amount=Decimal("4199.99"),
+            max_amount=Decimal("4599.00"),
+            average_amount=Decimal("4399.5000"),
+            variation_percent=Decimal("2.50"),
+        ),
+    )
+    monkeypatch.setattr(
+        "app.webapp.offers_router.get_offer_price_history_for_user",
+        AsyncMock(return_value=history),
+    )
+
+    response = client.get(
+        f"/api/v1/offers/{detail.offer.id}/price-history?period=1m",
+        cookies=_cookies(),
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["comparable"] is True
+    assert body["currency"] == "BRL"
+    assert body["series"][0]["store_code"] == "amazon"
+    assert body["series"][0]["points"][0]["date"] == NOW.date().isoformat()
+    assert body["series"][0]["points"][0]["amount"] == "4599.00"
+    assert body["metrics"]["current_amount"] == "4599.00"
+    assert body["metrics"]["variation_percent"] == "2.50"
+
+
+def test_price_history_not_comparable_returns_200_with_reason(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    product_id = uuid4()
+    history = OfferPriceHistory(
+        product_id=product_id,
+        comparable=False,
+        reason="unresolved_product_identity",
+        period="all",
+        currency=None,
+        period_from=None,
+        period_to=NOW,
+        series=(),
+        metrics=None,
+    )
+    monkeypatch.setattr(
+        "app.webapp.offers_router.get_offer_price_history_for_user",
+        AsyncMock(return_value=history),
+    )
+
+    response = client.get(
+        f"/api/v1/offers/{uuid4()}/price-history?period=all", cookies=_cookies()
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["comparable"] is False
+    assert body["reason"] == "unresolved_product_identity"
+    assert body["series"] == []
+    assert body["metrics"] is None
+    assert body["period_from"] is None
+
+
+def test_price_history_denies_access_for_unauthorized_user(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "app.webapp.offers_router.get_offer_price_history_for_user",
+        AsyncMock(return_value=None),
+    )
+
+    response = client.get(f"/api/v1/offers/{uuid4()}/price-history", cookies=_cookies())
+
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "offer_access_denied"
+
+
+def test_price_history_invalid_period_returns_native_422(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "app.webapp.offers_router.get_offer_price_history_for_user",
+        AsyncMock(side_effect=AssertionError("não deveria ser chamado")),
+    )
+
+    response = client.get(
+        f"/api/v1/offers/{uuid4()}/price-history?period=2y", cookies=_cookies()
+    )
+
+    assert response.status_code == 422
+    body = response.json()
+    assert "detail" in body
+    assert "error" not in body
+
+
+def test_daily_low_points_query_filters_new_available_matching_currency_and_ownership() -> (
+    None
+):
+    session = MagicMock()
+    execute_result = MagicMock()
+    execute_result.all.return_value = []
+    session.execute = AsyncMock(return_value=execute_result)
+    product_id, user_id = uuid4(), uuid4()
+    start = datetime(2026, 7, 23, 3, 0, tzinfo=UTC)
+    end = NOW
+
+    asyncio.run(
+        _fetch_daily_low_points(
+            session,
+            product_id=product_id,
+            user_id=user_id,
+            start_utc=start,
+            end_utc=end,
+            reference_currency="BRL",
+        )
+    )
+
+    statement = session.execute.await_args.args[0]
+    sql = str(
+        statement.compile(
+            dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}
+        )
+    ).lower()
+    assert f"offers.product_id = '{product_id}'" in sql
+    assert f"missions.user_id = '{user_id}'" in sql
+    assert "classification in ('match', 'possible_match')" in sql
+    assert "condition = 'new'" in sql
+    assert "availability = 'available'" in sql
+    assert "currency = 'brl'" in sql
+    assert "observed_at >=" in sql
+    assert "observed_at <=" in sql
+
+
+def test_daily_low_points_query_omits_lower_bound_for_period_all() -> None:
+    session = MagicMock()
+    execute_result = MagicMock()
+    execute_result.all.return_value = []
+    session.execute = AsyncMock(return_value=execute_result)
+
+    asyncio.run(
+        _fetch_daily_low_points(
+            session,
+            product_id=uuid4(),
+            user_id=uuid4(),
+            start_utc=None,
+            end_utc=NOW,
+            reference_currency="BRL",
+        )
+    )
+
+    statement = session.execute.await_args.args[0]
+    sql = str(
+        statement.compile(
+            dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}
+        )
+    ).lower()
+    assert "observed_at >=" not in sql
+    assert "observed_at <=" in sql
+
+
+def test_current_amount_query_resolves_latest_observation_per_offer_before_validity() -> (
+    None
+):
+    session = MagicMock()
+    session.scalar = AsyncMock(return_value=Decimal("4599.00"))
+    product_id, user_id = uuid4(), uuid4()
+
+    asyncio.run(
+        _resolve_current_amount(
+            session, product_id=product_id, user_id=user_id, reference_currency="BRL"
+        )
+    )
+
+    statement = session.scalar.await_args.args[0]
+    sql = str(
+        statement.compile(
+            dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}
+        )
+    ).lower()
+    assert "row_number() over" in sql
+    assert "partition by price_observations.offer_id" in sql
+    assert f"offers.product_id = '{product_id}'" in sql
+    assert f"missions.user_id = '{user_id}'" in sql
+    assert "rn = 1" in sql
+    assert "condition = 'new'" in sql
+    assert "availability = 'available'" in sql
+
+
+def test_reference_currency_prefers_anchors_own_observation() -> None:
+    """Correção pós-plano item 4(A): a âncora tem prioridade -- nunca cai
+    para outra Offer só porque esta é mais recente."""
+    session = MagicMock()
+    session.scalar = AsyncMock(return_value="BRL")
+    product_id, user_id, anchor_offer_id = uuid4(), uuid4(), uuid4()
+
+    result = asyncio.run(
+        _resolve_reference_currency(
+            session,
+            product_id=product_id,
+            user_id=user_id,
+            anchor_offer_id=anchor_offer_id,
+        )
+    )
+
+    assert result == "BRL"
+    assert session.scalar.await_count == 1
+    statement = session.scalar.await_args.args[0]
+    sql = str(
+        statement.compile(
+            dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}
+        )
+    ).lower()
+    assert f"price_observations.offer_id = '{anchor_offer_id}'" in sql
+    assert "order by price_observations.observed_at desc" in sql
+
+
+def test_reference_currency_falls_back_to_other_accessible_offers() -> None:
+    """Correção pós-plano item 4(B): só cai para outra Offer quando a
+    âncora não tem NENHUMA observação própria."""
+    session = MagicMock()
+    session.scalar = AsyncMock(side_effect=[None, "BRL"])
+    product_id, user_id, anchor_offer_id = uuid4(), uuid4(), uuid4()
+
+    result = asyncio.run(
+        _resolve_reference_currency(
+            session,
+            product_id=product_id,
+            user_id=user_id,
+            anchor_offer_id=anchor_offer_id,
+        )
+    )
+
+    assert result == "BRL"
+    assert session.scalar.await_count == 2
+    fallback_statement = session.scalar.await_args_list[1].args[0]
+    sql = str(
+        fallback_statement.compile(
+            dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}
+        )
+    ).lower()
+    assert f"offers.product_id = '{product_id}'" in sql
+    assert f"missions.user_id = '{user_id}'" in sql
+    assert "order by price_observations.observed_at desc" in sql
 
 
 def test_comparison_response_preserves_source_bound_data() -> None:

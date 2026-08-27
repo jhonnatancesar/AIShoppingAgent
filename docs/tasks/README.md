@@ -38,9 +38,10 @@ concluída, commitada localmente (fase 3B em `9f95351`), publicação
 pendente. TASK-113 (avaliação inteligente de preço, absorve e implementa
 o item 17 da V1.2) **concluída no DEV**, commitada localmente (`03b7370`
 implementação, `8ad5709` documentação/validação Firecrawl), publicação
-em `origin/main` pendente. **TASK-098 é a próxima TASK executável e o
-último item ativo da V1.2** — dependência (TASK-097) já satisfeita e
-publicada, sem preflight nem implementação iniciados ainda.
+em `origin/main` pendente. **TASK-098 (histórico e gráficos de preço,
+último item ativo da V1.2) concluída no DEV** (backend, frontend, testes
+unitários e de integração PostgreSQL real, `EXPLAIN ANALYZE`) —
+publicação em `origin/main` pendente.
 
 **TASK-103 concluída e publicada (`610a997`):** comparação de Offers
 autorizadas do mesmo produto/variante global resolvido. Ver
@@ -63,9 +64,11 @@ Ver `docs/tasks/TASK-100.md` e `DEC-084`.
 fluxos de identidade da TASK-097, commit `e9610c3`. Ver `docs/tasks/TASK-099.md` e
 `DEC-083`.
 
-**TASK-098 formalizada e reservada:** histórico e gráficos exclusivamente por
-identidade global de produto/variante; movida para o último item da V1.2 pela
-`DEC-081`, sem implementação.
+**TASK-098 concluída no DEV:** histórico e gráficos
+exclusivamente por identidade global de produto/variante; movida para o
+último item da V1.2 pela `DEC-081`. Ver `docs/tasks/TASK-098.md`
+("Registro de implementação") e `docs/architecture/price-history.md`.
+Publicação em `origin/main` pendente; sem deploy; PROD intocada.
 
 **TASK-097 concluída, aprovada e publicada:** identidade global
 determinística de produto/variante e escolha de variantes para pedidos genéricos

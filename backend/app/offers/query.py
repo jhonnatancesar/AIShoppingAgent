@@ -1,17 +1,24 @@
 """Consultas USER de ofertas, sempre escopadas por missão do proprietário."""
 
+import calendar
+from collections import defaultdict
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, date, datetime, timedelta
+from decimal import ROUND_HALF_UP, Decimal
+from typing import Literal
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
-from sqlalchemy import exists, func, select
+from sqlalchemy import Date, cast, exists, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.collection.contracts import OfferCondition
 from app.collection.models import (
     MissionOfferRelevance,
     OfferInstallmentOption,
     PriceObservation,
 )
+from app.collection.normalization import Availability
 from app.collection.relevance import OfferRelevance
 from app.missions.models import (
     Mission,
@@ -398,4 +405,412 @@ async def list_current_offer_links_for_mission(
         MissionOfferLink(offer=offer, product=product, store=store)
         for offer, product, store in eligible_rows
         if offer.last_seen_at == latest_seen_by_store[store.id]
+    )
+
+
+# ---------------------------------------------------------------------------
+# Histórico de preço por Product, ancorado em Offer (TASK-098).
+#
+# Entrada HTTP continua Offer-level (mesma autorização já existente,
+# `authorize(..., resource_type="offer", ...)`); a agregação interna é
+# Product-level (mesmo Product global entre lojas, TASK-097), reaproveitando
+# `_accessible_offer_exists` como cláusula EXISTS correlata dentro da própria
+# query -- nunca materializando lista de UUIDs em Python (mesmo padrão de
+# `comparison_offers_statement`, TASK-103).
+# ---------------------------------------------------------------------------
+
+PriceHistoryPeriod = Literal["1d", "7d", "1m", "6m", "1a", "all"]
+_SAO_PAULO_TZ = ZoneInfo("America/Sao_Paulo")
+_TWO_PLACES = Decimal("0.01")
+_FOUR_PLACES = Decimal("0.0001")
+
+
+def _subtract_calendar_months(value: datetime, months: int) -> datetime:
+    """Aritmética de calendário real -- nunca aproximação fixa de 30/180/365
+    dias. Clampa o dia ao último dia válido do mês de destino (ex.: 31/08
+    menos 6 meses cai em 28 ou 29/02, conforme o ano)."""
+    total_months = value.year * 12 + (value.month - 1) - months
+    year, month0 = divmod(total_months, 12)
+    month = month0 + 1
+    day = min(value.day, calendar.monthrange(year, month)[1])
+    return value.replace(year=year, month=month, day=day)
+
+
+@dataclass(frozen=True, slots=True)
+class PeriodRange:
+    period: PriceHistoryPeriod
+    start_utc: datetime | None
+    """`None` somente para `period="all"` -- nunca vira um predicado SQL
+    `>= NULL` (que eliminaria todas as linhas); o predicado de limite
+    inferior simplesmente não é adicionado à query nesse caso."""
+    end_utc: datetime
+
+
+def resolve_period_range(period: PriceHistoryPeriod, *, now: datetime) -> PeriodRange:
+    """Fronteiras calculadas no dia comercial de `America/Sao_Paulo`, nunca
+    em UTC -- `now` precisa ser timezone-aware; a conversão para UTC só
+    acontece no final, para comparar com `PriceObservation.observed_at`."""
+    if now.tzinfo is None:
+        raise ValueError("now must be timezone-aware")
+    now_local = now.astimezone(_SAO_PAULO_TZ)
+    today_start_local = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+    if period == "1d":
+        start_local = today_start_local
+    elif period == "7d":
+        start_local = today_start_local - timedelta(days=6)
+    elif period == "1m":
+        start_local = _subtract_calendar_months(today_start_local, 1)
+    elif period == "6m":
+        start_local = _subtract_calendar_months(today_start_local, 6)
+    elif period == "1a":
+        start_local = _subtract_calendar_months(today_start_local, 12)
+    elif period == "all":
+        return PeriodRange(period=period, start_utc=None, end_utc=now)
+    else:
+        raise ValueError(f"unknown price history period: {period}")
+    return PeriodRange(
+        period=period, start_utc=start_local.astimezone(UTC), end_utc=now
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class PriceHistoryPoint:
+    day: date
+    amount: Decimal
+    observation_id: UUID
+    offer_id: UUID
+
+
+@dataclass(frozen=True, slots=True)
+class PriceHistorySeries:
+    store_id: UUID
+    store_code: str
+    store_name: str
+    points: tuple[PriceHistoryPoint, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class PriceHistoryMetrics:
+    current_amount: Decimal | None
+    min_amount: Decimal | None
+    max_amount: Decimal | None
+    average_amount: Decimal | None
+    variation_percent: Decimal | None
+
+
+@dataclass(frozen=True, slots=True)
+class OfferPriceHistory:
+    product_id: UUID
+    comparable: bool
+    reason: str | None
+    period: PriceHistoryPeriod
+    currency: str | None
+    period_from: datetime | None
+    period_to: datetime
+    series: tuple[PriceHistorySeries, ...]
+    metrics: PriceHistoryMetrics | None
+
+
+def _commercial_day_expr():
+    """`(observed_at AT TIME ZONE 'America/Sao_Paulo')::date` -- dia
+    comercial local, nunca UTC (correção pós-plano, item 5)."""
+    return cast(func.timezone("America/Sao_Paulo", PriceObservation.observed_at), Date)
+
+
+async def _resolve_reference_currency(
+    session: AsyncSession, *, product_id: UUID, user_id: UUID, anchor_offer_id: UUID
+) -> str | None:
+    """Moeda de referência, cadeia determinística de duas etapas (correção
+    pós-plano, item 4): (A) a observação mais recente da própria Offer
+    âncora, se existir -- nunca ignorada em favor de outra Offer só porque
+    esta é mais recente; (B) só quando a âncora não tem NENHUMA observação,
+    cai para a observação mais recente entre as demais Offers acessíveis do
+    Product; (C) `None` (nunca BRL inventado) quando nenhuma das duas achar
+    nada."""
+    anchor_currency = await session.scalar(
+        select(PriceObservation.currency)
+        .where(PriceObservation.offer_id == anchor_offer_id)
+        .order_by(PriceObservation.observed_at.desc(), PriceObservation.id.desc())
+        .limit(1)
+    )
+    if anchor_currency is not None:
+        return anchor_currency
+    return await session.scalar(
+        select(PriceObservation.currency)
+        .select_from(PriceObservation)
+        .join(Offer, Offer.id == PriceObservation.offer_id)
+        .where(
+            Offer.product_id == product_id,
+            _accessible_offer_exists(user_id=user_id),
+        )
+        .order_by(PriceObservation.observed_at.desc(), PriceObservation.id.desc())
+        .limit(1)
+    )
+
+
+async def _resolve_current_amount(
+    session: AsyncSession, *, product_id: UUID, user_id: UUID, reference_currency: str
+) -> Decimal | None:
+    """Preço ATUAL -- nunca o mínimo do dia (correção pós-plano, item 2).
+    Resolve a observação MAIS RECENTE de cada Offer acessível primeiro (sem
+    filtro nenhum), só DEPOIS checa se aquela observação específica está
+    `NEW`/`AVAILABLE`/na moeda de referência. Uma Offer cuja última
+    observação ficou indisponível nunca "ressuscita" um preço antigo válido
+    -- ela simplesmente não contribui para `current_amount`."""
+    latest_rank = (
+        func.row_number()
+        .over(
+            partition_by=PriceObservation.offer_id,
+            order_by=(
+                PriceObservation.observed_at.desc(),
+                PriceObservation.id.desc(),
+            ),
+        )
+        .label("rn")
+    )
+    latest_cte = (
+        select(
+            PriceObservation.amount,
+            PriceObservation.currency,
+            PriceObservation.condition,
+            PriceObservation.availability,
+            latest_rank,
+        )
+        .select_from(PriceObservation)
+        .join(Offer, Offer.id == PriceObservation.offer_id)
+        .where(
+            Offer.product_id == product_id,
+            _accessible_offer_exists(user_id=user_id),
+        )
+        .cte("latest_observation_per_offer")
+    )
+    statement = select(func.min(latest_cte.c.amount)).where(
+        latest_cte.c.rn == 1,
+        latest_cte.c.condition == OfferCondition.NEW,
+        latest_cte.c.availability == Availability.AVAILABLE,
+        latest_cte.c.currency == reference_currency,
+    )
+    return await session.scalar(statement)
+
+
+async def _fetch_daily_low_points(
+    session: AsyncSession,
+    *,
+    product_id: UUID,
+    user_id: UUID,
+    start_utc: datetime | None,
+    end_utc: datetime,
+    reference_currency: str,
+) -> list[tuple[UUID, str, str, date, Decimal, UUID, UUID]]:
+    """Menor `PriceObservation.amount` comercialmente válido por (Store,
+    dia comercial) -- linhas da série exibida no gráfico. Desempate: menor
+    `amount`; empate, observação mais recente; empate ainda, `id` como
+    último critério (correção pós-plano, item 3). `start_utc=None` (period
+    `all`) nunca vira um predicado `>= NULL` -- o filtro de limite inferior
+    simplesmente não entra na query (correção pós-plano, item 1)."""
+    commercial_day = _commercial_day_expr()
+    conditions = [
+        Offer.product_id == product_id,
+        _accessible_offer_exists(user_id=user_id),
+        PriceObservation.condition == OfferCondition.NEW,
+        PriceObservation.availability == Availability.AVAILABLE,
+        PriceObservation.currency == reference_currency,
+        PriceObservation.observed_at <= end_utc,
+    ]
+    if start_utc is not None:
+        conditions.append(PriceObservation.observed_at >= start_utc)
+    daily_rank = (
+        func.row_number()
+        .over(
+            partition_by=(Offer.store_id, commercial_day),
+            order_by=(
+                PriceObservation.amount.asc(),
+                PriceObservation.observed_at.desc(),
+                PriceObservation.id.asc(),
+            ),
+        )
+        .label("rn")
+    )
+    ranked_cte = (
+        select(
+            Offer.store_id.label("store_id"),
+            Store.code.label("store_code"),
+            Store.name.label("store_name"),
+            commercial_day.label("commercial_day"),
+            PriceObservation.amount.label("amount"),
+            PriceObservation.id.label("observation_id"),
+            PriceObservation.offer_id.label("offer_id"),
+            daily_rank,
+        )
+        .select_from(PriceObservation)
+        .join(Offer, Offer.id == PriceObservation.offer_id)
+        .join(Store, Store.id == Offer.store_id)
+        .where(*conditions)
+        .cte("ranked_daily_observations")
+    )
+    statement = (
+        select(
+            ranked_cte.c.store_id,
+            ranked_cte.c.store_code,
+            ranked_cte.c.store_name,
+            ranked_cte.c.commercial_day,
+            ranked_cte.c.amount,
+            ranked_cte.c.observation_id,
+            ranked_cte.c.offer_id,
+        )
+        .where(ranked_cte.c.rn == 1)
+        .order_by(ranked_cte.c.store_code, ranked_cte.c.commercial_day)
+    )
+    rows = (await session.execute(statement)).all()
+    return [tuple(row) for row in rows]
+
+
+def _compute_metrics(
+    rows: list[tuple[UUID, str, str, date, Decimal, UUID, UUID]],
+    *,
+    current_amount: Decimal | None,
+) -> PriceHistoryMetrics:
+    """`daily_market_low(dia) = MIN(store_daily_low de todas as Stores
+    naquele dia)` -- min/max/average derivam SEMPRE desse agregado por dia,
+    nunca da média bruta dos pontos por Store (evita viés por dias com mais
+    ou menos lojas coletadas, correção pós-plano item 3)."""
+    daily_low: dict[date, Decimal] = {}
+    for _store_id, _code, _name, day, amount, _obs_id, _offer_id in rows:
+        current = daily_low.get(day)
+        if current is None or amount < current:
+            daily_low[day] = amount
+    if not daily_low:
+        return PriceHistoryMetrics(
+            current_amount=current_amount,
+            min_amount=None,
+            max_amount=None,
+            average_amount=None,
+            variation_percent=None,
+        )
+    ordered_days = sorted(daily_low)
+    values = [daily_low[day] for day in ordered_days]
+    min_amount = min(values)
+    max_amount = max(values)
+    average_amount = (sum(values, start=Decimal(0)) / len(values)).quantize(
+        _FOUR_PLACES, rounding=ROUND_HALF_UP
+    )
+    baseline = daily_low[ordered_days[0]]
+    variation_percent = None
+    if current_amount is not None and baseline != 0:
+        variation_percent = (
+            (current_amount - baseline) / baseline * Decimal(100)
+        ).quantize(_TWO_PLACES, rounding=ROUND_HALF_UP)
+    return PriceHistoryMetrics(
+        current_amount=current_amount,
+        min_amount=min_amount,
+        max_amount=max_amount,
+        average_amount=average_amount,
+        variation_percent=variation_percent,
+    )
+
+
+async def get_offer_price_history_for_user(
+    session: AsyncSession,
+    *,
+    offer_id: UUID,
+    user_id: UUID,
+    period: PriceHistoryPeriod,
+    now: datetime,
+) -> OfferPriceHistory | None:
+    """`None` quando a Offer não é acessível ao usuário -- o router converte
+    isso em 403, mesmo mecanismo de autorização já existente para Offer
+    (nenhum `resource_type="product"` novo)."""
+    anchor = await get_offer_detail_for_user(
+        session, offer_id=offer_id, user_id=user_id
+    )
+    if anchor is None:
+        return None
+    period_range = resolve_period_range(period, now=now)
+    product_id = anchor.product.id
+    if anchor.product.identity_key is None:
+        return OfferPriceHistory(
+            product_id=product_id,
+            comparable=False,
+            reason="unresolved_product_identity",
+            period=period,
+            currency=None,
+            period_from=period_range.start_utc,
+            period_to=period_range.end_utc,
+            series=(),
+            metrics=None,
+        )
+    reference_currency = await _resolve_reference_currency(
+        session, product_id=product_id, user_id=user_id, anchor_offer_id=offer_id
+    )
+    if reference_currency is None:
+        # Nenhuma observação em nenhuma Offer acessível -- resposta vazia
+        # honesta, nunca fallback de moeda inventado (correção pós-plano,
+        # item 4, caso C).
+        return OfferPriceHistory(
+            product_id=product_id,
+            comparable=True,
+            reason=None,
+            period=period,
+            currency=None,
+            period_from=period_range.start_utc,
+            period_to=period_range.end_utc,
+            series=(),
+            metrics=None,
+        )
+    current_amount = await _resolve_current_amount(
+        session,
+        product_id=product_id,
+        user_id=user_id,
+        reference_currency=reference_currency,
+    )
+    rows = await _fetch_daily_low_points(
+        session,
+        product_id=product_id,
+        user_id=user_id,
+        start_utc=period_range.start_utc,
+        end_utc=period_range.end_utc,
+        reference_currency=reference_currency,
+    )
+    series_points: dict[UUID, list[PriceHistoryPoint]] = defaultdict(list)
+    store_meta: dict[UUID, tuple[str, str]] = {}
+    for (
+        store_id,
+        store_code,
+        store_name,
+        day,
+        amount,
+        observation_id,
+        offer_id_row,
+    ) in rows:
+        store_meta[store_id] = (store_code, store_name)
+        series_points[store_id].append(
+            PriceHistoryPoint(
+                day=day,
+                amount=amount,
+                observation_id=observation_id,
+                offer_id=offer_id_row,
+            )
+        )
+    series = tuple(
+        PriceHistorySeries(
+            store_id=store_id,
+            store_code=code,
+            store_name=name,
+            points=tuple(sorted(series_points[store_id], key=lambda p: p.day)),
+        )
+        for store_id, (code, name) in sorted(
+            store_meta.items(), key=lambda item: item[1][0]
+        )
+    )
+    metrics = _compute_metrics(rows, current_amount=current_amount)
+    return OfferPriceHistory(
+        product_id=product_id,
+        comparable=True,
+        reason=None,
+        period=period,
+        currency=reference_currency,
+        period_from=period_range.start_utc,
+        period_to=period_range.end_utc,
+        series=series,
+        metrics=metrics,
     )
