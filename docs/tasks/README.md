@@ -1,5 +1,19 @@
 # Tarefas
 
+**TASK-113 com desenho final fechado (2026-08-27), status PLANNED —
+nenhuma implementação iniciada:** avaliação inteligente de preço,
+pesquisa de mercado (Firecrawl + AI Provider Manager) e qualidade dos
+alertas — separa histórico comercial, avaliação de oferta e decisão de
+alerta; evita alertas por queda relativa à observação anterior sem
+considerar o melhor preço já alertado, via checkpoint
+`MissionProductAlertState` por `(mission_id, product_id)`; evita
+Firecrawl/IA repetidos por Mission/usuário via `MarketPriceAssessment`
+cacheado por `product_id` (identidade exata do Product Identity Engine,
+TASK-097 — nunca `MonitoringItem` genérico) com single-flight crash-safe.
+Pré-flight (§32) já executado e revisado em duas rodadas; **§33 é a
+fonte de verdade para a implementação futura**, mediante comando
+explícito ("faça a TASK-113"). Ver `docs/tasks/TASK-113.md`.
+
 **Atividade atual:** TASK-104B (Mercado Livre) implementada no DEV e aguardando
 uma única validação real final pelo fallback Edge/CDP; depois vem a TASK-104C
 (Shopee). Cada loja tem provider e validação próprios, mas
