@@ -228,8 +228,139 @@ intocados), sem fila justa/`fairness_owner`/TASK-108 (fase 3B) --
 `collect_monitoring_item_store`/`resume_shared_collection_fan_out` são
 chamadas isoladamente, caminho controlado/testável; FASE 3B decide
 QUANDO/COM QUE FREQUÊNCIA chamar `resume_shared_collection_fan_out` em
-produção -- ainda não integradas ao loop de produção. Ver
-`docs/internal/decision-log.md` para o registro completo de decisões.**
+produção -- ainda não integradas ao loop de produção.**
+
+**Fase 3B concluída (2026-08-27, revisada em 6 rodadas antes do código --
+ver `docs/internal/decision-log.md`). `CollectionOrchestrator` (produção)
+passa a chamar `claim_due_work` (`orchestration.py`), scheduler unificado
+que reserva fairness e claima os dois caminhos (antigo por Mission, novo
+por MonitoringItem) na MESMA transação/ciclo. `claim_due_collections`/
+`_select_due_schedules_for_batch` continuam existindo, quase sem
+mudança (só ganharam o anti-join contra `MissionMonitoringItem`) --
+compatibility API para quem ainda chama direto (auditado: só testes,
+nenhum outro runtime real).
+
+**Achado que corrige as seções §6/§7/§12/§14 abaixo** (escritas antes da
+implementação real, nunca atualizadas): a implementação de verdade
+(fase 2, `1dca734`/`5d05767`) **não criou** `MissionCriteria.
+monitoring_item_id` nem `MonitoringItemSchedule`/`MonitoringItemSource`
+como classes separadas -- o vínculo Mission→MonitoringItem é
+exclusivamente via `MissionMonitoringItem` (`mission_id` é a própria PK),
+e agenda+backoff do item vivem todos em `MonitoringItemStore` (fusão das
+duas tabelas planejadas). As seções abaixo ficam como registro histórico
+do raciocínio de design; para o schema real, use esta seção e o código.
+
+**Reserva de fairness — mecanismo final** (substituiu completamente o
+`fairness_owner` "calculado e creditado depois" do §12 original): dentro
+de `claim_due_work`, Fase 1 reserva usuários candidatos via lock real
+(`SELECT ... FOR UPDATE SKIP LOCKED` em `UserCollectionQueueState`, em
+ordem ascendente de `user_id` -- nunca espera, nunca cria ciclo de
+deadlock com locks de loja, que só são adquiridos DEPOIS, na Fase 2, em
+ordem de `store_id`); só ENTÃO os recursos (Mission+loja / item+loja) são
+efetivamente reivindicados, numa lista única ordenada por `(store_id,
+due_at, kind, resource_id)` -- nenhum caminho tem prioridade estrutural
+sobre o outro na mesma loja. Cooldown só é gravado
+(`app.collection.fairness._commit_fairness_turn_for_owner`, `UPDATE`
+simples -- o lock da Fase 1 já garante exclusão mútua, sem precisar de
+CAS) para donos que tiveram >= 1 claim real; um dono reservado sem
+nenhum claim real (loja em throttle, corrida perdida) não paga cooldown
+algum. `UserCollectionQueueState.last_fairness_turn_id` é só rastro de
+auditoria (qual ciclo creditou o avanço) -- a garantia de corretude em si
+é o lock contínuo, não uma comparação de token. `CollectionRun.
+fairness_owner_user_id` grava o dono na MESMA transação/savepoint do
+claim compartilhado -- `NULL` sempre no caminho antigo, e também no
+caminho compartilhado STANDALONE (`collect_monitoring_item_store`
+chamada fora do orchestrator, sem `fairness_owner_user_id` -- nunca toca
+`UserCollectionQueueState`); nunca `NULL` no caminho orquestrado.
+
+**Seleção somente-leitura** (`_select_due_work_for_batch`): candidatos
+compartilhados contam `MonitoringItemStore` ÚNICO (nunca explodido por
+usuário vinculado -- achado real: um item com 100 vinculados não pode
+consumir 100 posições da janela de scan), `candidate_scan_limit`
+(default 1000, configurável) é só para DESCOBRIR trabalho/donos, nunca
+um teto de execução -- um dono reservado tem todo o seu trabalho due
+processado. `EXPLAIN ANALYZE` contra 5000 `MonitoringItemStore`
+sintéticos (2% due) confirma `ix_monitoring_item_stores_due` em uso
+(Bitmap Index Scan, nunca sequential scan completo), execução sub-
+milissegundo -- `next_eligible_at` não entrou no índice por desenho (não
+"no escuro"): a seletividade real é dominada por `next_run_at`, o filtro
+extra sobre a fração já due é barato mesmo fora do índice.
+
+**Sweep de fan-out** (`sweep_shared_collection_fan_out`, chamado no
+INÍCIO de todo `run_batch`, antes de qualquer claim novo -- backlog
+antigo tem prioridade): orçamento em duas dimensões, nunca "todos os
+pendentes" -- `target_scan_limit` (quantos `(item, store)` distintos
+considerar) e `task_budget` (quantas `SharedFanOutTask` no TOTAL),
+alocado em rodadas via `per_target_task_cap` para que um alvo com
+backlog grande nunca monopolize o ciclo enquanto alvos menores também
+estão devidos. `recover_stale_fan_out_tasks` roda UMA vez por sweep
+(nunca uma vez por alvo -- `resume_shared_collection_fan_out(...,
+recover_stale=False)` internamente). Ordenação por `COALESCE(next_
+retry_at, created_at)` tanto entre alvos quanto dentro de cada alvo
+(achado real: a query interna de `_process_pending_fan_out` ordenava por
+`mission_id`, arbitrário, antes desta fase) -- retry antigo nunca é
+starvado por uma enxurrada de tarefas novas. `attempted_task_count`
+(contagem real de tarefas reivindicadas, nunca a soma dos buckets de
+resultado) é o contrato de orçamento.
+
+**Política de cadência** (`app.collection.cadence`, módulo novo) --
+NUNCA confundir com cooldown de fairness (decide QUEM, não QUANDO uma
+necessidade específica é revisitada) nem com `StoreThrottleState`
+(proteção contra rajada, não intervalo de monitoramento). Prioridade
+fixa: backoff por bloqueio confirmado (DEC-046) sempre vence (fora desta
+política, resolvido pelo duplo-gate já existente de `next_run_at`/
+`next_eligible_at` no claim) > `PROMO_CALENDAR`/`HIGH_ACTIVITY` (30-45min,
+piso absoluto de 30min reforçado em `CadenceConfig.__post_init__` --
+nenhum modo, nem uma futura diferenciação de plano pago, pode baixar
+disso) > `NORMAL` (45-75min, alvo ~60). Calendário promocional
+(`PromotionalWindow`, tabela) é dado, não código -- ADMIN insere/remove
+janelas sem NENHUMA migration nova. Atividade comercial alta é POR LOJA
+(nunca por produto/item individual, nunca IA, nunca estatística
+sofisticada): sinal já durável, sem schema novo para a contagem em si --
+uma nova `PriceObservation` só existe quando o estado comercial mudou de
+verdade (TASK-093/DEC-097), então contar linhas novas numa janela já é
+contar mudanças reais. `StoreActivityState` guarda só a HISTERESE
+(`high_activity_until`, evita alternar NORMAL/HIGH_ACTIVITY a cada ciclo
+bem na borda do limiar) -- nunca cacheia a contagem em si. `_advance_
+monitoring_item_store` passou a agendar sempre relativo a AGORA (nunca
+mais "recuperar atraso em múltiplos do intervalo antigo" -- incompatível
+com uma faixa que muda de ciclo para ciclo).
+
+**Migration** `20260826_0001` (aditiva, única): `UserCollectionQueueState.
+last_fairness_turn_id`, `CollectionRun.fairness_owner_user_id` (+ FK
+`users.id` `ondelete=RESTRICT` -- auditado `app.privacy.service.
+deidentify_account`, nunca apaga a linha `User`, só remove credenciais/
+`telegram_user_id`; a FK nunca fica pendurada na prática -- + `CHECK`
+`ck_collection_runs_fairness_owner_requires_shared`), índice `ix_
+monitoring_item_stores_due`, tabelas novas `promotional_windows`/
+`store_activity_state`.
+
+**Organização de código**: dois módulos novos, neutros, sem dependência
+circular nova -- `app/collection/fairness.py` (reserva/turno, throttle de
+loja) e `app/collection/shared_claim.py` (claim compartilhado, movido de
+`shared_collection.py`) -- ambos importados por `orchestration.py` E por
+`shared_collection.py`, nenhum dos dois importa do outro para isto. O
+único sentido restante (`CollectionOrchestrator` chamando `_execute_
+claimed_shared_collection`/`sweep_shared_collection_fan_out`, que ficam
+em `shared_collection.py` por serem execução/rede) usa injeção de
+dependência no construtor (mesmo padrão de `identity_resolver`,
+TASK-083) + `TYPE_CHECKING` para os tipos -- `orchestration.py` nunca
+importa `shared_collection.py` no nível de módulo.
+
+**Testes**: suíte de integração completa (152 testes, incluindo toda a
+fase 3A/TASK-108 sem NENHUMA modificação) verde contra PostgreSQL real,
+mais 15 testes novos dedicados (`tests/integration/test_unified_fair_
+queue.py`, `tests/integration/test_cadence_and_high_activity.py`) --
+exclusão de vinculada do legado, `claim_due_collections` sem efeito
+shared, rider nunca avança, dono reservado sem claim não paga cooldown,
+owner NULL só no standalone, concorrência real (2 workers, `Barrier`)
+sem duplicar claim, NORMAL/PROMO/backoff/atividade alta. Suíte completa
+de testes unitários (não-DB) também verde -- 2 testes pré-existentes
+(`test_collection_worker.py`) ajustados para os campos novos de
+`CollectionBatchResult`.
+
+Ver `docs/internal/decision-log.md` para o registro completo de
+decisões.**
 
 ## Objetivo
 
@@ -560,94 +691,206 @@ de hash, ponto final.
 
 ## 6. Modelo de dados (Shared Monitoring)
 
+> **Esta seção descreve o schema REAL implementado (fases 1/2/3A/3B).**
+> O desenho anterior a qualquer código (histórico, nunca construído)
+> previa `MissionCriteria.monitoring_item_id`, `MonitoringItemSchedule` e
+> `MonitoringItemSource` como tabelas separadas — **nenhuma das três
+> existe**. A implementação real fundiu agenda+backoff numa única tabela
+> por `(item, loja)` e moveu o vínculo Mission→item para uma tabela
+> própria, nunca uma coluna dentro de `MissionCriteria`. Ver `app/missions/
+> models.py:290-424` para o código-fonte destas classes.
+
 ```
-Mission (1) ── (1) MissionCriteria ── (N) ─→ (1) MonitoringItem
-   │                                               │
-   └─ (N) MissionSource ←── preferência do USER    ├─ (1) MonitoringItemSchedule
-        (quais lojas ELE quer, cota TASK-107,       │    (quando reavaliar de novo --
-         SEM mudança de forma)                       │     era 1 por Mission, agora 1 por item)
-                                                       │
-                                                       └─ (N) MonitoringItemSource
-                                                            (backoff DEC-046 por (item, loja) --
-                                                             era por (mission, loja))
-                                                                 │
-                                                                 ▼
+Mission (1) ── (1) MissionMonitoringItem ── (N) ─→ (1) MonitoringItem
+   │                  (mission_id É a PK --                │
+   │                   vínculo canônico único,              │
+   │                   nunca em MissionCriteria)             │
+   │                                                          ├─ (N) MonitoringItemStore
+   └─ (N) MissionSource ←── preferência do USER               │    (PK composta: monitoring_item_id +
+        (quais lojas ELE quer, cota TASK-107,                 │     store_id -- agenda E backoff
+         SEM mudança de forma; caminho legado                 │     fundidos numa tabela só, por
+         continua usando MissionSchedule)                     │     (item, loja), nunca por
+                                                                │     (mission, loja))
+                                                                ▼
                                                          CollectionRun
-                                                     (monitoring_item_id, store_id)
-                                                                 │
-                                                                 ▼
+                                            (monitoring_item_id XOR mission_id, store_id,
+                                             fairness_owner_user_id -- ver §12)
+                                                                │
+                                                                ▼
                                                Offer / PriceObservation (TASK-093, sem mudança)
-                                                                 │
-                                                                 ▼
+                                                                │
+                                                                ▼
                                          MissionOfferRelevance (mission_id, offer_id) --
                                          JÁ existe por missão (TASK-063): é o fan-out
-                                         pronto, só falta a Fase C iterar (§9).
+                                         (§10), uma linha por missão vinculada.
 ```
 
 `MonitoringItem` **não é `Offer`** (resultado da coleta, por loja) nem
 `Product` (identidade cross-loja da TASK-097, só existe após alguma
 coleta real) — é a representação do **pedido canônico de monitoramento
-em si**, existe desde a criação da missão.
+em si**, existe desde a criação da missão. Schema real
+(`app/missions/models.py:290-324`):
 
 ```python
 class MonitoringItem(Base):
     __tablename__ = "monitoring_items"
-    __table_args__ = (Index("uq_monitoring_items_key", "monitoring_key", unique=True),)
+    __table_args__ = (
+        CheckConstraint("identity_version > 0", ...),
+        Index("uq_monitoring_items_monitoring_key", "monitoring_key", unique=True),
+    )
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     monitoring_key: Mapped[str] = mapped_column(String(160), nullable=False)
-    canonical_criteria: Mapped[dict] = mapped_column(JSONB, nullable=False)  # auditoria/ADMIN
+    identity_version: Mapped[int]          # MONITORING_KEY_VERSION, para migração de schema futura
+    canonical_identity: Mapped[dict]        # JSONB -- auditoria/ADMIN, nunca usado para comparação
+    created_at: Mapped[datetime]
+    updated_at: Mapped[datetime]
+```
+
+**Vínculo Mission→MonitoringItem — `MissionMonitoringItem`, não uma
+coluna em `MissionCriteria`** (`app/missions/models.py:327-353`):
+
+```python
+class MissionMonitoringItem(Base):
+    __tablename__ = "mission_monitoring_items"
+    mission_id: Mapped[UUID] = mapped_column(
+        ForeignKey("missions.id", ondelete="CASCADE"), primary_key=True,
+    )                                        # PK própria -- uma Mission nunca tem 2 vínculos
+    monitoring_item_id: Mapped[UUID] = mapped_column(
+        ForeignKey("monitoring_items.id", ondelete="RESTRICT"), nullable=False, index=True,
+    )
     created_at: Mapped[datetime]
 ```
 
-`MissionCriteria` ganha `monitoring_item_id: UUID | None` (FK `ON DELETE
-RESTRICT`, nullable durante a migração — ver §13; missão nova sempre
-resolve, mesmo que para um item "sozinho" quando `monitoring_key` é
-`None`, que nesse caso NÃO cria `MonitoringItem` nenhum — fica `NULL`
-mesmo, sem custo de linha extra por missão que nunca compartilha nada).
-Muitas `MissionCriteria` apontam para o mesmo item — N:1 direto, sem
-tabela de junção (uma missão nunca precisa de mais de um item).
+`mission_id` sendo a própria chave primária é o que torna o vínculo
+**canônico e único por definição** — não existe (e nunca existiu) um
+segundo lugar onde uma Mission poderia apontar para um item diferente. A
+ausência de linha nesta tabela para uma `mission_id` significa
+"identidade não compartilhável ainda" (`monitoring_key = None`,
+fail-closed) — a Mission continua 100% pelo caminho legado (`Mission
+Schedule`), nunca um estado intermediário ambíguo.
 
-`MonitoringItemSchedule`/`MonitoringItemSource` espelham exatamente
-`MissionSchedule`/`MissionSource` de hoje, só rescopados de `mission_id`
-para `monitoring_item_id` — `MissionSource` em si **continua existindo
-sem mudança de forma**, só deixa de guardar backoff (que muda de dono).
+**Necessidade agregada de coleta por `(item, loja)` — `MonitoringItemStore`**,
+funde o papel de agenda (equivalente a `MissionSchedule`) e de backoff
+(equivalente a `MissionSource.next_eligible_at`/`consecutive_blocks`,
+DEC-046) numa tabela só, por item, nunca por missão
+(`app/missions/models.py:356-424`):
 
-`CollectionRun` ganha `monitoring_item_id: UUID | None`. Achado
-favorável do audit: `CollectionRun.mission_id` **já é nullable hoje**
-(com índice único parcial `postgresql_where="status = 'running' AND
-mission_id IS NOT NULL"`) — o schema já tem essa flexibilidade, sem
-`ALTER COLUMN ... DROP NOT NULL` em produção. Runs novas gravam
-`monitoring_item_id` e deixam `mission_id = NULL`; runs históricas
-continuam com `mission_id` preenchido, intocadas. Novo índice espelhado:
-`(monitoring_item_id, store_id)` único parcial para `status='running'`.
+```python
+class MonitoringItemStore(Base):
+    __tablename__ = "monitoring_item_stores"
+    __table_args__ = (
+        CheckConstraint("consecutive_blocks >= 0", ...),
+        Index(
+            "ix_monitoring_item_stores_due",
+            "next_run_at", "monitoring_item_id", "store_id",
+            postgresql_where="is_enabled",     # Bitmap Index Scan confirmado, ver §12
+        ),
+    )
+    monitoring_item_id: Mapped[UUID] = mapped_column(
+        ForeignKey("monitoring_items.id", ondelete="CASCADE"), primary_key=True,
+    )
+    store_id: Mapped[UUID] = mapped_column(
+        ForeignKey("stores.id", ondelete="RESTRICT"), primary_key=True,
+    )                                       # PK composta (monitoring_item_id, store_id)
+    is_enabled: Mapped[bool]                 # True enquanto >= 1 Mission ACTIVE vinculada exigir a loja
+    next_run_at: Mapped[datetime | None]      # cadência (§12) -- quando reavaliar de novo
+    last_run_at: Mapped[datetime | None]
+    next_eligible_at: Mapped[datetime | None] # backoff DEC-046 -- vence sempre sobre a cadência
+    consecutive_blocks: Mapped[int]
+    created_at: Mapped[datetime]
+    updated_at: Mapped[datetime]
+```
 
-`MissionOfferRelevance(mission_id, offer_id)` **não muda em nada**.
+`MissionSource` (preferência de loja do usuário, cota TASK-107) **não
+muda de forma** — continua existindo exatamente como antes; só deixou de
+ser a fonte de backoff para missões vinculadas (que passa a ser
+`MonitoringItemStore`). Nada aqui é apagado quando a última Mission
+vinculada é pausada/cancelada — só `is_enabled` vira `False` e o
+histórico (`next_run_at`/`next_eligible_at`/`consecutive_blocks`) para
+de avançar, sem perder dado (§9).
 
-## 7. Criação de missão
+`CollectionRun` ganha `monitoring_item_id: UUID | None` (`CHECK
+ck_collection_runs_ownership_xor`: `mission_id` XOR `monitoring_item_id`,
+nunca os dois, nunca nenhum) e `fairness_owner_user_id: UUID | None`
+(fase 3B, detalhado no §12) — índice único parcial
+`uq_collection_runs_running_monitoring_item_store` espelha o mesmo papel
+que já existia para `mission_id`. Runs compartilhadas gravam
+`monitoring_item_id` e deixam `mission_id = NULL`; runs do caminho
+legado continuam com `mission_id` preenchido e `monitoring_item_id =
+NULL`, exatamente como antes desta fase.
 
-Dentro da mesma transação que já cria `Mission`/`MissionCriteria`/
-`MissionSource`/`MissionSchedule` (`create_mission_from_criteria(_async)`,
-`app/missions/service.py` — os dois pontos de entrada, síncrono/Telegram
-e async/Web, precisam do MESMO tratamento; helper único
-`resolve_or_create_monitoring_item(session, criteria)` chamado pelos
-dois, para não duplicar a lógica de vínculo em dois lugares que podem
-divergir):
+`MissionOfferRelevance(mission_id, offer_id)` **não muda em nada** —
+ganhou só `last_observation_id` na fase 3A (DEC-048, fonte de "previous"
+por Mission no fan-out compartilhado), documentado no §10/§11.
+
+## 7. Criação/reconciliação de missão
+
+> Fluxo REAL implementado. O ponto de entrada único é
+> `reconcile_mission_monitoring_item(_async)` (`app/missions/monitoring.py`),
+> nunca `resolve_or_create_monitoring_item` chamado direto por cada
+> caller — evita exatamente a duplicação de lógica de vínculo que o
+> desenho original já queria prevenir, só que resolvida numa camada acima
+> da inicialmente prevista.
+
+1. **Mission continua sendo entidade individual do usuário** — criada por
+   `create_mission_from_criteria(_async)` (`app/missions/service.py`),
+   sem mudança de forma; `MissionCriteria`/`MissionSource`/
+   `MissionSchedule` continuam existindo exatamente como antes desta
+   TASK.
+2. **Product Identity Engine** (fase 1, `app.products.identity.
+   resolve_monitoring_identity`/`resolve_monitoring_identity_for_family`/
+   `resolve_monitoring_identity_for_resolved_product`) determina a
+   identidade estruturada e a `monitoring_key` — determinístico, sem IA
+   na decisão (§5). A identidade EFETIVA da missão segue a mesma
+   precedência sempre: variante de `Product` selecionada >
+   `VariantSelectionMode.ALL` > texto puro.
+3. `reconcile_mission_monitoring_item(session, *, mission_id, criteria,
+   mission_is_active, now)` (versão síncrona) /
+   `reconcile_mission_monitoring_item_async(...)` (versão assíncrona) —
+   **único ponto de entrada** para criar, trocar ou remover o vínculo:
+   recalcula a identidade atual, resolve-ou-cria o `MonitoringItem`
+   correspondente (`INSERT ... ON CONFLICT (monitoring_key) DO NOTHING` +
+   `SELECT`, §8) e grava/atualiza a linha em `MissionMonitoringItem`
+   (nunca uma coluna em `MissionCriteria` — ver §6).
+4. **`MonitoringItemStore` é reconciliado a cada chamada** conforme as
+   stores exigidas pelas Missions `ACTIVE` atualmente vinculadas ao item:
+   cria a linha `(item, store)` se ainda não existir (`next_run_at =
+   now`, `is_enabled = True`) e mantém `is_enabled` coerente — `True`
+   enquanto ao menos uma Mission `ACTIVE` vinculada ainda exigir aquela
+   loja, `False` quando a última sai. Se o item já existia com agenda em
+   andamento, `next_run_at`/`next_eligible_at`/`consecutive_blocks`
+   **nunca são reiniciados** por uma nova missão se juntando.
+5. **Mission sem identidade compartilhável** (`monitoring_key = None`,
+   fail-closed do Product Identity Engine — categoria desconhecida,
+   `GENERIC_CATEGORY`, ou `PRODUCT_FAMILY` ainda `PENDING`) **continua
+   100% pelo caminho legado**: nenhuma linha em `MissionMonitoringItem`,
+   agendamento via `MissionSchedule` como sempre foi.
+6. **Todo caller que pode alterar a identidade relevante de uma missão já
+   criada** chama `reconcile_mission_monitoring_item(_async)` de novo —
+   criação, seleção/confirmação de variante (`PENDING → SELECTED/ALL`,
+   TASK-097), pós-coleta (resolução de `Product` global), e
+   desidentificação de conta (`app.privacy.service.deidentify_account`).
+   Nunca existe um segundo caminho duplicando essa lógica.
+7. **Pause/cancel/remoção de vínculo nunca destrói histórico
+   compartilhado**: `MonitoringItem`/`MonitoringItemStore` persistem
+   mesmo quando a última Mission vinculada é cancelada — só
+   `is_enabled` muda (§9). Cancelar/pausar uma Mission nunca é em
+   cascata sobre outras Missions vinculadas ao mesmo item.
+8. **Uma loja compartilhada permanece ativa enquanto qualquer outra
+   Mission `ACTIVE` ainda depender dela** — a saída de uma Mission
+   específica nunca desliga `MonitoringItemStore.is_enabled` sozinha se
+   outra Mission ainda precisa da mesma `(item, store)`.
+
+**Coexistência permanente, nunca as duas ao mesmo tempo para a mesma
+necessidade de coleta**:
 
 ```
-USER input → IA interpreta/extrai (inalterado)
-  → MissionCriteria criada, request_kind/family_key/identity_key/model
-    resolvidos pela UX já existente da TASK-097 (inalterado)
-  → Product Identity Engine calcula monitoring_key (novo, síncrono,
-    sem IA -- §5)
-  → monitoring_key is None: MissionCriteria.monitoring_item_id fica NULL,
-    comportamento de hoje, sem risco
-  → senão: achar-ou-criar MonitoringItem por monitoring_key
-  → MissionCriteria.monitoring_item_id = item.id
-  → para cada store pedida (MissionSource, inalterado): upsert
-    MonitoringItemSource(item.id, store_id) se ainda não existir
-  → item novo: cria MonitoringItemSchedule(item.id, next_run_at=agora)
-  → item já existia: NÃO mexe no schedule -- já está rodando
+Mission com MissionMonitoringItem → caminho compartilhado (MonitoringItemStore).
+Mission sem MissionMonitoringItem → caminho legado (MissionSchedule).
 ```
+
+Backfill de missões antigas (ligar retroativamente missões já existentes
+sem vínculo) fica fora do escopo desta fase — ver §14.
 
 ## 8. Concorrência
 
@@ -661,20 +904,30 @@ já usada para `Offer`/`Product`.
 
 ## 9. Pause / Resume / Cancel
 
-- **PAUSE/CANCEL**: `transition_mission` (`app/missions/service.py`)
-  **sem nenhuma mudança**. O que passa a rodar depois: elegibilidade de
-  `(monitoring_item_id, store_id)` para agendamento é **derivada por
-  query** (EXISTS `MissionCriteria` com esse `monitoring_item_id`, cuja
-  `Mission.status == ACTIVE`, com `MissionSource` para aquela loja) —
-  nunca um flag persistido que precisa ser mantido em dia por
-  trigger/cascade. Se não existir mais nenhuma missão ativa exigindo
-  aquela combinação, ela simplesmente para de aparecer na query de claim
-  (§11). Se o item inteiro não tem mais nenhuma loja com missão ativa,
-  `MonitoringItemSchedule.is_enabled = False`. **Nada é apagado.**
-- **RESUME**: reativa a `Mission` — a query derivada volta a enxergá-la
-  automaticamente, sem precisar "religar" nada explicitamente.
+> Corrigido (achado durante a reescrita do §6/§7): o mecanismo real não é
+> "elegibilidade derivada por query" como o desenho original previa — é
+> um par de helpers dedicados, chamados pelo mesmo `transition_mission(_
+> async)` que já existia, cobrindo uniformemente qualquer chamador
+> (ADMIN, criação de missão via `ACTIVATE` interno, comandos diretos).
+
+- **PAUSE/CANCEL**: `transition_mission(_async)` (`app/missions/
+  service.py`) chama `deactivate_monitoring_item_stores_if_unneeded(
+  session, mission_id=..., now=...)` sempre que o status anterior era
+  `ACTIVE` e o novo não é — desliga `MonitoringItemStore.is_enabled` para
+  cada `(item, loja)` que esta Mission exigia, **só se nenhuma outra
+  Mission `ACTIVE` vinculada ao mesmo item ainda precisar daquela loja**.
+  `MissionSchedule.is_enabled = False` continua acontecendo à parte para
+  o caminho legado (cancelamento), sem mudança. **Nada é apagado** — o
+  histórico (`next_run_at`/`next_eligible_at`/`consecutive_blocks`) só
+  para de avançar.
+- **RESUME/ACTIVATE**: `activate_monitoring_item_stores(session,
+  mission_id=..., now=...)` religa (ou cria, se ainda não existia)
+  `MonitoringItemStore.is_enabled = True` para cada `(item, loja)` que a
+  Mission volta a exigir — nunca precisa de intervenção manual.
 - **Cancelamento nunca é em cascata**: cancelar Mission A nunca afeta
-  Mission B só por compartilharem item.
+  Mission B só por compartilharem item — `deactivate_monitoring_item_
+  stores_if_unneeded` sempre recheca se ainda existe outra Mission
+  `ACTIVE` antes de desligar qualquer coisa.
 
 ## 10. Fan-out
 
@@ -722,74 +975,191 @@ quem já monitorava. `PriceObservationComparison`/`_persist_phase_a`
 (DEC-097) já são o mecanismo certo — passam a rodar 1x por missão
 vinculada dentro do fan-out do §10, em vez de 1x total.
 
-## 12. Integração com TASK-108 (fila justa / throttle)
+## 12. Integração com TASK-108 (fila justa / throttle / cadência)
 
-Ponto mais delicado do desenho: a unidade de trabalho deixa de ser "1
-claim = 1 missão" e passa a ser "1 claim = 1 `(monitoring_item, store)`,
-que pode servir N missões de M usuários diferentes".
+> Esta seção descreve o scheduler FINAL implementado (fase 3B,
+> `app.collection.orchestration.claim_due_work`, `app.collection.
+> fairness`, `app.collection.shared_claim`, `app.collection.cadence`),
+> não o algoritmo "creditar o fairness_owner depois do claim" do desenho
+> original — substituído por um mecanismo de reserva por lock real,
+> explicado abaixo, depois de o usuário provar um cenário concreto de
+> deadlock cruzado contra a versão anterior.
 
-**`fairness_owner` — decisão revisada** (não "creditar todos"): cada
-claim compartilhada tem exatamente **um** dono de fairness, escolhido
-deterministicamente entre os usuários **elegíveis** (fora de cooldown)
-com missão ativa vinculada:
+### 12.1 Três mecanismos distintos — nunca confundir
 
-```
-_select_due_schedules_for_batch (rescopado a MonitoringItemSchedule):
-  para cada (item, store) due:
-    linked_users = usuários com Mission ACTIVE, MissionCriteria.
-      monitoring_item_id = item, MissionSource para essa store
-    eligible = linked_users sem cooldown ativo (UserCollectionQueueState.
-      next_eligible_at IS NULL OR <= due_at)
-    se eligible vazio: claim NÃO elegível ainda -- aguarda o primeiro
-      dos linked_users ficar elegível (nunca escolhe alguém em cooldown)
-    fairness_owner = argmin(eligible, key=mesmo sort_key de hoje:
-      last_processed_at IS NULL primeiro, depois mais antigo, depois
-      user_id como desempate estável)
-    a claim herda o sort_key do fairness_owner para o round-robin geral
-  -- mesmo algoritmo de hoje (agrupar por "dono", ordenar, cortar em
-     max_users, incluir tudo que pertence aos donos selecionados) --
-     só que "dono" agora é o fairness_owner por claim, não o user_id
-     direto de uma MissionSchedule.
+| Mecanismo | Tabela | Decide | Escopo |
+|---|---|---|---|
+| Fairness entre usuários | `UserCollectionQueueState` | **QUEM** pode consumir capacidade agora (cooldown por usuário) | por `user_id`, TASK-108 |
+| Cadência de monitoramento | `MonitoringItemStore.next_run_at` (compartilhado) / `MissionSchedule.next_run_at` (legado) | **QUANDO** uma necessidade específica de coleta precisa ser revisitada de novo | por `(item, loja)` ou por missão |
+| Pacing por loja | `StoreThrottleState` | proteção contra rajada de acessos à MESMA loja entre alvos diferentes no MESMO ciclo | por `store_id`, global, TASK-108 |
 
-depois de uma claim bem-sucedida:
-  _advance_user_queue_state roda SÓ para o fairness_owner.
-  Os demais linked_users (riders) recebem o resultado via fan-out (§10)
-  mas o PRÓPRIO UserCollectionQueueState deles não muda -- eles não
-  "gastaram" o turno, continuam com a MESMA posição de fila que tinham
-  antes para qualquer outra coisa (vinculada ou não) que dependa deles.
-```
+Os três coexistem sempre; nenhum substitui o outro. Backoff por bloqueio
+externo confirmado (DEC-046, `next_eligible_at` em `MonitoringItemStore`/
+`MissionSource`) fica fora dos três — vence sempre, estruturalmente: o
+claim recusa um recurso cujo `next_eligible_at` ainda não passou, mesmo
+que `next_run_at` (cadência) já esteja due.
 
-Por que dono único (e não "créditar todos", desenho anterior descartado):
-creditar cooldown para todo `user_id` vinculado penalizaria um usuário
-vinculado a vários itens compartilhados de frequências diferentes --
-cada colheita de QUALQUER item que ele nem "possui" no turno empurraria
-o cooldown dele, podendo starvar as missões próprias dele sem relação
-nenhuma com esses itens. Dono único elimina esse efeito colateral: um
-usuário só paga cooldown pelo trabalho que ele de fato consumiu como
-dono, nunca por carona de outros.
+### 12.2 Unidade de trabalho e caminho legado
 
-"Nenhum usuário ganha prioridade extra por estar vinculado a mais
-gente" fica garantido porque: (1) o `fairness_owner` é sempre só UM,
-nunca importa se há 2 ou 100 vinculados; (2) os outros 99 não têm seu
-próprio estado de fila alterado por essa claim, então não "leapfroggeiam"
-ninguém de propósito; (3) uma claim nunca entra na fila mais de uma vez
-— é uma linha só na seleção, independente de quantos usuários dependem
-dela.
+A unidade de trabalho compartilhada deixa de ser "1 claim = 1 missão" e
+passa a ser "1 claim = 1 `(monitoring_item, store)`, que pode servir N
+missões de M usuários diferentes". O caminho legado continua "1 claim =
+1 `(mission, store)`" sem nenhuma mudança de unidade — as duas unidades
+participam da **mesma fila de fairness**, nunca filas separadas com
+níveis de proteção diferentes.
+
+`claim_due_collections`/`_select_due_schedules_for_batch`
+(`app/collection/orchestration.py`) são **compatibility/legacy-only**:
+continuam existindo quase sem mudança (só ganharam o anti-join contra
+`MissionMonitoringItem`, para nunca reivindicar uma Mission já vinculada
+ao caminho compartilhado) para quem ainda as chama direto — auditado:
+hoje só testes, nenhum runtime de produção. **Nunca criam efeito
+colateral compartilhado** (nenhuma `CollectionRun` com
+`monitoring_item_id`, nenhum avanço de `MonitoringItemStore`).
+`CollectionOrchestrator`, o caminho de produção real
+(`app/collection/worker.py`), usa exclusivamente `claim_due_work`.
+
+### 12.3 `fairness_owner` — reserva por lock real, antes de qualquer loja
+
+Cada claim compartilhada tem exatamente **um** dono de fairness,
+escolhido entre os usuários elegíveis (fora de cooldown) com Mission
+`ACTIVE` vinculada ao item e `MissionSource` para aquela loja — nunca
+"creditar todos os vinculados" (penalizaria um usuário vinculado a vários
+itens de frequências diferentes por trabalho que ele não "possui" no
+turno).
+
+`claim_due_work` roda em duas fases estritas, sempre na mesma ordem, para
+nunca permitir o ciclo "transação A espera lock de usuário que B segura;
+B espera lock de loja que A segura":
+
+1. **Fase 1 — reserva de donos, sempre antes de qualquer loja**
+   (`app.collection.fairness._reserve_fairness_owners`): para cada
+   usuário candidato (união dos donos do caminho legado e do
+   compartilhado, já ordenada por `queue_sort_key`), adquire
+   `SELECT ... FOR UPDATE SKIP LOCKED` em `UserCollectionQueueState`, em
+   ordem ascendente de `user_id` — nunca espera; um usuário cujo lock já
+   está com outra transação é simplesmente pulado nesta rodada, nunca
+   bloqueia. **Recheca `next_eligible_at` (cooldown) sob o lock já
+   adquirido**, nunca confia só na seleção otimista anterior — um usuário
+   cuja seleção ficou desatualizada entre a leitura e o lock (outra
+   transação concorrente já avançou o cooldown dele) é rejeitado aqui,
+   não silenciosamente aceito.
+2. **Fase 2 — claims de recurso, só para donos já reservados** — Mission
+   +loja (legado) e item+loja (compartilhado) numa lista única, ordenada
+   por `(store_id, due_at, kind, resource_id)`: lojas sempre em ordem
+   consistente entre transações concorrentes, `kind` só como desempate
+   final, nunca prioridade estrutural do legado sobre o compartilhado (ou
+   vice-versa).
+
+Só quem teve **>= 1 claim real** na Fase 2 recebe o avanço de cooldown
+(`app.collection.fairness._commit_fairness_turn_for_owner`, `UPDATE`
+simples — o lock da Fase 1 já garante exclusão mútua, sem precisar de
+CAS/token comparado). **Um dono reservado sem nenhum claim real** (loja
+em throttle, corrida perdida para outro worker) **não paga cooldown
+algum** — `UserCollectionQueueState` permanece exatamente como estava.
+`UserCollectionQueueState.last_fairness_turn_id` é só rastro de
+auditoria (qual ciclo creditou o avanço), nunca o mecanismo de exclusão
+mútua em si — isso é o lock contínuo da Fase 1.
+
+Os demais usuários vinculados (**riders**) recebem o resultado via
+fan-out (§10) mas o próprio `UserCollectionQueueState` deles nunca muda —
+não "gastam" turno, continuam na mesma posição de fila para qualquer
+outra coisa que dependa deles, vinculada ou não.
+
+### 12.4 `CollectionRun.fairness_owner_user_id`
+
+Gravado na mesma transação/savepoint do claim compartilhado
+(`app.collection.shared_claim._claim_shared_collection_in_session`):
+**sempre preenchido** no caminho orquestrado (`claim_due_work` nunca
+constrói uma tentativa compartilhada sem dono já resolvido pela Fase 1);
+**sempre `NULL`** no caminho legado e também no caminho compartilhado
+STANDALONE (`collect_monitoring_item_store` chamada fora do
+orchestrator — scripts, ADMIN, testes — sem passar `fairness_owner_
+user_id`: nunca toca `UserCollectionQueueState`, `NULL` documenta
+explicitamente "execução fora da fila de fairness", nunca "o scheduler
+esqueceu de gravar"). FK `users.id`, `ondelete="RESTRICT"` — auditado
+`app.privacy.service.deidentify_account`: nunca apaga a linha `User`, só
+remove credenciais/`telegram_user_id`, a FK nunca fica pendurada na
+prática. `CHECK ck_collection_runs_fairness_owner_requires_shared`
+impede `fairness_owner_user_id` preenchido numa run do caminho legado.
 
 `StoreThrottleState`/`_advance_store_throttle` **não mudam em nada** —
-já são globais por `store_id`; "1 claim = 1 acesso à loja" já é
-garantido por definição.
+já são globais por `store_id` e valem por igual para os dois caminhos
+(legado e compartilhado); "1 claim = 1 acesso à loja" já é garantido por
+definição, sem nenhum tratamento especial por tipo de claim.
 
-`max_concurrent_user_batches` continua limitando quantos
-`fairness_owner`s distintos entram no lote — semântica idêntica à de
-hoje (contagem de "donos", não de linked_users totais).
+### 12.5 Política de cadência (`app.collection.cadence`)
 
-Esta seção precisa de testes de integração dedicados antes de qualquer
-merge, nos moldes de `test_fair_queue_*`/`test_store_throttle_*` já
-existentes, cobrindo pelo menos: dono elegível com riders em cooldown;
-todos os linked_users em cooldown (claim não selecionável); dono troca
-de ciclo pra ciclo conforme cooldowns evoluem; rider nunca tem o próprio
-`UserCollectionQueueState` alterado por claim da qual não é dono.
+Módulo novo da fase 3B — decide o intervalo até a próxima coleta de uma
+necessidade já bem-sucedida, aplicado **igualmente ao caminho
+compartilhado** (`MonitoringItemStore.next_run_at`, via `resolve_
+collection_cadence`) **e ao caminho legado** (`MissionSchedule.
+next_run_at`, via `resolve_legacy_schedule_next_run_at` — usa a decisão
+mais CEDO entre as lojas reivindicadas naquele ciclo para a missão, nunca
+a mais tarde) — coexistência permanente nunca significou duas classes de
+proteção diferentes.
+
+Prioridade fixa (backoff DEC-046 já tratado fora, sempre vence,
+estrutural — ver 12.1):
+
+| Modo | Faixa | Critério |
+|---|---|---|
+| `PROMO_CALENDAR` | 30–45 min | `now` dentro de alguma `PromotionalWindow` ativa |
+| `HIGH_ACTIVITY` | 30–45 min | loja com >= `high_activity_change_threshold` (padrão 3) mudanças comerciais reais numa janela de `high_activity_window_minutes` (padrão 30min), OU ainda dentro da histerese `StoreActivityState.high_activity_until` |
+| `NORMAL` | 45–75 min | nenhum dos anteriores (alvo conceitual ~60min) |
+
+Piso absoluto de 30 minutos reforçado em `CadenceConfig.__post_init__` —
+nenhum modo, nem uma futura diferenciação de plano pago, pode baixar
+disso.
+
+**`HIGH_ACTIVITY` é sempre por loja** (nunca por produto/item individual,
+nunca IA, nunca estatística sofisticada), baseado **somente** em mudanças
+comerciais reais: uma `PriceObservation` só existe quando o estado
+comercial mudou de verdade (TASK-093/DEC-097) — mas isso vale tanto para
+`CHANGED` quanto para a PRIMEIRA observação de uma `Offer`
+(`FIRST_OBSERVATION`). A detecção exclui `FIRST_OBSERVATION` via `NOT
+EXISTS` (só conta observação que tem uma observação mais antiga para a
+MESMA `Offer` — prova de mudança real, nunca chegada nova); `UNCHANGED_
+REUSED` nunca gera linha nova, então nunca entra na contagem por
+construção. `StoreActivityState.high_activity_until` guarda só a
+HISTERESE (evita alternar `NORMAL`/`HIGH_ACTIVITY` a cada ciclo bem na
+borda do limiar) — nunca cacheia a contagem em si, que é sempre
+recomputada ao vivo. Sem schema novo dedicado à contagem.
+
+`PromotionalWindow` é **dado, não código** — tabela (`label`, `starts_at`,
+`ends_at`) para o calendário promocional (datas duplas, Black Friday,
+Cyber Monday, futuras); ADMIN insere/remove linhas sem NENHUMA migration
+nova. Não existe hoje UI ADMIN dedicada para gerenciar janelas — inserção
+é operacional (SQL/script), documentado aqui para não presumir uma UI que
+ainda não foi construída.
+
+**Plano pago pode aumentar `max_active_missions`/store slots (TASK-107);
+nunca aumenta a frequência de coleta de uma mesma necessidade** — cota
+controla capacidade do usuário (quantas missões/lojas ele pode ter),
+nunca a velocidade da mesma busca. `CadenceConfig` é global, sem
+diferenciação por plano.
+
+### 12.6 Índice e verificação de escala
+
+`ix_monitoring_item_stores_due` (`next_run_at`, `monitoring_item_id`,
+`store_id`, `WHERE is_enabled`) — `EXPLAIN ANALYZE` contra 5000
+`MonitoringItemStore` sintéticos (2% due) confirma `Bitmap Index Scan`,
+execução sub-milissegundo. `next_eligible_at` não entrou no índice por
+desenho: a seletividade real é dominada por `next_run_at`, o filtro extra
+sobre a fração já due é barato mesmo fora do índice.
+
+`max_concurrent_user_batches` continua limitando quantos `fairness_
+owner`s distintos entram no lote — semântica idêntica à de antes desta
+fase (contagem de "donos", nunca de vinculados totais).
+
+Cobertura de teste desta seção:
+`tests/integration/test_unified_fair_queue.py` (reserva/lock, recheck de
+cooldown sob lock, dono sem claim não paga cooldown, riders nunca têm o
+próprio estado alterado, ausência de deadlock cruzado sob concorrência
+real) e `tests/integration/test_cadence_and_high_activity.py`
+(`NORMAL`/`PROMO_CALENDAR`/`HIGH_ACTIVITY`/histerese/exclusão de
+`FIRST_OBSERVATION`, cadência legado usando a decisão mais cedo entre
+lojas).
 
 ## 13. Impacto na TASK-107 (cotas)
 

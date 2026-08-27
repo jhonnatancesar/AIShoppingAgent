@@ -172,7 +172,15 @@ def test_worker_once_records_batch_and_disposes(monkeypatch) -> None:
     )
 
     async def result(*_args, **_kwargs):
-        return SimpleNamespace(claimed=2, succeeded=1, failed=1, recovered_stale=0)
+        return SimpleNamespace(
+            claimed=2,
+            succeeded=1,
+            failed=1,
+            recovered_stale=0,
+            legacy_claimed=2,
+            shared_claimed=0,
+            fan_out_attempted_task_count=0,
+        )
 
     orchestrator.run_batch = result
     observe = MagicMock()
@@ -224,7 +232,15 @@ def test_worker_wires_fair_queue_and_store_throttle_settings(monkeypatch) -> Non
     orchestrator = MagicMock()
 
     async def result(*_args, **_kwargs):
-        return SimpleNamespace(claimed=0, succeeded=0, failed=0, recovered_stale=0)
+        return SimpleNamespace(
+            claimed=0,
+            succeeded=0,
+            failed=0,
+            recovered_stale=0,
+            legacy_claimed=0,
+            shared_claimed=0,
+            fan_out_attempted_task_count=0,
+        )
 
     orchestrator.run_batch = result
     captured_kwargs: dict[str, object] = {}

@@ -10,7 +10,12 @@ from sqlalchemy import CheckConstraint, ForeignKeyConstraint, Numeric, UniqueCon
 
 
 def test_mission_criteria_table_matches_data_contract() -> None:
-    """Critérios devem representar busca e preço sem JSONB extensível."""
+    """Critérios devem representar busca e preço sem JSONB extensível.
+
+    Achado (auditoria TASK-112 fase 3B): esta lista ficou desatualizada
+    desde a TASK-097 (identidade de produto/seleção de variante), que
+    nunca foi refletida aqui -- confirmado que a defasagem já existia
+    antes da fase 3B (baseline `471e898`), não é regressão desta fase."""
     table = MissionCriteria.__table__
 
     assert list(table.columns) == [
@@ -20,6 +25,12 @@ def test_mission_criteria_table_matches_data_contract() -> None:
         table.c.model,
         table.c.target_amount,
         table.c.target_currency,
+        table.c.request_kind,
+        table.c.requested_family_key,
+        table.c.requested_identity_key,
+        table.c.requested_variant,
+        table.c.variant_selection_mode,
+        table.c.variant_prompted_at,
         table.c.created_at,
         table.c.updated_at,
     ]
@@ -61,7 +72,11 @@ def test_mission_criteria_reference_restricts_mission_deletion() -> None:
 
 
 def test_mission_criteria_constraints_protect_search_and_target() -> None:
-    """Busca, valor e moeda devem permanecer coerentes no banco."""
+    """Busca, valor e moeda devem permanecer coerentes no banco.
+
+    Achado (auditoria TASK-112 fase 3B): mesma defasagem da TASK-097
+    (`request_kind`/`variant_selection_mode`) do teste acima, já existente
+    antes desta fase."""
     check_names = {
         constraint.name
         for constraint in MissionCriteria.__table__.constraints
@@ -74,6 +89,9 @@ def test_mission_criteria_constraints_protect_search_and_target() -> None:
         "ck_mission_criteria_target_amount_non_negative",
         "ck_mission_criteria_target_pair",
         "ck_mission_criteria_currency_iso4217",
+        "ck_mission_criteria_request_kind_values",
+        "ck_mission_criteria_variant_selection_mode_values",
+        "ck_mission_criteria_product_request_shape",
     }
 
 

@@ -384,10 +384,13 @@ def test_successive_observations_keep_independent_option_sets(
         ),
         ai_manager=_AlwaysMatchAIManager(),
     )
-    # precisa reagendar a missão para ficar due de novo
+    # precisa reagendar a missão para ficar due de novo -- TASK-112 fase
+    # 3B: MissionSource, não o agregado MissionSchedule, é quem decide.
     with integration_database.sessions.begin() as session:
         schedule = session.scalar(select(MissionSchedule))
         schedule.next_run_at = later
+        source = session.scalar(select(MissionSource))
+        source.next_run_at = later
     result = asyncio.run(orchestrator.run_batch(now=later))
     assert result.succeeded == 1
 

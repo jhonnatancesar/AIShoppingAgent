@@ -660,10 +660,7 @@ def test_target_reached_state_does_not_leak_between_missions_sharing_an_offer(
         session.add(
             MissionSchedule(
                 mission_id=mission_a_id,
-                # intervalo bem longo de propósito: a missão A não deve
-                # ficar due de novo dentro da janela deste teste, para que
-                # o ciclo 2 prove isoladamente o comportamento da missão B.
-                interval_minutes=100_000,
+                interval_minutes=60,
                 next_run_at=now,
                 is_enabled=True,
             )
@@ -675,6 +672,27 @@ def test_target_reached_state_does_not_leak_between_missions_sharing_an_offer(
     assert (result_a.claimed, result_a.succeeded) == (1, 1)
     assert _target_events(mission_a_id) == 1
     assert _target_events(mission_b_id) == 0
+
+    # TASK-112 fase 3B (achado real): a agenda do caminho antigo agora
+    # avança pela política de cadência (`app.collection.cadence`), que
+    # ignora `MissionSchedule.interval_minutes` de propósito -- não dá
+    # mais para isolar a missão A do ciclo 2 configurando um intervalo
+    # gigante (`interval_minutes=100_000`, técnica antiga deste teste).
+    # Força a agenda da missão A para bem longe do ciclo 2 diretamente --
+    # o teste é sobre isolamento de alerta entre missões (DEC-048), não
+    # sobre o valor exato da próxima agenda da missão A.
+    # TASK-112 fase 3B (correção estrutural, achado real da auditoria):
+    # a unidade autoritativa de cadência agora é `MissionSource`, não
+    # `MissionSchedule` (agregado derivado, só exibição) -- forçar só o
+    # agregado não bastaria mais, o ciclo 2 reclamaria a missão A de novo
+    # pela cadência real do ciclo 1 (45-75min, já vencida em `later`).
+    with integration_database.sessions.begin() as session:
+        schedule_a = session.scalar(
+            select(MissionSchedule).where(MissionSchedule.mission_id == mission_a_id)
+        )
+        schedule_a.next_run_at = now + timedelta(days=365)
+        source_a = session.get(MissionSource, (mission_a_id, store_id))
+        source_a.next_run_at = now + timedelta(days=365)
 
     # Ciclo 2: agora a missão B fica due e coleta a MESMA Offer pela
     # primeira vez -- sem a correção, herdaria o "já atingido" da missão A
@@ -803,11 +821,19 @@ def test_source_backoff_lifecycle_across_batches(integration_database) -> None:
             )
 
     def _make_due_again(due_at):
+        """TASK-112 fase 3B (correção estrutural): força a cadência de
+        CADA `MissionSource` da missão, não só o agregado derivado
+        (`MissionSchedule`) -- o backoff independente de cada source
+        (`next_eligible_at`) continua decidindo quem de fato é
+        reivindicado neste ciclo."""
         with integration_database.sessions.begin() as session:
             schedule = session.scalar(
                 select(MissionSchedule).where(MissionSchedule.mission_id == mission_id)
             )
             schedule.next_run_at = due_at
+            for store_id in (pichau_id, kabum_id):
+                source = session.get(MissionSource, (mission_id, store_id))
+                source.next_run_at = due_at
 
     def _expire_backoff(store_id, due_at):
         with integration_database.sessions.begin() as session:
@@ -993,13 +1019,19 @@ def test_prelist_ready_fires_once_then_errata_corrects_a_cheaper_late_offer(
         )
         assert errata_before == 0
 
-    # Libera kabum do backoff e deixa a agenda due de novo, simulando a
-    # rodada seguinte -- desta vez kabum responde mais barato (R$ 1.500,00)
-    # que a base já enviada (R$ 1.900,00): deve gerar a única correção.
+    # Libera kabum do backoff e deixa AMBAS as sources due de novo,
+    # simulando a rodada seguinte -- desta vez kabum responde mais barato
+    # (R$ 1.500,00) que a base já enviada (R$ 1.900,00): deve gerar a
+    # única correção. TASK-112 fase 3B (correção estrutural): cada
+    # `MissionSource` tem sua própria cadência -- forçar só o agregado
+    # derivado (`MissionSchedule`) não bastaria mais.
     due_at = datetime.now(UTC).replace(microsecond=0)
     with integration_database.sessions.begin() as session:
         source = session.get(MissionSource, (mission_id, kabum_id))
         source.next_eligible_at = due_at - timedelta(seconds=1)
+        source.next_run_at = due_at - timedelta(seconds=1)
+        pichau_source = session.get(MissionSource, (mission_id, pichau_id))
+        pichau_source.next_run_at = due_at - timedelta(seconds=1)
         schedule = session.scalar(
             select(MissionSchedule).where(MissionSchedule.mission_id == mission_id)
         )
@@ -1044,6 +1076,9 @@ def test_prelist_ready_fires_once_then_errata_corrects_a_cheaper_late_offer(
     with integration_database.sessions.begin() as session:
         source = session.get(MissionSource, (mission_id, kabum_id))
         source.next_eligible_at = due_at_3 - timedelta(seconds=1)
+        source.next_run_at = due_at_3 - timedelta(seconds=1)
+        pichau_source = session.get(MissionSource, (mission_id, pichau_id))
+        pichau_source.next_run_at = due_at_3 - timedelta(seconds=1)
         schedule = session.scalar(
             select(MissionSchedule).where(MissionSchedule.mission_id == mission_id)
         )
@@ -1692,9 +1727,13 @@ class _ControllableOfferProvider:
 
 
 def _rearm_schedule(sessions, mission_id, pichau_id, due_at: datetime) -> None:
+    """TASK-112 fase 3B (correção estrutural): `MissionSource.next_run_at`
+    -- não mais `MissionSchedule.next_run_at` -- é quem decide se a store
+    está due; forçar só o agregado derivado não adiantaria nada."""
     with sessions.begin() as session:
         source = session.get(MissionSource, (mission_id, pichau_id))
         source.next_eligible_at = due_at - timedelta(seconds=1)
+        source.next_run_at = due_at - timedelta(seconds=1)
         schedule = session.scalar(
             select(MissionSchedule).where(MissionSchedule.mission_id == mission_id)
         )

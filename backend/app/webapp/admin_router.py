@@ -8,7 +8,7 @@ from uuid import NAMESPACE_URL, UUID, uuid5
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import delete, func, or_, select, update
+from sqlalchemy import delete, exists, func, or_, select, update
 from sqlalchemy.orm import Session
 
 from app.admin.service_ops import (
@@ -43,7 +43,14 @@ from app.core.errors import ApiError
 from app.database.dependency import get_session
 from app.database.time import utc_now
 from app.events.models import ConsumptionOutcome, Event, EventConsumptionAttempt
-from app.missions.models import Mission, MissionCommand, MissionSchedule, MissionStatus
+from app.missions.models import (
+    Mission,
+    MissionCommand,
+    MissionMonitoringItem,
+    MissionSchedule,
+    MissionSource,
+    MissionStatus,
+)
 from app.missions.service import MissionTransitionError, transition_mission
 from app.stores.models import Store
 from app.users.models import User, UserLifecycleStatus, UserRole
@@ -711,8 +718,20 @@ def trigger_collection(
         raise ApiError(
             status_code=404, code="schedule_not_found", message="Missão sem agenda."
         )
-    schedule.next_run_at = utc_now()
+    now = utc_now()
+    # TASK-112 fase 3B (achado da auditoria pós-implementação): a
+    # cadência real do caminho legado é por `MissionSource` -- forçar só
+    # o agregado `MissionSchedule` não adiantaria a próxima coleta de
+    # verdade, já que o scheduler não lê mais este campo para decidir due.
+    # Cada `MissionSource` da missão precisa ser forçada individualmente.
+    session.execute(
+        update(MissionSource)
+        .where(MissionSource.mission_id == payload.mission_id)
+        .values(next_run_at=now)
+    )
+    schedule.next_run_at = now
     schedule.is_enabled = True
+    schedule.updated_at = now
     _audit(
         session,
         actor,
@@ -831,12 +850,24 @@ def queue_dashboard(
         row[0]
         for row in session.execute(
             select(Mission.user_id)
+            .join(MissionSource, MissionSource.mission_id == Mission.id)
             .join(MissionSchedule, MissionSchedule.mission_id == Mission.id)
             .where(
                 MissionSchedule.is_enabled.is_(True),
-                MissionSchedule.next_run_at <= now,
                 Mission.status == MissionStatus.ACTIVE,
                 or_(Mission.expires_at.is_(None), Mission.expires_at > now),
+                or_(
+                    MissionSource.next_run_at.is_(None),
+                    MissionSource.next_run_at <= now,
+                ),
+                or_(
+                    MissionSource.next_eligible_at.is_(None),
+                    MissionSource.next_eligible_at <= now,
+                ),
+                # TASK-112 fase 3B: Mission vinculada é coletada pelo
+                # caminho compartilhado -- nunca conta aqui, mesmo
+                # raciocínio do anti-join do scheduler real.
+                ~exists().where(MissionMonitoringItem.mission_id == Mission.id),
             )
             .distinct()
         ).all()

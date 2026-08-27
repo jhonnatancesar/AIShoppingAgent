@@ -253,6 +253,46 @@ class Settings(BaseSettings):
     # throughput normal), ajustável pelo ADMIN sem número mágico
     # espalhado pelo código.
     store_min_interval_seconds: float = Field(default=2.0, gt=0, le=120)
+    # TASK-112 (fase 3B): fila justa unificada -- caminho compartilhado
+    # por MonitoringItem. `candidate_scan_limit` é só a janela de leitura
+    # para DESCOBRIR trabalho/donos (nunca um limite de execução -- um
+    # dono reservado tem TODO o seu trabalho due processado, sem cap
+    # adicional); 1000 é folgado para a escala real da V1.2 (dezenas de
+    # usuários, poucas centenas de itens monitorados, quotas de TASK-107
+    # limitando cada usuário a poucas dezenas de slots).
+    collection_candidate_scan_limit: int = Field(default=1000, ge=1, le=100000)
+    # Orçamento do sweep de fan-out -- duas dimensões (rodada 6 da
+    # revisão): quantos alvos (MonitoringItem, store) distintos considerar
+    # por ciclo, e quantas SharedFanOutTask processar no TOTAL (nunca
+    # "todos os pendentes" -- um alvo com backlog grande não pode
+    # monopolizar o worker). `fan_out_per_target_task_cap` dá fairness
+    # ENTRE alvos (round-robin em rodadas) -- um alvo pequeno nunca espera
+    # um alvo maior esvaziar.
+    collection_fan_out_target_scan_limit: int = Field(default=25, ge=1, le=1000)
+    collection_fan_out_task_budget: int = Field(default=100, ge=1, le=10000)
+    collection_fan_out_per_target_task_cap: int = Field(default=25, ge=1, le=1000)
+    collection_fan_out_concurrency: int = Field(default=4, ge=1, le=20)
+    # Política de cadência (`app.collection.cadence`) -- NUNCA confundir
+    # com cooldown de fairness acima (que decide QUEM consome capacidade,
+    # não QUANDO uma necessidade de monitoramento específica é
+    # revisitada). NORMAL: 45-75min, alvo ~60. PROMO/HIGH_ACTIVITY:
+    # 30-45min -- piso absoluto da V1.2, nenhum modo (nem uma futura
+    # diferenciação de plano pago) pode baixar disso; risco de bloqueio
+    # da infraestrutura compartilhada nunca é comprado por velocidade
+    # (validado por `CadenceConfig.__post_init__`).
+    collection_cadence_normal_min_minutes: int = Field(default=45, ge=1, le=1440)
+    collection_cadence_normal_max_minutes: int = Field(default=75, ge=1, le=1440)
+    collection_cadence_promo_min_minutes: int = Field(default=30, ge=30, le=1440)
+    collection_cadence_promo_max_minutes: int = Field(default=45, ge=1, le=1440)
+    # Detecção de atividade comercial alta -- sinal já durável (nova
+    # PriceObservation só existe quando o estado comercial mudou de
+    # verdade, TASK-093/DEC-097), sem schema novo para a contagem;
+    # `high_activity_duration_minutes` é histerese (evita alternar NORMAL/
+    # HIGH_ACTIVITY a cada ciclo bem na borda do limiar) -- único estado
+    # persistido é `StoreActivityState.high_activity_until`.
+    collection_high_activity_window_minutes: int = Field(default=30, ge=1, le=1440)
+    collection_high_activity_change_threshold: int = Field(default=3, ge=1, le=10000)
+    collection_high_activity_duration_minutes: int = Field(default=60, ge=1, le=1440)
 
     @field_validator("edge_cdp_url")
     @classmethod
@@ -280,6 +320,16 @@ class Settings(BaseSettings):
         if self.user_cooldown_max_seconds < self.user_cooldown_min_seconds:
             raise ValueError(
                 "user cooldown max must not be smaller than user cooldown min"
+            )
+        if self.collection_cadence_normal_max_minutes < self.collection_cadence_normal_min_minutes:
+            raise ValueError(
+                "collection_cadence_normal_max_minutes must not be smaller than "
+                "collection_cadence_normal_min_minutes"
+            )
+        if self.collection_cadence_promo_max_minutes < self.collection_cadence_promo_min_minutes:
+            raise ValueError(
+                "collection_cadence_promo_max_minutes must not be smaller than "
+                "collection_cadence_promo_min_minutes"
             )
         for secret_field, file_field in _SECRET_FILE_FIELDS.items():
             direct_value = getattr(self, secret_field)

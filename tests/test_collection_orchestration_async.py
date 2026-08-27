@@ -59,17 +59,40 @@ from app.collection.orchestration import (
     _resolve_seller,
     _run_phase_b,
     _same_commercial_state,
+    _ClaimedBatch,
     claim_due_collections,
+    claim_due_work,
     ensure_missing_schedules,
     recover_stale_runs,
 )
 from app.collection.relevance import OfferRelevance
+from app.collection.shared_collection import FanOutSweepSummary
 from app.missions.models import MissionStatus, VariantSelectionMode
 from app.products.identity import classify_product_request
 from app.products.models import Product
 from app.users.models import UserRole
 
 NOW = datetime(2026, 8, 12, 12, 0, tzinfo=UTC)
+
+
+@pytest.fixture(autouse=True)
+def _no_op_fan_out_sweep(monkeypatch: pytest.MonkeyPatch) -> None:
+    """TASK-112 fase 3B: `CollectionOrchestrator.run_batch` chama o sweep
+    de fan-out ANTES de qualquer outra coisa, sempre -- este arquivo é só
+    testes de caixa branca do caminho legado (`AsyncMock`, sem Postgres
+    real), então o sweep real (que faz suas próprias queries) nunca teria
+    o que responder a uma sessão mockada. `CollectionOrchestrator.
+    __init__` resolve `fan_out_sweeper`/`shared_collector` via import
+    local de `app.collection.shared_collection` quando não recebe nada
+    explicitamente (construção direta, como todo teste deste arquivo já
+    faz) -- então patchar a função NA ORIGEM, antes de qualquer
+    `CollectionOrchestrator(...)` deste arquivo ser construído, é
+    suficiente para todos os 23 pontos de construção sem precisar tocar
+    em nenhum deles individualmente."""
+    monkeypatch.setattr(
+        "app.collection.shared_collection.sweep_shared_collection_fan_out",
+        AsyncMock(return_value=FanOutSweepSummary()),
+    )
 
 
 @pytest.mark.parametrize(
@@ -226,41 +249,70 @@ def test_stale_runs_are_terminal_and_publish_failure(monkeypatch) -> None:
     evaluate.assert_awaited_once_with(session, run.mission_id, NOW)
 
 
-def test_claim_due_schedule_creates_runs_and_advances(monkeypatch) -> None:
-    """TASK-062 original: dado um schedule due com 2 fontes elegíveis, cada
-    fonte ganha seu próprio `CollectionRun` e o schedule avança. TASK-108
-    trocou a seleção de schedules due por `_select_due_schedules_for_batch`
-    (devolve `(schedule, user_id)`, não só `schedule`) -- aqui ela é
-    mockada diretamente (não é o objeto deste teste, que é a criação de
-    run/avanço de schedule dado um schedule já selecionado). Fairness/
-    cooldown/throttle de loja também não são o objeto deste teste --
-    neutralizados explicitamente para não mascarar o cenário."""
-    from app.missions.models import MissionSchedule
+def test_claim_due_sources_creates_runs_and_advances_each_source(monkeypatch) -> None:
+    """TASK-112 fase 3B (correção estrutural): due passa a ser por
+    `MissionSource` -- (mission, store) --, nunca por `MissionSchedule`
+    (missão inteira) -- achado real da auditoria: a versão anterior
+    reagendava a Mission inteira pela decisão mais cedo entre as lojas
+    claimadas, fazendo uma store NORMAL ser recoletada antes da própria
+    cadência só porque outra store da mesma missão estava em
+    HIGH_ACTIVITY. Aqui a SELECT ... FOR UPDATE (`_due_legacy_sources_
+    statement`) é mockada diretamente via `session.execute` (não é o
+    objeto deste teste, que é claim/avanço de CADA source dado um
+    conjunto já selecionado); `resolve_collection_cadence`/`start_
+    collection_run` mockados no limite da chamada, mesmo espírito de
+    `test_stale_runs_are_terminal_and_publish_failure` acima -- fora do
+    escopo deste teste (cobertura real de cadência multi-store, com
+    verificação de PROVIDER CALL: `tests/integration/test_legacy_source_
+    level_cadence.py`). Fairness/cooldown/throttle de loja também não são
+    o objeto deste teste -- neutralizados explicitamente."""
+    from app.missions.models import MissionSource
 
     mission_id = uuid4()
     user_id = uuid4()
-    schedule = MissionSchedule(
-        id=uuid4(),
-        mission_id=mission_id,
-        interval_minutes=60,
-        next_run_at=NOW,
-        is_enabled=True,
-    )
-    criteria = SimpleNamespace(search_query="GPU", model=None)
     store_ids = (uuid4(), uuid4())
+    source_a = MissionSource(mission_id=mission_id, store_id=store_ids[0])
+    source_b = MissionSource(mission_id=mission_id, store_id=store_ids[1])
+    criteria = SimpleNamespace(search_query="GPU", model=None)
     session = _mock_async_session()
+
+    due_rows = MagicMock()
+    due_rows.all.return_value = [
+        (source_a, "kabum", user_id),
+        (source_b, "pichau", user_id),
+    ]
+    # 1a chamada: SELECT ... FOR UPDATE de sources due; as 3 seguintes são
+    # os UPDATEs de throttle (1 por source) e o avanço de fila do usuário
+    # (1, já que as duas claims pertencem ao mesmo usuário) -- nenhum
+    # deles lê o retorno, só precisam não estourar `StopIteration`.
+    session.execute.side_effect = [due_rows, MagicMock(), MagicMock(), MagicMock()]
+    session.scalars.return_value = []  # UserCollectionQueueState -- ninguém em cooldown
+    session.get.side_effect = [None, None]  # StoreThrottleState -- sem throttle ativo
+    # running-check (1x, cache por missão) + MissionCriteria (1x, cache).
     session.scalar.side_effect = [None, criteria]
-    rows = MagicMock()
-    rows.all.return_value = [(store_ids[0], "kabum"), (store_ids[1], "pichau")]
-    session.execute.return_value = rows
+
     runs = iter((SimpleNamespace(id=uuid4()), SimpleNamespace(id=uuid4())))
-    monkeypatch.setattr(
-        "app.collection.orchestration._select_due_schedules_for_batch",
-        AsyncMock(return_value=[(schedule, user_id)]),
-    )
     monkeypatch.setattr(
         "app.collection.orchestration.start_collection_run",
         AsyncMock(side_effect=lambda *_a, **_k: next(runs)),
+    )
+    decisions = iter(
+        (
+            SimpleNamespace(min_minutes=45, max_minutes=45, mode="normal"),
+            SimpleNamespace(min_minutes=30, max_minutes=30, mode="high_activity"),
+        )
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration.resolve_collection_cadence",
+        AsyncMock(side_effect=lambda *_a, **_k: next(decisions)),
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration.sample_next_run_at",
+        lambda started_at, decision: started_at + timedelta(minutes=decision.min_minutes),
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration._refresh_legacy_schedule_aggregate",
+        AsyncMock(),
     )
 
     claims = asyncio.run(
@@ -274,47 +326,41 @@ def test_claim_due_schedule_creates_runs_and_advances(monkeypatch) -> None:
     )
 
     assert [claim.source_code for claim in claims] == ["kabum", "pichau"]
-    assert schedule.last_run_at == NOW
-    assert schedule.next_run_at == NOW + timedelta(hours=1)
+    # Cada source avança pela SUA PRÓPRIA decisão de cadência, nunca uma
+    # decisão compartilhada/mais-cedo-vence entre as duas.
+    assert source_a.last_run_at == NOW
+    assert source_a.next_run_at == NOW + timedelta(minutes=45)
+    assert source_b.last_run_at == NOW
+    assert source_b.next_run_at == NOW + timedelta(minutes=30)
     session.flush.assert_awaited_once()
 
 
 def test_claim_due_collections_skips_mission_already_running() -> None:
     """TASK-062 original: missão com `CollectionRun` já `RUNNING` não pode
-    ser reclamada de novo -- nenhuma claim, nenhum run novo. Mesma troca de
-    `find_due_schedules_async` -> `_select_due_schedules_for_batch` do
-    teste acima; fairness/cooldown/throttle neutralizados (não são o
-    objeto deste teste, e nem chegam a rodar aqui já que nenhuma claim é
-    produzida)."""
-    from app.missions.models import MissionSchedule
+    ser reclamada de novo -- nenhuma claim, nenhum run novo, mesmo com
+    fonte due. TASK-112 fase 3B: seleção agora é por `MissionSource`."""
+    from app.missions.models import MissionSource
 
     mission_id = uuid4()
     user_id = uuid4()
-    schedule = MissionSchedule(
-        id=uuid4(),
-        mission_id=mission_id,
-        interval_minutes=60,
-        next_run_at=NOW,
-        is_enabled=True,
-    )
+    source = MissionSource(mission_id=mission_id, store_id=uuid4())
     session = _mock_async_session()
-    session.scalar.return_value = uuid4()  # ja existe um run RUNNING
 
-    async def _run():
-        import app.collection.orchestration as module
+    due_rows = MagicMock()
+    due_rows.all.return_value = [(source, "kabum", user_id)]
+    session.execute.return_value = due_rows
+    session.scalars.return_value = []
+    session.scalar.return_value = uuid4()  # já existe um run RUNNING
 
-        module._select_due_schedules_for_batch = AsyncMock(
-            return_value=[(schedule, user_id)]
-        )
-        return await claim_due_collections(
+    claims = asyncio.run(
+        claim_due_collections(
             session,
             now=NOW,
             user_cooldown_min_seconds=0,
             user_cooldown_max_seconds=0,
             store_min_interval_seconds=0,
         )
-
-    claims = asyncio.run(_run())
+    )
 
     assert claims == ()
 
@@ -1531,9 +1577,13 @@ def test_orchestrator_batch_processes_success_and_failure(monkeypatch) -> None:
     monkeypatch.setattr(
         "app.collection.orchestration.recover_stale_runs", AsyncMock(return_value=0)
     )
+    # TASK-112 fase 3B: `run_batch` passou a chamar `claim_due_work`
+    # (scheduler unificado), nunca mais `claim_due_collections` direto --
+    # este teste só exercita o caminho legado, então o batch retornado
+    # tem `shared=()`.
     monkeypatch.setattr(
-        "app.collection.orchestration.claim_due_collections",
-        AsyncMock(return_value=claims),
+        "app.collection.orchestration.claim_due_work",
+        AsyncMock(return_value=_ClaimedBatch(old_path=claims, shared=())),
     )
     orchestrator = CollectionOrchestrator(
         session_factory, CollectionAdapter(), ai_manager=_StubAIManager()
@@ -1734,9 +1784,11 @@ def _patch_phase_a(monkeypatch, claims: tuple[ClaimedCollection, ...]) -> None:
     monkeypatch.setattr(
         "app.collection.orchestration.recover_stale_runs", AsyncMock(return_value=0)
     )
+    # TASK-112 fase 3B: `run_batch` chama `claim_due_work`, nunca mais
+    # `claim_due_collections` direto -- só caminho legado aqui (`shared=()`).
     monkeypatch.setattr(
-        "app.collection.orchestration.claim_due_collections",
-        AsyncMock(return_value=claims),
+        "app.collection.orchestration.claim_due_work",
+        AsyncMock(return_value=_ClaimedBatch(old_path=claims, shared=())),
     )
 
 
@@ -2385,15 +2437,20 @@ def test_scenario_r_next_batch_does_not_resolve_promoted_identity(monkeypatch) -
     )
 
     async def _dynamic_claims(*args: object, **kwargs: object):
-        return _mission_claims(
-            mission_id,
-            search_query=persisted.search_query,
-            model=persisted.model,
-            sources=("kabum", "amazon"),
+        return _ClaimedBatch(
+            old_path=_mission_claims(
+                mission_id,
+                search_query=persisted.search_query,
+                model=persisted.model,
+                sources=("kabum", "amazon"),
+            ),
+            shared=(),
         )
 
+    # TASK-112 fase 3B: `run_batch` chama `claim_due_work`, nunca mais
+    # `claim_due_collections` direto.
     monkeypatch.setattr(
-        "app.collection.orchestration.claim_due_collections",
+        "app.collection.orchestration.claim_due_work",
         _dynamic_claims,
     )
     promotion_calls: list[tuple[object, str]] = []

@@ -12,6 +12,7 @@ from opentelemetry.trace import SpanKind
 from app.ai_provider import build_admin_dev_ai_provider_manager
 from app.collection.adapter import CollectionAdapter
 from app.collection.browser import BrowserSettings
+from app.collection.cadence import CadenceConfig
 from app.collection.identity_resolution import StoreProductIdentityResolver
 from app.collection.orchestration import CollectionOrchestrator
 from app.collection.providers import (
@@ -43,6 +44,17 @@ from app.observability.metrics import (
     start_worker_metrics_server,
 )
 from app.observability.tracing import configure_tracing
+
+# TASK-112 fase 3B: worker.py já importa orchestration.py e shared_
+# collection.py livremente (nenhum ciclo -- é este módulo que junta os
+# dois, não um importando o outro) -- passa as referências reais
+# explicitamente na construção do orchestrator, em vez de depender do
+# default de conveniência que `CollectionOrchestrator.__init__` resolve
+# sozinho quando não recebe nada (pensado para scripts/testes).
+from app.collection.shared_collection import (
+    _execute_claimed_shared_collection,
+    sweep_shared_collection_fan_out,
+)
 
 logger = logging.getLogger("app.collection.worker")
 
@@ -248,6 +260,23 @@ async def run_worker(
         user_cooldown_min_seconds=settings.user_cooldown_min_seconds,
         user_cooldown_max_seconds=settings.user_cooldown_max_seconds,
         store_min_interval_seconds=settings.store_min_interval_seconds,
+        # TASK-112 fase 3B: caminho compartilhado.
+        cadence_config=CadenceConfig(
+            normal_min_minutes=settings.collection_cadence_normal_min_minutes,
+            normal_max_minutes=settings.collection_cadence_normal_max_minutes,
+            promo_min_minutes=settings.collection_cadence_promo_min_minutes,
+            promo_max_minutes=settings.collection_cadence_promo_max_minutes,
+            high_activity_window_minutes=settings.collection_high_activity_window_minutes,
+            high_activity_change_threshold=settings.collection_high_activity_change_threshold,
+            high_activity_duration_minutes=settings.collection_high_activity_duration_minutes,
+        ),
+        candidate_scan_limit=settings.collection_candidate_scan_limit,
+        fan_out_target_scan_limit=settings.collection_fan_out_target_scan_limit,
+        fan_out_task_budget=settings.collection_fan_out_task_budget,
+        fan_out_per_target_task_cap=settings.collection_fan_out_per_target_task_cap,
+        fan_out_concurrency=settings.collection_fan_out_concurrency,
+        shared_collector=_execute_claimed_shared_collection,
+        fan_out_sweeper=sweep_shared_collection_fan_out,
     )
     try:
         consecutive_failures = 0
@@ -293,10 +322,17 @@ async def run_worker(
                 else logging.DEBUG,
                 "collection_batch",
                 extra={
+                    # TASK-112 fase 3B: `collection_claimed`/`_succeeded`/
+                    # `_failed` continuam TOTAIS (legado + compartilhado)
+                    # -- mesma semântica de sempre, nunca subconta depois
+                    # do cutover. Campos novos detalham a composição.
                     "collection_claimed": result.claimed,
                     "collection_succeeded": result.succeeded,
                     "collection_failed": result.failed,
                     "collection_stale_recovered": result.recovered_stale,
+                    "collection_legacy_claimed": result.legacy_claimed,
+                    "collection_shared_claimed": result.shared_claimed,
+                    "collection_fan_out_attempted_task_count": result.fan_out_attempted_task_count,
                 },
             )
             if once:

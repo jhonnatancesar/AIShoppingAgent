@@ -13,14 +13,14 @@ import enum
 import logging
 import random
 import traceback
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from decimal import Decimal
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import exists, func, or_, select
+from sqlalchemy import exists, func, or_, select, tuple_
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -28,6 +28,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.ai_provider import AIProviderManager
 from app.alerts import evaluate_price_alerts
 from app.collection.adapter import CollectionAdapter
+from app.collection.cadence import (
+    CadenceConfig,
+    resolve_collection_cadence,
+    sample_next_run_at,
+)
 from app.collection.contracts import (
     CollectionRequest,
     MarketplacePartyKind,
@@ -41,6 +46,12 @@ from app.collection.errors import (
     ProviderBlockedError,
     ProviderCircuitOpenError,
     ProviderNavigationError,
+)
+from app.collection.fairness import (
+    _commit_fairness_turn_for_owner,
+    _reserve_fairness_owners,
+    is_user_eligible,
+    queue_sort_key,
 )
 from app.collection.model_matching import (
     normalize_for_matching as _normalize_for_matching,
@@ -72,6 +83,7 @@ from app.collection.relevance import (
     classify_offer_relevance,
     normalize_offer_title,
 )
+from app.collection.shared_claim import _claim_shared_collection_in_session, _SharedClaim
 from app.database.time import utc_now
 from app.events import (
     AggregateType,
@@ -90,14 +102,15 @@ from app.events.service import publish_event_async
 from app.missions.models import (
     Mission,
     MissionCriteria,
+    MissionMonitoringItem,
     MissionProductSelection,
     MissionSchedule,
     MissionSource,
     MissionStatus,
+    MonitoringItemStore,
     VariantSelectionMode,
 )
 from app.missions.schedule import (
-    advance_schedule,
     next_source_backoff,
     staggered_next_run_at,
 )
@@ -111,6 +124,17 @@ from app.products.identity import (
 from app.products.models import Product
 from app.stores.models import Seller, Store
 from app.users.models import UserRole
+
+if TYPE_CHECKING:
+    # TASK-112 fase 3B: `shared_collection.py` já depende deste módulo
+    # (17+ símbolos privados reaproveitados) -- um import de módulo aqui
+    # criaria um ciclo real. `TYPE_CHECKING` nunca executa em runtime
+    # (só para checagem estática), então não custa nada; as referências
+    # reais chegam via injeção de dependência no construtor de
+    # `CollectionOrchestrator` (mesmo padrão de `identity_resolver`,
+    # TASK-083), resolvidas de verdade em `worker.py`, que já importa os
+    # dois módulos livremente.
+    from app.collection.shared_collection import FanOutSweepSummary, SharedCollectionResult
 
 logger = logging.getLogger("app.collection.orchestration")
 
@@ -176,10 +200,33 @@ class ClaimedCollection:
 
 @dataclass(frozen=True, slots=True)
 class CollectionBatchResult:
+    """TASK-112 fase 3B: `claimed`/`succeeded`/`failed` são TOTAIS (legado
+    + compartilhado somados) -- `backend/app/collection/worker.py` já loga
+    esses 3 campos como métrica operacional (`collection_claimed` etc.);
+    mantê-los "só legado" faria qualquer painel/alerta existente
+    subcontar depois do cutover, já que o caminho compartilhado passaria
+    a produzir coleta real que nunca apareceria nessas métricas. Toda
+    fixture de teste hoje tem zero trabalho compartilhado, então
+    `claimed == legacy_claimed` em todo teste existente -- a mudança de
+    contrato não quebra nada hoje, só passa a somar corretamente quando o
+    caminho novo entrar em produção. `legacy_*`/`shared_*` detalham a
+    composição; `fan_out_*` são as métricas do sweep (independentes de
+    claim novo neste ciclo -- backlog de ciclos anteriores)."""
+
     claimed: int
     succeeded: int
     failed: int
     recovered_stale: int
+    legacy_claimed: int = 0
+    legacy_succeeded: int = 0
+    legacy_failed: int = 0
+    shared_claimed: int = 0
+    shared_succeeded: int = 0
+    shared_failed: int = 0
+    fan_out_attempted_task_count: int = 0
+    fan_out_done_mission_count: int = 0
+    fan_out_attention_required_mission_count: int = 0
+    fan_out_terminally_failed_mission_count: int = 0
 
 
 async def ensure_missing_schedules(
@@ -259,78 +306,124 @@ async def recover_stale_runs(
     return len(runs)
 
 
-async def _select_due_schedules_for_batch(
-    session: AsyncSession,
-    *,
-    due_at: datetime,
-    limit: int,
-    max_users: int,
-) -> list[tuple[MissionSchedule, UUID]]:
-    """TASK-108: fila justa por usuário -- camada ortogonal ao backoff por
-    provider (`DEC-046`, intocado). Entre os agendamentos due, devolve só
-    os de até `max_users` usuários elegíveis (fora do cooldown
-    individual), escolhidos por round-robin: quem nunca foi processado
-    (`last_processed_at IS NULL`) vence sempre; entre os já processados,
-    o mais antigo primeiro. O cooldown de um usuário nunca exclui os
-    demais candidatos -- eles só são ignorados nesta seleção, sem afetar
-    sua própria agenda (`MissionSchedule.next_run_at` continua vencida
-    até serem escolhidos num ciclo futuro)."""
+def _due_legacy_sources_statement(*, due_at: datetime, limit: int, lock: bool):
+    """TASK-112 fase 3B (correção estrutural, achado da auditoria pós-
+    implementação): a unidade REAL de execução do caminho legado é
+    `MissionSource` -- `(Mission, Store)` --, nunca `MissionSchedule`
+    (agenda por MISSÃO INTEIRA). A versão anterior desta fase selecionava
+    por `MissionSchedule` due e expandia para TODAS as `MissionSource`
+    habilitadas da missão, sem checar a cadência de cada uma -- uma
+    Mission com KaBuM em NORMAL (45-75min) e Amazon em HIGH_ACTIVITY
+    (30-45min) tinha `MissionSchedule.next_run_at` reagendada para o mais
+    cedo entre as duas; quando esse horário vencia, KaBuM era recoletada
+    de novo mesmo sem ter passado sua própria cadência, só porque a
+    missão "acordou" para atender Amazon. Corrigido selecionando
+    diretamente por `MissionSource` due -- cada `(mission, store)` só
+    aparece aqui quando SUA PRÓPRIA `next_run_at` (cadência,
+    `app.collection.cadence`) e `next_eligible_at` (backoff DEC-046, gate
+    SEPARADO que sempre vence) permitem.
+
+    `MissionSchedule.is_enabled` continua um gate real (join, nunca
+    dropado) -- é o kill-switch independente que ADMIN
+    (`_stop_user_missions`) e privacidade (`deidentify_account`) já usam
+    para desligar TODA a missão de uma vez sem precisar tocar em cada
+    `MissionSource`; `MissionSchedule.next_run_at`/`last_run_at` deixam de
+    ser lidos aqui (viram agregado DERIVADO só de exibição, ver
+    `_refresh_legacy_schedule_aggregate`).
+
+    Anti-join contra `MissionMonitoringItem` preservado (TASK-112 fase
+    3B original): uma Mission vinculada a um `MonitoringItem` nunca é
+    candidata aqui, mesmo com `MissionSource`/`MissionSchedule`
+    fisicamente presentes (dado morto, nunca apagado) -- sem isto, uma
+    Mission vinculada seria coletada duas vezes.
+
+    `lock=True` (usado só por `claim_due_collections`, compatibility/
+    legacy-only, transação única sem a reserva de fairness em duas fases)
+    aplica `FOR UPDATE SKIP LOCKED` na própria `MissionSource`. `lock=False`
+    (usado pela Fase 1 somente-leitura de `claim_due_work`) nunca trava --
+    travar um candidato que o corte de `max_users` vai descartar bloquearia
+    outro worker à toa; a garantia real de "nunca claima duas vezes" fica
+    inteiramente no lock da Fase 2 (`_claim_legacy_source_attempt`)."""
+    statement = (
+        select(MissionSource, Store.code, Mission.user_id)
+        .join(Mission, Mission.id == MissionSource.mission_id)
+        .join(Store, Store.id == MissionSource.store_id)
+        .join(MissionSchedule, MissionSchedule.mission_id == Mission.id)
+        .where(
+            Mission.status == MissionStatus.ACTIVE,
+            or_(Mission.expires_at.is_(None), Mission.expires_at > due_at),
+            MissionSchedule.is_enabled.is_(True),
+            Store.is_active.is_(True),
+            Store.code.in_(V1_SOURCE_CODES),
+            or_(
+                MissionSource.next_run_at.is_(None),
+                MissionSource.next_run_at <= due_at,
+            ),
+            or_(
+                MissionSource.next_eligible_at.is_(None),
+                MissionSource.next_eligible_at <= due_at,
+            ),
+            ~exists().where(MissionMonitoringItem.mission_id == Mission.id),
+        )
+        .order_by(MissionSource.next_run_at.asc().nulls_first(), Mission.id, Store.id)
+        .limit(limit)
+    )
+    if lock:
+        statement = statement.with_for_update(skip_locked=True, of=MissionSource)
+    return statement
+
+
+async def _select_due_legacy_sources_for_batch(
+    session: AsyncSession, *, due_at: datetime, limit: int
+) -> list[tuple[MissionSource, str, UUID]]:
+    """Somente leitura -- ver `_due_legacy_sources_statement` (`lock=False`)."""
+    return (
+        await session.execute(
+            _due_legacy_sources_statement(due_at=due_at, limit=limit, lock=False)
+        )
+    ).all()
+
+
+async def _refresh_legacy_schedule_aggregate(
+    session: AsyncSession, *, mission_id: UUID, now: datetime
+) -> None:
+    """`MissionSchedule` deixou de ser autoritativa para cadência
+    (`MissionSource` é, TASK-112 fase 3B) -- este helper só mantém o
+    AGREGADO DE EXIBIÇÃO coerente: `next_run_at` = MIN entre as
+    `MissionSource` da missão (`NULL` tratado como `now`, já due);
+    `last_run_at` = MAIS RECENTE. Consumido por `MissionScheduleOut`
+    (API de detalhe da missão) e pelo dashboard ADMIN -- nunca lido por
+    nenhuma decisão real de claim. `is_enabled`/`interval_minutes` nunca
+    são tocados aqui (permanecem o kill-switch e a base de DEC-046,
+    respectivamente -- papéis que não mudaram)."""
+    schedule = await session.scalar(
+        select(MissionSchedule)
+        .where(MissionSchedule.mission_id == mission_id)
+        .with_for_update()
+    )
+    if schedule is None or not schedule.is_enabled:
+        return
+    # `autoflush=False` (convenção do projeto, `app.database.session`) --
+    # o claim por source, logo acima na mesma transação, só mutou atributos
+    # Python de objetos `MissionSource` já carregados; esta é uma SELECT
+    # "core" nova (só colunas, nunca passa pelo identity map), nunca veria
+    # essas mudanças sem um flush explícito antes.
+    await session.flush()
     rows = (
         await session.execute(
-            select(MissionSchedule, Mission.user_id)
-            .join(Mission, Mission.id == MissionSchedule.mission_id)
-            .where(
-                MissionSchedule.is_enabled.is_(True),
-                MissionSchedule.next_run_at <= due_at,
-                Mission.status == MissionStatus.ACTIVE,
-                or_(Mission.expires_at.is_(None), Mission.expires_at > due_at),
+            select(MissionSource.next_run_at, MissionSource.last_run_at).where(
+                MissionSource.mission_id == mission_id
             )
-            .order_by(MissionSchedule.next_run_at, MissionSchedule.id)
-            .limit(limit)
-            .with_for_update(skip_locked=True, of=MissionSchedule)
         )
     ).all()
     if not rows:
-        return []
-
-    schedules_by_user: dict[UUID, list[MissionSchedule]] = {}
-    user_order: list[UUID] = []
-    for schedule, user_id in rows:
-        if user_id not in schedules_by_user:
-            schedules_by_user[user_id] = []
-            user_order.append(user_id)
-        schedules_by_user[user_id].append(schedule)
-
-    states = {
-        state.user_id: state
-        for state in await session.scalars(
-            select(UserCollectionQueueState).where(
-                UserCollectionQueueState.user_id.in_(user_order)
-            )
-        )
-    }
-
-    def sort_key(user_id: UUID) -> tuple[int, object]:
-        last_processed_at = states[user_id].last_processed_at if user_id in states else None
-        if last_processed_at is None:
-            return (0, str(user_id))
-        return (1, last_processed_at, str(user_id))
-
-    eligible_users = [
-        user_id
-        for user_id in user_order
-        if user_id not in states
-        or states[user_id].next_eligible_at is None
-        or states[user_id].next_eligible_at <= due_at
-    ]
-    eligible_users.sort(key=sort_key)
-    selected_users = eligible_users[:max_users]
-
-    return [
-        (schedule, user_id)
-        for user_id in selected_users
-        for schedule in schedules_by_user[user_id]
-    ]
+        return
+    next_candidates = [next_run_at or now for next_run_at, _ in rows]
+    last_candidates = [last_run_at for _, last_run_at in rows if last_run_at is not None]
+    schedule.next_run_at = min(next_candidates)
+    if last_candidates:
+        schedule.last_run_at = max(last_candidates)
+    schedule.updated_at = now
 
 
 async def _advance_user_queue_state(
@@ -410,66 +503,120 @@ async def claim_due_collections(
     user_cooldown_min_seconds: float = 60.0,
     user_cooldown_max_seconds: float = 180.0,
     store_min_interval_seconds: float = 2.0,
+    cadence_config: CadenceConfig | None = None,
 ) -> tuple[ClaimedCollection, ...]:
-    """Reserva fonte por fonte e avança a agenda numa transação curta."""
+    """Reserva fonte por fonte e avança a cadência individual numa
+    transação curta -- compatibility/legacy-only (scripts/testes que
+    querem só o comportamento legado isolado; produção usa
+    `claim_due_work`, que compartilha `_due_legacy_sources_statement` com
+    esta função para nunca divergir sobre o que conta como "due").
+
+    TASK-112 fase 3B (correção estrutural): due é decidido por
+    `MissionSource` -- `(mission, store)` --, nunca por `MissionSchedule`
+    (missão inteira). Contrato externo (assinatura/retorno) preservado
+    para quem já chama isto direto."""
     effective_now = now or utc_now()
+    effective_cadence_config = cadence_config or CadenceConfig()
+    rows = (
+        await session.execute(
+            _due_legacy_sources_statement(due_at=effective_now, limit=limit, lock=True)
+        )
+    ).all()
+    if not rows:
+        return ()
+
+    sources_by_user: dict[UUID, list[tuple[MissionSource, str]]] = {}
+    user_order: list[UUID] = []
+    for source, store_code, user_id in rows:
+        if user_id not in sources_by_user:
+            sources_by_user[user_id] = []
+            user_order.append(user_id)
+        sources_by_user[user_id].append((source, store_code))
+
+    states = {
+        state.user_id: state
+        for state in await session.scalars(
+            select(UserCollectionQueueState).where(
+                UserCollectionQueueState.user_id.in_(user_order)
+            )
+        )
+    }
+
+    def sort_key(user_id: UUID) -> tuple[int, object]:
+        last_processed_at = states[user_id].last_processed_at if user_id in states else None
+        if last_processed_at is None:
+            return (0, str(user_id))
+        return (1, last_processed_at, str(user_id))
+
+    eligible_users = [
+        user_id
+        for user_id in user_order
+        if user_id not in states
+        or states[user_id].next_eligible_at is None
+        or states[user_id].next_eligible_at <= effective_now
+    ]
+    eligible_users.sort(key=sort_key)
+    selected_users = eligible_users[:max_users]
+
     claims: list[ClaimedCollection] = []
     processed_users: set[UUID] = set()
-    schedules = await _select_due_schedules_for_batch(
-        session, due_at=effective_now, limit=limit, max_users=max_users
-    )
-    for schedule, user_id in schedules:
-        mission_id = schedule.mission_id
-        running = await session.scalar(
-            select(CollectionRun.id)
-            .where(
-                CollectionRun.mission_id == mission_id,
-                CollectionRun.status == CollectionRunStatus.RUNNING,
-            )
-            .limit(1)
-        )
-        if running is not None:
-            continue
-        criteria = await session.scalar(
-            select(MissionCriteria).where(MissionCriteria.mission_id == mission_id)
-        )
-        if criteria is None or not criteria.search_query.strip():
-            continue
-        sources = (
-            await session.execute(
-                select(Store.id, Store.code)
-                .join(MissionSource, MissionSource.store_id == Store.id)
-                .outerjoin(
-                    StoreThrottleState, StoreThrottleState.store_id == Store.id
+    claimed_mission_ids: set[UUID] = set()
+    criteria_cache: dict[UUID, MissionCriteria | None] = {}
+    # Mesma granularidade de sempre: se a MISSÃO já tem QUALQUER store em
+    # CollectionRun RUNNING, o ciclo inteiro dela fica de fora (não só a
+    # store específica -- a unicidade por `(mission_id, store_id)` já é
+    # garantida à parte pelo índice `_RUNNING_INDEX`/`start_collection_
+    # run`). Cache evita repetir a mesma query para cada source da mesma
+    # missão.
+    running_cache: dict[UUID, bool] = {}
+    for user_id in selected_users:
+        for source, store_code in sources_by_user[user_id]:
+            mission_id = source.mission_id
+            if mission_id not in running_cache:
+                running_cache[mission_id] = (
+                    await session.scalar(
+                        select(CollectionRun.id)
+                        .where(
+                            CollectionRun.mission_id == mission_id,
+                            CollectionRun.status == CollectionRunStatus.RUNNING,
+                        )
+                        .limit(1)
+                    )
+                ) is not None
+            if running_cache[mission_id]:
+                continue
+            if mission_id not in criteria_cache:
+                criteria_cache[mission_id] = await session.scalar(
+                    select(MissionCriteria).where(MissionCriteria.mission_id == mission_id)
                 )
-                .where(
-                    MissionSource.mission_id == mission_id,
-                    Store.is_active.is_(True),
-                    Store.code.in_(V1_SOURCE_CODES),
-                    # DEC-046: fonte específica em backoff (bloqueio externo
-                    # confirmado) fica de fora deste ciclo; as demais fontes
-                    # da mesma missão continuam normalmente.
-                    or_(
-                        MissionSource.next_eligible_at.is_(None),
-                        MissionSource.next_eligible_at <= effective_now,
-                    ),
-                    # TASK-108: pacing GLOBAL por loja -- independe de qual
-                    # usuário/missão pediu a última claim desta loja.
-                    or_(
-                        StoreThrottleState.next_allowed_at.is_(None),
-                        StoreThrottleState.next_allowed_at <= effective_now,
-                    ),
-                )
-                .order_by(Store.code)
-            )
-        ).all()
-        mission_claims: list[ClaimedCollection] = []
-        for store_id, source_code in sources:
+            criteria = criteria_cache[mission_id]
+            if criteria is None or not criteria.search_query.strip():
+                continue
+            # TASK-108: pacing GLOBAL por loja -- independe de qual
+            # usuário/missão pediu a última claim desta loja.
+            throttle = await session.get(StoreThrottleState, source.store_id)
+            if (
+                throttle is not None
+                and throttle.next_allowed_at is not None
+                and throttle.next_allowed_at > effective_now
+            ):
+                continue
+            # Recheck sob o lock já adquirido pela SELECT ... FOR UPDATE
+            # acima -- a leitura desta linha pode ter precedido o lock
+            # efetivo sobre ela; mesma disciplina do resto do sistema
+            # (nunca confiar só na leitura otimista da seleção).
+            if source.next_run_at is not None and source.next_run_at > effective_now:
+                continue
+            if (
+                source.next_eligible_at is not None
+                and source.next_eligible_at > effective_now
+            ):
+                continue
             try:
                 async with session.begin_nested():
                     run = await start_collection_run(
                         session,
-                        store_id,
+                        source.store_id,
                         mission_id,
                         started_at=effective_now,
                     )
@@ -477,33 +624,47 @@ async def claim_due_collections(
                 if _constraint_name(error) != _RUNNING_INDEX:
                     raise
                 continue
-            mission_claims.append(
+            decision = await resolve_collection_cadence(
+                session,
+                store_id=source.store_id,
+                now=effective_now,
+                config=effective_cadence_config,
+            )
+            source.last_run_at = effective_now
+            source.next_run_at = sample_next_run_at(effective_now, decision)
+            # TASK-108: aplicado já, dentro do mesmo batch/transação -- a
+            # próxima source desta loja (mesma missão ou outra, mais
+            # adiante no loop) já vê o novo `next_allowed_at`.
+            await _advance_store_throttle(
+                session,
+                store_id=source.store_id,
+                claimed_at=effective_now,
+                min_interval_seconds=store_min_interval_seconds,
+            )
+            claims.append(
                 ClaimedCollection(
                     run.id,
                     mission_id,
-                    store_id,
-                    source_code,
+                    source.store_id,
+                    store_code,
                     criteria.search_query,
                     effective_now,
                     criteria.model,
                 )
             )
-            # TASK-108: aplicado já, dentro do mesmo batch/transação --
-            # a próxima fonte desta loja (mesma missão ou outra, mais
-            # adiante no loop) já vê o novo `next_allowed_at`.
-            await _advance_store_throttle(
-                session,
-                store_id=store_id,
-                claimed_at=effective_now,
-                min_interval_seconds=store_min_interval_seconds,
-            )
-        if mission_claims:
-            advance_schedule(schedule, started_at=effective_now)
-            claims.extend(mission_claims)
             processed_users.add(user_id)
+            claimed_mission_ids.add(mission_id)
+
+    # Agregado de exibição (`MissionScheduleOut`, dashboard ADMIN) -- nunca
+    # lido por nenhuma decisão de claim (ver `_refresh_legacy_schedule_
+    # aggregate`).
+    for mission_id in claimed_mission_ids:
+        await _refresh_legacy_schedule_aggregate(
+            session, mission_id=mission_id, now=effective_now
+        )
     # TASK-108: só usuários que realmente contribuíram com uma claim real
     # nesta rodada entram em cooldown -- um usuário selecionado cujas
-    # missões due não geraram nenhuma claim (já rodando, fontes em
+    # sources due não geraram nenhuma claim (já rodando, fontes em
     # backoff) não é penalizado por um lote vazio.
     for user_id in processed_users:
         await _advance_user_queue_state(
@@ -515,6 +676,400 @@ async def claim_due_collections(
         )
     await session.flush()
     return tuple(claims)
+
+
+# ---------------------------------------------------------------------------
+# TASK-112 fase 3B: scheduler unificado -- fila de fairness compartilhada
+# entre o caminho antigo (por MissionSource) e o caminho novo (por
+# MonitoringItemStore). `claim_due_collections` acima é compatibility/
+# legacy-only -- usada por qualquer caller que ainda queira só o
+# comportamento legado isolado, mas compartilha `_due_legacy_sources_
+# statement` com a Fase 1 abaixo para nunca divergir sobre due-ness.
+# `claim_due_work` abaixo é o único caminho usado pelo
+# `CollectionOrchestrator` de produção.
+#
+# Desenho (documentado em detalhe em `docs/tasks/TASK-112.md`, revisado
+# em 6 rodadas antes desta implementação):
+#   1. Seleção somente-leitura (`_select_due_work_for_batch`) -- nunca
+#      trava um candidato que o corte de `max_users` vai descartar.
+#      Candidatos compartilhados contam por `MonitoringItemStore` ÚNICO
+#      (nunca explodidos por usuário vinculado).
+#   2. Reserva de fairness (`app.collection.fairness._reserve_fairness_
+#      owners`) -- lock real de `UserCollectionQueueState`, em ordem de
+#      `user_id`, SEMPRE antes de qualquer lock de loja. É este lock
+#      contínuo (não mais um token comparado por igualdade) que impede
+#      duas execuções concorrentes de `claim_due_work` (mesmo com `now`
+#      diferentes) de creditarem o mesmo usuário duas vezes.
+#   3. Só para donos reservados: lista ÚNICA de tentativas (legado +
+#      compartilhado juntos), ordenada por `(store_id, due_at, kind,
+#      resource_id)` -- ordem global de locja evita deadlock cruzado
+#      entre transações concorrentes; nenhum caminho tem prioridade
+#      estrutural sobre o outro na mesma loja.
+#   4. Cooldown só é gravado para donos que tiveram >= 1 claim real
+#      (`_commit_fairness_turn_for_owner`) -- usa o lock já em mãos desde
+#      o passo 2, `UPDATE` simples, sem CAS.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class _SelectedWork:
+    owner_ids: frozenset[UUID]
+    old_path_sources_by_owner: dict[UUID, tuple[tuple[MissionSource, str], ...]]
+    shared_targets_by_owner: dict[UUID, tuple[tuple[UUID, UUID], ...]]
+
+
+async def _select_due_work_for_batch(
+    session: AsyncSession,
+    *,
+    due_at: datetime,
+    limit: int,
+    max_users: int,
+    candidate_scan_limit: int,
+) -> _SelectedWork:
+    """Somente leitura -- NENHUM `FOR UPDATE` aqui (achado real, rodada 5:
+    travar um candidato que o corte de `max_users` vai descartar bloqueia
+    outro worker à toa). A garantia real de "nunca claima duas vezes"
+    fica inteiramente na Fase 2 (`claim_due_work`, lock real no momento
+    do claim)."""
+    # --- Caminho antigo: MissionSource due -- (mission, store) --, nunca
+    #     MissionSchedule (missão inteira). Compartilha `_due_legacy_
+    #     sources_statement` com `claim_due_collections` (`lock=False`
+    #     aqui -- usada só pela Fase 2 deste scheduler) para as duas
+    #     nunca divergirem sobre o que conta como "due". ---
+    legacy_rows = await _select_due_legacy_sources_for_batch(
+        session, due_at=due_at, limit=limit
+    )
+    old_path_sources_by_owner: dict[UUID, list[tuple[MissionSource, str]]] = {}
+    for source, store_code, user_id in legacy_rows:
+        old_path_sources_by_owner.setdefault(user_id, []).append((source, store_code))
+
+    # --- Caminho novo: MonitoringItemStore due ÚNICOS -- 1 linha = 1
+    #     candidato, nunca explodido por usuário vinculado (achado real,
+    #     rodada 6: um item com 100 vinculados não pode consumir 100
+    #     posições da janela de scan). `candidate_scan_limit` (default
+    #     1000, folgado para a escala real da V1.2) existe só para
+    #     descobrir trabalho/donos -- depois que os donos forem
+    #     reservados, TODO o trabalho due deles entra (§ da rodada 6,
+    #     "scan de fairness != limite de execução"), sem cap adicional
+    #     por dono. ---
+    shared_rows = (
+        await session.execute(
+            select(MonitoringItemStore.monitoring_item_id, MonitoringItemStore.store_id)
+            .where(
+                MonitoringItemStore.is_enabled.is_(True),
+                or_(
+                    MonitoringItemStore.next_run_at.is_(None),
+                    MonitoringItemStore.next_run_at <= due_at,
+                ),
+                or_(
+                    MonitoringItemStore.next_eligible_at.is_(None),
+                    MonitoringItemStore.next_eligible_at <= due_at,
+                ),
+            )
+            .order_by(
+                MonitoringItemStore.next_run_at,
+                MonitoringItemStore.monitoring_item_id,
+                MonitoringItemStore.store_id,
+            )
+            .limit(candidate_scan_limit)
+        )
+    ).all()
+    pairs = [(item_id, store_id) for item_id, store_id in shared_rows]
+
+    linked_by_pair: dict[tuple[UUID, UUID], set[UUID]] = {}
+    all_linked_users: set[UUID] = set()
+    if pairs:
+        link_rows = (
+            await session.execute(
+                select(
+                    MissionMonitoringItem.monitoring_item_id,
+                    MissionSource.store_id,
+                    Mission.user_id,
+                )
+                .select_from(MissionMonitoringItem)
+                .join(Mission, Mission.id == MissionMonitoringItem.mission_id)
+                .join(MissionSource, MissionSource.mission_id == Mission.id)
+                .where(
+                    Mission.status == MissionStatus.ACTIVE,
+                    tuple_(
+                        MissionMonitoringItem.monitoring_item_id, MissionSource.store_id
+                    ).in_(pairs),
+                )
+            )
+        ).all()
+        for item_id, store_id, user_id in link_rows:
+            linked_by_pair.setdefault((item_id, store_id), set()).add(user_id)
+            all_linked_users.add(user_id)
+
+    all_candidate_user_ids = set(old_path_sources_by_owner) | all_linked_users
+    states: dict[UUID, UserCollectionQueueState] = {}
+    if all_candidate_user_ids:
+        states = {
+            state.user_id: state
+            for state in await session.scalars(
+                select(UserCollectionQueueState).where(
+                    UserCollectionQueueState.user_id.in_(all_candidate_user_ids)
+                )
+            )
+        }
+
+    # §12: dono único por target -- argmin entre os vinculados elegíveis.
+    shared_targets_by_owner: dict[UUID, list[tuple[UUID, UUID]]] = {}
+    for pair, linked_users in linked_by_pair.items():
+        eligible = [u for u in linked_users if is_user_eligible(states.get(u), due_at)]
+        if not eligible:
+            continue
+        owner = min(eligible, key=lambda u: queue_sort_key(states.get(u), u))
+        shared_targets_by_owner.setdefault(owner, []).append(pair)
+
+    owner_candidates = set(old_path_sources_by_owner) | set(shared_targets_by_owner)
+    eligible_owners = sorted(
+        (u for u in owner_candidates if is_user_eligible(states.get(u), due_at)),
+        key=lambda u: queue_sort_key(states.get(u), u),
+    )
+    selected_owner_ids = frozenset(eligible_owners[:max_users])
+
+    return _SelectedWork(
+        owner_ids=selected_owner_ids,
+        old_path_sources_by_owner={
+            user_id: tuple(sources)
+            for user_id, sources in old_path_sources_by_owner.items()
+            if user_id in selected_owner_ids
+        },
+        shared_targets_by_owner={
+            user_id: tuple(pairs_)
+            for user_id, pairs_ in shared_targets_by_owner.items()
+            if user_id in selected_owner_ids
+        },
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class _ClaimAttempt:
+    """Uma tentativa de claim de recurso -- legado (missão, loja) ou
+    compartilhado (item, loja) -- já normalizada para a ordenação global
+    única (`(store_id, due_at, kind, resource_id)`, seção 5 do desenho)."""
+
+    kind: str  # "legacy_store" | "shared"
+    owner_user_id: UUID
+    store_id: UUID
+    due_at: datetime
+    resource_id: str
+    mission_id: UUID | None = None
+    source_code: str | None = None
+    search_query: str | None = None
+    model: str | None = None
+    monitoring_item_id: UUID | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _ClaimedBatch:
+    old_path: tuple[ClaimedCollection, ...]
+    shared: tuple[_SharedClaim, ...]
+
+
+async def _build_claim_attempts(
+    session: AsyncSession, selected: _SelectedWork, reserved_owners: set[UUID], *, due_at: datetime
+) -> list[_ClaimAttempt]:
+    """Monta a lista de tentativas só para donos reservados -- uma
+    tentativa por `MissionSource` já devida (Fase 1 já decidiu isso, por
+    `(mission, store)`, TASK-112 fase 3B correção estrutural -- nunca mais
+    "expande a missão inteira em todas as lojas"). `MissionCriteria`
+    buscada uma vez por missão distinta (cache local), não por source --
+    Mission sem `MissionCriteria` válida é pulada, mesmo comportamento de
+    sempre."""
+    attempts: list[_ClaimAttempt] = []
+    for owner in reserved_owners:
+        criteria_cache: dict[UUID, MissionCriteria | None] = {}
+        for source, source_code in selected.old_path_sources_by_owner.get(owner, ()):
+            mission_id = source.mission_id
+            if mission_id not in criteria_cache:
+                criteria_cache[mission_id] = await session.scalar(
+                    select(MissionCriteria).where(MissionCriteria.mission_id == mission_id)
+                )
+            criteria = criteria_cache[mission_id]
+            if criteria is None or not criteria.search_query.strip():
+                continue
+            attempts.append(
+                _ClaimAttempt(
+                    kind="legacy_store",
+                    owner_user_id=owner,
+                    store_id=source.store_id,
+                    due_at=source.next_run_at or due_at,
+                    resource_id=f"{mission_id}:{source.store_id}",
+                    mission_id=mission_id,
+                    source_code=source_code,
+                    search_query=criteria.search_query,
+                    model=criteria.model,
+                )
+            )
+        for item_id, store_id in selected.shared_targets_by_owner.get(owner, ()):
+            attempts.append(
+                _ClaimAttempt(
+                    kind="shared",
+                    owner_user_id=owner,
+                    store_id=store_id,
+                    due_at=due_at,
+                    resource_id=f"{item_id}:{store_id}",
+                    monitoring_item_id=item_id,
+                )
+            )
+    attempts.sort(key=lambda a: (str(a.store_id), a.due_at, a.kind, a.resource_id))
+    return attempts
+
+
+async def _claim_legacy_source_attempt(
+    session: AsyncSession,
+    attempt: _ClaimAttempt,
+    *,
+    effective_now: datetime,
+    store_min_interval_seconds: float,
+    cadence_config: CadenceConfig,
+) -> ClaimedCollection | None:
+    """Mesmo template de `_claim_shared_collection_in_session`
+    (`shared_claim.py`): 1. LOCK real da linha específica já escolhida
+    (nunca um scan -- `SKIP LOCKED` já filtrou isso na seleção); 2.
+    RECHECK sob o lock, nunca a leitura otimista da Fase 1 (`next_run_at`/
+    `next_eligible_at` podem ter mudado entre a seleção e este momento);
+    3. THROTTLE global de loja; 4. registrar `CollectionRun`; 5. avançar
+    cadência (SÓ desta `MissionSource`, nunca de outra da mesma missão) +
+    throttle."""
+    source = await session.get(
+        MissionSource, (attempt.mission_id, attempt.store_id), with_for_update=True
+    )
+    if source is None:
+        return None
+    if source.next_run_at is not None and source.next_run_at > effective_now:
+        return None
+    if source.next_eligible_at is not None and source.next_eligible_at > effective_now:
+        return None
+    throttle = await session.get(StoreThrottleState, attempt.store_id)
+    if throttle is not None and throttle.next_allowed_at is not None and throttle.next_allowed_at > effective_now:
+        return None
+    try:
+        async with session.begin_nested():
+            run = await start_collection_run(
+                session, attempt.store_id, attempt.mission_id, started_at=effective_now
+            )
+    except IntegrityError as error:
+        if _constraint_name(error) != _RUNNING_INDEX:
+            raise
+        return None
+    decision = await resolve_collection_cadence(
+        session, store_id=attempt.store_id, now=effective_now, config=cadence_config
+    )
+    source.last_run_at = effective_now
+    source.next_run_at = sample_next_run_at(effective_now, decision)
+    await _advance_store_throttle(
+        session,
+        store_id=attempt.store_id,
+        claimed_at=effective_now,
+        min_interval_seconds=store_min_interval_seconds,
+    )
+    return ClaimedCollection(
+        run.id,
+        attempt.mission_id,
+        attempt.store_id,
+        attempt.source_code,
+        attempt.search_query,
+        effective_now,
+        attempt.model,
+    )
+
+
+async def claim_due_work(
+    session: AsyncSession,
+    *,
+    now: datetime | None = None,
+    limit: int = 25,
+    max_users: int = 1,
+    user_cooldown_min_seconds: float = 60.0,
+    user_cooldown_max_seconds: float = 180.0,
+    store_min_interval_seconds: float = 2.0,
+    cadence_config: CadenceConfig | None = None,
+    candidate_scan_limit: int = 1000,
+) -> _ClaimedBatch:
+    """Scheduler unificado (TASK-112 fase 3B) -- único caminho usado pelo
+    `CollectionOrchestrator` de produção. Ver o bloco de comentário acima
+    para o desenho completo (seleção somente-leitura -> reserva de
+    fairness -> claim em ordem global de loja -> cooldown só para quem
+    claimou de verdade)."""
+    effective_now = now or utc_now()
+    effective_cadence_config = cadence_config or CadenceConfig()
+    turn_id = uuid4()
+
+    selected = await _select_due_work_for_batch(
+        session,
+        due_at=effective_now,
+        limit=limit,
+        max_users=max_users,
+        candidate_scan_limit=candidate_scan_limit,
+    )
+    reserved_owners = await _reserve_fairness_owners(
+        session, candidate_owners=set(selected.owner_ids), due_at=effective_now
+    )
+    if not reserved_owners:
+        return _ClaimedBatch(old_path=(), shared=())
+
+    attempts = await _build_claim_attempts(
+        session, selected, reserved_owners, due_at=effective_now
+    )
+
+    old_claims: list[ClaimedCollection] = []
+    shared_claims: list[_SharedClaim] = []
+    claimed_owners: set[UUID] = set()
+    claimed_mission_ids: set[UUID] = set()
+
+    for attempt in attempts:
+        if attempt.kind == "legacy_store":
+            resource_claim = await _claim_legacy_source_attempt(
+                session,
+                attempt,
+                effective_now=effective_now,
+                store_min_interval_seconds=store_min_interval_seconds,
+                cadence_config=effective_cadence_config,
+            )
+            if resource_claim is not None:
+                old_claims.append(resource_claim)
+                claimed_owners.add(attempt.owner_user_id)
+                claimed_mission_ids.add(attempt.mission_id)
+        else:
+            resource_claim = await _claim_shared_collection_in_session(
+                session,
+                monitoring_item_id=attempt.monitoring_item_id,
+                store_id=attempt.store_id,
+                now=effective_now,
+                cadence_config=effective_cadence_config,
+                store_min_interval_seconds=store_min_interval_seconds,
+                fairness_owner_user_id=attempt.owner_user_id,
+            )
+            if resource_claim is not None:
+                shared_claims.append(resource_claim)
+                claimed_owners.add(attempt.owner_user_id)
+
+    # Cadência já avançada POR SOURCE dentro de `_claim_legacy_source_
+    # attempt` (TASK-112 fase 3B, correção estrutural -- cada
+    # `MissionSource` tem sua própria agenda, nunca a Mission inteira).
+    # Só o agregado de EXIBIÇÃO (`MissionScheduleOut`, dashboard ADMIN)
+    # precisa ser recalculado aqui, uma vez por missão que teve >= 1
+    # source claimada de verdade -- nunca lido por nenhuma decisão real.
+    for mission_id in claimed_mission_ids:
+        await _refresh_legacy_schedule_aggregate(
+            session, mission_id=mission_id, now=effective_now
+        )
+
+    for user_id in claimed_owners:
+        await _commit_fairness_turn_for_owner(
+            session,
+            user_id=user_id,
+            processed_at=effective_now,
+            turn_id=turn_id,
+            cooldown_min_seconds=user_cooldown_min_seconds,
+            cooldown_max_seconds=user_cooldown_max_seconds,
+        )
+
+    await session.flush()
+    return _ClaimedBatch(old_path=tuple(old_claims), shared=tuple(shared_claims))
 
 
 class CollectionOrchestrator:
@@ -545,6 +1100,15 @@ class CollectionOrchestrator:
         user_cooldown_min_seconds: float = 60.0,
         user_cooldown_max_seconds: float = 180.0,
         store_min_interval_seconds: float = 2.0,
+        # TASK-112 fase 3B -- caminho compartilhado.
+        cadence_config: CadenceConfig | None = None,
+        candidate_scan_limit: int = 1000,
+        fan_out_target_scan_limit: int = 25,
+        fan_out_task_budget: int = 100,
+        fan_out_per_target_task_cap: int = 25,
+        fan_out_concurrency: int = 4,
+        shared_collector: "Callable[..., Awaitable[SharedCollectionResult]] | None" = None,
+        fan_out_sweeper: "Callable[..., Awaitable[FanOutSweepSummary]] | None" = None,
     ) -> None:
         if schedule_interval_minutes <= 0:
             raise ValueError("schedule_interval_minutes must be positive")
@@ -568,6 +1132,16 @@ class CollectionOrchestrator:
             raise ValueError("user cooldown max must not be smaller than min")
         if store_min_interval_seconds < 0:
             raise ValueError("store_min_interval_seconds must not be negative")
+        if candidate_scan_limit <= 0:
+            raise ValueError("candidate_scan_limit must be positive")
+        if fan_out_target_scan_limit <= 0:
+            raise ValueError("fan_out_target_scan_limit must be positive")
+        if fan_out_task_budget <= 0:
+            raise ValueError("fan_out_task_budget must be positive")
+        if fan_out_per_target_task_cap <= 0:
+            raise ValueError("fan_out_per_target_task_cap must be positive")
+        if fan_out_concurrency <= 0:
+            raise ValueError("fan_out_concurrency must be positive")
         self._session_factory = session_factory
         self._adapter = adapter
         self._ai_manager = ai_manager
@@ -589,13 +1163,60 @@ class CollectionOrchestrator:
         # orchestrator (scripts/testes) pode desligar o throttle global
         # de propósito.
         self._store_min_interval_seconds = store_min_interval_seconds
+        # TASK-112 fase 3B.
+        self._cadence_config = cadence_config or CadenceConfig()
+        self._candidate_scan_limit = candidate_scan_limit
+        self._fan_out_target_scan_limit = fan_out_target_scan_limit
+        self._fan_out_task_budget = fan_out_task_budget
+        self._fan_out_per_target_task_cap = fan_out_per_target_task_cap
+        self._fan_out_concurrency = fan_out_concurrency
+        # Injeção de dependência (mesmo padrão de `identity_resolver`,
+        # TASK-083) -- evita `orchestration.py` importar `shared_
+        # collection.py` no nível de módulo, que já depende deste módulo
+        # (17+ símbolos privados), criando um ciclo real. `worker.py` (que
+        # já importa os dois módulos livremente) passa as referências
+        # reais em produção; aqui, só quando `None`, um import local
+        # (executado uma vez, na construção, nunca por chamada) resolve
+        # os defaults para quem constrói o orchestrator direto sem se
+        # importar com isto (scripts/testes).
+        if shared_collector is None or fan_out_sweeper is None:
+            from app.collection.shared_collection import (
+                _execute_claimed_shared_collection,
+                sweep_shared_collection_fan_out,
+            )
+
+            shared_collector = shared_collector or _execute_claimed_shared_collection
+            fan_out_sweeper = fan_out_sweeper or sweep_shared_collection_fan_out
+        self._shared_collector = shared_collector
+        self._fan_out_sweeper = fan_out_sweeper
 
     async def run_batch(
         self, *, now: datetime | None = None, limit: int = 25
     ) -> CollectionBatchResult:
         effective_now = now or utc_now()
+
+        # TASK-112 fase 3B: sweep de fan-out pendente SEMPRE primeiro,
+        # antes de gastar capacidade com coletas novas -- backlog de
+        # ciclos anteriores (crash/retry) tem prioridade sobre trabalho
+        # novo. Orçamento real (alvos E tarefas, nunca "todos os
+        # pendentes") -- nunca monopoliza o worker. Roda mesmo quando não
+        # há nenhum claim novo neste ciclo.
+        fan_out_summary = await self._fan_out_sweeper(
+            self._session_factory,
+            self._ai_manager,
+            now=effective_now,
+            ai_profile=self._ai_profile,
+            target_scan_limit=self._fan_out_target_scan_limit,
+            task_budget=self._fan_out_task_budget,
+            per_target_task_cap=self._fan_out_per_target_task_cap,
+            concurrency=self._fan_out_concurrency,
+        )
+
         # Fase A: transação curta, só dados locais -- nenhum Playwright,
-        # HTTP ou IA acontece dentro deste bloco.
+        # HTTP ou IA acontece dentro deste bloco. `claim_due_work`
+        # (TASK-112 fase 3B) já claima os dois caminhos (legado +
+        # compartilhado) dentro desta mesma transação -- ver o bloco de
+        # comentário antes de `claim_due_work` para o desenho completo.
         async with self._session_factory() as session, session.begin():
             # TASK-108: lida a cada batch -- override do ADMIN
             # (`CollectionQueueConfig`, persistido) tem prioridade sobre os
@@ -620,7 +1241,7 @@ class CollectionOrchestrator:
             stale = await recover_stale_runs(
                 session, now=effective_now, stale_after=self._stale_after
             )
-            claims = await claim_due_collections(
+            batch = await claim_due_work(
                 session,
                 now=effective_now,
                 limit=limit,
@@ -628,6 +1249,8 @@ class CollectionOrchestrator:
                 user_cooldown_min_seconds=queue_config.user_cooldown_min_seconds,
                 user_cooldown_max_seconds=queue_config.user_cooldown_max_seconds,
                 store_min_interval_seconds=queue_config.store_min_interval_seconds,
+                cadence_config=self._cadence_config,
+                candidate_scan_limit=self._candidate_scan_limit,
             )
         # Transação da Fase A já fechada neste ponto (fim do `async with`
         # acima) -- a Fase B (TASK-083) roda inteiramente fora dela.
@@ -635,12 +1258,85 @@ class CollectionOrchestrator:
             logger.info(
                 "collection_schedules_created", extra={"schedule_count": schedules}
             )
-        claims = await self._resolve_identities(claims)
-        outcomes = await asyncio.gather(*(self._process(claim) for claim in claims))
-        succeeded = sum(outcome for outcome in outcomes)
-        return CollectionBatchResult(
-            len(claims), succeeded, len(claims) - succeeded, stale
+        old_claims = await self._resolve_identities(batch.old_path)
+        old_outcomes, shared_outcomes = await asyncio.gather(
+            asyncio.gather(*(self._process(claim) for claim in old_claims)),
+            asyncio.gather(*(self._process_shared(claim, effective_now) for claim in batch.shared)),
         )
+        legacy_succeeded = sum(old_outcomes)
+        legacy_failed = len(old_claims) - legacy_succeeded
+        shared_succeeded = sum(1 for outcome in shared_outcomes if outcome.succeeded)
+        shared_failed = len(batch.shared) - shared_succeeded
+
+        return CollectionBatchResult(
+            claimed=len(old_claims) + len(batch.shared),
+            succeeded=legacy_succeeded + shared_succeeded,
+            failed=legacy_failed + shared_failed,
+            recovered_stale=stale,
+            legacy_claimed=len(old_claims),
+            legacy_succeeded=legacy_succeeded,
+            legacy_failed=legacy_failed,
+            shared_claimed=len(batch.shared),
+            shared_succeeded=shared_succeeded,
+            shared_failed=shared_failed,
+            fan_out_attempted_task_count=(
+                fan_out_summary.attempted_task_count
+                + sum(outcome.attempted_task_count for outcome in shared_outcomes)
+            ),
+            fan_out_done_mission_count=(
+                fan_out_summary.fanned_out_mission_count
+                + sum(len(outcome.fanned_out_mission_ids) for outcome in shared_outcomes)
+            ),
+            fan_out_attention_required_mission_count=(
+                fan_out_summary.attention_required_mission_count
+                + sum(len(outcome.fan_out_attention_required_mission_ids) for outcome in shared_outcomes)
+            ),
+            fan_out_terminally_failed_mission_count=(
+                fan_out_summary.terminally_failed_mission_count
+                + sum(len(outcome.fan_out_failed_mission_ids) for outcome in shared_outcomes)
+            ),
+        )
+
+    async def _process_shared(
+        self, claim: "_SharedClaim", effective_now: datetime
+    ) -> "SharedCollectionResult":
+        """Análogo a `self._process` (teto de tempo, TASK-079 item 7) para
+        o caminho compartilhado -- o claim em si JÁ aconteceu dentro da
+        Fase A (`claim_due_work`); aqui só roda o "rabo" (rede +
+        persistência + fan-out do trabalho novo, `_execute_claimed_
+        shared_collection`), sob o MESMO `self._semaphore` do caminho
+        antigo (Playwright/CDP é um recurso único, compartilhado entre os
+        dois caminhos)."""
+        try:
+            return await asyncio.wait_for(
+                self._process_shared_claim(claim, effective_now),
+                timeout=self._claim_deadline_seconds,
+            )
+        except asyncio.CancelledError:
+            raise
+        except TimeoutError:
+            logger.warning(
+                "shared_collection_claim_deadline_exceeded",
+                extra={"source_code": _safe_source(claim.store_code)},
+            )
+            from app.collection.shared_collection import SharedCollectionResult
+
+            return SharedCollectionResult(claimed=True, provider_called=False, succeeded=False)
+
+    async def _process_shared_claim(
+        self, claim: "_SharedClaim", effective_now: datetime
+    ) -> "SharedCollectionResult":
+        async with self._semaphore:
+            return await self._shared_collector(
+                self._session_factory,
+                self._adapter,
+                self._ai_manager,
+                claim=claim,
+                ai_profile=self._ai_profile,
+                normalizer=self._normalizer,
+                effective_now=effective_now,
+                base_backoff_minutes=self._cadence_config.normal_min_minutes,
+            )
 
     async def _resolve_identities(
         self, claims: tuple[ClaimedCollection, ...]

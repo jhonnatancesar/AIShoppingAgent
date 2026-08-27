@@ -39,6 +39,14 @@ def test_search_executes_only_selects_and_cannot_increase_mission_count() -> Non
 
 
 def test_generic_search_returns_options_without_creating_mission(monkeypatch) -> None:
+    """Achado (auditoria TASK-112 fase 3B): `search_products` passou a
+    reservar cota (TASK-107, `check_and_reserve_search_quota_async` --
+    escreve de verdade via `session`) antes deste teste ser escrito;
+    `SimpleNamespace()` como `session` nunca suportaria essa escrita --
+    defasagem já existente antes da fase 3B, não é regressão. Mockada no
+    mesmo espírito de `search_persisted_products` abaixo (fronteira já
+    testada à parte em `tests/test_quotas*.py`, fora do escopo deste
+    teste, que é só o roteamento de pesquisa)."""
     calls = 0
 
     async def fake_search(*args, **kwargs):
@@ -46,12 +54,18 @@ def test_generic_search_returns_options_without_creating_mission(monkeypatch) ->
         calls += 1
         return ()
 
+    async def fake_reserve_quota(*args, **kwargs):
+        return None
+
     monkeypatch.setattr(search_router, "search_persisted_products", fake_search)
+    monkeypatch.setattr(
+        search_router, "check_and_reserve_search_quota_async", fake_reserve_quota
+    )
     response = asyncio.run(
         search_router.search_products(
             q="mouse gamer",
             stores=["amazon", "kabum"],
-            _user=SimpleNamespace(id=uuid4()),
+            user=SimpleNamespace(id=uuid4()),
             session=SimpleNamespace(),
         )
     )
@@ -73,15 +87,24 @@ def test_generic_search_returns_options_without_creating_mission(monkeypatch) ->
 def test_search_preserves_task_097_request_kinds(
     monkeypatch, query: str, kind: ProductRequestKind
 ) -> None:
+    """Mesma correção de mock de `check_and_reserve_search_quota_async`
+    (TASK-107) do teste acima -- ver docstring lá."""
+
     async def fake_search(*args, **kwargs):
         return ()
 
+    async def fake_reserve_quota(*args, **kwargs):
+        return None
+
     monkeypatch.setattr(search_router, "search_persisted_products", fake_search)
+    monkeypatch.setattr(
+        search_router, "check_and_reserve_search_quota_async", fake_reserve_quota
+    )
     response = asyncio.run(
         search_router.search_products(
             q=query,
             stores=["amazon"],
-            _user=SimpleNamespace(id=uuid4()),
+            user=SimpleNamespace(id=uuid4()),
             session=SimpleNamespace(),
         )
     )

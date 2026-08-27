@@ -133,19 +133,22 @@ isolado por Mission no fan-out nunca marca essa execução compartilhada
 como falha -- ela já terminou (SUCCEEDED) antes do fan-out começar.
 """
 
+import asyncio
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import and_, exists, or_, select, update
+from sqlalchemy import and_, exists, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.ai_provider import AIProviderManager
 from app.collection.adapter import CollectionAdapter
+from app.collection.cadence import CadenceConfig
 from app.collection.contracts import CollectionRequest
 from app.collection.models import (
     CollectionRun,
@@ -180,6 +183,12 @@ from app.collection.orchestration import (
     _select_final_candidates,
 )
 from app.collection.persistence import finish_collection_run, start_collection_run
+from app.collection.shared_claim import (
+    _apply_shared_backoff,
+    _claim_shared_collection,
+    _reset_shared_backoff,
+    _SharedClaim,
+)
 from app.database.time import utc_now
 from app.events import AggregateType, AvailabilityChangedPayload, EventType
 from app.events.service import publish_event_async
@@ -189,21 +198,14 @@ from app.missions.models import (
     MissionMonitoringItem,
     MissionSource,
     MissionStatus,
-    MonitoringItem,
-    MonitoringItemStore,
 )
-from app.missions.schedule import next_source_backoff
 from app.offers.models import Offer
-from app.products.identity import CollectionCriteria, canonical_collection_criteria
 from app.products.models import Product
 from app.stores.models import Store
 from app.users.models import UserRole
 
 logger = logging.getLogger("app.collection.shared_collection")
 
-_SHARED_RUNNING_INDEX = "uq_collection_runs_running_monitoring_item_store"
-_DEFAULT_SHARED_INTERVAL_MINUTES = 60
-_SOURCE_BACKOFF_CAP_MINUTES = 360
 V1_SOURCE_CODES = frozenset(
     {"pichau", "terabyte", "amazon", "kabum", "magalu", "mercadolivre"}
 )
@@ -245,166 +247,22 @@ class SharedCollectionResult:
     fan_out_failed_mission_ids: tuple[UUID, ...] = ()
     """Erro determinístico (`SharedFanOutTerminalError`), nunca vai
     funcionar numa próxima tentativa (tarefa -> `terminal_failed`)."""
+    attempted_task_count: int = 0
+    """TASK-112 fase 3B: soma de `_FanOutBatchOutcome.attempted_task_
+    count` de todas as runs processadas nesta chamada -- contrato
+    explícito de orçamento para `sweep_shared_collection_fan_out`, nunca
+    inferido somando os 4 campos acima (não cobrem retry transitório)."""
 
 
 # ---------------------------------------------------------------------------
-# Agenda/backoff compartilhados -- granularidade (MonitoringItem, store)
+# Agenda/backoff/claim compartilhados: movidos para `app.collection.
+# shared_claim` (TASK-112, fase 3B) -- módulo neutro, sem depender de
+# `orchestration.py` nem de `shared_collection.py`, condição necessária
+# para o scheduler unificado (`claim_due_work`, orchestration.py) poder
+# chamar o claim compartilhado diretamente sem criar dependência
+# circular. `_SharedClaim`/`_claim_shared_collection`/`_apply_shared_
+# backoff`/`_reset_shared_backoff` importados no topo deste arquivo.
 # ---------------------------------------------------------------------------
-
-
-def _advance_monitoring_item_store(
-    item_store: MonitoringItemStore, *, started_at: datetime, interval_minutes: int
-) -> None:
-    """Mesmo algoritmo de `app.missions.schedule.advance_schedule`, mas
-    para `MonitoringItemStore` -- que não persiste `interval_minutes`
-    (auditoria da fase 3A: hoje TODA missão usa o mesmo intervalo global
-    `Settings.collection_schedule_interval_minutes`, sem exceção nem
-    override por missão -- ver relatório da fase 3A). `next_run_at`
-    ausente (item novo, nunca coletado) conta como devido agora."""
-    interval = timedelta(minutes=interval_minutes)
-    base = (
-        item_store.next_run_at
-        if item_store.next_run_at is not None and item_store.next_run_at <= started_at
-        else started_at
-    )
-    elapsed = started_at - base
-    steps = elapsed // interval + 1
-    item_store.last_run_at = started_at
-    item_store.next_run_at = base + interval * steps
-    item_store.updated_at = started_at
-
-
-async def _apply_shared_backoff(
-    session: AsyncSession,
-    *,
-    monitoring_item_id: UUID,
-    store_id: UUID,
-    base_interval_minutes: int,
-    failed_at: datetime,
-) -> None:
-    """Backoff por bloqueio externo confirmado (DEC-046), na granularidade
-    compartilhada -- `MonitoringItemStore.consecutive_blocks`/
-    `next_eligible_at`, nunca mais `MissionSource` (que continua existindo
-    só como preferência/cota do usuário, TASK-107 -- auditoria §2 da fase
-    3A). Nunca dois estados de backoff concorrentes: para item vinculado a
-    Shared Monitoring, só este é lido para decidir elegibilidade."""
-    item_store = await session.get(
-        MonitoringItemStore, (monitoring_item_id, store_id), with_for_update=True
-    )
-    if item_store is None:
-        return
-    consecutive_blocks, delay_minutes = next_source_backoff(
-        base_interval_minutes=base_interval_minutes,
-        consecutive_blocks=item_store.consecutive_blocks,
-        cap_minutes=_SOURCE_BACKOFF_CAP_MINUTES,
-    )
-    item_store.consecutive_blocks = consecutive_blocks
-    item_store.next_eligible_at = failed_at + timedelta(minutes=delay_minutes)
-    item_store.updated_at = failed_at
-
-
-async def _reset_shared_backoff(
-    session: AsyncSession, *, monitoring_item_id: UUID, store_id: UUID, now: datetime
-) -> None:
-    item_store = await session.get(
-        MonitoringItemStore, (monitoring_item_id, store_id), with_for_update=True
-    )
-    if item_store is None:
-        return
-    if item_store.consecutive_blocks == 0 and item_store.next_eligible_at is None:
-        return
-    item_store.consecutive_blocks = 0
-    item_store.next_eligible_at = None
-    item_store.updated_at = now
-
-
-# ---------------------------------------------------------------------------
-# Claim/lock do due slot (item 3, fase 3A rodada 2) -- atômico: o MESMO
-# SELECT ... FOR UPDATE que faz o recheck de is_enabled/next_run_at/
-# next_eligible_at é o que serializa contra qualquer outro worker tentando
-# o mesmo (monitoring_item_id, store_id); o claim (INSERT em CollectionRun,
-# protegido também pelo índice único parcial) e o avanço do due slot
-# (`_advance_monitoring_item_store`) acontecem DENTRO da mesma transação,
-# antes do commit que libera o lock -- um segundo worker que esperava o
-# lock só o adquire DEPOIS que o primeiro já commitou claim+avanço, e o
-# recheck que ele faz em seguida (mesma leitura, já com o lock em mãos)
-# sempre vê o estado pós-avanço, nunca o estado antigo (READ COMMITTED:
-# uma nova leitura após adquirir o lock enxerga o que já foi commitado).
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True, slots=True)
-class _SharedClaim:
-    run_id: UUID
-    criteria: CollectionCriteria
-    store_code: str
-
-
-async def _claim_shared_collection(
-    session_factory: async_sessionmaker[AsyncSession],
-    *,
-    monitoring_item_id: UUID,
-    store_id: UUID,
-    now: datetime,
-    interval_minutes: int,
-) -> _SharedClaim | None:
-    """Fase A (curta, só local): reserva a execução e avança a agenda
-    compartilhada -- nenhum `await` externo (provider/IA) acontece com
-    esta transação aberta (TASK-079)."""
-    async with session_factory() as session, session.begin():
-        item = await session.get(MonitoringItem, monitoring_item_id)
-        store = await session.get(Store, store_id)
-        if item is None or store is None:
-            return None
-        if not store.is_active or store.code not in V1_SOURCE_CODES:
-            return None
-        # 1. LOCK -- serializa contra qualquer outro worker no mesmo
-        #    (monitoring_item_id, store_id); quem chega depois só
-        #    prossegue daqui depois que o dono do lock commitar ou
-        #    reverter.
-        item_store = await session.get(
-            MonitoringItemStore, (monitoring_item_id, store_id), with_for_update=True
-        )
-        if item_store is None:
-            return None
-        # 2/3/4. RECHECK -- sempre lido DEPOIS de adquirir o lock, então
-        #    nunca vê estado desatualizado de um claim concorrente que
-        #    acabou de commitar.
-        if not item_store.is_enabled:
-            return None
-        if item_store.next_run_at is not None and item_store.next_run_at > now:
-            return None
-        if item_store.next_eligible_at is not None and item_store.next_eligible_at > now:
-            return None
-        # 5. REGISTRAR CLAIM -- índice único parcial é defesa em
-        #    profundidade (protege mesmo se algum caminho futuro tentar
-        #    claim sem passar pelo lock acima); sob o lock já adquirido,
-        #    nunca deveria colidir.
-        try:
-            async with session.begin_nested():
-                run = await start_collection_run(
-                    session,
-                    store_id,
-                    mission_id=None,
-                    monitoring_item_id=monitoring_item_id,
-                    started_at=now,
-                )
-        except IntegrityError as error:
-            if _constraint_name(error) != _SHARED_RUNNING_INDEX:
-                raise
-            return None
-        # 6. AVANÇAR/RESERVAR o due slot -- ainda dentro da mesma
-        #    transação/lock; só depois do commit (fim deste `async with`)
-        #    é que a execução real (rede) acontece.
-        _advance_monitoring_item_store(
-            item_store, started_at=now, interval_minutes=interval_minutes
-        )
-        run_id = run.id
-        criteria = canonical_collection_criteria(item.canonical_identity)
-        store_code = store.code
-        return _SharedClaim(run_id=run_id, criteria=criteria, store_code=store_code)
-    # 7. SOMENTE ENTÃO EXECUTAR -- fora da transação (o chamador faz a
-    #    chamada de rede depois deste retorno), TASK-079.
 
 
 async def _finish_shared_collection(
@@ -1092,6 +950,16 @@ class _FanOutBatchOutcome:
     skipped: tuple[UUID, ...]
     attention_required: tuple[UUID, ...]
     terminally_failed: tuple[UUID, ...]
+    attempted_task_count: int = 0
+    """TASK-112 fase 3B: quantas `SharedFanOutTask` foram efetivamente
+    REIVINDICADAS (`_claim_fan_out_task` retornou sucesso) nesta chamada
+    -- independente do resultado final (`done`/`skipped`/retry
+    transitório de volta a `pending`/`attention_required`/`terminal_
+    failed`/qualquer status futuro). É este campo, nunca a soma dos 4
+    buckets acima, que o sweep (`sweep_shared_collection_fan_out`) usa
+    para decrementar orçamento -- os buckets não cobrem retry
+    transitório (task volta para `pending` sem aparecer em nenhum deles),
+    então somá-los subestimaria o trabalho real feito."""
 
 
 async def _process_pending_fan_out(
@@ -1123,6 +991,14 @@ async def _process_pending_fan_out(
     (ainda com tentativas restantes) não aparece em nenhuma lista aqui,
     continua elegível para uma retomada futura."""
     async with session_factory() as session:
+        # TASK-112 fase 3B (achado real, rodada 6): ordenar por
+        # `mission_id` (como era antes) é uma ordem arbitrária (UUID),
+        # sem relação nenhuma com antiguidade de retry -- uma enxurrada
+        # de tarefas novas (`next_retry_at IS NULL`) podia furar a frente
+        # de um retry antigo já vencido só por ter um UUID menor.
+        # `COALESCE(next_retry_at, created_at)`: tarefa nunca tentada
+        # ordena pela hora de criação (nunca fura a frente de um retry
+        # antigo), `mission_id` só como desempate final determinístico.
         query = (
             select(SharedFanOutTask.mission_id)
             .where(
@@ -1133,12 +1009,16 @@ async def _process_pending_fan_out(
                     SharedFanOutTask.next_retry_at <= finished_at,
                 ),
             )
-            .order_by(SharedFanOutTask.mission_id)
+            .order_by(
+                func.coalesce(SharedFanOutTask.next_retry_at, SharedFanOutTask.created_at),
+                SharedFanOutTask.mission_id,
+            )
         )
         if limit is not None:
             query = query.limit(limit)
         candidate_mission_ids = tuple(await session.scalars(query))
 
+    attempted_task_count = 0
     done: list[UUID] = []
     skipped: list[UUID] = []
     attention_required: list[UUID] = []
@@ -1150,8 +1030,11 @@ async def _process_pending_fan_out(
         if not claimed:
             # Outra worker/retomada já levou esta tarefa, ou deixou de
             # ser elegível entre a listagem e o claim -- nunca processa
-            # duas vezes, nunca erro.
+            # duas vezes, nunca erro. Não conta para o orçamento (TASK-112
+            # fase 3B): nenhum processamento real aconteceu, só um UPDATE
+            # barato que não afetou linha nenhuma.
             continue
+        attempted_task_count += 1
 
         # Item 2 (correção de consistência): revalida ANTES de qualquer
         # efeito -- Mission pode ter sido pausada/cancelada/relinkada
@@ -1278,6 +1161,7 @@ async def _process_pending_fan_out(
         skipped=tuple(skipped),
         attention_required=tuple(attention_required),
         terminally_failed=tuple(terminally_failed),
+        attempted_task_count=attempted_task_count,
     )
 
 
@@ -1289,6 +1173,8 @@ async def resume_shared_collection_fan_out(
     store_id: UUID,
     now: datetime | None = None,
     ai_profile: UserRole = UserRole.ADMIN,
+    task_limit: int | None = None,
+    recover_stale: bool = True,
 ) -> SharedCollectionResult:
     """Retoma fan-out pendente de coletas compartilhadas já `SUCCEEDED`
     para `(monitoring_item_id, store_id)` -- NUNCA chama o provider de
@@ -1299,26 +1185,28 @@ async def resume_shared_collection_fan_out(
     por Mission -- processar fora de ordem corromperia
     `MissionOfferRelevance.last_observation_id`).
 
-    Item 5 (fase 3A, rodada 4): recupera automaticamente tarefas presas
-    em `processing` além do lease (`recover_stale_fan_out_tasks`) como
-    PRIMEIRO passo, antes de listar o que processar -- quem chama esta
-    função nunca precisa lembrar de chamar a recuperação separadamente
-    para que uma tarefa abandonada volte a ser processada; é o ponto
-    coerente do runtime atual de coleta compartilhada para garantir isso
-    sem depender de integração com o scheduler/TASK-108 (deliberadamente
-    fora do escopo desta fase). `recover_stale_fan_out_tasks` continua
-    exposta separadamente (idempotente, sem custo chamar de novo).
+    `recover_stale=True` (default, preserva o comportamento standalone já
+    documentado desde a fase 3A -- "quem chama nunca precisa lembrar de
+    recuperar tarefas presas separadamente"): recupera automaticamente
+    tarefas presas em `processing` além do lease (`recover_stale_fan_out_
+    tasks`) como PRIMEIRO passo. TASK-112 fase 3B: `sweep_shared_
+    collection_fan_out` já chama a recuperação UMA vez, globalmente,
+    antes de descobrir os alvos -- passa `recover_stale=False` para não
+    repetir a recuperação uma vez por alvo (achado real, rodada 6:
+    chamar esta função N vezes com o default multiplicaria a recuperação
+    por N+1).
 
-    Chamada explícita, independente de o item estar due agora -- é
-    exatamente o ponto: um due slot já consumido (run `SUCCEEDED`) pode
-    ter fan-out incompleto por um crash, e isso é ortogonal a quando o
-    próximo ciclo natural vence. Fase 3B decide QUANDO/COM QUE FREQUÊNCIA
-    chamar isto em produção; esta função só garante que é seguro chamar
-    a qualquer momento, quantas vezes forem necessárias, e que nunca
-    deixa uma tarefa presa esperando uma chamada manual separada."""
+    `task_limit` (opcional, `None` = sem teto, comportamento de sempre):
+    orçamento de `SharedFanOutTask` a reivindicar/processar nesta
+    chamada, decrementado por `_FanOutBatchOutcome.attempted_task_count`
+    real (nunca pela soma dos buckets de resultado) conforme avança pelas
+    runs -- para de processar mais runs assim que o orçamento esgota;
+    runs/tarefas não alcançadas continuam `pending`, retomáveis na
+    próxima chamada."""
     effective_now = now or utc_now()
-    async with session_factory() as session, session.begin():
-        await recover_stale_fan_out_tasks(session, now=effective_now)
+    if recover_stale:
+        async with session_factory() as session, session.begin():
+            await recover_stale_fan_out_tasks(session, now=effective_now)
     async with session_factory() as session:
         runs = (
             await session.execute(
@@ -1345,7 +1233,11 @@ async def resume_shared_collection_fan_out(
     skipped: list[UUID] = []
     attention_required: list[UUID] = []
     failed: list[UUID] = []
+    attempted_task_count = 0
+    remaining = task_limit
     for run_id, store_code in runs:
+        if remaining is not None and remaining <= 0:
+            break
         shared_results = await _reconstruct_shared_results(session_factory, run_id=run_id)
         outcome = await _process_pending_fan_out(
             session_factory,
@@ -1357,11 +1249,15 @@ async def resume_shared_collection_fan_out(
             store_id=store_id,
             shared_results=shared_results,
             finished_at=effective_now,
+            limit=remaining,
         )
         fanned_out.extend(outcome.done)
         skipped.extend(outcome.skipped)
         attention_required.extend(outcome.attention_required)
         failed.extend(outcome.terminally_failed)
+        attempted_task_count += outcome.attempted_task_count
+        if remaining is not None:
+            remaining -= outcome.attempted_task_count
 
     return SharedCollectionResult(
         claimed=False,
@@ -1372,45 +1268,192 @@ async def resume_shared_collection_fan_out(
         fan_out_skipped_mission_ids=tuple(skipped),
         fan_out_attention_required_mission_ids=tuple(attention_required),
         fan_out_failed_mission_ids=tuple(failed),
+        attempted_task_count=attempted_task_count,
     )
 
 
-async def collect_monitoring_item_store(
+async def _due_shared_fan_out_targets(
+    session: AsyncSession, *, now: datetime, limit: int
+) -> tuple[tuple[UUID, UUID, int], ...]:
+    """TASK-112 fase 3B: todos os `(monitoring_item_id, store_id)`
+    distintos do sistema com pelo menos uma `SharedFanOutTask` pending
+    devida -- não só os claimados neste ciclo (o sweep roda todo ciclo,
+    independente de claim novo). Devolve também a contagem de pendentes
+    por alvo (`pending_count`), usada por `_allocate_fan_out_budget` para
+    dar fairness entre targets, não só orçamento total. Ordenado por
+    `MIN(COALESCE(next_retry_at, created_at))` -- mesma correção de
+    `_process_pending_fan_out`, agora no nível de TARGET: alvo mais
+    atrasado primeiro, nunca starvado por uma enxurrada de alvos novos.
+    `limit` aqui é só quantos PARES distintos considerar (`target_scan_
+    limit`) -- o orçamento real de TAREFAS é aplicado depois, por
+    `_allocate_fan_out_budget`."""
+    rows = (
+        await session.execute(
+            select(
+                CollectionRun.monitoring_item_id,
+                CollectionRun.store_id,
+                func.count(SharedFanOutTask.mission_id).label("pending_count"),
+                func.min(
+                    func.coalesce(SharedFanOutTask.next_retry_at, SharedFanOutTask.created_at)
+                ).label("earliest_due_at"),
+            )
+            .select_from(SharedFanOutTask)
+            .join(CollectionRun, CollectionRun.id == SharedFanOutTask.collection_run_id)
+            .where(
+                CollectionRun.monitoring_item_id.is_not(None),
+                SharedFanOutTask.status == SharedFanOutStatus.PENDING,
+                or_(
+                    SharedFanOutTask.next_retry_at.is_(None),
+                    SharedFanOutTask.next_retry_at <= now,
+                ),
+            )
+            .group_by(CollectionRun.monitoring_item_id, CollectionRun.store_id)
+            .order_by("earliest_due_at")
+            .limit(limit)
+        )
+    ).all()
+    return tuple((item_id, store_id, count) for item_id, store_id, count, _ in rows)
+
+
+def _allocate_fan_out_budget(
+    targets: Sequence[tuple[UUID, UUID, int]],
+    *,
+    task_budget: int,
+    per_target_task_cap: int,
+) -> tuple[tuple[UUID, UUID, int], ...]:
+    """TASK-112 fase 3B: fairness ENTRE targets, não só orçamento total --
+    um alvo com backlog gigante nunca pode monopolizar o orçamento
+    inteiro enquanto outros alvos, menores, também estão devidos (achado
+    real, rodada 6: orçamento total sozinho não impede isso). Alocação em
+    RODADAS, capada por `per_target_task_cap` por rodada, na mesma ordem
+    de urgência de `targets` (já ordenado por `_due_shared_fan_out_
+    targets`) -- um alvo pequeno recebe seu total já na primeira rodada,
+    nunca espera um alvo maior esvaziar; rodadas seguintes distribuem o
+    que sobrar do orçamento entre quem ainda tem trabalho pendente, até
+    esgotar `task_budget` ou os pendentes de todos os alvos."""
+    remaining_by_target = {(item_id, store_id): count for item_id, store_id, count in targets}
+    allocation: dict[tuple[UUID, UUID], int] = dict.fromkeys(remaining_by_target, 0)
+    budget = task_budget
+    progressed = True
+    while budget > 0 and progressed:
+        progressed = False
+        for key in remaining_by_target:
+            if budget <= 0:
+                break
+            room = remaining_by_target[key] - allocation[key]
+            if room <= 0:
+                continue
+            take = min(per_target_task_cap, room, budget)
+            if take <= 0:
+                continue
+            allocation[key] += take
+            budget -= take
+            progressed = True
+    return tuple((item_id, store_id, count) for (item_id, store_id), count in allocation.items() if count > 0)
+
+
+@dataclass(frozen=True, slots=True)
+class FanOutSweepSummary:
+    targets_processed: int = 0
+    attempted_task_count: int = 0
+    fanned_out_mission_count: int = 0
+    skipped_mission_count: int = 0
+    attention_required_mission_count: int = 0
+    terminally_failed_mission_count: int = 0
+
+    @classmethod
+    def aggregate(cls, outcomes: Sequence[SharedCollectionResult]) -> "FanOutSweepSummary":
+        return cls(
+            targets_processed=len(outcomes),
+            attempted_task_count=sum(o.attempted_task_count for o in outcomes),
+            fanned_out_mission_count=sum(len(o.fanned_out_mission_ids) for o in outcomes),
+            skipped_mission_count=sum(len(o.fan_out_skipped_mission_ids) for o in outcomes),
+            attention_required_mission_count=sum(
+                len(o.fan_out_attention_required_mission_ids) for o in outcomes
+            ),
+            terminally_failed_mission_count=sum(
+                len(o.fan_out_failed_mission_ids) for o in outcomes
+            ),
+        )
+
+
+async def sweep_shared_collection_fan_out(
+    session_factory: async_sessionmaker[AsyncSession],
+    ai_manager: AIProviderManager,
+    *,
+    now: datetime | None = None,
+    ai_profile: UserRole = UserRole.ADMIN,
+    target_scan_limit: int = 25,
+    task_budget: int = 100,
+    per_target_task_cap: int = 25,
+    concurrency: int = 4,
+) -> FanOutSweepSummary:
+    """TASK-112 fase 3B: sweep limitado de fan-out pendente/retry/stale --
+    chamado no INÍCIO de todo ciclo do `CollectionOrchestrator.run_batch`
+    (antes de gastar capacidade com coletas novas -- backlog antigo tem
+    prioridade). Orçamento real em duas dimensões (rodada 6): quantos
+    alvos distintos considerar (`target_scan_limit`) e quantas tarefas no
+    TOTAL processar (`task_budget`, nunca "todos os pendentes") --
+    nenhuma das duas pode monopolizar o worker indefinidamente. `recover_
+    stale_fan_out_tasks` roda UMA vez aqui, nunca uma vez por alvo
+    (`resume_shared_collection_fan_out(..., recover_stale=False)`
+    abaixo)."""
+    effective_now = now or utc_now()
+    async with session_factory() as session, session.begin():
+        await recover_stale_fan_out_tasks(session, now=effective_now)
+    async with session_factory() as session:
+        targets = await _due_shared_fan_out_targets(
+            session, now=effective_now, limit=target_scan_limit
+        )
+
+    allocations = _allocate_fan_out_budget(
+        targets, task_budget=task_budget, per_target_task_cap=per_target_task_cap
+    )
+    if not allocations:
+        return FanOutSweepSummary()
+
+    semaphore = asyncio.Semaphore(concurrency)
+
+    async def _run_one(item_id: UUID, store_id: UUID, limit: int) -> SharedCollectionResult:
+        async with semaphore:
+            return await resume_shared_collection_fan_out(
+                session_factory,
+                ai_manager,
+                monitoring_item_id=item_id,
+                store_id=store_id,
+                now=effective_now,
+                ai_profile=ai_profile,
+                recover_stale=False,
+                task_limit=limit,
+            )
+
+    outcomes = await asyncio.gather(
+        *(_run_one(item_id, store_id, limit) for item_id, store_id, limit in allocations)
+    )
+    return FanOutSweepSummary.aggregate(outcomes)
+
+
+async def _execute_claimed_shared_collection(
     session_factory: async_sessionmaker[AsyncSession],
     adapter: CollectionAdapter,
     ai_manager: AIProviderManager,
     *,
-    monitoring_item_id: UUID,
-    store_id: UUID,
-    now: datetime | None = None,
-    ai_profile: UserRole = UserRole.ADMIN,
-    interval_minutes: int = _DEFAULT_SHARED_INTERVAL_MINUTES,
-    normalizer: PriceNormalizer | None = None,
+    claim: _SharedClaim,
+    ai_profile: UserRole,
+    normalizer: PriceNormalizer | None,
+    effective_now: datetime,
+    base_backoff_minutes: int,
 ) -> SharedCollectionResult:
-    """Operação central da fase 3A -- prova o fluxo:
-
-    `MonitoringItemStore` -> 1 coleta na loja -> normalização/persistência
-    comercial 1 execução -> `Offer`/`PriceObservation` persistidos uma vez
-    -> fan-out (`MissionOfferRelevance`/alerta/pré-lista/notificação
-    individuais por Mission elegível, só depois que a persistência
-    comercial já terminou).
-
-    Chamador controla explicitamente QUAL `(monitoring_item_id, store_id)`
-    processar -- não decide sozinha o que está due em lote; isso é
-    trabalho do scheduler (fila justa/fairness, fase 3B), deliberadamente
-    fora desta função."""
-    effective_now = now or utc_now()
+    """TASK-112 fase 3B: "rabo" de `collect_monitoring_item_store`
+    fatorado -- rede + persistência comercial + fan-out do trabalho novo,
+    dado um `_SharedClaim` JÁ estabelecido (fora de qualquer transação,
+    disciplina TASK-079). Usada tanto por `collect_monitoring_item_store`
+    (claim standalone + este rabo) quanto por `claim_due_work`
+    (`orchestration.py` -- claim já feito dentro da Fase A, este rabo
+    chamado depois, sob `self._semaphore`)."""
     effective_normalizer = normalizer or PriceNormalizer()
-
-    claim = await _claim_shared_collection(
-        session_factory,
-        monitoring_item_id=monitoring_item_id,
-        store_id=store_id,
-        now=effective_now,
-        interval_minutes=interval_minutes,
-    )
-    if claim is None:
-        return SharedCollectionResult(claimed=False)
+    monitoring_item_id = claim.monitoring_item_id
+    store_id = claim.store_id
 
     try:
         result = await adapter.collect(
@@ -1435,7 +1478,7 @@ async def collect_monitoring_item_store(
             # relógio desta execução (controlável em teste); `finished_at`
             # precisa ser >= `started_at` do claim, sempre `effective_now`.
             finished_at=effective_now,
-            base_interval_minutes=interval_minutes,
+            base_interval_minutes=base_backoff_minutes,
             confirmed_block=_is_confirmed_external_block(error),
         )
         logger.warning(
@@ -1519,4 +1562,63 @@ async def collect_monitoring_item_store(
         fan_out_skipped_mission_ids=outcome.skipped,
         fan_out_attention_required_mission_ids=outcome.attention_required,
         fan_out_failed_mission_ids=outcome.terminally_failed,
+        attempted_task_count=outcome.attempted_task_count,
+    )
+
+
+async def collect_monitoring_item_store(
+    session_factory: async_sessionmaker[AsyncSession],
+    adapter: CollectionAdapter,
+    ai_manager: AIProviderManager,
+    *,
+    monitoring_item_id: UUID,
+    store_id: UUID,
+    now: datetime | None = None,
+    ai_profile: UserRole = UserRole.ADMIN,
+    cadence_config: CadenceConfig | None = None,
+    store_min_interval_seconds: float = 2.0,
+    fairness_owner_user_id: UUID | None = None,
+    normalizer: PriceNormalizer | None = None,
+) -> SharedCollectionResult:
+    """Operação central da fase 3A, com claim standalone (fase 3B):
+    `MonitoringItemStore` -> 1 coleta na loja -> normalização/persistência
+    comercial 1 execução -> `Offer`/`PriceObservation` persistidos uma vez
+    -> fan-out individual por Mission elegível.
+
+    Chamador controla explicitamente QUAL `(monitoring_item_id, store_id)`
+    processar -- não decide sozinha o que está due em lote; isso é
+    trabalho do scheduler (`app.collection.orchestration.claim_due_work`).
+
+    `fairness_owner_user_id=None` (default) é o contrato STANDALONE --
+    "execução shared fora da fila de fairness" (script/ADMIN/teste
+    chamando direto), nunca "o scheduler esqueceu de gravar o dono": não
+    inventa fairness_owner nem toca `UserCollectionQueueState`. O
+    `CollectionOrchestrator` de produção NUNCA chama esta função
+    diretamente -- usa `claim_due_work`, que já claima dentro da Fase A
+    (dono resolvido pela reserva de fairness) e chama só o "rabo" de
+    execução (`_execute_claimed_shared_collection`) depois."""
+    effective_now = now or utc_now()
+    effective_cadence_config = cadence_config or CadenceConfig()
+
+    claim = await _claim_shared_collection(
+        session_factory,
+        monitoring_item_id=monitoring_item_id,
+        store_id=store_id,
+        now=effective_now,
+        cadence_config=effective_cadence_config,
+        store_min_interval_seconds=store_min_interval_seconds,
+        fairness_owner_user_id=fairness_owner_user_id,
+    )
+    if claim is None:
+        return SharedCollectionResult(claimed=False)
+
+    return await _execute_claimed_shared_collection(
+        session_factory,
+        adapter,
+        ai_manager,
+        claim=claim,
+        ai_profile=ai_profile,
+        normalizer=normalizer,
+        effective_now=effective_now,
+        base_backoff_minutes=effective_cadence_config.normal_min_minutes,
     )

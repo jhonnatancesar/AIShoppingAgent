@@ -378,6 +378,13 @@ class MonitoringItemStore(Base):
             "consecutive_blocks >= 0",
             name="ck_monitoring_item_stores_consecutive_blocks_non_negative",
         ),
+        Index(
+            "ix_monitoring_item_stores_due",
+            "next_run_at",
+            "monitoring_item_id",
+            "store_id",
+            postgresql_where="is_enabled",
+        ),
     )
 
     monitoring_item_id: Mapped[UUID] = mapped_column(
@@ -502,12 +509,20 @@ class MissionTransition(Base):
 
 
 class MissionSource(Base):
-    """Fonte explicitamente selecionada para a busca de uma missão.
+    """Fonte explicitamente selecionada para a busca de uma missão --
+    unidade REAL de execução do caminho legado (TASK-112, fase 3B,
+    correção estrutural): `(mission_id, store_id)`, agenda individual,
+    nunca a Mission inteira via `MissionSchedule`.
 
-    `next_eligible_at`/`consecutive_blocks` (DEC-046) implementam backoff
-    persistente por `(mission_id, store_id)` após bloqueio externo
-    confirmado (401/403/429): não afetam a seleção da fonte nem a agenda
-    da missão, só se essa fonte específica pode ser reivindicada agora.
+    `next_run_at`/`last_run_at` são a cadência comercial desta store
+    específica (`app.collection.cadence`, mesmo papel de
+    `MonitoringItemStore` no caminho compartilhado) -- `NULL` em
+    `next_run_at` significa "ainda não coletada, elegível imediatamente".
+    `next_eligible_at`/`consecutive_blocks` (DEC-046) continuam sendo o
+    backoff por bloqueio externo confirmado (401/403/429), camada
+    separada que sempre vence sobre a cadência: uma store só pode ser
+    reivindicada quando as DUAS condições permitem (`next_run_at` devido
+    E `next_eligible_at` devido), nunca fundidas no mesmo campo.
     """
 
     __tablename__ = "mission_sources"
@@ -528,6 +543,12 @@ class MissionSource(Base):
         PostgreSQLUUID(as_uuid=True),
         ForeignKey("stores.id", ondelete="RESTRICT"),
         primary_key=True,
+    )
+    next_run_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_run_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
     next_eligible_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
@@ -564,17 +585,20 @@ class MissionProductSelection(Base):
 
 
 class MissionSchedule(Base):
-    """Agenda recorrente e editável de uma missão."""
+    """Agenda recorrente de uma missão -- desde TASK-112 fase 3B, agregado
+    DERIVADO só de exibição (API de detalhe, dashboard ADMIN), nunca mais
+    autoritativo para cadência real (`MissionSource` é, ver
+    `app.collection.orchestration._refresh_legacy_schedule_aggregate`).
+    `is_enabled` continua um kill-switch real (ADMIN/privacidade);
+    `interval_minutes` continua a base do backoff DEC-046
+    (`app.collection.orchestration._apply_source_backoff`).
+    """
 
     __tablename__ = "mission_schedules"
     __table_args__ = (
         CheckConstraint(
             "interval_minutes > 0",
             name="ck_mission_schedules_interval_positive",
-        ),
-        CheckConstraint(
-            "last_run_at IS NULL OR last_run_at <= next_run_at",
-            name="ck_mission_schedules_run_order",
         ),
         Index(
             "ix_mission_schedules_due",

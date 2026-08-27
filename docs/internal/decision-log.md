@@ -1,5 +1,128 @@
 # Decision Log
 
+## DEC-101 — TASK-112 fase 3B: fila justa unificada (fairness_owner) + política de cadência
+
+- **Data:** 2026-08-27.
+- **Classificação:** Nova capacidade (base: `DEC-098`/`DEC-099`/`DEC-100`).
+- **Decisão:** o scheduler de produção (`CollectionOrchestrator`) passa a
+  usar `claim_due_work` (`app/collection/orchestration.py`), que unifica
+  fairness entre o caminho antigo (por `Mission`) e o novo (por
+  `MonitoringItem`) numa única fila -- um usuário conta como "dono" no
+  máximo uma vez por ciclo, seja por missão solta due ou por ser
+  `fairness_owner` de um ou mais claims compartilhados. `claim_due_
+  collections`/`_select_due_schedules_for_batch` continuam existindo,
+  quase sem mudança (só anti-join contra `MissionMonitoringItem`) --
+  compatibility API, nunca mais usada pelo orchestrator de produção
+  (auditado: só testes chamam direto, nenhum outro runtime real).
+- **Desenho revisado em 6 rodadas de revisão antes de qualquer código**
+  (histórico completo na conversa de implementação, resumo abaixo é só o
+  desenho final). Rodadas anteriores tentaram: token de fairness
+  comparado por igualdade (rejeitado -- não impede duas execuções
+  concorrentes com `now` diferentes de creditarem o mesmo usuário);
+  seleção travando candidatos no momento do scan (rejeitado -- trava
+  candidatos que o corte de `max_users` vai descartar); scan explodido
+  por vínculo usuário×item (rejeitado -- um item popular consumiria toda
+  a janela de scan sozinho); ordem de locks "loja depois usuário"
+  (rejeitado -- permite deadlock cruzado entre transações concorrentes,
+  provado com cenário concreto).
+- **Reserva de fairness — mecanismo final:** `app.collection.fairness.
+  _reserve_fairness_owners` trava `UserCollectionQueueState` dos
+  candidatos via `SELECT ... FOR UPDATE SKIP LOCKED`, em ordem ASCENDENTE
+  de `user_id`, SEMPRE antes de qualquer lock de loja -- é este lock
+  contínuo (mantido até o commit/rollback da transação inteira), não uma
+  comparação de token, que impede duas execuções concorrentes de
+  `claim_due_work` de reservarem o mesmo usuário ao mesmo tempo, e a
+  ordem fixa (usuário sempre antes de loja, loja sempre em ordem de
+  `store_id`) que torna o deadlock cruzado estruturalmente impossível
+  (nenhuma transação jamais faz loja-antes-de-usuário). Só DEPOIS da
+  reserva os recursos são de fato reivindicados, numa lista única
+  ordenada por `(store_id, due_at, kind, resource_id)` -- nenhum caminho
+  tem prioridade estrutural sobre o outro na mesma loja. Cooldown
+  (`_commit_fairness_turn_for_owner`, `UPDATE` simples, sem CAS -- o lock
+  da reserva já garante exclusão mútua) só é gravado para donos com >= 1
+  claim real; dono reservado sem nenhum claim real nunca paga cooldown.
+  `UserCollectionQueueState.last_fairness_turn_id` (coluna nova) é só
+  rastro de auditoria, não o mecanismo de corretude.
+- **`CollectionRun.fairness_owner_user_id`** (coluna nova): gravado na
+  MESMA transação/savepoint do claim compartilhado -- trilha de auditoria
+  completa numa linha (`CollectionRun → monitoring_item_id → store_id →
+  fairness_owner_user_id`). `NULL` no caminho antigo (reforçado por
+  `CHECK`) e também no caminho compartilhado STANDALONE (`collect_
+  monitoring_item_store` chamada fora do orchestrator -- script/ADMIN/
+  teste -- "execução shared fora da fila de fairness", nunca "esqueceram
+  de gravar"); nunca `NULL` no caminho orquestrado. `ondelete=RESTRICT`
+  auditado contra `app.privacy.service.deidentify_account` -- nunca apaga
+  a linha `User`, só remove credenciais/`telegram_user_id`, então a FK
+  nunca fica pendurada na prática.
+- **Seleção somente-leitura, sem explosão por vinculados:** `_select_due_
+  work_for_batch` conta `MonitoringItemStore` ÚNICO como candidato
+  (nunca 1 vínculo Mission/User = 1 candidato -- um item com 100
+  vinculados nunca consome mais que 1 posição da janela de scan).
+  `candidate_scan_limit` (default 1000) é só para descobrir trabalho/
+  donos, nunca um teto de execução. `EXPLAIN ANALYZE` contra 5000
+  `MonitoringItemStore` sintéticos (2% due) confirmou o índice novo (`ix_
+  monitoring_item_stores_due`) em uso via Bitmap Index Scan, execução
+  sub-milissegundo -- `next_eligible_at` não entrou no índice por
+  desenho (seletividade dominada por `next_run_at`), não "no escuro".
+- **Sweep de fan-out** (`sweep_shared_collection_fan_out`, chamado no
+  INÍCIO de todo `run_batch`, antes de qualquer claim novo): orçamento em
+  duas dimensões (`target_scan_limit`/`task_budget`, nunca "todos os
+  pendentes"), alocado em rodadas via `per_target_task_cap` -- um alvo
+  com backlog grande nunca monopoliza o ciclo enquanto alvos menores
+  também estão devidos. `recover_stale_fan_out_tasks` roda 1x por sweep
+  (nunca 1x por alvo). Achado real corrigido nesta fase: `_process_
+  pending_fan_out` ordenava por `mission_id` (arbitrário) -- agora
+  `COALESCE(next_retry_at, created_at)`, entre alvos e dentro de cada
+  alvo, para que retry antigo nunca seja starvado por tarefas novas.
+  `attempted_task_count` (contagem real de tarefas reivindicadas) é o
+  contrato de orçamento, nunca a soma dos buckets de resultado (não
+  cobrem retry transitório).
+- **Política de cadência** (`app/collection/cadence.py`, módulo novo) --
+  nova camada, distinta de fairness (decide QUEM) e de `StoreThrottleState`
+  (rajada de curtíssimo prazo). Prioridade fixa: backoff (DEC-046) sempre
+  vence > `PROMO_CALENDAR`/`HIGH_ACTIVITY` (30-45min, piso absoluto de
+  30min) > `NORMAL` (45-75min, alvo ~60). `PromotionalWindow` (tabela
+  nova) é calendário promocional como dado, não código -- ADMIN insere/
+  remove janelas sem nenhuma migration nova. Atividade comercial alta é
+  POR LOJA, sinal determinístico já durável (nova `PriceObservation` só
+  existe quando o estado comercial mudou de verdade, TASK-093/DEC-097 --
+  contar linhas novas numa janela já é contar mudanças reais, sem schema
+  novo para a contagem). `StoreActivityState` (tabela nova) guarda só a
+  histerese (`high_activity_until`) para não alternar modos a cada ciclo
+  bem na borda do limiar.
+- **Migration `20260826_0001`** (aditiva, única): `UserCollectionQueueState.
+  last_fairness_turn_id`, `CollectionRun.fairness_owner_user_id` + FK +
+  `CHECK`, índice `ix_monitoring_item_stores_due`, tabelas `promotional_
+  windows`/`store_activity_state`.
+- **Organização de código:** dois módulos novos, neutros --
+  `app/collection/fairness.py` e `app/collection/shared_claim.py`
+  (claim compartilhado, movido de `shared_collection.py`) -- eliminam a
+  dependência circular que existiria se essa lógica vivesse em
+  `orchestration.py` ou `shared_collection.py` diretamente (que já
+  depende de `orchestration.py` para ~17 símbolos privados reaproveitados
+  desde a fase 3A). O único sentido restante de dependência
+  (`CollectionOrchestrator` chamando execução do caminho compartilhado)
+  usa injeção de dependência no construtor, mesmo padrão de `identity_
+  resolver` (TASK-083).
+- **Fora de escopo, deliberadamente:** backfill de missões antigas para
+  o caminho compartilhado (§14 do `docs/tasks/TASK-112.md`) -- coexistência
+  permanente confirmada (missão nunca vinculada continua para sempre no
+  caminho antigo); painel ADMIN de calendário promocional (hoje só
+  inserção direta de linha, sem UI); qualquer mudança em TASK-093
+  (dedupe) ou TASK-107 (cotas) -- cota do usuário continua sem relação
+  com velocidade de scraping da mesma busca.
+- **Validação:** suíte de integração completa (152 testes) verde contra
+  PostgreSQL real, incluindo toda a suíte pré-existente de fase 3A/
+  TASK-108 sem NENHUMA modificação -- prova que o caminho antigo
+  degenera exatamente no comportamento de sempre quando não há
+  trabalho compartilhado. 15 testes de integração novos dedicados
+  (exclusão de vinculada, `claim_due_collections` sem efeito shared,
+  rider nunca avança, dono sem claim não paga cooldown, owner NULL só
+  standalone, concorrência real sem duplicar claim, cadência NORMAL/
+  PROMO/backoff/atividade alta). Suíte unitária (não-DB) completa
+  também verde, com 2 testes pré-existentes ajustados para os campos
+  novos de `CollectionBatchResult`.
+
 ## DEC-100 — TASK-112 fase 3A: coleta compartilhada durável com fan-out individual
 
 - **Data:** 2026-08-26.

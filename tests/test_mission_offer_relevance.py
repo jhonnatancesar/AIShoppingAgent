@@ -8,12 +8,17 @@ from sqlalchemy import ForeignKeyConstraint, Index
 
 
 def test_mission_offer_relevance_uses_composite_identity() -> None:
+    """Achado (auditoria TASK-112 fase 3B): `last_observation_id` foi
+    adicionada na fase 3A (fonte de "previous" por Mission no fan-out
+    compartilhado, DEC-048) e nunca refletida aqui -- defasagem já
+    existente antes desta fase, não é regressão."""
     table = MissionOfferRelevance.__table__
     assert [column.name for column in table.columns] == [
         "mission_id",
         "offer_id",
         "classification",
         "classified_at",
+        "last_observation_id",
         "created_at",
     ]
     assert tuple(column.name for column in table.primary_key.columns) == (

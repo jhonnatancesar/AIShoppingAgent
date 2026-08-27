@@ -57,15 +57,19 @@ def test_schedule_table_matches_contract() -> None:
 
 
 def test_schedule_constraints_and_reference_protect_integrity() -> None:
+    """Achado (auditoria TASK-112 fase 3B, correção estrutural):
+    `ck_mission_schedules_run_order` foi removida -- `MissionSchedule`
+    virou agregado DERIVADO (MIN/MAX sobre `MissionSource` da missão,
+    `app.collection.orchestration._refresh_legacy_schedule_aggregate`),
+    `next_run_at`/`last_run_at` podem vir de sources diferentes, claimadas
+    em momentos diferentes -- `last_run_at <= next_run_at` deixou de ser
+    um invariante válido no agregado."""
     table = MissionSchedule.__table__
     assert {
         constraint.name
         for constraint in table.constraints
         if isinstance(constraint, CheckConstraint)
-    } == {
-        "ck_mission_schedules_interval_positive",
-        "ck_mission_schedules_run_order",
-    }
+    } == {"ck_mission_schedules_interval_positive"}
     foreign_key = next(
         constraint
         for constraint in table.constraints

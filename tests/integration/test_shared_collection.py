@@ -23,6 +23,7 @@ import pytest
 import app.collection.shared_collection as shared_collection_module
 from app.ai_provider import AIResponse
 from app.collection.adapter import CollectionAdapter
+from app.collection.cadence import CadenceConfig
 from app.collection.contracts import CollectionRequest, CollectionResult, RawCollectedOffer
 from app.collection.models import (
     CollectionRun,
@@ -58,6 +59,16 @@ from sqlalchemy import text as sa_text
 pytestmark = pytest.mark.integration
 
 NOW = datetime(2026, 8, 25, 12, 0, tzinfo=UTC)
+
+# TASK-112 fase 3B: `_claim_shared_collection`/`collect_monitoring_item_store`
+# usam agora a política de cadência (`app.collection.cadence`, faixa
+# jitterada 45-75min por padrão) em vez do antigo `interval_minutes` fixo
+# -- esta suíte (fase 3A) testa claim/lock/fan-out, não a política de
+# cadência em si (isso tem cobertura própria, `tests/integration/
+# test_cadence_and_high_activity.py`), então usa uma faixa determinística
+# (min == max == 60, mesmo valor do antigo default) para preservar as
+# asserções de tempo já existentes sem introduzir flakiness.
+_DETERMINISTIC_CADENCE = CadenceConfig(normal_min_minutes=60, normal_max_minutes=60)
 
 
 class _CountingGpuProvider:
@@ -1143,7 +1154,7 @@ def test_fan_out_survives_crash_and_resumes_without_recalling_the_provider(
             monitoring_item_id=item_id,
             store_id=amazon_id,
             now=NOW,
-            interval_minutes=60,
+            cadence_config=_DETERMINISTIC_CADENCE,
         )
     )
     assert claim is not None
@@ -1274,7 +1285,7 @@ def test_stale_shared_run_is_recovered_and_slot_becomes_eligible_again(
             monitoring_item_id=item_id,
             store_id=amazon_id,
             now=NOW,
-            interval_minutes=60,
+            cadence_config=_DETERMINISTIC_CADENCE,
         )
     )
     assert claim is not None
@@ -1291,7 +1302,7 @@ def test_stale_shared_run_is_recovered_and_slot_becomes_eligible_again(
             monitoring_item_id=item_id,
             store_id=amazon_id,
             now=NOW + timedelta(minutes=5),
-            interval_minutes=60,
+            cadence_config=_DETERMINISTIC_CADENCE,
         )
     )
     assert second_attempt is None
@@ -1549,7 +1560,7 @@ def test_two_workers_resuming_concurrently_never_process_the_same_task_twice(
             monitoring_item_id=item_id,
             store_id=amazon_id,
             now=NOW,
-            interval_minutes=60,
+            cadence_config=_DETERMINISTIC_CADENCE,
         )
     )
     assert claim is not None
@@ -1673,7 +1684,7 @@ def test_crash_mid_mission_processing_never_duplicates_individual_effects(
             monitoring_item_id=item_id,
             store_id=amazon_id,
             now=NOW,
-            interval_minutes=60,
+            cadence_config=_DETERMINISTIC_CADENCE,
         )
     )
     assert claim is not None
@@ -1824,7 +1835,7 @@ def test_stale_processing_fan_out_task_is_recovered_and_processed_once(
             monitoring_item_id=item_id,
             store_id=amazon_id,
             now=NOW,
-            interval_minutes=60,
+            cadence_config=_DETERMINISTIC_CADENCE,
         )
     )
     assert claim is not None
@@ -1940,7 +1951,7 @@ def _create_shared_pending_tasks(integration_database, *, item_id, store_id, now
             monitoring_item_id=item_id,
             store_id=store_id,
             now=now,
-            interval_minutes=60,
+            cadence_config=_DETERMINISTIC_CADENCE,
         )
     )
     assert claim is not None
@@ -2150,7 +2161,7 @@ def test_notification_outbox_never_double_delivers_after_fan_out_crash_and_retry
             monitoring_item_id=item_id,
             store_id=amazon_id,
             now=NOW,
-            interval_minutes=60,
+            cadence_config=_DETERMINISTIC_CADENCE,
         )
     )
     assert claim is not None

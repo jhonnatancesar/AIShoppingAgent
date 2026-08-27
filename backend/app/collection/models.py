@@ -58,6 +58,10 @@ class CollectionRun(Base):
             "(mission_id IS NULL AND monitoring_item_id IS NOT NULL)",
             name="ck_collection_runs_ownership_xor",
         ),
+        CheckConstraint(
+            "fairness_owner_user_id IS NULL OR monitoring_item_id IS NOT NULL",
+            name="ck_collection_runs_fairness_owner_requires_shared",
+        ),
         Index(
             "ix_collection_runs_mission_started_at", "mission_id", desc("started_at")
         ),
@@ -97,6 +101,32 @@ class CollectionRun(Base):
     `PriceObservation` é gravada presa a ela; cada Mission elegível do
     fan-out ganha sua PRÓPRIA run (`mission_id` preenchido,
     `monitoring_item_id` nulo), exatamente como hoje."""
+    fairness_owner_user_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    """TASK-112 (fase 3B): usuário que consumiu o turno de fairness desta
+    run compartilhada -- trilha de auditoria numa linha só (CollectionRun
+    -> monitoring_item_id -> store_id -> fairness_owner_user_id), sem
+    join extra. Gravado na MESMA transação/savepoint do claim
+    (`app.collection.shared_claim._claim_shared_collection_in_session`)
+    -- se a aquisição do turno falhar logo em seguida, o rollback do
+    savepoint desfaz a CollectionRun inteira, atribuição incluída.
+    `NULL` em duas situações diferentes: (a) sempre `NULL` numa run do
+    caminho antigo (`monitoring_item_id IS NULL`, reforçado pelo CHECK
+    abaixo); (b) pode ser `NULL` numa run compartilhada disparada FORA do
+    scheduler (`collect_monitoring_item_store` chamada direto -- script/
+    ADMIN/teste, sem passar `fairness_owner_user_id`) -- significa
+    "execução shared fora da fila de fairness", nunca "o scheduler
+    esqueceu de gravar o dono". No caminho do `CollectionOrchestrator`
+    (`claim_due_work`), owner `NULL` é impossível por construção -- só
+    reserva um alvo compartilhado para donos já resolvidos pela Fase 1 de
+    `app.collection.fairness._reserve_fairness_owners`. `ondelete=
+    RESTRICT` (não `SET NULL`): `app.privacy.service.deidentify_account`
+    nunca apaga a linha `User`, só remove credenciais/`telegram_user_id`
+    -- a FK nunca fica pendurada na prática; `RESTRICT` é só consistência
+    com o resto do histórico append-only do projeto."""
     store_id: Mapped[UUID] = mapped_column(
         PostgreSQLUUID(as_uuid=True),
         ForeignKey("stores.id", ondelete="RESTRICT"),
@@ -619,6 +649,17 @@ class UserCollectionQueueState(Base):
     next_eligible_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    last_fairness_turn_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), nullable=True
+    )
+    """TASK-112 (fase 3B): rastro de auditoria/depuração -- "qual ciclo
+    (`turn_id`, um `uuid4()` sorteado por chamada de `run_batch`) creditou
+    o último avanço deste usuário". NÃO é o mecanismo de exclusão mútua
+    entre execuções concorrentes (isso é o lock contínuo de linha
+    adquirido por `app.collection.fairness._reserve_fairness_owners`,
+    mantido até o commit) -- comparar tokens por igualdade sozinho já foi
+    tentado e rejeitado (não impede duas execuções com `now` diferentes
+    de creditarem o mesmo usuário, ver `docs/tasks/TASK-112.md`)."""
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -685,6 +726,77 @@ class CollectionQueueConfig(Base):
     )
     store_min_interval_seconds_override: Mapped[float | None] = mapped_column(
         Float, nullable=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+        onupdate=utc_now,
+        server_default=func.now(),
+    )
+
+
+class PromotionalWindow(Base):
+    """Janela de cadência promocional determinística (TASK-112, fase 3B)
+    -- dado, não código: ADMIN insere/remove linhas para calendário
+    promocional (datas duplas -- 9/9, 10/10, 11/11, 12/12 --, Black
+    Friday, Cyber Monday, outras futuras) sem NENHUMA migration nova.
+    Enquanto `now` cai dentro de QUALQUER janela ativa, a política de
+    cadência (`app.collection.cadence`) usa a faixa promocional para toda
+    loja -- nunca substitui fairness/StoreThrottle/backoff, só torna
+    `MonitoringItemStore.next_run_at` due mais cedo (`app.collection.
+    cadence.resolve_collection_cadence`)."""
+
+    __tablename__ = "promotional_windows"
+    __table_args__ = (
+        CheckConstraint(
+            "ends_at > starts_at", name="ck_promotional_windows_time_order"
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4
+    )
+    label: Mapped[str] = mapped_column(String(120), nullable=False)
+    starts_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    ends_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+        server_default=func.now(),
+    )
+
+
+class StoreActivityState(Base):
+    """Estado mínimo por loja para detecção determinística de atividade
+    comercial alta (TASK-112, fase 3B). A CONTAGEM de mudanças em si
+    nunca é cacheada aqui -- é sempre recomputada ao vivo a partir de
+    `PriceObservation` (TASK-093/DEC-097: uma nova linha só existe quando
+    o estado comercial de fato mudou, sinal já durável, sem schema novo
+    para a contagem em si -- ver `app.collection.cadence._is_high_
+    activity`). Esta tabela guarda só a HISTERESE: uma vez detectado um
+    pico (quantidade de mudanças >= limiar dentro da janela de
+    observação, ambos configuráveis), `high_activity_until` mantém a loja
+    em modo acelerado por uma duração mínima configurável mesmo que as
+    mudanças que dispararam o pico já tenham saído da janela de
+    observação no ciclo seguinte -- evita alternar NORMAL/HIGH_ACTIVITY a
+    cada ciclo bem na borda do limiar. Sem `high_activity_until` no
+    futuro (nunca disparado, ou já expirado sem um novo pico), a loja
+    está em NORMAL -- nenhuma transição explícita de saída é necessária,
+    só a passagem do tempo."""
+
+    __tablename__ = "store_activity_state"
+
+    store_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("stores.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    high_activity_until: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

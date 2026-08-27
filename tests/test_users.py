@@ -22,7 +22,12 @@ def test_user_role_has_only_v1_profiles() -> None:
 
 
 def test_user_table_matches_data_contract() -> None:
-    """Colunas, nulabilidade e limites devem refletir o modelo documentado."""
+    """Colunas, nulabilidade e limites devem refletir o modelo documentado.
+
+    Achado (auditoria TASK-112 fase 3B): `lifecycle_status`/`deleted_at`
+    (tombstone, TASK-102) e os overrides de cota (TASK-107) foram
+    adicionados e nunca refletidos aqui -- defasagem já existente antes
+    desta fase, não é regressão."""
     table = User.__table__
 
     assert table.name == "users"
@@ -31,6 +36,8 @@ def test_user_table_matches_data_contract() -> None:
         table.c.display_name,
         table.c.role,
         table.c.is_active,
+        table.c.lifecycle_status,
+        table.c.deleted_at,
         table.c.telegram_user_id,
         table.c.telegram_chat_id,
         table.c.notify_price_decreases,
@@ -41,9 +48,16 @@ def test_user_table_matches_data_contract() -> None:
         table.c.preferred_categories,
         table.c.registration_step,
         table.c.pending_intent,
+        table.c.max_active_missions_override,
+        table.c.max_store_slots_override,
+        table.c.max_daily_searches_override,
         table.c.created_at,
         table.c.updated_at,
     ]
+    assert table.c.deleted_at.nullable is True
+    assert table.c.max_active_missions_override.nullable is True
+    assert table.c.max_store_slots_override.nullable is True
+    assert table.c.max_daily_searches_override.nullable is True
     assert table.c.id.primary_key is True
     assert table.c.display_name.nullable is False
     assert table.c.display_name.type.length == 160

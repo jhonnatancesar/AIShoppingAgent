@@ -176,9 +176,15 @@ def test_create_mission_rejects_unpaired_target(client: TestClient) -> None:
 
 
 def test_create_mission_rejects_unknown_source_code(client: TestClient) -> None:
+    """Achado (auditoria TASK-112 fase 3B): este teste usava "magalu" como
+    fonte inválida -- desde a TASK-104A, `magalu` é uma fonte V1 real
+    (`MISSION_SOURCE_CODES`), então já não testava mais rejeição nenhuma
+    (defasagem já existente antes desta fase, não é regressão). `shopee`
+    continua fora do escopo comercial da V1 (CLAUDE.md: "Futuro"), então
+    é o valor certo para exercitar a validação de fonte desconhecida."""
     response = client.post(
         "/api/v1/missions",
-        json={"search_query": "rtx 5070 ti", "source_codes": ["magalu"]},
+        json={"search_query": "rtx 5070 ti", "source_codes": ["shopee"]},
         cookies=_cookies(),
         headers=_csrf_headers(),
     )

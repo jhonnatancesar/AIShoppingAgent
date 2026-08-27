@@ -1,5 +1,30 @@
 # Project Context
 
+**Atualização 2026-08-27 (TASK-112 fase 3B concluída, `DEC-101`; ainda
+sem commit):** `CollectionOrchestrator` (produção) passa a chamar
+`claim_due_work`, scheduler unificado que reserva fairness (lock real de
+`UserCollectionQueueState` via `FOR UPDATE SKIP LOCKED`, ordem de
+`user_id`, sempre antes de qualquer lock de loja -- não mais um token
+comparado por igualdade) e claima os dois caminhos (Mission solta e
+MonitoringItem) numa lista única ordenada por loja, sem prioridade
+estrutural de um caminho sobre o outro. `claim_due_collections` continua
+existindo, quase intocada (só ganhou anti-join contra
+`MissionMonitoringItem`), como compatibility API -- auditado que nenhum
+runtime real além de testes ainda a chama direto. Cooldown só é
+debitado de dono com >= 1 claim real; `CollectionRun.fairness_owner_
+user_id` audita quem consumiu cada turno compartilhado (`NULL` só no
+caminho antigo e no standalone fora do scheduler). Nova política de
+cadência (`app.collection.cadence`) substitui o intervalo fixo de 60min
+por faixas configuráveis -- NORMAL 45-75min, PROMO_CALENDAR/HIGH_ACTIVITY
+30-45min (piso absoluto), backoff por bloqueio confirmado sempre vence;
+atividade comercial alta é detectada por loja a partir de
+`PriceObservation` já persistida (sinal durável, sem IA). Migration
+`20260826_0001` (aditiva). Suíte de integração completa (152 testes)
+verde contra PostgreSQL real, incluindo toda a fase 3A/TASK-108
+pré-existente sem nenhuma modificação; 15 testes de integração novos
+dedicados à fila unificada/cadência. Desenho revisado em 6 rodadas antes
+do código (ver `docs/internal/decision-log.md`, `DEC-101`).
+
 **Nota de manutenção (2026-08-26):** este arquivo ficou sem atualização
 entre a TASK-104B (2026-08-22) e a TASK-112 (2026-08-25/26) -- TASK-105,
 TASK-107, TASK-108, TASK-109 e TASK-111 foram concluídas nesse

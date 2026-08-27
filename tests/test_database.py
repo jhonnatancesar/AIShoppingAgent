@@ -133,21 +133,34 @@ def test_telegram_async_engine_uses_default_timeout_settings() -> None:
 
 
 def test_metadata_contains_only_implemented_tables() -> None:
-    """A metadata não deve antecipar tabelas de tarefas futuras."""
+    """A metadata não deve antecipar tabelas de tarefas futuras.
+
+    Achado (auditoria TASK-112 fase 3B): esta lista ficou desatualizada
+    entre TASK-108 e a fase 3A/3B da TASK-112 sem que ninguém a atualizasse
+    -- confirmado que a defasagem já existia antes desta fase (baseline
+    `471e898`), não é uma regressão introduzida aqui. Corrigida para o
+    conjunto real de tabelas hoje; `import app.main` garante que todo
+    módulo de modelo já foi carregado antes da asserção."""
+    import app.main  # noqa: F401 -- garante que toda tabela real já foi registrada
+
     assert set(Base.metadata.tables) == {
         "users",
         "products",
         "stores",
         "offers",
+        "sellers",
         "audit_entries",
         "missions",
         "mission_criteria",
         "mission_transitions",
-        "sellers",
         "mission_sources",
         "mission_schedules",
+        "mission_offer_relevance",
+        "mission_product_selections",
         "collection_runs",
         "price_observations",
+        "offer_installment_options",
+        "offer_short_links",
         "events",
         "event_consumption_attempts",
         "event_delivery_checkpoints",
@@ -157,8 +170,22 @@ def test_metadata_contains_only_implemented_tables() -> None:
         "user_auth_sessions",
         "credential_action_tokens",
         "telegram_update_receipts",
-        "mission_offer_relevance",
-        "offer_short_links",
-        "offer_installment_options",
+        "telegram_link_tokens",
         "web_sessions",
+        "admin_api_keys",
+        "search_receipts",
+        "product_identity_aliases",
+        # TASK-112: Shared Monitoring (fases 1-3B).
+        "monitoring_items",
+        "mission_monitoring_items",
+        "monitoring_item_stores",
+        "shared_collection_offers",
+        "shared_fan_out_tasks",
+        # TASK-108: fila justa/pacing global por loja.
+        "user_collection_queue_state",
+        "store_throttle_state",
+        "collection_queue_config",
+        # TASK-112 fase 3B: política de cadência.
+        "promotional_windows",
+        "store_activity_state",
     }
