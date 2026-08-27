@@ -8,14 +8,15 @@
 | `terabyte` | Terabyte | `retailer` |
 | `amazon` | Amazon | `marketplace` |
 | `kabum` | Kabum | `retailer` |
+| `magalu` | Magalu | `marketplace` |
+| `mercadolivre` | Mercado Livre | `marketplace` |
 
-Uma missão seleciona uma ou mais dessas fontes por `mission_sources`. A Amazon
-inclui vendedores terceiros: `Seller` identifica cada vendedor e `Offer` mantém
-identidade separada por marketplace e vendedor.
+Uma missão seleciona uma ou mais dessas fontes por `mission_sources`. Amazon,
+Magalu e Mercado Livre incluem vendedores terceiros: `Seller` identifica cada
+vendedor e `Offer` mantém identidade separada por marketplace e vendedor.
 
 ***Futuro***
 
-- Mercado Livre (`mercado_livre`);
 - Shopee (`shopee`);
 - AliExpress (`aliexpress`).
 
@@ -33,9 +34,16 @@ válida significa `unknown`. A classificação não popula `Seller`, não altera
 identidade, preço, relevância ou ranking e nunca assume loja oficial por
 omissão.
 
-Os quatro providers foram implementados na TASK-055. Pichau e Terabyte podem
-exigir Chromium headed (com Xvfb no Ubuntu Server) por bloquearem execução
-headless. O projeto não tenta ocultar automação nem contornar CAPTCHA/proteções.
-A imagem da API inicia Xvfb e define `DISPLAY`, sem exigir desktop instalado no
-host. A validação real usa `python -m scripts.validate_store_providers <fonte>`
-dentro do container; Pichau e Terabyte usam headed por padrão.
+Pichau, Terabyte, Amazon e Kabum foram implementados na TASK-055; Magalu
+(TASK-104A) e Mercado Livre (TASK-104B) vieram depois, na V1.2. O projeto não
+tenta ocultar automação nem contornar CAPTCHA/proteções.
+
+Desde a TASK-109, o `collection_worker` roda como processo nativo Windows e
+navega através de um Microsoft Edge real via CDP
+(`EdgeCdpSupervisor`/`Playwright.chromium.connect_over_cdp()`) — nunca mais
+lança Chromium gerenciado (headed ou headless) nem depende de Xvfb/Docker para
+navegação em nenhum provider, incluindo Pichau e Terabyte. Ver
+[Runtime Windows do collection_worker](windows-collection-worker.md) e
+[Playwright: sempre `connect_over_cdp()`, nunca `.launch()`](playwright.md)
+para a arquitetura de transporte completa. A validação real usa
+`python -m scripts.validate_store_providers <fonte>`.
