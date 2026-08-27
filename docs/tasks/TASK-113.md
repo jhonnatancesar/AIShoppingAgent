@@ -1002,3 +1002,229 @@ commit; nenhum push; nenhum deploy. Só `docs/tasks/TASK-113.md` foi
 alterado nesta correção (sincronização de `docs/internal/roadmap.md`/
 `v1.2-scope.md`/`README.md` para refletir a fusão do item 17 fica
 pendente, fora desta edição específica salvo pedido explícito).
+
+## 39. Implementação (2026-08-27) — 14 correções pós-plano incorporadas
+
+Implementação real de código, direto a partir de §33, com 14 correções
+adicionais pedidas pelo usuário antes de codificar (single-flight
+completo por estado, decisão final sob lock, fases nunca misturando
+transação com rede, bootstrap determinístico via `Event`s reais,
+identidade determinística, quórum validado em código, fallback
+`/v2/scrape`, rate-limit vs. bloqueio de origem, `internal_historical_
+best` product-global, resolução de modo unificada, round-trip de
+migration, reuso pelo shared/fan-out, caracterização do evaluator
+anterior, sem parar entre fases).
+
+**Schema/migration**: `market_price_assessments` (`app/market_research/
+models.py`) e `mission_product_alert_state` (`app/alerts/models.py`),
+migration `20260827_0001` -- upgrade/downgrade/upgrade verificado num
+Postgres 18 descartável real, schema conferido via `\d` batendo exatamente
+com os modelos. Backfill determinístico incluído na própria migration,
+via `Event`s reais (`price.decreased.v1`/`price.target_reached.v1`,
+únicos emissores de `evaluate_price_alerts`, `mission_id` sempre
+preenchido) -- `best_notified_amount`/`last_notified_amount`/`last_
+notified_at`/`last_alert_event_id` reconstruídos com precisão, `rearmed_
+at` nasce `NULL` (conservador, sem como reconstruir subida intermediária
+só dos eventos de alerta).
+
+**Single-flight** (`app.market_research.service.claim_assessment`):
+`INSERT ... ON CONFLICT ... DO UPDATE ... WHERE` cobre os 4 estados
+explicitamente (`processing` com lease expirado, `failed` com `retry_
+after` vencido, `ready` expirado OU refresh antecipado por variação
+>=5%, linha inexistente) -- nunca `SELECT FOR UPDATE` numa linha
+presumida. Sucesso limpa `lease_until`/`retry_after`/`last_error`, zera
+`failure_count`; falha nunca permite reclaim imediato (`retry_after`
+cresce geometricamente com falhas consecutivas, capado).
+
+**Fases nunca misturadas**: `claim_assessment`/`mark_assessment_ready`/
+`mark_assessment_failed` são três transações CURTAS e independentes;
+Firecrawl/IA rodam entre elas, sempre fora de qualquer `session.begin()`.
+
+**Decisão final sob lock** (`evaluate_price_alerts` chamado de dentro de
+`_persist_phase_c`): achado real registrado no código -- o `SELECT
+missions ... FOR UPDATE` já existente no TOPO de `_persist_phase_c`
+(TASK-079) já serializa toda a Fase C por `mission_id`, tornando um
+segundo lock dedicado em `MissionProductAlertState` redundante (duas
+stores da mesma Mission nunca decidem em paralelo, a segunda espera o
+commit da primeira). O checkpoint é lido dentro dessa mesma transação
+já travada, nunca de um valor calculado antes na Fase B.
+
+**Identidade determinística**: evidência Firecrawl só entra no
+assessment quando `resolve_product_variant` (Product Identity Engine,
+TASK-097, MESMO motor que gerou `Product.identity_key`) resolve o texto
+da evidência para a identidade EXATA esperada -- IA nunca autoriza
+equivalência.
+
+**Quórum validado em código** (`finalize_market_research`): 2 domínios
+nunca sai de `MEDIUM` mesmo se a IA disser `HIGH`; `HIGH` exige 3+
+domínios E a IA também ter dito `HIGH`. `historical_low_source` além de
+obrigatório quando o valor não é `NULL`, precisa ser uma das URLs
+realmente buscadas (nunca aceita URL inventada pela IA).
+
+**Firecrawl**: `scrape_basic` (`/v2/scrape` básico, sem stealth/proxy)
+como fallback quando a busca sozinha não atinge o mínimo, até 3 URLs de
+domínios distintos por busca; circuito/retry por CHAVE (`firecrawl_
+search` vs. `firecrawl_scrape`) representa saúde do SERVIÇO Firecrawl,
+nunca uma origem específica recusando (`success: false` de uma URL
+nunca conta para o circuito, nunca é retentado).
+
+**`internal_historical_best`** (`app.alerts.internal_history`):
+product-global por desenho -- nunca filtra por `MissionOfferRelevance`
+(relevância é por Mission, o histórico interno não é).
+
+**Resolução de modo unificada** (`app.collection.cadence.resolve_
+product_market_mode`): mesma função alimenta TTL do assessment e janela
+de re-alert -- `Store.is_active` (sinal já existente, mesmo usado para
+desativar a Terabyte) define "loja relevante", nunca um conceito novo.
+
+**Evaluator**: `evaluate_price_alerts` ganhou parâmetros novos, todos
+opcionais (`checkpoint=None` reproduz exatamente o comportamento
+anterior) -- os 17 testes já existentes em `tests/test_price_alerts.py`
+passam sem alteração, mais 7 novos cobrindo os caminhos A/B/C e os
+exemplos centrais do §16/§33.9 (3900→4500→4199,99 sem alerta; re-alert
+liberado meses depois só com assessment bom; bloqueado sem assessment).
+
+**Shared/fan-out**: `_run_phase_b`/`_persist_phase_c` são reaproveitados
+SEM alteração de import pelo caminho compartilhado (`shared_collection.
+_process_pending_fan_out`) -- a mesma extensão vale para os dois
+caminhos automaticamente; `firecrawl`/`settings` propagados por toda a
+cadeia (`sweep_shared_collection_fan_out` -> `resume_shared_collection_
+fan_out` -> `_process_pending_fan_out`) como parâmetros opcionais
+(`None` desliga o recurso, comportamento idêntico ao anterior).
+
+## 40. Fechamento técnico -- testes de integração focados (2026-08-27, rodada de correção pós-relatório)
+
+O relatório da rodada anterior (§39) tinha testes unitários e checagens
+pontuais, mas nenhum teste de integração real contra PostgreSQL para os
+invariantes que só concorrência/estado real provam. Esta rodada fechou
+isso, sem reabrir arquitetura nem rodar a suíte inteira do projeto --
+só o que estava faltando.
+
+### 40.1 Testes de integração adicionados
+
+`tests/integration/test_market_research.py` (11 testes) e `tests/
+integration/test_alert_checkpoint.py` (2 testes), 13 no total, contra
+PostgreSQL 18 real (`scripts/run_integration_tests.py`):
+
+- **Single-flight concorrente** (A): 5 chamadas `claim_assessment`
+  simultâneas (`asyncio.gather`, conexões `asyncpg` distintas) para o
+  mesmo `product_id` sem assessment -- exatamente 1 `WON`, as outras 4
+  `IN_PROGRESS`.
+- **Lease** (B): `PROCESSING` com `lease_until` futuro bloqueia reclaim;
+  expirado permite.
+- **`READY` expirado** (C): `expires_at` no passado permite reclaim.
+- **Cache hit** (D): `READY` válido, variação de preço <5%, zero
+  chamada nova.
+- **Refresh antecipado** (E): `READY` ainda dentro do TTL, variação
+  >=5%, reclaim permitido.
+- **`FAILED`/`retry_after`** (F): bloqueia antes do prazo, libera depois.
+- **Falha do Firecrawl** (J): `run_market_research` nunca lança --
+  `mark_assessment_failed` grava `status=FAILED`, `retry_after` futuro,
+  `failure_count=1`.
+- **Fallback `/v2/scrape`** (K): busca com 2+ domínios válidos nunca
+  aciona scrape; busca com 1 domínio (abaixo do mínimo) aciona.
+- **Shared/fan-out** (H): 10 Missions (10 usuários distintos, cota de 5
+  ativas por usuário respeitada) vinculadas ao mesmo `MonitoringItem`
+  (mesma GPU) -- exatamente 2 chamadas Firecrawl (mercado + histórico,
+  sempre juntas, §33.18) e 1 chamada de IA no total, `MarketPriceAssessment`
+  único, mas 10 `MissionProductAlertState`/10 `Event`s (decisão
+  individual por Mission, nunca um alerta "global").
+- **Decisão sob lock, sem duplicar alerta** (G): duas `CollectionRun`s
+  (duas lojas) da MESMA Mission/Product, mesma oportunidade comercial
+  (R$5.000 -> R$4.000), `_persist_phase_c` chamado "ao mesmo tempo" via
+  `asyncio.gather` sobre duas conexões reais -- exatamente 1
+  `price.decreased.v1`, checkpoint final com `best_notified_amount=4000`.
+- **Bootstrap determinístico** (I): reconstrução via a MESMA query da
+  migration `20260827_0001` contra `Event`s sintéticos -- `best_
+  notified_amount`/`last_notified_amount`/`last_notified_at`/`last_
+  alert_event_id` corretos; Mission sem nenhum `Event` de alerta não
+  ganha linha (nunca inventa checkpoint).
+
+Suítes preexistentes afetadas pelo wiring novo (`orchestration.py`/
+`shared_collection.py`), 51 testes, 100% verdes depois de 1 correção
+(ver 40.3): `tests/integration/test_shared_collection.py`, `tests/
+integration/test_collection_orchestration.py`. Unitários já cobertos no
+§39 (`tests/test_price_alerts.py`, `tests/test_firecrawl_search.py`,
+`tests/test_collection_orchestration_async.py`) re-executados, 101
+testes, 100% verdes.
+
+**Total desta rodada + §39: 189 testes focados executados, 100%
+verdes** (13 integração nova + 51 integração preexistente afetada + 101
+unitários + 24 já contados em §39 que se sobrepõem a `test_price_alerts.py`
+-- sem dupla contagem real, o número de execuções distintas é 165, já
+que os 24 de `test_price_alerts.py` fazem parte dos 101 unitários).
+
+### 40.2 Prova objetiva do lock da Mission (não só comentário)
+
+Confirmado no código real, não presumido: `_persist_phase_c`
+(`backend/app/collection/orchestration.py:2132`) trava `Mission` com
+`SELECT ... FOR UPDATE` na linha 2151, ANTES de ler `MissionProductAlertState`
+(linha 2303) e ANTES de chamar `evaluate_price_alerts` (linha 2330) --
+tudo dentro da MESMA transação (`async with session_factory() as
+session, session.begin():`, nunca fechada entre esses pontos). Os DOIS
+únicos call sites de `_persist_phase_c` no projeto inteiro chamam
+exatamente esta mesma função, sem cópia nem lógica divergente:
+`orchestration.py:1516` (caminho legado, `_process_claim`) e
+`shared_collection.py:1108` (`_process_pending_fan_out`, usado tanto
+pela coleta compartilhada fresca quanto pela retomada de fan-out). Como
+o teste G (40.1) prova sob concorrência real que duas transações da
+mesma Mission nunca decidem em paralelo, um `SELECT ... FOR UPDATE`
+adicional dedicado a `MissionProductAlertState` seria redundante --
+mantido como está, nenhum lock novo foi criado. Granularidade
+reconhecidamente mais grosseira que `(Mission, Product)` (serializa a
+Mission INTEIRA, mesmo para Products diferentes) -- aceitável na escala
+da V1.2 (a mesma Fase C já serializava por Mission antes desta TASK,
+para `MissionOfferRelevance`; não é uma seção crítica nova).
+
+### 40.3 Bugs reais encontrados e corrigidos pelos próprios testes
+
+1. **`_CLAIM_SQL` usava `now()` do Postgres, não o `now` lógico do
+   chamador** (`app/market_research/service.py`) -- toda comparação de
+   `lease_until`/`retry_after`/`expires_at` no UPSERT do single-flight
+   comparava contra o relógio real da máquina, ignorando silenciosamente
+   o parâmetro `now` de `claim_assessment`. Corrigido para `:now`
+   (parâmetro vinculado) em todas as 5 ocorrências. Detectado pelos
+   testes B/F (que fixam `now` no passado/futuro para simular lease/
+   retry -- com `now()`, os dois sempre comparavam contra "agora de
+   verdade" e mascaravam o bug).
+2. **Falha do serviço Firecrawl na busca inicial virava
+   `INSUFFICIENT_EVIDENCE` silencioso, nunca `FAILED`**
+   (`_search_with_scrape_fallback`) -- um `except FirecrawlSearchError:
+   return ()` ao redor da chamada `firecrawl.search()` inicial fazia o
+   fluxo seguir normalmente com evidência vazia, produzindo um
+   assessment `READY`/`INSUFFICIENT_EVIDENCE` cacheado pelo TTL inteiro
+   como se uma pesquisa real tivesse rodado -- nunca acionava `mark_
+   assessment_failed`/`retry_after` (§33.19/§33.20). Corrigido: só as
+   chamadas de `scrape_basic` POR URL continuam engolindo erro (essa sim
+   é "origem específica sem evidência"); a busca inicial propaga para
+   `run_market_research` marcar `FAILED`. Detectado pelo teste J.
+3. **Regressão em teste preexistente**: `tests/integration/
+   test_shared_collection.py::test_fan_out_retryable_error_retries_then_
+   becomes_attention_required` monkeypatcha `_run_phase_b` com uma
+   função que só aceitava `(phase_a, manager, profile)` posicionais --
+   quebrou quando `_process_pending_fan_out` passou a chamar `_run_
+   phase_b` com os novos `session_factory`/`firecrawl`/`settings`
+   nomeados. Corrigido adicionando `**kwargs` ao wrapper de teste
+   (repassado para a função real) -- mudança de 2 linhas, só no teste,
+   nenhuma mudança de comportamento do teste em si.
+
+### 40.4 Documentação atualizada nesta rodada
+
+`docs/architecture/price-alerts.md` (nova seção "Checkpoint por
+Mission+Product e avaliação de mercado"); `docs/internal/decision-log.md`
+(`DEC-102`); `docs/internal/project-context.md` (nova entrada no topo);
+este arquivo (§39/§40). Nenhum documento de arquitetura Firecrawl
+dedicado foi criado -- o cliente (`app/search/firecrawl.py`) já não tinha
+um antes desta TASK, e o acréscimo (retry/circuit breaker/`scrape_basic`)
+está documentado inline no próprio módulo e em `DEC-102`/§39; criar um
+documento novo só para isso não foi considerado necessário nesta rodada
+(decisão pragmática, não esquecimento -- reavaliar se o cliente crescer
+mais).
+
+**Explicitamente NÃO feito nesta rodada** (pendências reais):
+implementação completa do §33.27 além dos 13 testes focados (mais
+combinações de TTL/modo promocional-vs-normal, mais cenários de retry
+de circuit breaker sob 429 real, teste de carga); nenhuma chamada real
+à API da Firecrawl com chave verdadeira (só fakes/stubs -- o contrato
+exato do `/v2/scrape` não pôde ser confirmado contra a API real). Nenhum
+commit, push ou deploy.

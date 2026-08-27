@@ -41,6 +41,7 @@ from app.collection.models import (
     StoreActivityState,
 )
 from app.offers.models import Offer
+from app.stores.models import Store
 
 _MODE_NORMAL = "normal"
 _MODE_PROMO_CALENDAR = "promo_calendar"
@@ -102,6 +103,47 @@ async def resolve_collection_cadence(
         return CadenceDecision(
             config.promo_min_minutes, config.promo_max_minutes, _MODE_HIGH_ACTIVITY
         )
+    return CadenceDecision(
+        config.normal_min_minutes, config.normal_max_minutes, _MODE_NORMAL
+    )
+
+
+async def resolve_product_market_mode(
+    session: AsyncSession, *, product_id: UUID, now: datetime, config: CadenceConfig
+) -> CadenceDecision:
+    """Modo efetivo (NORMAL/PROMO_CALENDAR/HIGH_ACTIVITY) de um `Product`
+    inteiro, cross-loja (TASK-113, correção pós-plano ponto 10).
+
+    Ponto único de resolução reutilizado tanto pelo TTL do
+    `MarketPriceAssessment` (`app.market_research.service`, TASK-113
+    §33.15) quanto pela janela de re-alert (`app.alerts.evaluator`,
+    §33.11) -- nunca duas leituras diferentes de "loja relevante".
+    `PROMO_CALENDAR` já é global (`_is_promo_calendar_active` não filtra
+    por loja); `HIGH_ACTIVITY` é avaliado por loja, mas aqui percorre
+    TODA loja com `Offer` deste `product_id` e `Store.is_active` (sinal
+    já existente, mesmo usado para desativar a Terabyte, DEC-070 --
+    nenhum conceito novo de "loja relevante/ativa" foi inventado). Pior
+    caso (mais agressivo) vence: uma única loja ativa em HIGH_ACTIVITY já
+    é suficiente para tratar o Product inteiro como acelerado."""
+    if await _is_promo_calendar_active(session, now=now):
+        return CadenceDecision(
+            config.promo_min_minutes, config.promo_max_minutes, _MODE_PROMO_CALENDAR
+        )
+    store_ids = (
+        await session.scalars(
+            select(Offer.store_id)
+            .distinct()
+            .join(Store, Store.id == Offer.store_id)
+            .where(Offer.product_id == product_id, Store.is_active.is_(True))
+        )
+    ).all()
+    for store_id in store_ids:
+        if await _is_high_activity(session, store_id=store_id, now=now, config=config):
+            return CadenceDecision(
+                config.promo_min_minutes,
+                config.promo_max_minutes,
+                _MODE_HIGH_ACTIVITY,
+            )
     return CadenceDecision(
         config.normal_min_minutes, config.normal_max_minutes, _MODE_NORMAL
     )

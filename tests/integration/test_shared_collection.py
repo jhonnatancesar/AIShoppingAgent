@@ -510,11 +510,11 @@ def test_fan_out_retryable_error_retries_then_becomes_attention_required(
     remaining_failures = {"count": max_attempts}
     real_run_phase_b = shared_collection_module._run_phase_b
 
-    async def _flaky_run_phase_b(phase_a, manager, profile):
+    async def _flaky_run_phase_b(phase_a, manager, profile, **kwargs):
         if phase_a.mission_id == mission_a.id and remaining_failures["count"] > 0:
             remaining_failures["count"] -= 1
             raise RuntimeError("simulated_transient_infra_failure")
-        return await real_run_phase_b(phase_a, manager, profile)
+        return await real_run_phase_b(phase_a, manager, profile, **kwargs)
 
     monkeypatch.setattr(shared_collection_module, "_run_phase_b", _flaky_run_phase_b)
 

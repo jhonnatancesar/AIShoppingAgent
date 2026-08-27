@@ -55,6 +55,59 @@ feita uma única vez por par e cacheada (`docs/database/schema.md`); ver
 moeda nunca são decididos pela IA — continuam vindo exclusivamente da
 coleta.
 
+## Checkpoint por Mission+Product e avaliação de mercado (TASK-113)
+
+A regra acima ("`price.decreased.v1` sempre que `amount` cai vs. a
+observação anterior") permanecia verdadeira só enquanto nunca existia
+`MissionProductAlertState` para aquele `(mission_id, product_id)`
+(nunca houve alerta antes) — sem isso, uma Mission podia ser alertada
+repetidamente por quedas locais que nunca batiam um preço já visto
+como melhor (ex.: R$3.900 alertado → sobe para R$4.500 → cai para
+R$4.199,99 → alerta de novo, mesmo pior que R$3.900). `evaluate_price_
+alerts` (`app.alerts.evaluator`) ganhou um parâmetro opcional,
+`checkpoint: AlertCheckpoint | None` — `None` preserva exatamente o
+comportamento descrito acima (chamado de "caminho A" no desenho); um
+checkpoint existente exige, além da queda local, um dos dois caminhos
+adicionais:
+
+- **Caminho B** — `current` materialmente melhor que `checkpoint.
+  best_notified_amount` (`app.alerts.material_improvement`, `clamp(
+  reference_amount × percent, min_amount, max_amount)`, valores em
+  `Settings.material_improvement_*`).
+- **Caminho C** — re-alert de oportunidade: o checkpoint está
+  REARMADO (`rearmed_at` setado quando o preço sobe materialmente
+  acima do último alerta, `should_rearm`), já passou a janela mínima
+  (`Settings.realert_*_hours`, resolvida por `app.collection.cadence.
+  resolve_product_market_mode` — o mesmo modo NORMAL/PROMO_CALENDAR/
+  HIGH_ACTIVITY usado para o TTL do assessment abaixo), **e** existe
+  um `MarketPriceAssessment` atual classificado `GOOD_DEAL`/
+  `EXCELLENT_DEAL` — sem avaliação externa favorável, o caminho C nunca
+  dispara.
+
+`MissionProductAlertState` (`app.alerts.models`, PK `(mission_id,
+product_id)` — nunca `offer_id`, para que o mesmo produto vendido em
+duas lojas diferentes dentro da mesma Mission compartilhe o mesmo
+checkpoint) é lido e escrito dentro da MESMA seção crítica que já
+existia em `_persist_phase_c` (`app.collection.orchestration`) —
+`SELECT missions ... FOR UPDATE` no topo da função já serializa toda a
+decisão por `mission_id`, então nenhum lock adicional foi necessário
+sobre o checkpoint em si (provado sob concorrência real por
+`tests/integration/test_alert_checkpoint.py::
+test_two_stores_same_mission_product_never_double_alert`, não só por
+comentário). O mesmo caminho é usado tanto pela coleta de missão única
+quanto pelo fan-out compartilhado da TASK-112 (`_run_phase_b`/
+`_persist_phase_c` são reaproveitados sem alteração de import por
+`app.collection.shared_collection._process_pending_fan_out`).
+
+`MarketPriceAssessment` (`app.market_research`) é a avaliação de
+mercado externa (Firecrawl + IA), compartilhada por `product_id`
+(nunca por Mission/usuário) — dez Missions monitorando o mesmo Product
+disparam no máximo uma pesquisa externa; cada uma decide seu próprio
+alerta de forma independente. Desenho completo (gatilho determinístico,
+single-flight com lease, TTL, quórum de evidência, fallback `/v2/scrape`,
+retry/circuit breaker) em `docs/tasks/TASK-113.md` §33/§39 — não
+duplicado aqui.
+
 O resultado é um `PriceAlertCandidate` validado contra `app.events`.
 Persistência e publicação foram implementadas na TASK-043
 (`app.events.service.publish_event`) — quem tiver um `PriceAlertCandidate`

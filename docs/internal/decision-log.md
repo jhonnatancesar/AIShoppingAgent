@@ -1,5 +1,66 @@
 # Decision Log
 
+## DEC-102 — TASK-113: avaliação inteligente de preço e checkpoint de alerta
+
+- **Data:** 2026-08-27.
+- **Classificação:** Nova capacidade (base: `DEC-045`/`DEC-048`/`DEC-097`, TASK-097/TASK-112).
+- **Decisão:** `evaluate_price_alerts` ganha checkpoint opcional
+  (`AlertCheckpoint`, espelha a tabela nova `MissionProductAlertState`,
+  PK `(mission_id, product_id)` -- nunca `offer_id`, para o mesmo Product
+  em duas lojas dentro da mesma Mission compartilhar o checkpoint).
+  `checkpoint is None` preserva 100% o comportamento anterior (os 17
+  testes já existentes de `tests/test_price_alerts.py` continuam
+  passando sem alteração); com checkpoint, a decisão exige melhoria
+  material vs. `best_notified_amount` (caminho B) ou REARM + janela +
+  `MarketPriceAssessment` `GOOD_DEAL`/`EXCELLENT_DEAL` (caminho C) --
+  nunca mais um alerta só por cair vs. a observação imediatamente
+  anterior. `MarketPriceAssessment` (`app.market_research`, tabela nova
+  `market_price_assessments`) é a avaliação de mercado externa
+  (Firecrawl `/v2/search` + `/v2/scrape` básico como fallback, IA via
+  `AIProviderManager` convencional -- nunca grounding nativo), chaveada
+  por `Product.identity_key` (nunca `MonitoringItem`, que agrupa N
+  Products distintos), com single-flight crash-safe (claim atômico via
+  `INSERT ... ON CONFLICT ... WHERE`, estados `processing`/`ready`/
+  `failed` com lease/retry_after/TTL) para nunca duplicar pesquisa entre
+  Missions/workers concorrentes.
+- **Achado real durante a implementação (decisão de arquitetura, não só
+  código)**: a decisão final de alerta acontece dentro da MESMA seção
+  crítica que `_persist_phase_c` (`app.collection.orchestration`) já
+  mantinha para `MissionOfferRelevance` -- o `SELECT missions ... FOR
+  UPDATE` no topo da função já serializa toda a Fase C por `mission_id`,
+  então um lock adicional dedicado em `MissionProductAlertState` seria
+  redundante (nunca duas transações da mesma Mission avançam em
+  paralelo). Provado sob concorrência real (duas conexões `asyncpg`
+  simultâneas, `asyncio.gather`), não só por comentário --
+  `tests/integration/test_alert_checkpoint.py::
+  test_two_stores_same_mission_product_never_double_alert`.
+- **Dois bugs reais corrigidos durante a própria escrita dos testes de
+  integração** (`app/market_research/service.py`): (1) o UPSERT do
+  single-flight comparava `lease_until`/`retry_after`/`expires_at`
+  contra `now()` do Postgres (relógio real da máquina), não contra o
+  `now` lógico passado pelo chamador -- em produção isso nunca
+  divergiria de forma visível (o `now` de produção é sempre "agora"
+  mesmo), mas quebrava tanto testabilidade quanto a disciplina de "um
+  único relógio por operação" já seguida pelo resto do projeto
+  (`effective_now`); corrigido para `:now` (parâmetro vinculado). (2) o
+  fallback de busca engolia `FirecrawlSearchError` da própria chamada de
+  busca inicial (indisponibilidade do SERVIÇO Firecrawl) e seguia como
+  se a pesquisa tivesse rodado normalmente sem achar nada
+  (`INSUFFICIENT_EVIDENCE`, cacheado pelo TTL inteiro) -- corrigido para
+  propagar essa falha para `mark_assessment_failed`/`retry_after`,
+  nunca fabricar um resultado "pesquisado com sucesso" que nunca
+  aconteceu.
+- **Próxima ação:** suíte de integração focada (`test_market_research.py`,
+  `test_alert_checkpoint.py`, 13 testes) mais as suítes preexistentes de
+  `shared_collection`/`collection_orchestration` (51 testes, 1 regressão
+  encontrada e corrigida -- assinatura de um monkeypatch de teste que não
+  aceitava os novos parâmetros opcionais) rodando 100% verdes contra
+  PostgreSQL real. Pendências reais registradas em `docs/tasks/
+  TASK-113.md` §39: suíte de integração exaustiva do §33.27 (além dos 13
+  testes focados já escritos) e validação com uma chave Firecrawl real
+  (nunca testada contra a API de verdade nesta rodada) ficam para quando
+  o recurso for ativado em produção.
+
 ## DEC-101 — TASK-112 fase 3B: fila justa unificada (fairness_owner) + política de cadência
 
 - **Data:** 2026-08-27.

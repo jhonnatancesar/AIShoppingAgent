@@ -30,6 +30,17 @@ from app.collection.providers.edge_cdp_supervisor import (
 )
 from app.collection.providers.edge_cdp_transport import EdgeCdpTransport
 from app.collection.providers.magalu_transport import build_magalu_search_transport
+
+# TASK-112 fase 3B: worker.py já importa orchestration.py e shared_
+# collection.py livremente (nenhum ciclo -- é este módulo que junta os
+# dois, não um importando o outro) -- passa as referências reais
+# explicitamente na construção do orchestrator, em vez de depender do
+# default de conveniência que `CollectionOrchestrator.__init__` resolve
+# sozinho quando não recebe nada (pensado para scripts/testes).
+from app.collection.shared_collection import (
+    _execute_claimed_shared_collection,
+    sweep_shared_collection_fan_out,
+)
 from app.core.config import Settings
 from app.core.logging import configure_logging
 from app.core.resilience import RetryPolicy
@@ -44,17 +55,7 @@ from app.observability.metrics import (
     start_worker_metrics_server,
 )
 from app.observability.tracing import configure_tracing
-
-# TASK-112 fase 3B: worker.py já importa orchestration.py e shared_
-# collection.py livremente (nenhum ciclo -- é este módulo que junta os
-# dois, não um importando o outro) -- passa as referências reais
-# explicitamente na construção do orchestrator, em vez de depender do
-# default de conveniência que `CollectionOrchestrator.__init__` resolve
-# sozinho quando não recebe nada (pensado para scripts/testes).
-from app.collection.shared_collection import (
-    _execute_claimed_shared_collection,
-    sweep_shared_collection_fan_out,
-)
+from app.search.firecrawl import FirecrawlSearchProvider
 
 logger = logging.getLogger("app.collection.worker")
 
@@ -239,10 +240,32 @@ async def run_worker(
         settings, async_driver=async_driver
     )
     session_factory = create_async_session_factory(engine)
+    # TASK-113: pesquisa de mercado -- `None` quando a chave não está
+    # configurada (fail-soft, mesmo padrão de `search_provider` em
+    # `build_admin_dev_ai_provider_manager`); `_run_phase_b` já trata
+    # `firecrawl is None` como "recurso desligado", nunca erro.
+    market_research_firecrawl = (
+        FirecrawlSearchProvider(
+            settings.firecrawl_api_key,
+            timeout_seconds=settings.external_http_timeout_seconds,
+            retry_policy=RetryPolicy(
+                max_attempts=settings.safe_retry_max_attempts,
+                base_delay_seconds=settings.retry_base_delay_seconds,
+                max_delay_seconds=settings.retry_max_delay_seconds,
+                retry_after_cap_seconds=settings.retry_after_cap_seconds,
+            ),
+            circuit_failure_threshold=settings.circuit_failure_threshold,
+            circuit_open_seconds=settings.circuit_open_seconds,
+        )
+        if settings.firecrawl_api_key is not None
+        else None
+    )
     orchestrator = CollectionOrchestrator(
         session_factory,
         build_collection_adapter(settings, edge_supervisor),
         ai_manager=build_admin_dev_ai_provider_manager(settings),
+        firecrawl=market_research_firecrawl,
+        settings=settings,
         # TASK-083: instâncias dedicadas (Kabum -> Amazon), nunca as da
         # coleta normal registrada em `build_collection_adapter` acima --
         # namespace de circuit breaker, volume e timeout próprios (ver

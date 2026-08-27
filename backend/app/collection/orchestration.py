@@ -27,6 +27,12 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.ai_provider import AIProviderManager
 from app.alerts import evaluate_price_alerts
+from app.alerts.evaluator import (
+    AlertCheckpoint,
+    MaterialImprovementPolicy,
+    should_rearm,
+)
+from app.alerts.models import MissionProductAlertState
 from app.collection.adapter import CollectionAdapter
 from app.collection.cadence import (
     CadenceConfig,
@@ -83,7 +89,11 @@ from app.collection.relevance import (
     classify_offer_relevance,
     normalize_offer_title,
 )
-from app.collection.shared_claim import _claim_shared_collection_in_session, _SharedClaim
+from app.collection.shared_claim import (
+    _claim_shared_collection_in_session,
+    _SharedClaim,
+)
+from app.core.config import Settings
 from app.database.time import utc_now
 from app.events import (
     AggregateType,
@@ -99,6 +109,11 @@ from app.events import (
     ProductVariantOptionPayload,
 )
 from app.events.service import publish_event_async
+from app.market_research.service import (
+    AssessmentSnapshot,
+    evaluate_trigger_and_maybe_research,
+    resolve_realert_window,
+)
 from app.missions.models import (
     Mission,
     MissionCriteria,
@@ -122,6 +137,7 @@ from app.products.identity import (
     resolve_product_variant,
 )
 from app.products.models import Product
+from app.search.firecrawl import FirecrawlSearchProvider
 from app.stores.models import Seller, Store
 from app.users.models import UserRole
 
@@ -134,7 +150,10 @@ if TYPE_CHECKING:
     # `CollectionOrchestrator` (mesmo padrão de `identity_resolver`,
     # TASK-083), resolvidas de verdade em `worker.py`, que já importa os
     # dois módulos livremente.
-    from app.collection.shared_collection import FanOutSweepSummary, SharedCollectionResult
+    from app.collection.shared_collection import (
+        FanOutSweepSummary,
+        SharedCollectionResult,
+    )
 
 logger = logging.getLogger("app.collection.orchestration")
 
@@ -1089,6 +1108,8 @@ class CollectionOrchestrator:
         *,
         ai_manager: AIProviderManager,
         ai_profile: UserRole = UserRole.ADMIN,
+        firecrawl: FirecrawlSearchProvider | None = None,
+        settings: Settings | None = None,
         normalizer: PriceNormalizer | None = None,
         identity_resolver: ProductIdentityResolver | None = None,
         schedule_interval_minutes: int = 60,
@@ -1146,6 +1167,12 @@ class CollectionOrchestrator:
         self._adapter = adapter
         self._ai_manager = ai_manager
         self._ai_profile = ai_profile
+        # TASK-113: pesquisa de mercado -- `None` (default) desliga por
+        # completo o recurso, mesmo comportamento de sempre (nenhum
+        # `MarketPriceAssessment` é disparado); produção injeta os dois
+        # via `worker.py`, mesmo padrão de `identity_resolver`.
+        self._firecrawl = firecrawl
+        self._settings = settings
         self._normalizer = normalizer or PriceNormalizer()
         self._identity_resolver = identity_resolver
         self._schedule_interval_minutes = schedule_interval_minutes
@@ -1210,6 +1237,8 @@ class CollectionOrchestrator:
             task_budget=self._fan_out_task_budget,
             per_target_task_cap=self._fan_out_per_target_task_cap,
             concurrency=self._fan_out_concurrency,
+            firecrawl=self._firecrawl,
+            settings=self._settings,
         )
 
         # Fase A: transação curta, só dados locais -- nenhum Playwright,
@@ -1336,6 +1365,8 @@ class CollectionOrchestrator:
                 normalizer=self._normalizer,
                 effective_now=effective_now,
                 base_backoff_minutes=self._cadence_config.normal_min_minutes,
+                firecrawl=self._firecrawl,
+                settings=self._settings,
             )
 
     async def _resolve_identities(
@@ -1485,9 +1516,19 @@ class CollectionOrchestrator:
             if phase_a is None:
                 return False
             ai_outcomes = await _run_phase_b(
-                phase_a, self._ai_manager, self._ai_profile
+                phase_a,
+                self._ai_manager,
+                self._ai_profile,
+                session_factory=self._session_factory,
+                firecrawl=self._firecrawl,
+                settings=self._settings,
             )
-            return await _persist_phase_c(self._session_factory, phase_a, ai_outcomes)
+            return await _persist_phase_c(
+                self._session_factory,
+                phase_a,
+                ai_outcomes,
+                settings=self._settings,
+            )
         except asyncio.CancelledError:
             raise
         except IntegrityError:
@@ -1716,6 +1757,12 @@ class _AIOutcome:
     offer_id: UUID
     relevance: OfferRelevance | None
     display_title: str | None
+    market_snapshot: AssessmentSnapshot | None = None
+    """TASK-113: `MarketPriceAssessment` corrente (cache reaproveitado ou
+    recém-pesquisado) para o `product_id` desta oferta, quando a Fase B
+    conseguiu resolver um -- `None` quando pesquisa foi pulada
+    (identidade não resolvida, gatilho não disparou, ou outro worker
+    está com o claim). Valor simples (TASK-079), nunca ORM."""
 
 
 def _deterministic_product_relevance(
@@ -1999,15 +2046,30 @@ async def _run_phase_b(
     outcome: _PhaseAOutcome,
     ai_manager: AIProviderManager,
     ai_profile: UserRole,
+    *,
+    session_factory: async_sessionmaker[AsyncSession] | None = None,
+    firecrawl: FirecrawlSearchProvider | None = None,
+    settings: Settings | None = None,
 ) -> tuple[_AIOutcome, ...]:
-    """Fase B (TASK-079): nenhuma transação aberta -- só chamadas de IA.
+    """Fase B (TASK-079): nenhuma transação aberta -- só chamadas de IA
+    (e, TASK-113, Firecrawl -- mesma disciplina: nenhum lock retido).
 
     As chamadas de ofertas diferentes podem rodar em paralelo entre si,
-    já que não há lock nem sessão de banco envolvida aqui.
-    """
+    já que não há lock nem sessão de banco compartilhada retida aqui
+    (leituras/upserts de pesquisa de mercado usam suas próprias
+    transações curtas, `app.market_research.service`).
+
+    Pesquisa de mercado só é considerada quando `session_factory`/
+    `firecrawl`/`settings` são fornecidos (produção, via
+    `CollectionOrchestrator`) -- `None` em qualquer um deles desliga o
+    recurso por completo, comportamento idêntico ao anterior a esta
+    TASK (nenhum chamador de teste/script existente precisa mudar)."""
+    market_research_enabled = (
+        session_factory is not None and firecrawl is not None and settings is not None
+    )
 
     async def _classify(pending: _PendingOffer) -> _AIOutcome:
-        relevance = None
+        relevance = pending.forced_relevance
         if pending.needs_relevance:
             relevance = await classify_offer_relevance(
                 ai_manager,
@@ -2020,22 +2082,69 @@ async def _run_phase_b(
             display_title = await normalize_offer_title(
                 ai_manager, raw_title=pending.raw_title, profile=ai_profile
             )
-        return _AIOutcome(pending.offer_id, relevance, display_title)
+        effective_relevance = relevance
+        if (
+            market_research_enabled
+            and effective_relevance is None
+            and pending.forced_relevance is None
+            and not pending.needs_relevance
+        ):
+            # TASK-113: nem forçada nesta rodada, nem precisando de
+            # reclassificação agora -- só pode ser um MATCH decidido em
+            # um ciclo ANTERIOR (`MissionOfferRelevance`, lido de novo
+            # normalmente na Fase C). Sem reler aqui, toda oferta já
+            # classificada há mais de um ciclo nunca disparava pesquisa
+            # de mercado -- exatamente o caso mais comum (Mission rodando
+            # há semanas), nunca só a exceção. Leitura pura, sem lock,
+            # sem transação -- mesma disciplina de Fase B.
+            assert session_factory is not None
+            async with session_factory() as lookup_session:
+                cached = await lookup_session.get(
+                    MissionOfferRelevance, (outcome.mission_id, pending.offer_id)
+                )
+            effective_relevance = cached.classification if cached is not None else None
+        market_snapshot = None
+        if (
+            market_research_enabled
+            and effective_relevance is OfferRelevance.MATCH
+            and pending.alert_comparison is not PriceObservationComparison.UNCHANGED_REUSED
+        ):
+            assert session_factory is not None
+            assert firecrawl is not None
+            assert settings is not None
+            market_snapshot = await evaluate_trigger_and_maybe_research(
+                session_factory,
+                ai_manager,
+                firecrawl,
+                mission_id=outcome.mission_id,
+                product_id=pending.product_id,
+                store_id=outcome.store_id,
+                current_amount=pending.amount,
+                current_currency=pending.currency,
+                previous_amount=pending.previous_amount,
+                target_amount=outcome.target_amount,
+                profile=ai_profile,
+                now=outcome.completed_at,
+                settings=settings,
+            )
+        return _AIOutcome(pending.offer_id, relevance, display_title, market_snapshot)
 
-    to_classify = [
+    to_process = [
         item
         for item in outcome.offers
-        if item.needs_relevance or item.needs_display_name
+        if item.needs_relevance or item.needs_display_name or market_research_enabled
     ]
-    if not to_classify:
+    if not to_process:
         return ()
-    return tuple(await asyncio.gather(*(_classify(item) for item in to_classify)))
+    return tuple(await asyncio.gather(*(_classify(item) for item in to_process)))
 
 
 async def _persist_phase_c(
     session_factory: async_sessionmaker[AsyncSession],
     outcome: _PhaseAOutcome,
     ai_outcomes: tuple[_AIOutcome, ...],
+    *,
+    settings: Settings | None = None,
 ) -> bool:
     """Fase C (TASK-079): seção crítica por `mission_id`.
 
@@ -2184,9 +2293,60 @@ async def _persist_phase_c(
                     target_amount=outcome.target_amount,
                     target_currency=outcome.target_currency,
                 )
+                # TASK-113 (correção pós-plano, ponto 2): a decisão final
+                # precisa reler o checkpoint sob lock, no momento exato da
+                # decisão -- satisfeito aqui pelo `SELECT missions ... FOR
+                # UPDATE` já existente no TOPO desta função (achado real:
+                # serializa TODA esta Fase C por `mission_id`, então duas
+                # stores do mesmo Product dentro da mesma Mission NUNCA
+                # decidem em paralelo -- a segunda espera o commit da
+                # primeira antes de sequer começar a ler `MissionProduct
+                # AlertState`). Um `SELECT ... FOR UPDATE` adicional só
+                # nesta linha seria redundante com o lock que já existe,
+                # nunca mais seguro.
+                checkpoint_row: MissionProductAlertState | None = None
+                checkpoint: AlertCheckpoint | None = None
+                realert_window: timedelta | None = None
+                material_policy: MaterialImprovementPolicy | None = None
+                market_assessment_supports_realert = False
+                if settings is not None:
+                    checkpoint_row = await session.get(
+                        MissionProductAlertState, (mission.id, pending.product_id)
+                    )
+                    if checkpoint_row is not None:
+                        checkpoint = AlertCheckpoint(
+                            best_notified_amount=checkpoint_row.best_notified_amount,
+                            last_notified_amount=checkpoint_row.last_notified_amount,
+                            last_notified_at=checkpoint_row.last_notified_at,
+                            rearmed_at=checkpoint_row.rearmed_at,
+                        )
+                    realert_window = await resolve_realert_window(
+                        session,
+                        product_id=pending.product_id,
+                        now=outcome.completed_at,
+                        settings=settings,
+                    )
+                    material_policy = MaterialImprovementPolicy(
+                        settings.material_improvement_percent,
+                        settings.material_improvement_min_amount,
+                        settings.material_improvement_max_amount,
+                    )
+                    market_assessment_supports_realert = bool(
+                        ai_outcome is not None
+                        and ai_outcome.market_snapshot is not None
+                        and ai_outcome.market_snapshot.is_good_or_excellent
+                    )
                 try:
                     candidates = evaluate_price_alerts(
-                        alert_mission, alert_criteria, current, previous
+                        alert_mission,
+                        alert_criteria,
+                        current,
+                        previous,
+                        checkpoint=checkpoint,
+                        material_improvement_policy=material_policy,
+                        market_assessment_supports_realert=market_assessment_supports_realert,
+                        realert_window=realert_window,
+                        now=outcome.completed_at,
                     )
                 except Exception:
                     # Avaliação/notificação de alerta é uma etapa derivada
@@ -2208,8 +2368,9 @@ async def _persist_phase_c(
                         exc_info=True,
                     )
                     candidates = ()
+                last_alert_event = None
                 for candidate in candidates:
-                    await publish_event_async(
+                    last_alert_event = await publish_event_async(
                         session,
                         event_type=candidate.event_type,
                         aggregate_type=candidate.aggregate_type,
@@ -2218,6 +2379,65 @@ async def _persist_phase_c(
                         occurred_at=outcome.completed_at,
                         mission_id=mission.id,
                     )
+
+                # TASK-113 (§33.9/§33.21): checkpoint atualizado na MESMA
+                # transação/commit que criou o(s) Event(s) -- nunca um
+                # segundo commit, nunca um "quase certo" (retry de entrega
+                # do Telegram nunca revisita esta decisão, outbox já
+                # existente cuida disso à parte).
+                if settings is not None:
+                    if candidates:
+                        best_amount = (
+                            current.amount
+                            if checkpoint_row is None
+                            else min(checkpoint_row.best_notified_amount, current.amount)
+                        )
+                        await session.execute(
+                            postgresql_insert(MissionProductAlertState)
+                            .values(
+                                mission_id=mission.id,
+                                product_id=pending.product_id,
+                                best_notified_amount=best_amount,
+                                best_notified_currency=current.currency,
+                                last_notified_amount=current.amount,
+                                last_notified_at=outcome.completed_at,
+                                rearmed_at=None,
+                                last_alert_event_id=(
+                                    last_alert_event.id
+                                    if last_alert_event is not None
+                                    else None
+                                ),
+                                updated_at=outcome.completed_at,
+                            )
+                            .on_conflict_do_update(
+                                index_elements=[
+                                    MissionProductAlertState.mission_id,
+                                    MissionProductAlertState.product_id,
+                                ],
+                                set_={
+                                    "best_notified_amount": best_amount,
+                                    "best_notified_currency": current.currency,
+                                    "last_notified_amount": current.amount,
+                                    "last_notified_at": outcome.completed_at,
+                                    "rearmed_at": None,
+                                    "last_alert_event_id": (
+                                        last_alert_event.id
+                                        if last_alert_event is not None
+                                        else None
+                                    ),
+                                    "updated_at": outcome.completed_at,
+                                },
+                            )
+                        )
+                    elif checkpoint_row is not None and should_rearm(
+                        checkpoint=checkpoint,
+                        current_amount=pending.amount,
+                        rearm_rise_percent=settings.rearm_rise_percent,
+                    ):
+                        # §33.8: só habilita um futuro re-alert (caminho
+                        # C) -- nunca gera alerta por si só.
+                        checkpoint_row.rearmed_at = outcome.completed_at
+                        checkpoint_row.updated_at = outcome.completed_at
 
         await finish_collection_run(
             session,

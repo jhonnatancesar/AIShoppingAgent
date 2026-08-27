@@ -1,5 +1,31 @@
 # Project Context
 
+**Atualização 2026-08-27 (TASK-113 implementada — código real, ainda sem
+commit):** implementação completa a partir de §33/`DEC-102`: dois
+modelos novos (`MarketPriceAssessment` em `app/market_research/models.py`,
+`MissionProductAlertState` em `app/alerts/models.py`), migration
+`20260827_0001` (round-trip upgrade/downgrade/upgrade verificado, com
+backfill determinístico a partir de `Event`s reais já existentes),
+`evaluate_price_alerts` estendido com checkpoint opcional (caminhos
+A/B/C do §33.9), módulo `app/market_research/` (single-flight, TTL,
+duas buscas Firecrawl + fallback `/v2/scrape`, quórum validado em
+código), wiring em `orchestration.py`/`shared_collection.py`/
+`worker.py` (parâmetros opcionais, `None` desliga o recurso — nenhum
+chamador existente precisou mudar). Suíte de integração focada nova
+(`tests/integration/test_market_research.py`,
+`tests/integration/test_alert_checkpoint.py`, 13 testes) mais as suítes
+preexistentes afetadas (`test_shared_collection.py`/
+`test_collection_orchestration.py`, 51 testes) rodando 100% verdes
+contra PostgreSQL real — 1 regressão real encontrada e corrigida nessa
+rodada (assinatura de monkeypatch de teste), 2 bugs reais no código
+novo encontrados e corrigidos pelos próprios testes de integração
+(`now()` do Postgres em vez do `now` lógico no claim SQL; falha do
+serviço Firecrawl sendo engolida e disfarçada de "pesquisa sem
+evidência"). Detalhe completo em `DEC-102` e `docs/tasks/TASK-113.md`
+§39. **Nenhum commit, push ou deploy** — tudo ainda só no working tree.
+Pendências reais: suíte de integração exaustiva do §33.27 (além dos 13
+testes focados), validação contra uma chave Firecrawl real.
+
 **Atualização 2026-08-27 (correção do desenho da TASK-113 — histórico
 externo, §38, ainda sem commit):** depois do registro/fechamento inicial
 abaixo, o desenho da TASK-113 foi corrigido — a pesquisa de histórico

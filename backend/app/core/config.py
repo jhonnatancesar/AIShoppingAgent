@@ -293,6 +293,49 @@ class Settings(BaseSettings):
     collection_high_activity_window_minutes: int = Field(default=30, ge=1, le=1440)
     collection_high_activity_change_threshold: int = Field(default=3, ge=1, le=10000)
     collection_high_activity_duration_minutes: int = Field(default=60, ge=1, le=1440)
+    # TASK-113: avaliação inteligente de preço/qualidade de alerta.
+    # Gatilho de pesquisa externa (§33.13) -- queda mínima vs `previous`
+    # que justifica gastar Firecrawl+IA; IA nunca decide se é chamada.
+    market_research_trigger_drop_percent: float = Field(default=0.05, gt=0, le=1)
+    # Refresh antecipado do assessment dentro do próprio TTL (§33.14) --
+    # variação do preço de referência grande o bastante para não
+    # reaproveitar cegamente um assessment ainda válido.
+    market_assessment_price_refresh_percent: float = Field(default=0.05, gt=0, le=1)
+    # TTL do MarketPriceAssessment (§33.15) -- usa o modo mais agressivo
+    # (`app.collection.cadence.resolve_product_market_mode`) entre as
+    # lojas ativas/relevantes daquele Product, nunca só a loja que
+    # disparou a pesquisa.
+    market_assessment_ttl_normal_hours: int = Field(default=24, ge=1, le=168)
+    market_assessment_ttl_promo_hours: int = Field(default=6, ge=1, le=168)
+    # Duração do lease do single-flight (§33.3) -- Firecrawl+IA precisam
+    # caber confortavelmente dentro disso; lease expirado libera reclaim.
+    market_assessment_lease_seconds: int = Field(default=300, ge=30, le=3600)
+    # Quórum mínimo de fontes/domínios distintos para `market_low`/
+    # `market_high`/`classification` saírem de INSUFFICIENT_EVIDENCE
+    # (§33.16) -- validado em código, nunca só confiado ao JSON da IA.
+    market_assessment_min_market_sources: int = Field(default=2, ge=1, le=10)
+    # Backoff entre tentativas de assessment CONSECUTIVAMENTE falhas
+    # (correção pós-plano ponto 1) -- nunca um loop imediato FAILED ->
+    # nova chamada; cresce geometricamente com `failure_count`, capado.
+    market_assessment_failure_backoff_minutes: float = Field(
+        default=15.0, gt=0, le=1440
+    )
+    market_assessment_failure_backoff_max_minutes: float = Field(
+        default=360.0, gt=0, le=10080
+    )
+    # Melhoria material (§33.10): required_improvement = clamp(
+    # reference_amount * percent, min_amount, max_amount).
+    material_improvement_percent: float = Field(default=0.01, gt=0, le=1)
+    material_improvement_min_amount: float = Field(default=2.00, gt=0)
+    material_improvement_max_amount: float = Field(default=50.00, gt=0)
+    # Janela mínima de re-alert (§33.11) -- nunca decidida por IA, e
+    # nunca sozinha: exige também REARM (`rearmed_at`) e assessment
+    # GOOD_DEAL/EXCELLENT_DEAL (caminho C, §33.9).
+    realert_normal_hours: int = Field(default=168, ge=1, le=8760)
+    realert_promo_hours: int = Field(default=48, ge=1, le=8760)
+    # REARM (§33.8): subida percentual acima de `last_notified_amount`
+    # que rearma o checkpoint para permitir um futuro re-alert.
+    rearm_rise_percent: float = Field(default=0.05, gt=0, le=1)
 
     @field_validator("edge_cdp_url")
     @classmethod
@@ -330,6 +373,28 @@ class Settings(BaseSettings):
             raise ValueError(
                 "collection_cadence_promo_max_minutes must not be smaller than "
                 "collection_cadence_promo_min_minutes"
+            )
+        if self.material_improvement_max_amount < self.material_improvement_min_amount:
+            raise ValueError(
+                "material_improvement_max_amount must not be smaller than "
+                "material_improvement_min_amount"
+            )
+        if self.realert_promo_hours > self.realert_normal_hours:
+            raise ValueError(
+                "realert_promo_hours must not be greater than realert_normal_hours"
+            )
+        if self.market_assessment_ttl_promo_hours > self.market_assessment_ttl_normal_hours:
+            raise ValueError(
+                "market_assessment_ttl_promo_hours must not be greater than "
+                "market_assessment_ttl_normal_hours"
+            )
+        if (
+            self.market_assessment_failure_backoff_max_minutes
+            < self.market_assessment_failure_backoff_minutes
+        ):
+            raise ValueError(
+                "market_assessment_failure_backoff_max_minutes must not be smaller "
+                "than market_assessment_failure_backoff_minutes"
             )
         for secret_field, file_field in _SECRET_FILE_FIELDS.items():
             direct_value = getattr(self, secret_field)

@@ -1,5 +1,6 @@
 """Registro central dos modelos carregados pela metadata e pelo Alembic."""
 
+from app.alerts.models import MissionProductAlertState
 from app.audit.models import AuditEntry
 from app.authentication.models import (
     AdminApiKey,
@@ -15,6 +16,7 @@ from app.collection.models import (
     PriceObservation,
 )
 from app.events.models import Event, EventConsumptionAttempt, EventDeliveryCheckpoint
+from app.market_research.models import MarketPriceAssessment
 from app.missions.models import (
     Mission,
     MissionCriteria,
@@ -34,6 +36,8 @@ REGISTERED_MODELS = (
     CollectionRun,
     PriceObservation,
     MissionOfferRelevance,
+    MarketPriceAssessment,
+    MissionProductAlertState,
     User,
     Product,
     Store,

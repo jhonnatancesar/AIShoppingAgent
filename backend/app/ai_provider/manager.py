@@ -20,7 +20,7 @@ from app.ai_provider.groq import GroqProvider
 from app.ai_provider.openrouter import OpenRouterProvider
 from app.ai_provider.telemetry import AIAttemptOutcome, record_ai_attempt
 from app.core.config import Settings, get_settings
-from app.core.resilience import CIRCUITS, CircuitOpenError
+from app.core.resilience import CIRCUITS, CircuitOpenError, RetryPolicy
 from app.observability.metrics import observe_resilience_event
 from app.search import (
     FirecrawlSearchError,
@@ -273,6 +273,14 @@ def build_admin_dev_ai_provider_manager(
         FirecrawlSearchProvider(
             current.firecrawl_api_key,
             timeout_seconds=current.external_http_timeout_seconds,
+            retry_policy=RetryPolicy(
+                max_attempts=current.safe_retry_max_attempts,
+                base_delay_seconds=current.retry_base_delay_seconds,
+                max_delay_seconds=current.retry_max_delay_seconds,
+                retry_after_cap_seconds=current.retry_after_cap_seconds,
+            ),
+            circuit_failure_threshold=current.circuit_failure_threshold,
+            circuit_open_seconds=current.circuit_open_seconds,
         )
         if current.firecrawl_api_key is not None
         else None

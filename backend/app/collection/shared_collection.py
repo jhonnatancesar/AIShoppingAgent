@@ -160,7 +160,11 @@ from app.collection.models import (
     SharedFanOutStatus,
     SharedFanOutTask,
 )
-from app.collection.normalization import Availability, NormalizedCollectionResult, PriceNormalizer
+from app.collection.normalization import (
+    Availability,
+    NormalizedCollectionResult,
+    PriceNormalizer,
+)
 from app.collection.orchestration import (
     _RUNNING_INDEX,
     ClaimedCollection,
@@ -189,6 +193,7 @@ from app.collection.shared_claim import (
     _reset_shared_backoff,
     _SharedClaim,
 )
+from app.core.config import Settings
 from app.database.time import utc_now
 from app.events import AggregateType, AvailabilityChangedPayload, EventType
 from app.events.service import publish_event_async
@@ -201,6 +206,7 @@ from app.missions.models import (
 )
 from app.offers.models import Offer
 from app.products.models import Product
+from app.search.firecrawl import FirecrawlSearchProvider
 from app.stores.models import Store
 from app.users.models import UserRole
 
@@ -974,6 +980,8 @@ async def _process_pending_fan_out(
     shared_results: tuple[_SharedOfferResult, ...],
     finished_at: datetime,
     limit: int | None = None,
+    firecrawl: FirecrawlSearchProvider | None = None,
+    settings: Settings | None = None,
 ) -> _FanOutBatchOutcome:
     """Processa `SharedFanOutTask` elegíveis (`pending`, devidas) de UMA
     `collection_run_id` -- usado tanto pelo caminho fresco (`collect_
@@ -1093,8 +1101,17 @@ async def _process_pending_fan_out(
                     now=finished_at,
                 )
                 continue
-            ai_outcomes = await _run_phase_b(phase_a, ai_manager, ai_profile)
-            ok = await _persist_phase_c(session_factory, phase_a, ai_outcomes)
+            ai_outcomes = await _run_phase_b(
+                phase_a,
+                ai_manager,
+                ai_profile,
+                session_factory=session_factory,
+                firecrawl=firecrawl,
+                settings=settings,
+            )
+            ok = await _persist_phase_c(
+                session_factory, phase_a, ai_outcomes, settings=settings
+            )
             if ok:
                 await _complete_fan_out_task(
                     session_factory, run_id=run_id, mission_id=mission_id, now=finished_at
@@ -1175,6 +1192,8 @@ async def resume_shared_collection_fan_out(
     ai_profile: UserRole = UserRole.ADMIN,
     task_limit: int | None = None,
     recover_stale: bool = True,
+    firecrawl: FirecrawlSearchProvider | None = None,
+    settings: Settings | None = None,
 ) -> SharedCollectionResult:
     """Retoma fan-out pendente de coletas compartilhadas já `SUCCEEDED`
     para `(monitoring_item_id, store_id)` -- NUNCA chama o provider de
@@ -1250,6 +1269,8 @@ async def resume_shared_collection_fan_out(
             shared_results=shared_results,
             finished_at=effective_now,
             limit=remaining,
+            firecrawl=firecrawl,
+            settings=settings,
         )
         fanned_out.extend(outcome.done)
         skipped.extend(outcome.skipped)
@@ -1387,6 +1408,8 @@ async def sweep_shared_collection_fan_out(
     task_budget: int = 100,
     per_target_task_cap: int = 25,
     concurrency: int = 4,
+    firecrawl: FirecrawlSearchProvider | None = None,
+    settings: Settings | None = None,
 ) -> FanOutSweepSummary:
     """TASK-112 fase 3B: sweep limitado de fan-out pendente/retry/stale --
     chamado no INÍCIO de todo ciclo do `CollectionOrchestrator.run_batch`
@@ -1425,6 +1448,8 @@ async def sweep_shared_collection_fan_out(
                 ai_profile=ai_profile,
                 recover_stale=False,
                 task_limit=limit,
+                firecrawl=firecrawl,
+                settings=settings,
             )
 
     outcomes = await asyncio.gather(
@@ -1443,6 +1468,8 @@ async def _execute_claimed_shared_collection(
     normalizer: PriceNormalizer | None,
     effective_now: datetime,
     base_backoff_minutes: int,
+    firecrawl: FirecrawlSearchProvider | None = None,
+    settings: Settings | None = None,
 ) -> SharedCollectionResult:
     """TASK-112 fase 3B: "rabo" de `collect_monitoring_item_store`
     fatorado -- rede + persistência comercial + fan-out do trabalho novo,
@@ -1551,6 +1578,8 @@ async def _execute_claimed_shared_collection(
         store_id=store_id,
         shared_results=shared_results,
         finished_at=finished_at,
+        firecrawl=firecrawl,
+        settings=settings,
     )
 
     return SharedCollectionResult(
@@ -1579,6 +1608,8 @@ async def collect_monitoring_item_store(
     store_min_interval_seconds: float = 2.0,
     fairness_owner_user_id: UUID | None = None,
     normalizer: PriceNormalizer | None = None,
+    firecrawl: FirecrawlSearchProvider | None = None,
+    settings: Settings | None = None,
 ) -> SharedCollectionResult:
     """Operação central da fase 3A, com claim standalone (fase 3B):
     `MonitoringItemStore` -> 1 coleta na loja -> normalização/persistência
@@ -1621,4 +1652,6 @@ async def collect_monitoring_item_store(
         normalizer=normalizer,
         effective_now=effective_now,
         base_backoff_minutes=effective_cadence_config.normal_min_minutes,
+        firecrawl=firecrawl,
+        settings=settings,
     )
