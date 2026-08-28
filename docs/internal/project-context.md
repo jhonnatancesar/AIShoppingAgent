@@ -1626,3 +1626,29 @@ TASK aberta ainda** — `backend/app/alerts/evaluator.py` e
 `backend/app/collection/model_matching.py` não foram tocados, por
 instrução explícita do usuário para não ampliar o escopo. Detalhes
 completos em `docs/tasks/TASK-090.md`.
+
+**Atualização 2026-08-28 — lacuna operacional da TASK-109 fechada antes
+do deploy/tag da V1.2:** auditoria de compatibilidade de PROD (código
+real rodando `75a47fc`/hotfix `285643c`, banco `20260817_0001`) contra
+`origin/main` encontrou uma lacuna real de reprodutibilidade: a
+Scheduled Task `AIShoppingAgent-CollectionWorker` nunca tinha sido
+capturada em script (só validada manualmente em DEV), e a documentação
+operacional não deixava explícito que "executar estando o usuário
+conectado ou não" depende da sessão continuar **logada** — tela
+**bloqueada** é suportada e já comprovada ao vivo na FASE 1 da TASK-109
+(kill externo → Ops Agent detecta e reinicia → Edge/CDP funcional
+depois); sessão efetivamente **deslogada** nunca foi testada e não é
+suportada. Fechado com `scripts\manage_collection_worker_task.ps1`
+(idempotente; `-LogonType Interactive` amarrado ao usuário do
+auto-logon, nunca `ServiceAccount`/`S4U`/`Password`; `-WhatIf`/
+`-StartDisabled` para validar sem tocar em produção; `-Action
+Install|Update|Status|Enable|Disable|Remove`) e pela distinção
+logada/bloqueada/deslogada tornada explícita em
+`docs/architecture/windows-collection-worker.md`. `ops_controller_secret`
+(gerado por `manage_secrets.py`, HMAC compartilhado com `api`) e
+`windows_ops_agent_secret` (gerado só pelo próprio Ops Agent, cópia
+manual para `.secrets/`) já estavam documentados desde antes desta
+rodada em `docs/installation/secrets.md` — só a subseção de rotação dos
+dois estava faltando, agora adicionada. Nenhuma mudança funcional de
+coleta/dados — só infraestrutura de deploy do worker nativo. Ver
+`docs/tasks/TASK-109.md` para o registro completo.

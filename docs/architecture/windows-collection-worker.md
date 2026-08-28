@@ -106,18 +106,37 @@ gerenciado como fallback (ver `docs/architecture/playwright.md`).
 
 ## Task Scheduler: `AIShoppingAgent-CollectionWorker`
 
-O worker roda como uma tarefa agendada, não como Windows Service: o
-servidor faz login automático e bloqueia a tela (não desconecta) --
-rodar em Session 0 (Windows Service) isolaria o Edge da sessão
-interativa que ele precisa. A tarefa está configurada para "executar
-estando o usuário conectado ou não", com gatilho de logon.
+O worker roda como uma tarefa agendada, não como Windows Service: rodar
+em Session 0 (Windows Service) isolaria o Edge da sessão interativa que
+ele precisa -- um Windows Service roda sem estação de janela real,
+GUI/CDP não funcionam de forma confiável nesse contexto.
+
+**Requisito de sessão -- não ambíguo, resolvido por prova ao vivo (ver
+`docs/tasks/TASK-109.md`, FASE 1):** o servidor precisa manter a sessão
+Windows **sempre logada** via auto-logon; a **tela pode ficar
+bloqueada** (bloquear não é o mesmo que deslogar -- a sessão e a estação
+de janela continuam existindo). Essa combinação foi comprovada ao vivo
+com a tela bloqueada o tempo todo: kill externo do processo → detecção
+pelo Ops Agent → restart → Edge/CDP funcional depois (navegação real,
+título extraído). **Sessão efetivamente deslogada nunca foi testada e
+não é suportada** -- não configurar a tarefa para depender disso. Por
+essa razão, o Principal da tarefa usa `-LogonType Interactive` amarrado
+ao usuário do auto-logon (nunca `ServiceAccount`/`S4U`/`Password`, que
+rodam sem sessão interativa real e provavelmente quebrariam o Edge).
+
+**Instalação/atualização reproduzível:** `scripts\manage_collection_worker_task.ps1`
+(idempotente, `-Action Install|Update|Status|Enable|Disable|Remove`,
+suporta `-WhatIf` e `-StartDisabled` para preparar a infraestrutura antes
+da janela de manutenção sem disparar coleta real -- ver cabeçalho do
+script para o contrato completo de parâmetros). Substitui qualquer
+construção manual da tarefa durante o deploy.
 
 **Achado importante:** o reinício automático nativo do Task Scheduler
 (`RestartCount`/`RestartInterval`) não funciona para um processo morto
 externamente (confirmado ao vivo: `Stop-Process -Force` não disparou
-reinício). Por isso a tarefa em si só inicia o worker no logon/manualmente
--- a detecção de queda e o reinício são responsabilidade do Windows Ops
-Agent, abaixo.
+reinício) -- por isso o script fixa `RestartCount 0` de propósito. A
+tarefa em si só inicia o worker no logon/manualmente -- a detecção de
+queda e o reinício são responsabilidade do Windows Ops Agent, abaixo.
 
 ## Windows Ops Agent: supervisão e integração com `ops_controller`
 

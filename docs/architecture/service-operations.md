@@ -32,3 +32,10 @@ O estado nativo (`Get-ScheduledTask` da task `AIShoppingAgent-CollectionWorker`)
 é traduzido para o mesmo vocabulário que o Docker já usava
 (`running`/`stopped`/`unavailable`/`unknown`), para que UI/API/auditoria
 continuem agnósticas a qual runtime está por trás de cada serviço lógico.
+
+A própria tarefa `AIShoppingAgent-CollectionWorker` que o `WindowsOpsAgentAdapter`
+consulta/aciona é instalada e mantida por
+`scripts\manage_collection_worker_task.ps1` -- ver
+`docs/architecture/windows-collection-worker.md` para o requisito de
+sessão (auto-logon, tela pode ficar bloqueada, nunca deslogada) e o
+contrato completo do script.

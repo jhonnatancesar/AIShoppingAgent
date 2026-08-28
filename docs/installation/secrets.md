@@ -125,6 +125,27 @@ cofre dinâmico não pertence à V1.
   registrar novamente o webhook com exatamente o mesmo novo valor; validar a
   entrega antes de descartar a cópia antiga.
 
+### Controlador operacional e Windows Ops Agent (TASK-109)
+
+- `ops_controller_secret`: gerar novo valor (`python -m scripts.manage_secrets
+  init --overwrite` ou `secrets.token_urlsafe(48)` equivalente), atualizar
+  `.secrets/ops_controller_secret`, recriar `api` (quem assina as chamadas) e
+  `ops_controller` (quem verifica a assinatura) juntos -- é HMAC de segredo
+  compartilhado, os dois lados precisam trocar na mesma janela, sem período de
+  sobreposição com valores diferentes. Validar uma chamada real
+  (`status`/`start`/`restart`) antes de considerar concluído.
+- `windows_ops_agent_secret`: só o próprio Windows Ops Agent gera esse valor,
+  na primeira inicialização (`_load_or_create_secret`,
+  `ops_agent/collection_worker_ops_agent.py`) -- nunca `manage_secrets.py`.
+  Para rotacionar: parar o serviço `AIShoppingAgentOpsAgent`
+  (`python ops_agent\collection_worker_ops_agent.py stop`), apagar
+  `C:\ProgramData\AIShoppingAgent\secrets\ops-agent-secret`, iniciar de novo
+  (`start`) para que um novo valor seja gerado, copiar esse novo valor
+  manualmente para `.secrets/windows_ops_agent_secret` (os dois lados nunca
+  sincronizam sozinhos) e recriar `ops_controller`. Validar
+  `status`/`start`/`restart` reais antes de remover qualquer anotação do
+  valor antigo.
+
 ## Detecção de vazamento
 
 O pipeline fixa Gitleaks `8.29.1`; o instalador verifica SHA-256 publicado para

@@ -5,6 +5,24 @@ publicada em `origin/main`. Deploy em produção ainda não feito (fora do
 escopo desta TASK); produção continua nos sete serviços Docker até uma
 TASK de deploy dedicada.**
 
+**Fechamento da lacuna operacional (auditoria de PROD, pré-deploy):** a
+auditoria de compatibilidade de PROD encontrou uma lacuna real — a
+instalação da Scheduled Task nunca foi capturada em script, só validada
+manualmente em DEV, e a documentação operacional (`windows-collection-worker.md`)
+não deixava explícito que "executar estando o usuário conectado ou não"
+depende de a sessão continuar **logada** (tela bloqueada é suportado e
+já comprovado ao vivo na FASE 1; sessão efetivamente **deslogada** nunca
+foi testada e não é suportada). Fechado sem alterar nenhum comportamento
+de coleta: script novo `scripts\manage_collection_worker_task.ps1`
+(idempotente, `-LogonType Interactive` amarrado ao usuário do
+auto-logon, `-WhatIf`/`-StartDisabled` para validar sem tocar em
+produção), e a distinção logada/bloqueada/deslogada tornada explícita em
+`windows-collection-worker.md`. `ops_controller_secret`/
+`windows_ops_agent_secret` já estavam completamente cobertos por
+`backend/scripts/manage_secrets.py` e `docs/installation/secrets.md`
+desde antes desta rodada — só faltava a subseção de rotação, agora
+adicionada.
+
 Histórico das fases:
 
 FASE 1 concluída e aprovada no DEV (Ops Agent + supervisão do
