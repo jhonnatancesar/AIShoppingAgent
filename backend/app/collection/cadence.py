@@ -42,6 +42,7 @@ from app.collection.models import (
     PromotionalWindow,
     StoreActivityState,
 )
+from app.missions.models import MissionMonitoringItem
 from app.offers.models import Offer
 from app.stores.models import Store
 
@@ -150,7 +151,16 @@ async def resolve_product_market_mode(
     já existente, mesmo usado para desativar a Terabyte, DEC-070 --
     nenhum conceito novo de "loja relevante/ativa" foi inventado). Pior
     caso (mais agressivo) vence: uma única loja ativa em HIGH_ACTIVITY já
-    é suficiente para tratar o Product inteiro como acelerado."""
+    é suficiente para tratar o Product inteiro como acelerado.
+
+    TASK-116 (achado real em PROD, v1.2.6): `_is_high_activity` passou a
+    exigir `scope_id`/`mission_ids` -- esta função nunca conhece
+    "o" `scope_id` de um Product (um mesmo Product numa loja pode ter
+    Offers cobertas por Missions de escopos diferentes), então resolve,
+    por loja, TODOS os escopos reais que uma coleta usaria
+    (`_resolve_market_mode_scopes`, mesmo agrupamento por
+    `MonitoringItem.id`/`Mission.id` que `shared_claim`/`orchestration`
+    já usam) e testa cada um -- nunca `scope_id=None` para calar o erro."""
     if await _is_promo_calendar_active(session, now=now):
         return CadenceDecision(
             config.promo_min_minutes, config.promo_max_minutes, _MODE_PROMO_CALENDAR
@@ -164,15 +174,62 @@ async def resolve_product_market_mode(
         )
     ).all()
     for store_id in store_ids:
-        if await _is_high_activity(session, store_id=store_id, now=now, config=config):
-            return CadenceDecision(
-                config.promo_min_minutes,
-                config.promo_max_minutes,
-                _MODE_HIGH_ACTIVITY,
-            )
+        scopes = await _resolve_market_mode_scopes(
+            session, product_id=product_id, store_id=store_id
+        )
+        for scope_id, mission_ids in scopes:
+            if await _is_high_activity(
+                session,
+                store_id=store_id,
+                scope_id=scope_id,
+                mission_ids=mission_ids,
+                now=now,
+                config=config,
+            ):
+                return CadenceDecision(
+                    config.promo_min_minutes,
+                    config.promo_max_minutes,
+                    _MODE_HIGH_ACTIVITY,
+                )
     return CadenceDecision(
         config.normal_min_minutes, config.normal_max_minutes, _MODE_NORMAL
     )
+
+
+async def _resolve_market_mode_scopes(
+    session: AsyncSession, *, product_id: UUID, store_id: UUID
+) -> list[tuple[UUID, list[UUID]]]:
+    """Reconstrói, para `(product_id, store_id)`, os mesmos escopos de
+    cadência que uma coleta real usaria (TASK-116): agrupa as Missions
+    relevantes às Offers deste Product nesta loja (`mission_offer_
+    relevance`, mesmo join sem filtro de `classification` que
+    `_is_high_activity` já usa) por `MonitoringItem.id` quando existe
+    vínculo em `mission_monitoring_items` (caminho compartilhado,
+    TASK-112), ou por `Mission.id` isolado quando não existe (caminho
+    legado, sem `MonitoringItem`) -- nunca inventa um conceito de escopo
+    novo, sempre o mesmo usado por `shared_claim._advance_monitoring_
+    item_store` e `orchestration` na coleta real."""
+    rows = (
+        await session.execute(
+            select(
+                MissionOfferRelevance.mission_id,
+                MissionMonitoringItem.monitoring_item_id,
+            )
+            .select_from(MissionOfferRelevance)
+            .join(Offer, Offer.id == MissionOfferRelevance.offer_id)
+            .outerjoin(
+                MissionMonitoringItem,
+                MissionMonitoringItem.mission_id == MissionOfferRelevance.mission_id,
+            )
+            .where(Offer.product_id == product_id, Offer.store_id == store_id)
+            .distinct()
+        )
+    ).all()
+    scopes: dict[UUID, list[UUID]] = {}
+    for mission_id, monitoring_item_id in rows:
+        scope_id = monitoring_item_id if monitoring_item_id is not None else mission_id
+        scopes.setdefault(scope_id, []).append(mission_id)
+    return list(scopes.items())
 
 
 def sample_next_run_at(started_at: datetime, decision: CadenceDecision) -> datetime:
