@@ -199,7 +199,13 @@ def test_faster_store_never_accelerates_slower_store_same_mission(integration_da
     # Amazon em HIGH_ACTIVITY (30min determinístico); KaBuM permanece NORMAL
     # (60min determinístico, sem PromotionalWindow/StoreActivityState).
     with integration_database.sessions.begin() as session:
-        session.add(StoreActivityState(store_id=amazon_id, high_activity_until=NOW + timedelta(hours=2)))
+        session.add(
+            StoreActivityState(
+                store_id=amazon_id,
+                scope_id=mission_id,
+                high_activity_until=NOW + timedelta(hours=2),
+            )
+        )
 
     amazon_provider = _CountingProvider("amazon")
     kabum_provider = _CountingProvider("kabum")
@@ -246,7 +252,13 @@ def test_high_activity_store_alone_never_drags_others(integration_database) -> N
         sources={amazon_id: NOW, kabum_id: NOW, pichau_id: NOW},
     )
     with integration_database.sessions.begin() as session:
-        session.add(StoreActivityState(store_id=amazon_id, high_activity_until=NOW + timedelta(hours=2)))
+        session.add(
+            StoreActivityState(
+                store_id=amazon_id,
+                scope_id=mission_id,
+                high_activity_until=NOW + timedelta(hours=2),
+            )
+        )
 
     amazon_provider = _CountingProvider("amazon")
     kabum_provider = _CountingProvider("kabum")

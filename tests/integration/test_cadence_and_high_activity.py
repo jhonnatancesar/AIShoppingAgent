@@ -11,7 +11,7 @@ NORMAL depois da duração configurada.
 
 import asyncio
 from datetime import UTC, datetime, timedelta
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from app.collection.adapter import CollectionAdapter
@@ -224,6 +224,8 @@ def test_promo_calendar_shortens_cadence_within_floor(integration_database) -> N
             return await resolve_collection_cadence(
                 session,
                 store_id=await _any_store_id(session),
+                scope_id=uuid4(),
+                mission_ids=(),
                 now=NOW,
                 config=CadenceConfig(),
             )
@@ -341,7 +343,12 @@ def test_high_activity_detected_from_persisted_price_observations(integration_da
     async def check():
         async with integration_database.async_sessions() as session, session.begin():
             return await resolve_collection_cadence(
-                session, store_id=amazon_id, now=NOW + timedelta(minutes=25), config=config
+                session,
+                store_id=amazon_id,
+                scope_id=item_id,
+                mission_ids=(mission.id,),
+                now=NOW + timedelta(minutes=25),
+                config=config,
             )
 
     decision = _run(check())
@@ -350,7 +357,7 @@ def test_high_activity_detected_from_persisted_price_observations(integration_da
     assert decision.max_minutes == 45
 
     with integration_database.sessions() as session:
-        state = session.get(StoreActivityState, amazon_id)
+        state = session.get(StoreActivityState, (amazon_id, item_id))
         assert state is not None
         assert state.high_activity_until is not None
 
@@ -394,14 +401,19 @@ def test_many_first_observations_never_trigger_high_activity(integration_databas
     async def check():
         async with integration_database.async_sessions() as session, session.begin():
             return await resolve_collection_cadence(
-                session, store_id=amazon_id, now=NOW + timedelta(minutes=15), config=config
+                session,
+                store_id=amazon_id,
+                scope_id=item_id,
+                mission_ids=(mission.id,),
+                now=NOW + timedelta(minutes=15),
+                config=config,
             )
 
     decision = _run(check())
     assert decision.mode == "normal"
 
     with integration_database.sessions() as session:
-        state = session.get(StoreActivityState, amazon_id)
+        state = session.get(StoreActivityState, (amazon_id, item_id))
         assert state is None  # nunca sequer criado
 
 
@@ -420,19 +432,27 @@ def _force_due(integration_database, item_id: UUID, store_id: UUID, due_at: date
 
 def test_high_activity_reverts_to_normal_after_duration_expires(integration_database) -> None:
     amazon_id = _store_id(integration_database, "amazon")
+    scope_id = uuid4()
     config = CadenceConfig(high_activity_duration_minutes=60)
 
     with integration_database.sessions.begin() as session:
         session.add(
             StoreActivityState(
-                store_id=amazon_id, high_activity_until=NOW + timedelta(minutes=10)
+                store_id=amazon_id,
+                scope_id=scope_id,
+                high_activity_until=NOW + timedelta(minutes=10),
             )
         )
 
     async def check(now):
         async with integration_database.async_sessions() as session:
             return await resolve_collection_cadence(
-                session, store_id=amazon_id, now=now, config=config
+                session,
+                store_id=amazon_id,
+                scope_id=scope_id,
+                mission_ids=(),
+                now=now,
+                config=config,
             )
 
     still_active = _run(check(NOW + timedelta(minutes=5)))
@@ -528,3 +548,149 @@ def test_legacy_schedule_promo_cadence_applies(integration_database) -> None:
         )
         delta_minutes = (schedule.next_run_at - NOW).total_seconds() / 60
         assert 30 <= delta_minutes <= 45
+
+
+# ---------------------------------------------------------------------------
+# TASK-116: HIGH_ACTIVITY escopado por unidade de monitoramento, nunca por
+# loja inteira -- achado real em PROD (mudança de preço em qualquer produto
+# acelerava TODOS os itens monitorados na mesma loja).
+# ---------------------------------------------------------------------------
+
+
+def test_unrelated_monitoring_item_same_store_stays_normal(integration_database) -> None:
+    """B: item A entra em HIGH_ACTIVITY; item B, mesma loja, produto
+    totalmente alheio, permanece NORMAL."""
+    user_a = _seed_user(integration_database.sessions, "scope-a")
+    user_b = _seed_user(integration_database.sessions, "scope-b")
+    mission_a = _make_shared_mission(integration_database, user_a, search_query="RTX 5070 Ti")
+    mission_b = _make_shared_mission(
+        integration_database, user_b, search_query="AMD Ryzen 9 9950X"
+    )
+    item_a = _monitoring_item_id_for(integration_database.sessions, mission_a.id)
+    item_b = _monitoring_item_id_for(integration_database.sessions, mission_b.id)
+    assert item_a != item_b
+    amazon_id = _store_id(integration_database, "amazon")
+    config = CadenceConfig(
+        high_activity_window_minutes=30,
+        high_activity_change_threshold=3,
+        high_activity_duration_minutes=60,
+    )
+
+    provider = _VaryingPriceProvider()
+    for minute in (0, 5, 10, 15):
+        due_at = NOW + timedelta(minutes=minute)
+        _force_due(integration_database, item_a, amazon_id, due_at)
+        result = _run(
+            collect_monitoring_item_store(
+                integration_database.async_sessions,
+                _adapter(provider),
+                _StubAIManager(),
+                monitoring_item_id=item_a,
+                store_id=amazon_id,
+                now=due_at,
+                cadence_config=config,
+            )
+        )
+        assert result.claimed is True
+
+    async def check(item_id, mission_id):
+        async with integration_database.async_sessions() as session, session.begin():
+            return await resolve_collection_cadence(
+                session,
+                store_id=amazon_id,
+                scope_id=item_id,
+                mission_ids=(mission_id,),
+                now=NOW + timedelta(minutes=25),
+                config=config,
+            )
+
+    assert _run(check(item_a, mission_a.id)).mode == "high_activity"
+    assert _run(check(item_b, mission_b.id)).mode == "normal"
+
+
+def test_two_missions_sharing_monitoring_item_share_high_activity(
+    integration_database,
+) -> None:
+    """C: duas Missions de usuários diferentes, mesma identidade resolvida
+    -> mesmo MonitoringItem -> compartilham o mesmo estado de atividade."""
+    user_1 = _seed_user(integration_database.sessions, "shared-1")
+    user_2 = _seed_user(integration_database.sessions, "shared-2")
+    mission_1 = _make_shared_mission(integration_database, user_1, search_query="RTX 5070 Ti")
+    mission_2 = _make_shared_mission(integration_database, user_2, search_query="RTX 5070 Ti")
+    item_1 = _monitoring_item_id_for(integration_database.sessions, mission_1.id)
+    item_2 = _monitoring_item_id_for(integration_database.sessions, mission_2.id)
+    assert item_1 == item_2  # mesma unidade compartilhada (TASK-112)
+    amazon_id = _store_id(integration_database, "amazon")
+    config = CadenceConfig(
+        high_activity_window_minutes=30,
+        high_activity_change_threshold=3,
+        high_activity_duration_minutes=60,
+    )
+
+    provider = _VaryingPriceProvider()
+    for minute in (0, 5, 10, 15):
+        due_at = NOW + timedelta(minutes=minute)
+        _force_due(integration_database, item_1, amazon_id, due_at)
+        result = _run(
+            collect_monitoring_item_store(
+                integration_database.async_sessions,
+                _adapter(provider),
+                _StubAIManager(),
+                monitoring_item_id=item_1,
+                store_id=amazon_id,
+                now=due_at,
+                cadence_config=config,
+            )
+        )
+        assert result.claimed is True
+
+    async def check(mission_id):
+        async with integration_database.async_sessions() as session, session.begin():
+            return await resolve_collection_cadence(
+                session,
+                store_id=amazon_id,
+                scope_id=item_1,
+                mission_ids=(mission_id,),
+                now=NOW + timedelta(minutes=25),
+                config=config,
+            )
+
+    # Mesmo detectado via a Offer/relevance da Mission 1, o estado (histerese
+    # em StoreActivityState) é chaveado por scope_id=item_id -- Mission 2
+    # também enxerga HIGH_ACTIVITY, mesmo sem gerar nenhuma observação
+    # própria (mission_ids=(mission_2.id,) sozinho não bateria o limiar).
+    assert _run(check(mission_2.id)).mode == "high_activity"
+
+
+def test_never_schedules_below_absolute_floor_even_in_high_activity(
+    integration_database,
+) -> None:
+    """I: piso absoluto de 30min -- HIGH_ACTIVITY nunca agenda antes disso,
+    mesmo em múltiplas coletas sucessivas."""
+    user_id = _seed_user(integration_database.sessions, "floor")
+    mission = _make_shared_mission(integration_database, user_id, search_query="RTX 5070 Ti")
+    item_id = _monitoring_item_id_for(integration_database.sessions, mission.id)
+    amazon_id = _store_id(integration_database, "amazon")
+    config = CadenceConfig(
+        high_activity_window_minutes=30,
+        high_activity_change_threshold=3,
+        high_activity_duration_minutes=60,
+    )
+    provider = _VaryingPriceProvider()
+    for minute in (0, 5, 10, 15, 20):
+        due_at = NOW + timedelta(minutes=minute)
+        _force_due(integration_database, item_id, amazon_id, due_at)
+        _run(
+            collect_monitoring_item_store(
+                integration_database.async_sessions,
+                _adapter(provider),
+                _StubAIManager(),
+                monitoring_item_id=item_id,
+                store_id=amazon_id,
+                now=due_at,
+                cadence_config=config,
+            )
+        )
+    item_store = _monitoring_item_store(integration_database.sessions, item_id, amazon_id)
+    delta_minutes = (item_store.next_run_at - (NOW + timedelta(minutes=20))).total_seconds() / 60
+    assert delta_minutes >= 30
