@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from uuid import UUID
 
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -25,7 +26,7 @@ from app.collection.cadence import CadenceConfig, resolve_collection_cadence, sa
 from app.collection.fairness import _advance_store_throttle
 from app.collection.models import StoreThrottleState
 from app.collection.persistence import start_collection_run
-from app.missions.models import MonitoringItem, MonitoringItemStore
+from app.missions.models import MissionMonitoringItem, MonitoringItem, MonitoringItemStore
 from app.missions.schedule import next_source_backoff
 from app.products.identity import CollectionCriteria, canonical_collection_criteria
 from app.stores.models import Store
@@ -64,9 +65,24 @@ async def _advance_monitoring_item_store(
     relativo a `started_at` (agora), nunca ao `next_run_at` antigo -- ver
     `cadence.sample_next_run_at` para o motivo de abandonar o algoritmo
     de "recuperar atraso em múltiplos do intervalo" (incompatível com uma
-    faixa que pode mudar de ciclo para ciclo)."""
+    faixa que pode mudar de ciclo para ciclo). TASK-116: atividade alta é
+    escopada a esta unidade (`monitoring_item_id`) -- resolve as Missions
+    que a compartilham para restringir a contagem de mudança de preço só
+    às ofertas relevantes a elas, nunca à loja inteira."""
+    mission_ids = (
+        await session.scalars(
+            select(MissionMonitoringItem.mission_id).where(
+                MissionMonitoringItem.monitoring_item_id == item_store.monitoring_item_id
+            )
+        )
+    ).all()
     decision = await resolve_collection_cadence(
-        session, store_id=item_store.store_id, now=started_at, config=cadence_config
+        session,
+        store_id=item_store.store_id,
+        scope_id=item_store.monitoring_item_id,
+        mission_ids=mission_ids,
+        now=started_at,
+        config=cadence_config,
     )
     item_store.last_run_at = started_at
     item_store.next_run_at = sample_next_run_at(started_at, decision)

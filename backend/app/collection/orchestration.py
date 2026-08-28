@@ -646,6 +646,8 @@ async def claim_due_collections(
             decision = await resolve_collection_cadence(
                 session,
                 store_id=source.store_id,
+                scope_id=mission_id,
+                mission_ids=(mission_id,),
                 now=effective_now,
                 config=effective_cadence_config,
             )
@@ -975,7 +977,12 @@ async def _claim_legacy_source_attempt(
             raise
         return None
     decision = await resolve_collection_cadence(
-        session, store_id=attempt.store_id, now=effective_now, config=cadence_config
+        session,
+        store_id=attempt.store_id,
+        scope_id=attempt.mission_id,
+        mission_ids=(attempt.mission_id,),
+        now=effective_now,
+        config=cadence_config,
     )
     source.last_run_at = effective_now
     source.next_run_at = sample_next_run_at(effective_now, decision)

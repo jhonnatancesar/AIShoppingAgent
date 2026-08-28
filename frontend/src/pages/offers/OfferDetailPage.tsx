@@ -62,7 +62,7 @@ export function OfferDetailView({ offer, comparison }: { offer: OfferDetail; com
       </div>
 
       <div className="offer-detail-grid">
-        <div className="offer-image-panel">
+        <div className={`offer-image-panel${offer.image_url ? '' : ' offer-image-panel--empty'}`}>
           {offer.image_url ? (
             <img
               className="offer-image"
@@ -78,96 +78,81 @@ export function OfferDetailView({ offer, comparison }: { offer: OfferDetail; com
         </div>
 
         <div className="offer-facts">
-          <dl>
-            <div><dt>Loja</dt><dd>{offer.store.name}</dd></div>
-            <div><dt>Vendedor</dt><dd>{offer.seller?.name ?? 'Não informado'}</dd></div>
-            <div>
-              <dt>Tipo de vendedor</dt>
-              <dd>{observation?.seller_kind ? PARTY_LABELS[observation.seller_kind] : 'Não informado'}</dd>
-            </div>
-            <div>
-              <dt>Entrega</dt>
-              <dd>
-                {observation?.fulfillment ??
-                  (observation?.fulfillment_kind
-                    ? PARTY_LABELS[observation.fulfillment_kind]
-                    : 'Não informada')}
-              </dd>
-            </div>
-            <div><dt>Condição</dt><dd>{observation ? CONDITION_LABELS[observation.condition] : 'Não informada'}</dd></div>
-            <div><dt>Disponibilidade</dt><dd>{observation ? AVAILABILITY_LABELS[observation.availability] : 'Não informada'}</dd></div>
-          </dl>
-
-          {observation ? (
-            <div className="offer-price-panel">
-              <p className="offer-price-label">Preço à vista</p>
-              <p className="offer-price">{money(observation.amount, observation.currency)}</p>
-              <p>
-                Frete: {observation.shipping_amount === null
-                  ? 'Não informado'
-                  : money(observation.shipping_amount, observation.currency)}
-              </p>
-              <p>Total: {money(observation.total_amount, observation.currency)}</p>
-              <p className="field-hint">Atualizado em {dateTime(observation.observed_at)}</p>
-            </div>
-          ) : (
-            <p className="field-hint">Ainda não há observação comercial disponível.</p>
-          )}
-        </div>
-      </div>
-
-      <div className="mission-section">
-        <h2>Avaliações na {offer.store.name}</h2>
-        {offer.rating ? (
-          <>
+          {offer.rating ? (
             <p className="offer-rating">
               ⭐ {ratingAverage(offer.rating.average)} ·{' '}
               {offer.rating.review_count.toLocaleString('pt-BR')}{' '}
               {offer.rating.review_count === 1 ? 'avaliação' : 'avaliações'}
             </p>
-            <p className="field-hint">
-              Informação da própria loja, observada em{' '}
-              {dateTime(offer.rating.observed_at)}.
-            </p>
-          </>
-        ) : (
-          <p className="field-hint">Avaliação não informada pela loja.</p>
-        )}
+          ) : null}
+
+          {observation ? (
+            <div className="offer-price-panel">
+              <p className="offer-price-label">Preço à vista</p>
+              <p className="offer-price">{money(observation.amount, observation.currency)}</p>
+              {observation.installments.length > 0 ? (
+                <ul className="installment-list">
+                  {observation.installments.map((item) => (
+                    <li key={item.installment_count}>
+                      {item.installment_count}x de {money(item.installment_amount, observation.currency)}
+                      {item.interest_kind === 'interest_free' ? ' sem juros' : ''}
+                      {item.installment_total_amount
+                        ? ` — total ${money(item.installment_total_amount, observation.currency)}`
+                        : ''}
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+              <a className="button" href={offer.original_url} target="_blank" rel="noreferrer">
+                Ver anúncio
+              </a>
+              {observation.shipping_amount !== null ? (
+                <p>Frete: {money(observation.shipping_amount, observation.currency)}</p>
+              ) : null}
+              <p>Total: {money(observation.total_amount, observation.currency)}</p>
+              <p className="field-hint">Atualizado em {dateTime(observation.observed_at)}</p>
+            </div>
+          ) : (
+            <>
+              <p className="field-hint">Ainda não há observação comercial disponível.</p>
+              <a className="button" href={offer.original_url} target="_blank" rel="noreferrer">
+                Ver anúncio
+              </a>
+            </>
+          )}
+
+          <OfferFacts offer={offer} observation={observation} />
+        </div>
       </div>
 
       <ComparisonSection comparison={comparison} currentOfferId={offer.id} />
 
       <PriceHistoryChart offerId={offer.id} />
 
-      <div className="mission-section">
-        <h2>Parcelamento</h2>
-        {!observation || observation.installments.length === 0 ? (
-          <p className="field-hint">Parcelamento não informado.</p>
-        ) : (
-          <ul className="installment-list">
-            {observation.installments.map((item) => (
-              <li key={item.installment_count}>
-                {item.installment_count}x de {money(item.installment_amount, observation.currency)}
-                {item.interest_kind === 'interest_free' ? ' sem juros' : ''}
-                {item.installment_total_amount
-                  ? ` — total ${money(item.installment_total_amount, observation.currency)}`
-                  : ''}
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
-
       <p className="field-hint">Oferta vista pela última vez em {dateTime(offer.last_seen_at)}.</p>
       <div className="mission-actions">
-        <a className="button" href={offer.original_url} target="_blank" rel="noreferrer">
-          Abrir oferta na loja
-        </a>
         <Link className="button button-secondary" to="/app/missions">
           Voltar para missões
         </Link>
       </div>
     </section>
+  )
+}
+
+function OfferFacts({ offer, observation }: { offer: OfferDetail; observation: OfferDetail['latest_observation'] }) {
+  const facts: [string, string][] = [['Loja', offer.store.name]]
+  if (offer.seller?.name) facts.push(['Vendedor', offer.seller.name])
+  if (observation?.seller_kind) facts.push(['Tipo de vendedor', PARTY_LABELS[observation.seller_kind]])
+  const delivery = observation?.fulfillment ?? (observation?.fulfillment_kind ? PARTY_LABELS[observation.fulfillment_kind] : null)
+  if (delivery) facts.push(['Entrega', delivery])
+  if (observation) facts.push(['Condição', CONDITION_LABELS[observation.condition]])
+  if (observation) facts.push(['Disponibilidade', AVAILABILITY_LABELS[observation.availability]])
+  return (
+    <dl>
+      {facts.map(([label, value]) => (
+        <div key={label}><dt>{label}</dt><dd>{value}</dd></div>
+      ))}
+    </dl>
   )
 }
 

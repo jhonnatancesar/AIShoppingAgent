@@ -25,6 +25,7 @@ sofisticada -- pensado para a escala real da V1.2 (dezenas de lojas,
 poucas centenas de itens monitorados), não para milhões de eventos.
 """
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from random import uniform
@@ -36,6 +37,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from app.collection.models import (
+    MissionOfferRelevance,
     PriceObservation,
     PromotionalWindow,
     StoreActivityState,
@@ -91,15 +93,39 @@ class CadenceDecision:
 
 
 async def resolve_collection_cadence(
-    session: AsyncSession, *, store_id: UUID, now: datetime, config: CadenceConfig
+    session: AsyncSession,
+    *,
+    store_id: UUID,
+    scope_id: UUID,
+    mission_ids: Sequence[UUID],
+    now: datetime,
+    config: CadenceConfig,
 ) -> CadenceDecision:
     """Ponto único de decisão -- nunca espalhar `if`/`else` de datas ou de
-    atividade pelo scheduler; qualquer novo caso entra aqui."""
+    atividade pelo scheduler; qualquer novo caso entra aqui.
+
+    TASK-116 (correção estrutural, achado real: HIGH_ACTIVITY acelerava a
+    loja inteira por uma mudança de preço em produto totalmente alheio).
+    `scope_id` é a unidade de monitoramento real (`MonitoringItem.id` no
+    caminho compartilhado TASK-112, ou `Mission.id` no caminho legado
+    sem `MonitoringItem`) -- chave de `StoreActivityState` junto com
+    `store_id`, nunca só a loja. `mission_ids` é o conjunto de Missions
+    que compartilham essa unidade (uma só no caminho legado; potencialmente
+    várias no compartilhado, via `mission_monitoring_items`) -- usado para
+    escopar a CONTAGEM de mudança de preço só às ofertas relevantes para
+    essa unidade, nunca à loja inteira."""
     if await _is_promo_calendar_active(session, now=now):
         return CadenceDecision(
             config.promo_min_minutes, config.promo_max_minutes, _MODE_PROMO_CALENDAR
         )
-    if await _is_high_activity(session, store_id=store_id, now=now, config=config):
+    if await _is_high_activity(
+        session,
+        store_id=store_id,
+        scope_id=scope_id,
+        mission_ids=mission_ids,
+        now=now,
+        config=config,
+    ):
         return CadenceDecision(
             config.promo_min_minutes, config.promo_max_minutes, _MODE_HIGH_ACTIVITY
         )
@@ -176,10 +202,20 @@ async def _is_promo_calendar_active(session: AsyncSession, *, now: datetime) -> 
 
 
 async def _is_high_activity(
-    session: AsyncSession, *, store_id: UUID, now: datetime, config: CadenceConfig
+    session: AsyncSession,
+    *,
+    store_id: UUID,
+    scope_id: UUID,
+    mission_ids: Sequence[UUID],
+    now: datetime,
+    config: CadenceConfig,
 ) -> bool:
-    """Atividade é POR LOJA, nunca por item/produto individual (decisão
-    explícita -- sem modelo preditivo, sem frequência por produto).
+    """Atividade é por UNIDADE DE MONITORAMENTO (`scope_id`) + loja, nunca
+    pela loja inteira (TASK-116, correção estrutural -- ver docstring de
+    `resolve_collection_cadence`). A contagem de mudança de preço é
+    restrita às ofertas ligadas às `mission_ids` desta unidade
+    (`mission_offer_relevance`) -- um produto totalmente alheio mudando de
+    preço na mesma loja nunca acelera esta unidade.
 
     Correção (achado real, auditoria pós-implementação): uma nova
     `PriceObservation` é gravada tanto quando o estado comercial muda
@@ -199,21 +235,30 @@ async def _is_high_activity(
     por si só, exatamente "isto é CHANGED, não FIRST_OBSERVATION". A
     query abaixo exclui via `NOT EXISTS` justamente as observações que
     são a primeira da sua própria Offer."""
-    state = await session.get(StoreActivityState, store_id, with_for_update=True)
+    state = await session.get(
+        StoreActivityState, (store_id, scope_id), with_for_update=True
+    )
     if (
         state is not None
         and state.high_activity_until is not None
         and state.high_activity_until > now
     ):
         return True
+    if not mission_ids:
+        return False
     window_start = now - timedelta(minutes=config.high_activity_window_minutes)
     earlier = aliased(PriceObservation)
     change_count = await session.scalar(
-        select(func.count(PriceObservation.id))
+        select(func.count(func.distinct(PriceObservation.id)))
         .select_from(PriceObservation)
         .join(Offer, Offer.id == PriceObservation.offer_id)
+        .join(
+            MissionOfferRelevance,
+            MissionOfferRelevance.offer_id == PriceObservation.offer_id,
+        )
         .where(
             Offer.store_id == store_id,
+            MissionOfferRelevance.mission_id.in_(mission_ids),
             PriceObservation.observed_at >= window_start,
             PriceObservation.observed_at <= now,
             # Exclui FIRST_OBSERVATION -- só conta quando existe uma
@@ -230,9 +275,14 @@ async def _is_high_activity(
     high_activity_until = now + timedelta(minutes=config.high_activity_duration_minutes)
     await session.execute(
         postgresql_insert(StoreActivityState)
-        .values(store_id=store_id, high_activity_until=high_activity_until, updated_at=now)
+        .values(
+            store_id=store_id,
+            scope_id=scope_id,
+            high_activity_until=high_activity_until,
+            updated_at=now,
+        )
         .on_conflict_do_update(
-            index_elements=[StoreActivityState.store_id],
+            index_elements=[StoreActivityState.store_id, StoreActivityState.scope_id],
             set_={"high_activity_until": high_activity_until, "updated_at": now},
         )
     )

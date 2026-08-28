@@ -23,6 +23,7 @@ from app.collection.contracts import (
 from app.collection.normalization import Availability
 from app.core.errors import ApiError
 from app.database.dependency import get_web_async_session
+from app.offers.presentation import resolve_offer_display_title
 from app.offers.query import (
     OfferPriceHistory,
     PriceHistoryPeriod,
@@ -193,7 +194,7 @@ def _as_response(detail: UserOfferDetail) -> OfferDetailResponse:
     observation = detail.observation
     return OfferDetailResponse(
         id=detail.offer.id,
-        title=detail.product.display_name or detail.product.name,
+        title=resolve_offer_display_title(detail.product, detail.observation),
         image_url=detail.offer.image_url,
         original_url=detail.offer.url,
         last_seen_at=detail.offer.last_seen_at.isoformat(),
@@ -244,7 +245,7 @@ def _as_summary(detail: UserOfferSummary) -> OfferSummaryOut:
     observation = detail.observation
     return OfferSummaryOut(
         id=detail.offer.id,
-        title=detail.product.display_name or detail.product.name,
+        title=resolve_offer_display_title(detail.product, detail.observation),
         image_url=detail.offer.image_url,
         last_seen_at=detail.offer.last_seen_at.isoformat(),
         store=StoreOut(code=detail.store.code, name=detail.store.name),

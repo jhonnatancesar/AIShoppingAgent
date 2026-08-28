@@ -35,6 +35,7 @@ from app.events.models import EventDeliveryCheckpoint
 from app.missions.models import Mission, MissionCriteria, VariantSelectionMode
 from app.observability.metrics import observe_resilience_event
 from app.offers.models import Offer
+from app.offers.presentation import resolve_offer_display_title
 from app.offers.short_links import build_offer_short_url, get_or_create_offer_short_link
 from app.products.models import Product
 from app.stores.models import Store
@@ -898,7 +899,7 @@ def _render_alert(
     payload = event.payload
     if not isinstance(payload, dict):
         raise TelegramNotificationError("notification_payload_invalid")
-    display_name = html.escape(product.display_name or product.name)
+    display_name = html.escape(resolve_offer_display_title(product, observation))
     mission_title_safe = html.escape(mission_title)
     marketplace_line = _marketplace_party_line(store, observation)
     rating_line = _rating_line(offer)
@@ -1087,7 +1088,7 @@ async def _render_prelist_block_async(
     ) = await _load_offer_context_async(session, offer_id, observation_id)
     link = await get_or_create_offer_short_link(session, offer.id)
     short_url = build_offer_short_url(public_base_url, link.token)
-    display_name = html.escape(product.display_name or product.name)
+    display_name = html.escape(resolve_offer_display_title(product, observation))
     number = {1: "1️⃣", 2: "2️⃣"}.get(position, f"{position}.")
     text = (
         prefix + f"{number} {display_name}\n"
@@ -1195,7 +1196,7 @@ async def _render_prelist_errata_async(
     ) = await _load_offer_context_async(session, offer_id, observation_id)
     link = await get_or_create_offer_short_link(session, offer.id)
     short_url = build_offer_short_url(public_base_url, link.token)
-    display_name = html.escape(product.display_name or product.name)
+    display_name = html.escape(resolve_offer_display_title(product, observation))
     if had_previous:
         header = "🔄 ATUALIZAÇÃO DA PRÉ-LISTA\n\n"
         note = (
@@ -1261,7 +1262,7 @@ async def _render_prelist_v2_async(
     payload = event.payload
     if not isinstance(payload, dict) or not isinstance(payload.get("offers"), list):
         raise TelegramNotificationError("notification_payload_invalid")
-    groups: dict[UUID, tuple[Store, list[tuple[UUID, str]]]] = {}
+    groups: dict[UUID, tuple[Store, list[tuple[UUID, str, str | None]]]] = {}
     for raw in payload["offers"]:
         if not isinstance(raw, dict):
             raise TelegramNotificationError("notification_payload_invalid")
@@ -1303,7 +1304,7 @@ async def _render_prelist_v2_async(
         entries = groups.setdefault(store.id, (store, []))[1]
         position = len(entries) + 1
         block = (
-            f"{position}. {html.escape(product.display_name or product.name)}\n"
+            f"{position}. {html.escape(resolve_offer_display_title(product, observation))}\n"
             f"📋 {_CONDITION_LABELS[condition]}\n"
             f"{_marketplace_party_line(store, observation)}"
             f"{_rating_line(offer)}"
@@ -1313,7 +1314,7 @@ async def _render_prelist_v2_async(
             "🔗 Ver anúncio\n"
             f"{_telegram_link(short_url)}"
         )
-        entries.append((offer.id, block))
+        entries.append((offer.id, block, offer.image_url))
 
     parts: list[_PreparedMessagePart] = []
     for store, entries in groups.values():
@@ -1327,23 +1328,32 @@ async def _render_prelist_v2_async(
         base = f"{heading}\n🔎 Missão: {html.escape(mission_title)}\n\n"
         current = base
         current_offer = entries[0][0]
-        for offer_id, block in entries:
+        # TASK-114: uma imagem por BLOCO (mensagem), nunca por oferta --
+        # a primeira image_url válida entre as ofertas que acabam entrando
+        # nesta parte específica do texto (uma loja pode se dividir em
+        # mais de uma parte pelo limite de tamanho; cada parte pega sua
+        # própria primeira imagem válida, nunca a de outra loja).
+        current_image: str | None = None
+        for offer_id, block, image_url in entries:
             addition = block + "\n\n"
             if len(current) + len(addition) + len(_PRELIST_SHIPPING_DISCLAIMER) > (
                 _TELEGRAM_TEXT_SAFE_LIMIT
             ):
                 text = current.rstrip() + f"\n\n{_PRELIST_SHIPPING_DISCLAIMER}"
                 parts.append(
-                    _PreparedMessagePart(current_offer, len(parts), text)
+                    _PreparedMessagePart(current_offer, len(parts), text, current_image)
                 )
                 current = (
                     f"{heading} — continuação\n"
                     f"🔎 Missão: {html.escape(mission_title)}\n\n"
                 )
                 current_offer = offer_id
+                current_image = None
+            if current_image is None and image_url is not None:
+                current_image = image_url
             current += addition
         text = current.rstrip() + f"\n\n{_PRELIST_SHIPPING_DISCLAIMER}"
-        parts.append(_PreparedMessagePart(current_offer, len(parts), text))
+        parts.append(_PreparedMessagePart(current_offer, len(parts), text, current_image))
     if not parts:
         raise TelegramNotificationError("notification_payload_invalid")
     return tuple(parts)

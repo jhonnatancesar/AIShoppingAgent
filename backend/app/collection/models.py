@@ -795,6 +795,16 @@ class StoreActivityState(Base):
         ForeignKey("stores.id", ondelete="CASCADE"),
         primary_key=True,
     )
+    scope_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        primary_key=True,
+    )
+    """TASK-116: unidade de monitoramento (`MonitoringItem.id` no caminho
+    compartilhado, `Mission.id` no caminho legado sem `MonitoringItem`) --
+    nunca FK direta, já que aponta para uma de duas tabelas diferentes
+    conforme o caminho; a integridade real é garantida por quem grava
+    (sempre um `scope_id` que já existe em `monitoring_items` ou
+    `missions` no momento da escrita)."""
     high_activity_until: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )

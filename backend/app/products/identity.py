@@ -449,6 +449,53 @@ _CATEGORY_BY_NAME: dict[str, CategoryDefinition] = {
 
 _RYZEN_KEYWORD = re.compile(r"\bAMD\b|\bRYZEN\b")
 _RYZEN_CODE = re.compile(r"\b(\d{4,5})([A-Z0-9]{0,3})\b")
+
+# TASK-114 (correção, achado real em PROD -- ver DEC-105): um título pode
+# citar marca/modelo de CPU só como CLÁUSULA DE COMPATIBILIDADE de um
+# produto de OUTRA categoria -- placa-mãe "suporta processadores AMD Ryzen
+# 9000/8000/7000", cooler "compatível com Intel Core", RAM "otimizada para
+# Ryzen" -- nunca significa que o produto anunciado É aquela CPU. Frase de
+# compatibilidade em QUALQUER lugar do título derruba o match inteiro
+# (fail-closed, nunca fabrica identidade): nenhuma _ParsedFamily de CPU é
+# devolvida, mesmo que o texto também contenha um código de CPU válido.
+# Compartilhado entre `_cpu` (AMD) e `_intel_cpu` -- mesmo risco estrutural
+# nos dois, mesma frase de ligação em português/inglês nas duas marcas.
+# Deliberadamente independente de loja/marca de produto (MSI, Amazon,
+# X870E não aparecem aqui) -- só depende da própria gramática do título.
+_CPU_COMPATIBILITY_PHRASE = re.compile(
+    r"\bSUPORT\w*\b"
+    r"|\bCOMPAT\w*\s+COM\b"
+    r"|\bOTIMIZAD\w*\s+PARA\b"
+    r"|\bINDICAD\w*\s+PARA\b"
+    r"|\bIDEAL\s+PARA\b"
+    r"|\bPROJETAD\w*\s+PARA\b"
+    r"|\bADEQUAD\w*\s+PARA\b"
+    r"|\bCOMPATIBLE\s+WITH\b"
+    r"|\bSUPPORTS?\b"
+    r"|\bDESIGNED\s+FOR\b"
+    r"|\bOPTIMIZED\s+FOR\b"
+)
+# Achado real durante o teste do reparo histórico (DEC-105): nem toda
+# menção de compatibilidade usa um verbo de ligação -- um título de
+# placa-mãe pode listar "Ryzen 5000/3000" como especificação solta, sem
+# "suporta"/"compatível com". Isso NUNCA significa que o produto anunciado
+# é a própria CPU -- é a categoria que já se autodeclara na frente do
+# título. Lista fechada, só categorias comprovadamente não-CPU e
+# inequívocas (nunca "cooler" aqui: um Processador real legitimamente se
+# anuncia "Com Cooler AMD Wraith Stealth"/"Sem Cooler" -- ambíguo demais
+# para entrar nesta lista sem virar falso negativo).
+_NON_CPU_PRODUCT_CATEGORY = re.compile(
+    r"\bPLACA.?MAE\b|\bMOTHERBOARD\b|\bMAINBOARD\b"
+)
+
+
+def _mentions_cpu_only_as_compatibility(text: str) -> bool:
+    return (
+        _CPU_COMPATIBILITY_PHRASE.search(text) is not None
+        or _NON_CPU_PRODUCT_CATEGORY.search(text) is not None
+    )
+
+
 # TASK-112 (correção): o tier ("Ryzen 9"/"Ryzen 7"/...) não é uma restrição
 # à parte do texto -- é informação IMPLÍCITA no próprio código do modelo,
 # conhecimento público do esquema de nomenclatura da AMD, verificável em
@@ -481,10 +528,14 @@ def _ryzen_family(model_digits: str) -> str:
 
 
 def _cpu(text: str) -> _ParsedFamily | None:
-    """AMD Ryzen desktop -- único fabricante coberto nesta fase; Intel (ou
-    qualquer outro) entra pelo mesmo mecanismo, como outro extractor
-    registrado em `_EXTRACTORS`, sem tocar neste. `family` nunca vem do
-    texto (ver `_RYZEN_TIER_BY_SECOND_DIGIT` acima) -- só do código."""
+    """AMD Ryzen desktop. `family` nunca vem do texto (ver
+    `_RYZEN_TIER_BY_SECOND_DIGIT` acima) -- só do código. TASK-114
+    (correção, achado real em PROD): rejeita de saída qualquer título com
+    frase de compatibilidade (`_mentions_cpu_only_as_compatibility`) --
+    placa-mãe/cooler/RAM que só cita a CPU como especificação suportada
+    nunca vira identidade de CPU."""
+    if _mentions_cpu_only_as_compatibility(text):
+        return None
     has_keyword = _RYZEN_KEYWORD.search(text) is not None
     for match in _RYZEN_CODE.finditer(text):
         digits, suffix = match.groups()
@@ -506,6 +557,33 @@ def _cpu(text: str) -> _ParsedFamily | None:
             required_attributes=frozenset(),
         )
     return None
+
+
+_INTEL_CODE = re.compile(r"\bI([3579])\s+(\d{4,5})([A-Z0-9]{0,3})\b")
+# TASK-114: Intel Core desktop -- tier vem direto do prefixo i3/i5/i7/i9
+# (ao contrário do Ryzen, a nomenclatura da Intel já expõe o tier no
+# próprio código, sem precisar de tabela de derivação por dígito).
+
+
+def _intel_cpu(text: str) -> _ParsedFamily | None:
+    """Mesmo guard de compatibilidade que `_cpu` (AMD) -- ver
+    `_mentions_cpu_only_as_compatibility`."""
+    if _mentions_cpu_only_as_compatibility(text):
+        return None
+    match = _INTEL_CODE.search(text)
+    if match is None:
+        return None
+    tier, digits, suffix = match.groups()
+    return _ParsedFamily(
+        category="cpu",
+        brand="intel",
+        family=f"core-i{tier}",
+        model=_slug(digits + suffix),
+        variant="",
+        variant_explicit=False,
+        attributes=(),
+        required_attributes=frozenset(),
+    )
 
 
 _GPU_KEYWORD = re.compile(r"\bRTX\b|\bGEFORCE\b|\bNVIDIA\b")
@@ -592,7 +670,7 @@ def _gpu(text: str) -> _ParsedFamily | None:
 # Registro aditivo -- não toca a tupla original definida acima (_iphone,
 # _galaxy_s intocados); só estende. `_parse`/resolve_product_variant/
 # classify_product_request passam a enxergar CPU/GPU a partir daqui.
-_EXTRACTORS = (*_EXTRACTORS, _cpu, _gpu)
+_EXTRACTORS = (*_EXTRACTORS, _cpu, _intel_cpu, _gpu)
 
 
 @dataclass(frozen=True, slots=True)
