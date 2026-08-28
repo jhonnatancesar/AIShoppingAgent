@@ -173,10 +173,18 @@ python ops_agent\collection_worker_ops_agent.py remove
 `ops_controller.py` despacha por `LogicalService`:
 `telegram_notifier` continua no `DockerOpsAdapter`; `collection_worker`
 passa pelo `WindowsOpsAgentAdapter`, que assina e chama a API acima via
-`http://host.docker.internal:8021` (Docker Desktop for Windows resolve
-`host.docker.internal` para portas em loopback do host, sem
-`extra_hosts`/rede nova). Requer um **segundo** secret, cópia manual do
-valor gerado acima:
+`http://host.docker.internal:8021`. A resolução automática de
+`host.docker.internal` pelo Docker Desktop **não é garantida** -- neste
+servidor ela está bloqueada porque `daemon.json` fixa `dns: ["1.1.1.1",
+"8.8.8.8"]` (fix do incidente Tailscale/MagicDNS, ver `DEC-103`), o que
+faz o resolvedor embutido dos containers encaminhar também
+`*.docker.internal` para os servidores externos (NXDOMAIN). Por isso o
+serviço `ops_controller` do `compose.yaml` declara
+`extra_hosts: ["host.docker.internal:host-gateway"]`, escopado só nele
+(único consumidor de `WINDOWS_OPS_AGENT_URL`) -- `host-gateway` é
+resolvido pelo Docker Engine, não pelo proxy DNS do Docker Desktop, e
+continua alcançando o Ops Agent em loopback do host. Requer um
+**segundo** secret, cópia manual do valor gerado acima:
 
 ```
 WINDOWS_OPS_AGENT_URL=http://host.docker.internal:8021   # compose.yaml, já default

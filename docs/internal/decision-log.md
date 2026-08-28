@@ -1,5 +1,42 @@
 # Decision Log
 
+## DEC-103 — deploy V1.2.0: `host.docker.internal` não resolvia dentro dos containers (Ops Controller ↔ Windows Ops Agent)
+
+- **Data:** 2026-08-28.
+- **Classificação:** Correção operacional escopada (achado durante o
+  deploy de produção da V1.2.0, gate de validação `ops_controller` ↔
+  Windows Ops Agent).
+- **Achado real (não hipótese)**: neste servidor, `host.docker.internal`
+  não resolve dentro de nenhum container (testado em rede `bridge`
+  padrão, na rede *user-defined* do projeto e nos containers reais `api`/
+  `ops_controller` -- todos com `NXDOMAIN`/`gaierror`). Causa raiz
+  confirmada por leitura de `C:\Users\Administrator\.docker\daemon.json`:
+  o servidor mantém `{"dns": ["1.1.1.1", "8.8.8.8"]}` fixo desde o
+  incidente de 2026-08-20 (Tailscale/MagicDNS interferindo na resolução
+  de `files.pythonhosted.org` durante builds, resolvido fixando DNS
+  externo). Esse override é herdado pelo resolvedor DNS embutido
+  (127.0.0.11) de cada container, que passa a encaminhar também os nomes
+  mágicos `*.docker.internal` para os servidores externos -- que
+  corretamente devolvem NXDOMAIN, pois não são domínios públicos reais.
+- **Decisão:** não reverter o override de DNS do `daemon.json` (reabriria
+  o incidente do Tailscale). Em vez disso, `ops_controller` -- único
+  consumidor de `WINDOWS_OPS_AGENT_URL` -- ganha
+  `extra_hosts: ["host.docker.internal:host-gateway"]` escopado só nele
+  (`compose.yaml`). `host-gateway` é resolvido pelo próprio Docker Engine
+  (independe do proxy DNS do Docker Desktop), validado empiricamente
+  nesta máquina: resolve para `192.168.65.254`, TCP conecta em
+  `192.168.65.254:8021` e uma chamada HMAC `STATUS` real (mesmo código de
+  produção, secrets reais) completou com sucesso (`200`,
+  `{"service":"collection_worker","status":"stopped"}`); requisições sem
+  cabeçalhos de autenticação (`422`) e com assinatura inválida (`401`)
+  continuam rejeitadas. Publicado como `v1.2.1` (compose apenas -- sem
+  mudança de código Python, sem nova migration).
+- **Por que não bind `0.0.0.0` no Ops Agent nem `daemon.json` global**: o
+  bind em `127.0.0.1:8021` já era alcançável via `host-gateway` sem
+  qualquer mudança de superfície de exposição; alterar o DNS global ou o
+  bind do Ops Agent teria blast radius maior (todo o host / todo o
+  serviço) para resolver um problema que afeta só um consumidor.
+
 ## DEC-102 — TASK-113: avaliação inteligente de preço e checkpoint de alerta
 
 - **Data:** 2026-08-27.

@@ -160,9 +160,7 @@ services:
       # TASK-109 (fechamento): `collection_worker` não existe mais como
       # container -- status/start/restart passam pelo Windows Ops Agent
       # (ops_agent/collection_worker_ops_agent.py), HTTP loopback assinado
-      # (HMAC+timestamp+nonce) na própria máquina Windows. `host.docker.internal`
-      # é resolvido pelo Docker Desktop for Windows para o host, inclusive
-      # portas em 127.0.0.1 do host (sem `extra_hosts`/rede nova).
+      # (HMAC+timestamp+nonce) na própria máquina Windows.
       WINDOWS_OPS_AGENT_URL: ${WINDOWS_OPS_AGENT_URL:-http://host.docker.internal:8021}
       WINDOWS_OPS_AGENT_SECRET_FILE: /run/secrets/windows_ops_agent_secret
     expose: ["8010"]
@@ -170,6 +168,23 @@ services:
     networks: [default, docker_ops]
     depends_on: [docker-socket-proxy]
     restart: unless-stopped
+    # `host.docker.internal` não é resolvido automaticamente pelo DNS
+    # embutido dos containers neste ambiente: o servidor mantém `dns:
+    # ["1.1.1.1", "8.8.8.8"]` fixo em `daemon.json` (Docker Desktop) desde o
+    # incidente de interferência do Tailscale/MagicDNS em resoluções
+    # externas (builds baixando de `files.pythonhosted.org` via IP CGNAT
+    # errado). Esse override é herdado pelo resolvedor 127.0.0.11 de cada
+    # container e passa a encaminhar também os nomes mágicos
+    # `*.docker.internal` para os servidores externos, que devolvem
+    # NXDOMAIN. Remover o override reabriria o incidente original, então a
+    # correção fica escopada só aqui: `host-gateway` é o mecanismo nativo
+    # do Docker Engine (independe do proxy DNS do Docker Desktop) e foi
+    # validado empiricamente nesta máquina alcançando o Ops Agent real em
+    # 127.0.0.1:8021 do host. Somente `ops_controller` fala com o Ops Agent
+    # (único consumidor de `WINDOWS_OPS_AGENT_URL`), por isso o mapeamento
+    # não é global.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
   docker-socket-proxy:
     image: tecnativa/docker-socket-proxy:0.3.0
