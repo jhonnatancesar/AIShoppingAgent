@@ -694,3 +694,91 @@ def test_never_schedules_below_absolute_floor_even_in_high_activity(
     item_store = _monitoring_item_store(integration_database.sessions, item_id, amazon_id)
     delta_minutes = (item_store.next_run_at - (NOW + timedelta(minutes=20))).total_seconds() / 60
     assert delta_minutes >= 30
+
+
+def test_different_stores_same_monitoring_item_are_independent(integration_database) -> None:
+    """D: mesmo MonitoringItem, lojas diferentes -- HIGH_ACTIVITY numa loja
+    nunca vaza para outra loja do mesmo item."""
+    user_id = _seed_user(integration_database.sessions, "store-indep")
+    mission = _make_shared_mission(integration_database, user_id, search_query="RTX 5070 Ti")
+    item_id = _monitoring_item_id_for(integration_database.sessions, mission.id)
+    amazon_id = _store_id(integration_database, "amazon")
+    kabum_id = _store_id(integration_database, "kabum")
+    config = CadenceConfig(
+        high_activity_window_minutes=30,
+        high_activity_change_threshold=3,
+        high_activity_duration_minutes=60,
+    )
+    provider = _VaryingPriceProvider()
+    for minute in (0, 5, 10, 15):
+        due_at = NOW + timedelta(minutes=minute)
+        _force_due(integration_database, item_id, amazon_id, due_at)
+        _run(
+            collect_monitoring_item_store(
+                integration_database.async_sessions,
+                _adapter(provider),
+                _StubAIManager(),
+                monitoring_item_id=item_id,
+                store_id=amazon_id,
+                now=due_at,
+                cadence_config=config,
+            )
+        )
+
+    async def check(store_id):
+        async with integration_database.async_sessions() as session, session.begin():
+            return await resolve_collection_cadence(
+                session,
+                store_id=store_id,
+                scope_id=item_id,
+                mission_ids=(mission.id,),
+                now=NOW + timedelta(minutes=25),
+                config=config,
+            )
+
+    assert _run(check(amazon_id)).mode == "high_activity"
+    assert _run(check(kabum_id)).mode == "normal"
+
+
+def test_reclaim_before_next_run_at_does_not_recollect(integration_database) -> None:
+    """J: reclaim/restart antes de next_run_at nunca dispara nova coleta
+    física, mesmo chamando de novo imediatamente (simula worker reiniciado)."""
+    user_id = _seed_user(integration_database.sessions, "reclaim")
+    mission = _make_shared_mission(integration_database, user_id, search_query="RTX 5070 Ti")
+    item_id = _monitoring_item_id_for(integration_database.sessions, mission.id)
+    amazon_id = _store_id(integration_database, "amazon")
+    provider = _VaryingPriceProvider()
+
+    result_1 = _run(
+        collect_monitoring_item_store(
+            integration_database.async_sessions,
+            _adapter(provider),
+            _StubAIManager(),
+            monitoring_item_id=item_id,
+            store_id=amazon_id,
+            now=NOW,
+        )
+    )
+    assert result_1.claimed is True
+    assert provider.call_count == 1
+    item_store_after_1 = _monitoring_item_store(integration_database.sessions, item_id, amazon_id)
+    next_run_after_1 = item_store_after_1.next_run_at
+    assert next_run_after_1 > NOW
+
+    # "Restart" simulado: reclaim imediato, mesmo instante, antes do
+    # next_run_at real.
+    result_2 = _run(
+        collect_monitoring_item_store(
+            integration_database.async_sessions,
+            _adapter(provider),
+            _StubAIManager(),
+            monitoring_item_id=item_id,
+            store_id=amazon_id,
+            now=NOW + timedelta(seconds=1),
+        )
+    )
+    assert result_2.claimed is False
+    assert provider.call_count == 1  # nenhuma coleta física nova
+
+    item_store_after_2 = _monitoring_item_store(integration_database.sessions, item_id, amazon_id)
+    assert item_store_after_2.next_run_at == next_run_after_1  # inalterado
