@@ -28,20 +28,23 @@ mesmo autenticado (`DEC-092`), sem código de provider escrito. TASK-105
 (pesquisa de cupons) continua **em pausa** por decisão explícita do
 usuário — as dependências que a bloqueavam (TASK-107/TASK-108) já foram
 concluídas, retomada depende de novo pedido. TASK-107 (cotas) concluída e
-publicada. TASK-108 (fila justa/pacing) concluída, commitada localmente,
-publicação em `origin/main` pendente. TASK-109 (worker Windows nativo)
-concluída e publicada. TASK-110 (documentação de providers) concluída,
-commitada localmente (`36351bd`), publicação pendente. TASK-111
-(asserção de teste) concluída, commitada localmente, publicação
-pendente. TASK-112 (vínculo de missões/coleta compartilhada, fases 1-3B)
-concluída, commitada localmente (fase 3B em `9f95351`), publicação
+publicada. TASK-108 (fila justa/pacing) concluída e publicada em
+`origin/main`. TASK-109 (worker Windows nativo) concluída e publicada.
+TASK-110 (documentação de providers) concluída, commitada localmente
+(`36351bd`), publicação pendente. TASK-111 (asserção de teste) concluída
+e publicada em `origin/main` (`471e898`, junto da TASK-112 fase 3A).
+TASK-112 (vínculo de missões/coleta compartilhada) **funcionalmente
+concluída** — fases 1/2/3A (`1dca734`/`5d05767`/`471e898`) publicadas em
+`origin/main`; fase 3B (`9f95351`) concluída localmente, publicação
 pendente. TASK-113 (avaliação inteligente de preço, absorve e implementa
 o item 17 da V1.2) **concluída no DEV**, commitada localmente (`03b7370`
 implementação, `8ad5709` documentação/validação Firecrawl), publicação
 em `origin/main` pendente. **TASK-098 (histórico e gráficos de preço,
 último item ativo da V1.2) concluída no DEV** (backend, frontend, testes
 unitários e de integração PostgreSQL real, `EXPLAIN ANALYZE`) —
-publicação em `origin/main` pendente.
+publicação em `origin/main` pendente. **Nenhuma TASK ativa de
+implementação da V1.2 permanece em aberto** — o que resta é só a
+publicação da release acumulada (TASK-110/112 fase 3B/113/098).
 
 **TASK-103 concluída e publicada (`610a997`):** comparação de Offers
 autorizadas do mesmo produto/variante global resolvido. Ver

@@ -1,5 +1,30 @@
 # Project Context
 
+**Estado da V1.2 (2026-08-27) — release acumulada pronta, ainda não
+publicada:** nenhuma TASK ativa de implementação da V1.2 permanece em
+aberto. TASK-098 (histórico e gráficos de preço), TASK-110 (docs de
+providers), TASK-112 fase 3B (fila justa/cadência unificada) e TASK-113
+(avaliação inteligente de preço) estão concluídas localmente, sem
+publicação em `origin/main` ainda. TASK-104C (Shopee) segue **adiada**
+(`DEC-092`); TASK-106 (cupons) segue **em pausa** por decisão do usuário.
+`origin/main` = `2aaac0d`; `HEAD` local (antes deste commit) = `e0ccea4`,
+10 commits à frente, `origin/main` ancestral estrito de `HEAD` (auditado
+via `git rev-list --left-right --count`, `git log`, `git merge-base` —
+sem divergência de histórico, sem commit remoto desconhecido). A release
+acumulada ainda não foi publicada em `origin/main`; a V1.2 ainda não foi
+deployada em PROD.
+
+**Registro sobre PROD**: PROD permanece no baseline anterior à V1.2
+(`CLAUDE.md`, tag `v1.0.10`/`df7609b`). Uma auditoria de regressão
+comparou os hotfixes reais já aplicados em PROD (Gemini timeout/
+fallback, pré-lista com relevância pendente, `PriceAlertEvaluationError`/
+preço `UNCHANGED_REUSED`) contra o `HEAD` atual: todos preservados,
+literalmente ou por implementação posterior superior (`DEC-097`), com
+teste de regressão dedicado passando para cada um. O stash antigo da
+PROD com o patch do `PriceAlertEvaluationError` não precisa ser portado
+-- a versão atual já resolve o mesmo problema de forma estruturalmente
+melhor.
+
 **Estado ATUAL (2026-08-27) — TASK-098 (último item da V1.2) concluída no
 DEV, publicação em `origin/main` pendente:** histórico e gráficos de preço por
 `Product`, ancorados em `Offer` (`GET /api/v1/offers/{offer_id}/price-history`),
