@@ -14,16 +14,19 @@ sem divergência de histórico, sem commit remoto desconhecido). A release
 acumulada ainda não foi publicada em `origin/main`; a V1.2 ainda não foi
 deployada em PROD.
 
-**Registro sobre PROD**: PROD permanece no baseline anterior à V1.2
-(`CLAUDE.md`, tag `v1.0.10`/`df7609b`). Uma auditoria de regressão
-comparou os hotfixes reais já aplicados em PROD (Gemini timeout/
-fallback, pré-lista com relevância pendente, `PriceAlertEvaluationError`/
-preço `UNCHANGED_REUSED`) contra o `HEAD` atual: todos preservados,
-literalmente ou por implementação posterior superior (`DEC-097`), com
-teste de regressão dedicado passando para cada um. O stash antigo da
-PROD com o patch do `PriceAlertEvaluationError` não precisa ser portado
--- a versão atual já resolve o mesmo problema de forma estruturalmente
-melhor.
+**Registro sobre PROD**: Estado operacional verificado da PROD -- API e
+`telegram_notifier` em `75a47fc`; `collection_worker` em `285643c`
+(checkout na branch `fix/gemini-timeout-and-prelist-pending`); banco em
+`20260817_0001`. O checkpoint `df7609b`/`v1.0.10` (`CLAUDE.md`) permanece
+só como referência histórica documentada anterior, não o estado
+operacional atual. Uma auditoria de regressão comparou os hotfixes reais
+de `285643c` (Gemini timeout/fallback, pré-lista com relevância
+pendente) e o de `PriceAlertEvaluationError`/preço `UNCHANGED_REUSED`
+contra o `HEAD` atual: todos preservados, literalmente ou por
+implementação posterior superior (`DEC-097`), com teste de regressão
+dedicado passando para cada um. O stash antigo da PROD com o patch do
+`PriceAlertEvaluationError` está superado pela `DEC-097` -- não precisa
+ser portado, e não deve ser apagado ainda.
 
 **Estado ATUAL (2026-08-27) — TASK-098 (último item da V1.2) concluída no
 DEV, publicação em `origin/main` pendente:** histórico e gráficos de preço por
