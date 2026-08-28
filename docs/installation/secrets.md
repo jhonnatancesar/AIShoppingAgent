@@ -13,7 +13,9 @@ para o diretório e `0600` para cada arquivo.
 | Senha PostgreSQL | `postgres_password` | sim | sim | sim | sim |
 | Chave Gemini USER | `gemini_api_key_user` | sim | não | não | não |
 | Chave Gemini ADMIN/DEV | `gemini_api_key_admin_dev` | sim | sim (TASK-063) | não | não |
-| Chave Groq | `groq_api_key` | sim | sim (TASK-063) | não | não |
+| Chave Groq | `groq_api_key` | sim | sim (TASK-063, opcional -- fail-soft) | não | não |
+| Chave OpenRouter | `openrouter_api_key` | sim | sim (TASK-063, opcional -- fail-soft) | não | não |
+| Chave Firecrawl | `firecrawl_api_key` | sim | sim (TASK-113, opcional -- fail-soft) | não | não |
 | Token do bot Telegram | `telegram_bot_token` | sim | não | sim | não |
 | Segredo do webhook | `telegram_webhook_secret` | sim | não | não | não |
 | Assinatura do controlador operacional | `ops_controller_secret` | sim | não | não | não |
@@ -23,11 +25,24 @@ A coluna "Collection Worker" descreve o que o worker nativo Windows
 precisa (TASK-109: não é mais um serviço Docker, não monta `/run/secrets`
 -- os mesmos secrets chegam por arquivo local no host, fora do Git/chat,
 ver `docs/architecture/windows-collection-worker.md`). O worker (TASK-063)
-usa a chave Gemini ADMIN/DEV — a mesma cascata premium/Groq/gratuito já
-usada pela `api` (nunca a chave/cota do perfil `USER`, reservada a
-conversas reais no Telegram) — só para normalizar título de exibição e
-classificar a correspondência missão↔oferta antes de um alerta. Não
-recebe token do bot, segredo do webhook nem a chave Gemini `USER`.
+usa a chave Gemini ADMIN/DEV — a mesma cascata premium/Groq/OpenRouter
+gratuito já usada pela `api` (nunca a chave/cota do perfil `USER`,
+reservada a conversas reais no Telegram) — para normalizar título de
+exibição e classificar a correspondência missão↔oferta antes de um
+alerta; Groq e OpenRouter são níveis de fallback opcionais da mesma
+cascata (TASK-063), Firecrawl é opcional só para a avaliação de mercado
+da TASK-113. Não recebe token do bot, segredo do webhook nem a chave
+Gemini `USER`.
+
+**DEC-104 (`v1.2.2`):** o worker nunca lê `.env` -- só variáveis de
+ambiente de **Máquina** do Windows, geridas de forma reproduzível por
+`scripts\manage_collection_worker_config.ps1` (`-Action
+Install|Update|Status|Remove`), que audita/aplica exatamente os `*_FILE`
+desta tabela relevantes ao worker (nunca inventa valor para secret
+obrigatório ausente) e valida que `.secrets\` está com ACL restrita a
+`Administrator`/`BUILTIN\Administrators`/`SYSTEM` -- ver tabela completa
+de settings e procedimento de reprovisionamento em
+`docs/architecture/windows-collection-worker.md`.
 
 `windows_ops_agent_secret` (TASK-109, fechamento) é consumido só pelo
 `ops_controller` (Docker), para assinar chamadas ao Windows Ops Agent

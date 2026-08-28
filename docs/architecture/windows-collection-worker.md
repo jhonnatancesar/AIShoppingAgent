@@ -3,9 +3,8 @@
 TASK-109 tirou o `collection_worker` do Docker/Linux (Chromium via
 Playwright) e passou a rodá-lo como processo Windows nativo, controlando
 um Microsoft Edge real via CDP loopback. Este documento descreve essa
-arquitetura -- válida hoje na máquina DEV; a migração de produção
-(`docs/installation/windows-server.md`, ainda os sete serviços em Docker)
-é um passo posterior, fora do escopo deste documento.
+arquitetura -- em produção desde `v1.2.1`/`v1.2.2` (`DEC-103`/`DEC-104`),
+na mesma máquina Windows Server que roda os demais serviços em Docker.
 
 API, PostgreSQL, Telegram notifier, `ops_controller` e observabilidade
 continuam em Docker (`compose.yaml`) -- só o `collection_worker` roda
@@ -29,16 +28,14 @@ ops_controller (Docker) -> WindowsOpsAgentAdapter -> Ops Agent (host, 8021)
 
 ## Python e dependências
 
-O worker roda no Python oficial da máquina (mesmo interpretador usado
-pelos utilitários de dev, ex. `manage_secrets.py`), com
-`backend/requirements.txt` instalado diretamente -- **sem virtualenv
-dedicado nesta migração**. Um venv próprio para o worker é recomendável
-antes de levar isso a produção, mas não foi criado nesta rodada (nada
-neste ponto depende disso; documentado aqui como pendência conhecida,
-não como decisão definitiva).
+Em produção, o worker roda num virtualenv dedicado,
+`C:\App\AIShoppingAgent-runtime\worker\.venv`, isolado do Python usado
+pelos utilitários de dev (`manage_secrets.py` etc.) -- é o caminho que
+`scripts\manage_collection_worker_task.ps1 -PythonPath` aponta para a
+Scheduled Task.
 
 ```powershell
-python -m pip install -r backend/requirements.txt
+C:\App\AIShoppingAgent-runtime\worker\.venv\Scripts\python.exe -m pip install -r backend/requirements.txt
 ```
 
 `playwright` (o pacote Python) é necessário -- o worker usa
@@ -198,21 +195,103 @@ os dois lados não sincronizam sozinhos; copiar manualmente, nunca por
 chat/Git. Ver `docs/architecture/service-operations.md` para o contrato
 completo dos dois adapters.
 
-## Variáveis de ambiente do worker (`.env` do host Windows)
+## Configuração do worker (DEC-104 -- padronizado, `v1.2.2`)
 
-Além das variáveis já documentadas em
-[Configuração](../installation/configuration.md) (banco, IA, retry,
-circuito, agendamento), o worker Windows precisa especificamente:
+**Nunca `backend\.env` em produção.** O worker Windows nativo é
+configurado exclusivamente por (1) variáveis de ambiente de **Máquina**
+do Windows, para valores não secretos, e (2) referências `*_FILE` --
+também variáveis de Máquina -- apontando para arquivos já existentes em
+`C:\App\AIShoppingAgent\.secrets\`, o mesmo mecanismo `_SECRET_FILE_FIELDS`
+que `app/core/config.py` já usa para os containers Docker. Nenhuma chave
+secreta é aceita como valor direto de variável de ambiente, nunca vai
+para `.env`, nunca vai para o Git -- só o caminho do arquivo.
 
-- `AISHOPPING_DATABASE_HOST=127.0.0.1` (nunca `localhost`, nunca o nome
-  do serviço Docker `database`);
-- `AISHOPPING_EDGE_CDP_URL` (obrigatória -- sem ela, toda coleta falha
-  explícito, ver acima);
-- as demais `AISHOPPING_EDGE_*` acima, se os defaults não servirem;
-- secrets do worker (senha do Postgres, chave Gemini ADMIN/DEV, chave
-  Groq) em arquivo local Windows, fora do Git/chat -- mesmo princípio já
-  usado pelos `*_FILE` do Docker, mecanismo de armazenamento local ainda
-  não padronizado nesta rodada.
+**Fonte canônica dos secrets:** `C:\App\AIShoppingAgent\.secrets\` -- os
+MESMOS arquivos que os containers Docker montam via `secrets:` no
+`compose.yaml`. Nenhuma cópia/duplicação para outro diretório.
+
+**ACL esperada de `.secrets\`** (diretório e todo arquivo filho, sem
+exceção): somente `CESAR-SERVER\Administrator`, `BUILTIN\Administrators`
+e `NT AUTHORITY\SYSTEM`, todos `FullControl`, herança bloqueada acima
+desse diretório. Nunca `BUILTIN\Users`, `Authenticated Users` ou
+`Everyone`. Cobre os três consumidores reais: Docker Desktop (bind mount
+dos secrets dos containers, roda como `Administrator` nesta máquina),
+`AIShoppingAgentOpsAgent` (roda como `LocalSystem`) e a Scheduled Task do
+worker (`LogonType Interactive`, usuário `Administrator`).
+
+**Settings realmente consumidos pelo worker** (auditado em
+`app/collection/worker.py` + `app/ai_provider/manager.py`
+`build_admin_dev_ai_provider_manager` + `app/collection/shared_collection.py`
++ `app/market_research/`, idêntico entre `v1.2.1` e `v1.2.2` -- só
+`compose.yaml` mudou entre as duas):
+
+| Setting | Obrigatório? | Secreto? | Variável |
+|---|---|---|---|
+| `database_password` | sim, sem default -- crasha no startup sem ele | sim | `AISHOPPING_DATABASE_PASSWORD_FILE` |
+| `gemini_api_key_admin_dev` | sim, sem default -- crasha no startup sem ele | sim | `AISHOPPING_GEMINI_API_KEY_ADMIN_DEV_FILE` |
+| `groq_api_key` | não -- fail-soft, cascata perde o 2º nível de fallback | sim | `AISHOPPING_GROQ_API_KEY_FILE` |
+| `openrouter_api_key` | não -- fail-soft, cascata perde o 3º nível (último) | sim | `AISHOPPING_OPENROUTER_API_KEY_FILE` |
+| `firecrawl_api_key` | não -- fail-soft, TASK-113 (avaliação de mercado) fica desligada | sim | `AISHOPPING_FIRECRAWL_API_KEY_FILE` |
+| `edge_cdp_url` | não -- sem ela, Magalu/MercadoLivre/Terabyte falham isolados (sem fallback Playwright); Amazon/Kabum/Pichau caem para Playwright puro | não | `AISHOPPING_EDGE_CDP_URL` |
+| `database_host` | não, default `localhost` -- produção exige `127.0.0.1` explícito | não | `AISHOPPING_DATABASE_HOST` |
+| `database_port` | não, default já bate (`5432`) -- explícito por determinismo | não | `AISHOPPING_DATABASE_PORT` |
+| `database_name`, `database_user` | não, defaults já batem (`aishoppingagent`/`aishoppingagent`) -- **não sobrepostos**, evita duplicação desnecessária | não | -- |
+| `gemini_api_key_user` | **não usado pelo worker** (só pelo caminho de requisição do usuário final, função diferente em `manager.py`) | -- | nunca configurar aqui |
+| `telegram_bot_token`, `telegram_webhook_secret`, `ops_controller_secret`, `windows_ops_agent_secret` | **não usados pelo worker** (outros serviços) | -- | nunca configurar aqui |
+| demais (poll/batch/retry/circuit/cadence/fan-out/...) | não, defaults documentados em [Configuração](../installation/configuration.md) | não | não sobrepostos |
+
+Valores de produção: `AISHOPPING_DATABASE_HOST=127.0.0.1`,
+`AISHOPPING_DATABASE_PORT=5432`, `AISHOPPING_EDGE_CDP_URL=http://127.0.0.1:9223`.
+
+**Provisionamento/reprovisionamento -- reproduzível via
+`scripts\manage_collection_worker_config.ps1`** (companheiro de
+`manage_collection_worker_task.ps1`, mesmo padrão operacional):
+
+```powershell
+# Auditar o estado atual (nunca imprime conteúdo de secret):
+powershell -File scripts\manage_collection_worker_config.ps1 -Action Status
+
+# Aplicar/reaplicar (idempotente, seguro rodar quantas vezes for preciso):
+powershell -File scripts\manage_collection_worker_config.ps1 -Action Install
+
+# Ver o que seria alterado, sem gravar nada:
+powershell -File scripts\manage_collection_worker_config.ps1 -Action Install -WhatIf
+
+# Reprovisionar uma máquina nova: instalar Python/venv dedicado, rodar
+# manage_secrets.py para os secrets em .secrets\ (se ainda não existirem
+# nesta máquina), corrigir a ACL (ver acima) e rodar -Action Install --
+# o script falha explícito e não inventa valor se algum secret
+# obrigatório estiver faltando.
+powershell -File scripts\manage_collection_worker_config.ps1 -Action Remove  # decomissionar
+```
+
+O script faz preflight antes de gravar qualquer variável: valida
+`ProjectRoot`/`SecretsDir` existem, caminhos são absolutos, `.secrets`
+está coberto por `.gitignore`, a ACL está correta, e que todo secret
+obrigatório existe como arquivo -- se faltar algum, para e reporta sem
+gerar valor artificial.
+
+**Variáveis de Máquina e Task Scheduler -- comprovado ao vivo, sem
+depender de reboot:** gravar em `[Environment]::SetEnvironmentVariable(...,
+"Machine")` não atualiza o ambiente de processos-filho de uma sessão
+shell já aberta (herança de bloco de ambiente do processo pai, comum a
+qualquer shell no Windows) -- mas o Task Scheduler não sofre dessa
+limitação: ele monta o ambiente do processo do zero, a partir do
+registro, a cada disparo. Comprovado nesta PROD em 2026-08-28: as
+variáveis foram gravadas e, na mesma sessão já logada, um
+`Start-ScheduledTask` imediato (via Windows Ops Agent, sem logoff/reboot/
+restart de serviço) já iniciou o worker com a configuração nova,
+conectou no Postgres e no Gemini ADMIN/DEV, e coletou de verdade
+(`collection_runs` reais com `status=succeeded`). Por isso nenhum
+launcher/wrapper intermediário foi criado -- provou-se desnecessário.
+
+**Comportamento após trocar de tag/release:** como a configuração vive em
+variáveis de Máquina do Windows (fora do checkout Git), trocar de tag
+(`git checkout vX.Y.Z`) **não afeta** a configuração já aplicada -- ela
+persiste entre releases. Rodar `-Action Status` após cada troca de tag
+para confirmar que nada mudou nos settings consumidos pelo worker (a
+tabela acima) antes de reiniciar o worker; se a nova tag adicionar/remover
+algum setting, atualizar este documento e o script na mesma release.
 
 ## O que NÃO mudou
 

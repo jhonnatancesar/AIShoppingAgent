@@ -1,5 +1,54 @@
 # Decision Log
 
+## DEC-104 — padronização da configuração do worker Windows nativo (`v1.2.2`)
+
+- **Data:** 2026-08-28.
+- **Classificação:** Correção operacional escopada + fechamento de dívida
+  documentada (achado durante o deploy de produção da V1.2, seguindo
+  `DEC-103`).
+- **Contexto:** `docs/architecture/windows-collection-worker.md`
+  (`v1.2.1`) admitia explicitamente que o "mecanismo de armazenamento
+  local [dos secrets do worker] ainda não estava padronizado" -- na
+  prática, o worker crashava no primeiro start real em produção por
+  faltar `AISHOPPING_DATABASE_PASSWORD`/`AISHOPPING_GEMINI_API_KEY_ADMIN_DEV`
+  (sem eles, `build_database_url`/`build_admin_dev_ai_provider_manager`
+  lançam exceção no startup).
+- **Achado à parte, corrigido na mesma janela**: a auditoria da ACL de
+  `C:\App\AIShoppingAgent\.secrets\` encontrou `BUILTIN\Users` com
+  `ReadAndExecute` herdado (qualquer usuário local conseguia ler os
+  secrets) e SIDs órfãos com `Modify`/`FullControl` não relacionados à
+  aplicação. Corrigido para exatamente três identidades:
+  `CESAR-SERVER\Administrator`, `BUILTIN\Administrators`,
+  `NT AUTHORITY\SYSTEM` -- cobre os três consumidores reais (Docker
+  Desktop, roda como `Administrator` nesta máquina; `AIShoppingAgentOpsAgent`,
+  roda como `LocalSystem`; a Scheduled Task do worker, `LogonType
+  Interactive` como `Administrator`).
+- **Decisão:** secrets do worker usam exclusivamente `*_FILE` apontando
+  para os arquivos já existentes em `.secrets\` (mesma fonte que os
+  containers Docker já usam via `secrets:` do `compose.yaml`) -- nunca
+  duplicados para outro diretório, nunca em `backend\.env`, nunca como
+  valor direto de variável de ambiente. Configuração não secreta
+  (`AISHOPPING_DATABASE_HOST`, `_PORT`, `AISHOPPING_EDGE_CDP_URL`) e as
+  referências `*_FILE` vivem em variáveis de ambiente de **Máquina** do
+  Windows, geridas de forma reproduzível por
+  `scripts\manage_collection_worker_config.ps1` (`-Action
+  Install|Update|Status|Remove`, `-WhatIf`, preflight que nunca inventa
+  valor para secret obrigatório ausente). Tabela completa de settings
+  consumidos pelo worker, classificados obrigatório/opcional/secreto, em
+  `docs/architecture/windows-collection-worker.md`.
+- **Achado técnico confirmado ao vivo**: variáveis de Máquina gravadas via
+  `[Environment]::SetEnvironmentVariable(..., "Machine")` **não**
+  aparecem em processos-filho de uma sessão shell já aberta (herança de
+  ambiente do processo pai), mas o Task Scheduler monta o ambiente do
+  zero a cada disparo -- confirmado nesta PROD: gravar as variáveis e, na
+  mesma sessão já logada, disparar `Start-ScheduledTask` (via Windows Ops
+  Agent) já iniciou o worker com a config nova, sem logoff/reboot/restart
+  de serviço. Por isso nenhum launcher/wrapper intermediário foi
+  necessário.
+- **Publicado como `v1.2.2`** (compose.yaml inalterado desde `v1.2.1`;
+  mudança é script PowerShell novo + documentação -- sem alteração de
+  código Python, sem rebuild de imagem, sem migration).
+
 ## DEC-103 — deploy V1.2.0: `host.docker.internal` não resolvia dentro dos containers (Ops Controller ↔ Windows Ops Agent)
 
 - **Data:** 2026-08-28.
