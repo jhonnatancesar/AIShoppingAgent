@@ -83,6 +83,29 @@ def test_login_shell_served_without_any_session(dist_dir: Path) -> None:
     assert response.status_code == 200
 
 
+def test_csp_img_src_allowlists_real_store_hosts_without_wildcard(dist_dir: Path) -> None:
+    """TASK-115 (v1.2.5): hosts reais das lojas com Offer.image_url em
+    PROD, nunca 'img-src *'/https: genérico."""
+    client = TestClient(_build_app(dist_dir))
+
+    response = client.get("/app")
+
+    csp = response.headers["content-security-policy"]
+    img_src = next(part for part in csp.split(";") if part.strip().startswith("img-src"))
+    tokens = img_src.split()[1:]  # remove "img-src"
+    assert "*" not in tokens
+    assert "https:" not in tokens  # nunca https: genérico (bare scheme) em img-src
+    assert "'self'" in tokens
+    assert "data:" in tokens
+    for host in (
+        "https://m.media-amazon.com",
+        "https://images.kabum.com.br",
+        "https://media.pichau.com.br",
+        "https://img.terabyteshop.com.br",
+    ):
+        assert host in img_src
+
+
 def test_static_asset_is_served_directly(dist_dir: Path) -> None:
     client = TestClient(_build_app(dist_dir))
 

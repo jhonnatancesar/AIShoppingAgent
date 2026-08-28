@@ -34,7 +34,18 @@ _SECURITY_HEADERS = {
     "Referrer-Policy": "no-referrer",
     "Content-Security-Policy": (
         "default-src 'self'; base-uri 'none'; frame-ancestors 'none'; "
-        "connect-src 'self'; img-src 'self' data:; style-src 'self'; "
+        "connect-src 'self'; "
+        # TASK-115 (v1.2.5, achado real): hosts levantados diretamente de
+        # Offer.image_url em PROD, um por loja com oferta real hoje
+        # (Amazon, KaBuM!, Pichau, Terabyte) -- nunca 'img-src *'/https:
+        # genérico. Magalu/Mercado Livre ainda sem oferta real com imagem
+        # em PROD; adicionar quando houver evidência real do host usado.
+        "img-src 'self' data: "
+        "https://m.media-amazon.com "
+        "https://images.kabum.com.br "
+        "https://media.pichau.com.br "
+        "https://img.terabyteshop.com.br; "
+        "style-src 'self'; "
         "script-src 'self'"
     ),
 }
