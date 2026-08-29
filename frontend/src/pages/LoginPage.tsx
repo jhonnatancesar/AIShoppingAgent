@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { motion } from 'motion/react'
-import { Bot, LockKeyhole } from 'lucide-react'
+import { Bot, LockKeyhole, ShieldCheck } from 'lucide-react'
 import { ApiError } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
 import { ThemeToggle } from '@/components/ThemeToggle'
@@ -20,7 +20,7 @@ export function LoginPage() {
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
-  const [submitting, setSubmitting] = useState(false)
+  const [pending, setPending] = useState<'app' | 'admin' | null>(null)
 
   if (user) {
     const state = location.state as LocationState | null
@@ -28,14 +28,10 @@ export function LoginPage() {
     return <Navigate to={destination} replace />
   }
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
+  async function doLogin(destination: string) {
     setError(null)
-    setSubmitting(true)
     try {
       await login(username, password)
-      const state = location.state as LocationState | null
-      const destination = state?.from?.pathname || '/app'
       navigate(destination, { replace: true })
     } catch (submitError) {
       if (submitError instanceof ApiError) {
@@ -44,8 +40,20 @@ export function LoginPage() {
         setError('Não foi possível entrar. Tente novamente.')
       }
     } finally {
-      setSubmitting(false)
+      setPending(null)
     }
+  }
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setPending('app')
+    const state = location.state as LocationState | null
+    await doLogin(state?.from?.pathname || '/app')
+  }
+
+  async function handleAdminSubmit() {
+    setPending('admin')
+    await doLogin('/admin')
   }
 
   return (
@@ -84,8 +92,11 @@ export function LoginPage() {
             {error}
           </p>
         ) : null}
-        <Button className="w-full" size="lg" type="submit" disabled={submitting}>
-          <LockKeyhole />{submitting ? 'Entrando…' : 'Entrar'}
+        <Button className="w-full" size="lg" type="submit" disabled={pending !== null}>
+          <LockKeyhole />{pending === 'app' ? 'Entrando…' : 'Entrar'}
+        </Button>
+        <Button className="w-full" size="lg" variant="outline" type="button" disabled={pending !== null} onClick={handleAdminSubmit}>
+          <ShieldCheck />{pending === 'admin' ? 'Entrando…' : 'Entrar como admin'}
         </Button>
         <p className="text-center text-xs leading-relaxed text-muted-foreground">
           Sua senha é a mesma criada pelo link enviado no Telegram.

@@ -23,7 +23,11 @@ const ADMIN_NAV: NavItem[] = [
   { to: '/app', label: 'Área do usuário', icon: Home },
 ]
 
-export function AppLayout() { return <Shell nav={USER_NAV} subtitle="Compras inteligentes" /> }
+export function AppLayout() {
+  const { isAdmin } = useAuth()
+  const nav = isAdmin ? [...USER_NAV, { to: '/admin', label: 'Administração', icon: ShieldCheck }] : USER_NAV
+  return <Shell nav={nav} subtitle="Compras inteligentes" />
+}
 export function AdminLayout() { return <Shell nav={ADMIN_NAV} subtitle="Operação e dados" admin /> }
 
 function Shell({ nav, subtitle, admin = false }: { nav: NavItem[]; subtitle: string; admin?: boolean }) {
