@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react'
-import { Navigate, useLocation, useNavigate } from 'react-router-dom'
+import { Navigate, useLocation } from 'react-router-dom'
 import { motion } from 'motion/react'
 import { Bot, LockKeyhole, ShieldCheck } from 'lucide-react'
 import { ApiError } from '../api/client'
@@ -15,24 +15,24 @@ interface LocationState {
 
 export function LoginPage() {
   const { user, login } = useAuth()
-  const navigate = useNavigate()
   const location = useLocation()
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [pending, setPending] = useState<'app' | 'admin' | null>(null)
+  const [destinationOverride, setDestinationOverride] = useState<string | null>(null)
 
   if (user) {
     const state = location.state as LocationState | null
-    const destination = state?.from?.pathname || '/app'
+    const destination = destinationOverride || state?.from?.pathname || '/app'
     return <Navigate to={destination} replace />
   }
 
-  async function doLogin(destination: string) {
+  async function doLogin(destination: string | null) {
     setError(null)
+    setDestinationOverride(destination)
     try {
       await login(username, password)
-      navigate(destination, { replace: true })
     } catch (submitError) {
       if (submitError instanceof ApiError) {
         setError(submitError.message)
@@ -47,8 +47,7 @@ export function LoginPage() {
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setPending('app')
-    const state = location.state as LocationState | null
-    await doLogin(state?.from?.pathname || '/app')
+    await doLogin(null)
   }
 
   async function handleAdminSubmit() {
