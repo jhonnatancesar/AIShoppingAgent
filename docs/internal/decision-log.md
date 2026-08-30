@@ -1,5 +1,56 @@
 # Decision Log
 
+## DEC-107 — TASK-118: pré-flight do OmniRoute com fonte oficial fixada e contratos reais extraídos do código
+
+- **Data:** 2026-08-30.
+- **Classificação:** Pré-flight (nenhum código/config/secret deste
+  repositório alterado) — primeira investigação real da TASK-118.
+- **Regra de fonte, fixada explicitamente pelo usuário**: só o
+  repositório oficial do OmniRoute (`https://github.com/diegosouzapw/
+  OmniRoute`, site `https://omniroute.online`, wiki oficial) conta como
+  referência arquitetural. Forks/mirrors/repositórios de terceiros com o
+  mesmo nome (achado real: `ChrisCompton/omniroute` apareceu numa busca
+  inicial) são tratados como não-oficiais até prova em contrário. Em
+  conflito: código do repo oficial > docs do repo oficial > wiki oficial
+  > site oficial.
+- **Commit de referência fixado**: `1f4dc830f3290a5507b5350417ae1547f825aefc`
+  (branch `release/v3.8.51`, pushed `2026-08-30T13:39:01Z`). Clonado
+  localmente (fora deste repositório e do repositório do Coupon
+  Collector, pasta de investigação isolada) especificamente pra ler o
+  `docs/openapi.yaml` oficial (spec OpenAPI real, ~9.670 linhas) e o
+  código-fonte direto, nunca resumo de terceiro.
+- **Achado central**: o OmniRoute é **self-hosted** (não é uma API SaaS
+  remota) — precisa rodar como infraestrutura própria do GG Oferta.
+  Publica imagem Docker oficial (`diegosouzapw/omniroute:X.Y.Z`, porta
+  `20128`), o que o torna compatível com o `compose.yaml` já existente
+  (diferente do `collection_worker`, que saiu do Docker por causa do
+  Edge/CDP -- o OmniRoute é HTTP comum, sem necessidade de sessão
+  Windows interativa).
+- **Contratos reais confirmados e citados por caminho exato** (detalhe
+  completo em `docs/tasks/TASK-118.md`, "Pré-flight §2"): autenticação
+  por chave de inferência `sk-…` (nunca as outras 3 famílias de
+  credencial, que são pra gestão/dashboard); `POST /api/v1/chat/
+  completions` compatível com OpenAI, com headers de observabilidade
+  prontos (custo, tokens, provider resolvido, decisão de roteamento,
+  fallback attempts); `POST /api/v1/search` com providers dedicados
+  (inclusive um fallback gratuito nativo, AnySearch) e scraping avançado
+  separado em `/v1/web/fetch` (que já reconhece Firecrawl como um dos
+  seus providers); `GET /api/health` liveness simples; 3 camadas de
+  resiliência já prontas no servidor (circuit breaker por provider,
+  cooldown por chave, model lockout) documentadas com caminho de código
+  real (`src/shared/utils/circuitBreaker.ts`, `src/sse/services/auth.ts`);
+  formato de erro uniforme (`{error: {message, type}, requestId}`).
+- **Das 7 perguntas originais da TASK-118**: a primeira (o que é o
+  OmniRoute) está respondida com evidência real; a segunda (fallback se
+  o OmniRoute cair) fica parcialmente respondida (o OmniRoute já resolve
+  fallback entre os providers que ele gerencia; falta só decisão do
+  usuário pro caso do OmniRoute inteiro cair); as demais 5 permanecem em
+  aberto, aguardando decisão explícita do usuário -- nenhuma foi
+  assumida ou decidida por conta própria nesta rodada.
+- **Nada implementado**: só leitura/registro do pré-flight, por
+  instrução explícita ("por enquanto você só vai atualizar documentação
+  e fazer pré-flight").
+
 ## DEC-106 — TASK-106: Coupon Collector evolui pra auto-configuração real, validado nas 4 lojas
 
 - **Data:** 2026-08-30.
