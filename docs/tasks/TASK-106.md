@@ -1,7 +1,14 @@
 # TASK-106 — Pesquisa de cupons
 
-Status: **Reorientada como subsistema independente (`DEC-093`); proposta de
-arquitetura registrada, aguardando aprovação. Nenhum código escrito.**
+Status: **Em desenvolvimento, fora deste repositório (`DEC-105`,
+2026-08-30, retifica `DEC-093`).** Código real existe e já foi validado
+ao vivo (Kabum, Edge/CDP dedicado — cupons reais encontrados e
+persistidos), mas vive num repositório totalmente separado
+(`https://github.com/jhonnatancesar/AIShoppingAgent-cupom.git`), nunca
+como `app/coupons/` aqui — decisão explícita do usuário, para poder
+desacoplar/mover para outra máquina sem tocar neste projeto. Nenhum
+código deste repositório foi alterado. Ver `DEC-105` para o detalhe
+completo da retificação arquitetural.
 
 ## Objetivo
 

@@ -1,5 +1,52 @@
 # Decision Log
 
+## DEC-105 — TASK-106: Coupon Collector vive em repositório separado, nunca em `app/coupons/`
+
+- **Data:** 2026-08-30.
+- **Classificação:** Decisão arquitetural, retificando o `DEC-093`
+  (2026-08-22), que propunha o Coupon Collector como módulo
+  `app/coupons/` dentro deste repositório.
+- **Contexto:** entre o `DEC-093` e agora, o Coupon Collector foi
+  prototipado de forma independente, numa pasta própria fora deste
+  repositório (`C:\AIShoppingAgenteCupom`), reimplementando scanner/
+  evidência/persistência do zero (sem reaproveitar `BrowserSession`/Store
+  Providers), originalmente com Firefox+Playwright visando uma Raspberry
+  Pi 3B+. A lógica de evidência foi validada contra a auditoria real do
+  `DEC-093`/`TASK-106.md` (reconhece literalmente as mesmas strings
+  encontradas: `"Cupom de R$ 20,00 de desconto"`, `"SELO: CUPOM
+  GAMER10"`, `"Cupom R$ 100 OFF"`, `"15% OFF com Cupom"`).
+- **Decisão do usuário:** a rota Raspberry Pi/Firefox foi descartada; o
+  Coupon Collector passa a rodar no mesmo Windows Server da produção,
+  usando Microsoft Edge real via CDP dedicado (mesmo padrão do
+  `collection_worker`, TASK-109: subprocess direto + `connect_over_cdp`,
+  porta/perfil próprios e distintos — `9224` vs `9223` da produção,
+  nunca `.launch()` gerenciado). **Mas continua como repositório
+  totalmente separado**, nunca incorporado a este repositório como
+  `app/coupons/` — decisão explícita: precisa ser possível
+  desacoplar/mover para outra máquina sem tocar em nada deste projeto.
+  Repositório: `https://github.com/jhonnatancesar/AIShoppingAgent-cupom.git`.
+- **O que isso significa na prática:** o Coupon Collector não reaproveita
+  `EdgeCdpSupervisor`, `asyncpg`/sessão de banco, nem a ferramenta de
+  deploy Windows deste repositório (`manage_collection_worker_task.ps1`)
+  — tem sua própria versão simplificada de cada um desses (ciclo de
+  vida do Edge por rodada, não por lease/idle-timeout; persistência
+  SQLite local, com `PostgresCouponStore` planejada como próximo passo
+  quando o usuário fornecer as credenciais reais do Postgres de
+  produção; `install.ps1`/`manage_coupon_worker_task.ps1` próprios,
+  inspirados no padrão deste repositório mas sem importar nada dele).
+  Nenhum código deste repositório foi alterado por esta decisão.
+- **Validado ao vivo:** smoke test real contra Kabum (Edge dedicado
+  sobe via CDP, navega, encontra cupons reais `GAMER10`/
+  `ASUSCOMPREJUNTO`/`KABUMPASS`, persiste, RAM do Edge dedicado medida
+  corretamente). Amazon/Magalu/Mercado Livre ainda não revalidados
+  contra o novo transporte Edge (só Kabum, nesta rodada).
+- **Superado do `DEC-093`:** só a localização do código (`app/coupons/`
+  vs. repositório externo) e o transporte (Firefox/Pi vs. Edge/Windows).
+  Toda a arquitetura de negócio do `DEC-093` (varredura por loja,
+  regra de evidência, escopo, separação do `collection_worker`,
+  aplicabilidade/notificação como fase futura do lado do backend)
+  permanece válida e não foi alterada.
+
 ## DEC-104 — padronização da configuração do worker Windows nativo (`v1.2.2`)
 
 - **Data:** 2026-08-28.
