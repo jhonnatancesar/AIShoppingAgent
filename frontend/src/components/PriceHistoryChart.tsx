@@ -126,6 +126,7 @@ export function PriceHistoryChart({ offerId }: { offerId: string }) {
               <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
               <XAxis dataKey="date" tickFormatter={shortDate} />
               <YAxis
+                domain={[(min: number) => min * 0.95, (max: number) => max * 1.05]}
                 tickFormatter={(value: number) =>
                   new Intl.NumberFormat('pt-BR', { notation: 'compact' }).format(value)
                 }
@@ -137,6 +138,14 @@ export function PriceHistoryChart({ offerId }: { offerId: string }) {
                   history.series.find((series) => series.store_code === name)
                     ?.store_name ?? String(name),
                 ]}
+                contentStyle={{
+                  background: 'var(--popover)',
+                  color: 'var(--popover-foreground)',
+                  border: '1px solid var(--border)',
+                  borderRadius: 'var(--radius)',
+                }}
+                labelStyle={{ color: 'var(--popover-foreground)' }}
+                itemStyle={{ color: 'var(--popover-foreground)' }}
               />
               <Legend
                 formatter={(value) =>
@@ -150,8 +159,7 @@ export function PriceHistoryChart({ offerId }: { offerId: string }) {
                   type="monotone"
                   dataKey={series.store_code}
                   stroke={LINE_COLORS[index % LINE_COLORS.length]}
-                  connectNulls
-                  dot={false}
+                  dot={series.points.length === 1}
                   strokeWidth={2}
                 />
               ))}
