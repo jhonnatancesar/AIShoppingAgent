@@ -20,26 +20,44 @@
   `docs/openapi.yaml` oficial (spec OpenAPI real, ~9.670 linhas) e o
   código-fonte direto, nunca resumo de terceiro.
 - **Achado central**: o OmniRoute é **self-hosted** (não é uma API SaaS
-  remota) — precisa rodar como infraestrutura própria do GG Oferta.
-  Publica imagem Docker oficial (`diegosouzapw/omniroute:X.Y.Z`, porta
-  `20128`), o que o torna compatível com o `compose.yaml` já existente
-  (diferente do `collection_worker`, que saiu do Docker por causa do
-  Edge/CDP -- o OmniRoute é HTTP comum, sem necessidade de sessão
-  Windows interativa).
+  remota) — precisa rodar como infraestrutura própria. Publica imagem
+  Docker oficial (`diegosouzapw/omniroute:X.Y.Z`, porta `20128`).
+  **Correção de arquitetura (mesma data, por instrução explícita do
+  usuário — a primeira leitura, que dizia "se encaixa direto no
+  `compose.yaml` do GG Oferta", estava errada)**: o OmniRoute é
+  infraestrutura **central compartilhável**, nunca acoplada
+  arquiteturalmente ao repositório/compose do GG Oferta. A cadeia
+  aprovada é `GG Oferta → AIProviderManager/WebSearchManager → César
+  Core → OmniRoute` — `cesar-core` é um **repositório novo e separado**
+  (mesmo padrão já aplicado ao Coupon Collector, `DEC-105`), dono da
+  integração com o OmniRoute; o GG Oferta só terá adapters/client do
+  César Core, nunca fala com o OmniRoute diretamente. Implantação pode
+  coexistir no mesmo host físico desde o início, mas serviços/repos/
+  compose ficam claramente separados.
 - **Contratos reais confirmados e citados por caminho exato** (detalhe
   completo em `docs/tasks/TASK-118.md`, "Pré-flight §2"): autenticação
   por chave de inferência `sk-…` (nunca as outras 3 famílias de
-  credencial, que são pra gestão/dashboard); `POST /api/v1/chat/
-  completions` compatível com OpenAI, com headers de observabilidade
-  prontos (custo, tokens, provider resolvido, decisão de roteamento,
-  fallback attempts); `POST /api/v1/search` com providers dedicados
-  (inclusive um fallback gratuito nativo, AnySearch) e scraping avançado
-  separado em `/v1/web/fetch` (que já reconhece Firecrawl como um dos
-  seus providers); `GET /api/health` liveness simples; 3 camadas de
+  credencial, que são pra gestão/dashboard, e essa chave ficaria com o
+  César Core, não com o GG Oferta); `POST /api/v1/chat/completions`
+  compatível com OpenAI, com headers de observabilidade prontos (custo,
+  tokens, provider resolvido, decisão de roteamento, fallback
+  attempts); `POST /api/v1/search` e scraping avançado separado em
+  `/v1/web/fetch` (que já reconhece Firecrawl como um dos seus
+  providers); `GET /api/health` liveness simples; 3 camadas de
   resiliência já prontas no servidor (circuit breaker por provider,
   cooldown por chave, model lockout) documentadas com caminho de código
   real (`src/shared/utils/circuitBreaker.ts`, `src/sse/services/auth.ts`);
   formato de erro uniforme (`{error: {message, type}, requestId}`).
+  **Fallback real de busca, confirmado no código + testes (correção
+  mesma data — a primeira leitura, "AnySearch é o fallback gratuito
+  nativo", estava incorreta)**: o fallback zero-configuração de verdade
+  é `duckduckgo-free` (`authType: "none"`, promovido automaticamente com
+  `credentials = {}` quando nenhum provider credenciado está
+  disponível — `src/app/api/v1/search/route.ts`, confirmado por
+  `tests/unit/search-handler-duckduckgo.test.ts`). A AnySearch é
+  gratuita (`costPerQuery: 0`) mas **ainda exige uma API key
+  configurada** (`authType: "apikey"`) — não é um fallback sem
+  configuração nenhuma.
 - **Das 7 perguntas originais da TASK-118**: a primeira (o que é o
   OmniRoute) está respondida com evidência real; a segunda (fallback se
   o OmniRoute cair) fica parcialmente respondida (o OmniRoute já resolve

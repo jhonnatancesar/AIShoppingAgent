@@ -78,10 +78,10 @@ de inferência do OmniRoute vira só mais um `AISHOPPING_OMNIROUTE_API_KEY_FILE`
   `time_range` (`any`/`hour`/`day`/`week`/`month`/`year`), `content`
   (snippet/full_page/format md-text/max_characters), `filters`
   (`include_domains` etc.).
-- **Achado direto do texto da descrição do endpoint**: "AnySearch
-  (`anysearch-search`) provides free fallback-only web search" — existe
-  uma opção gratuita nativa de fallback pra busca, relevante pra política
-  de custo do projeto (gratuito → free tier → pago).
+- **Fallback real confirmado no código + testes (correção 2026-08-30 —
+  a primeira leitura, baseada só na prosa do `openapi.yaml`, estava
+  errada e foi corrigida por pedido explícito do usuário)**: ver seção
+  dedicada "Web Search — fallback real, confirmado no código" abaixo.
 - Confirmado também em `docs/frameworks/SEARCH_TOOLS_STUDIO.md`
   (`POST /v1/search`, "existing endpoint, no changes") e em
   `src/app/api/search/providers/route.ts` (catálogo de providers com
@@ -92,6 +92,54 @@ de inferência do OmniRoute vira só mais um `AISHOPPING_OMNIROUTE_API_KEY_FILE`
   providers incluindo `firecrawl` — o próprio OmniRoute já reconhece
   Firecrawl como um dos seus providers de fetch, o que é coerente com o
   plano da TASK-118 de manter o Firecrawl só pra scraping avançado.
+
+### Web Search — fallback real, confirmado no código (correção 2026-08-30)
+
+Fonte: `src/app/api/v1/search/route.ts` (428 linhas, handler completo
+de `POST /v1/search`), `open-sse/config/searchRegistry.ts` (definição
+de `SEARCH_PROVIDERS`), `tests/unit/search-handler-duckduckgo.test.ts`
+e `tests/unit/search-route.test.ts`, todos no commit
+`1f4dc830f3290a5507b5350417ae1547f825aefc`. **Sem inferência** — cada
+afirmação abaixo é literal do código ou de um teste que passa.
+
+**Todos os providers de `SEARCH_PROVIDERS` e como se comportam:**
+
+| Provider | `authType` | `fallbackOnly` | Observação real |
+|---|---|---|---|
+| `serper-search`, `brave-search`, `perplexity-search`, `exa-search`, `tavily-search`, `nimble-search`, `firecrawl`, `google-pse-search`, `linkup-search`, `searchapi-search`, `youcom-search`, `ollama-search`, `zai-search`, `jina-search` | `apikey` | não | **Auto-selecionáveis** — elegíveis pra seleção automática por custo quando `provider` não é informado no request |
+| `x-search` | `apikey` | não | Só `search_type: "x"`, nunca busca web genérica |
+| `searxng-search` | `none` | **sim** | Aponta pra `http://localhost:8888/search` — precisa de uma instância SearXNG própria rodando; `authType: none` só quer dizer "sem chave de API", não "sem dependência" |
+| `context7` | `none` | **sim** | Comentário explícito no código: "doc-focused corpus, **never** auto-selected for generic web search" — busca de documentação de biblioteca, não é fallback de busca web genérica |
+| **`duckduckgo-free`** | **`none`** | **sim** | **Este é o fallback real, zero-configuração.** Comentário do código: "Free, no-API-key DuckDuckGo lite scraping... Last-resort only". `route.ts` linha ~265: quando nenhum provider credenciado está disponível, o código promove `duckduckgo-free` e define `credentials = {}` diretamente (nunca passa por resolução de credencial) |
+| `xquik-search` | `apikey` | sim | Só `search_type: "x"` (Twitter/X), exige API key própria |
+| `anysearch-search` (AnySearch) | **`apikey`** | sim | `costPerQuery: 0` (gratuita) e free tier de 1000 req/dia — **mas ainda exige uma API key configurada** (`authHeader: "bearer"`). **Não é um fallback zero-configuração** — a primeira leitura deste pré-flight (baseada só na prosa do `openapi.yaml`, "AnySearch provides free fallback-only web search") estava **incorreta** nesse ponto específico; corrigido agora contra o código real |
+
+**Comportamento exato sem nenhuma credencial de busca configurada**
+(`route.ts`, ramo `else` de auto-seleção, linhas ~209-276): tenta o
+provider auto-selecionado por custo → itera os demais não-`fallbackOnly`
+por custo crescente → se nenhum tiver credencial, itera os
+`fallbackOnly` por custo crescente e, ao chegar em `duckduckgo-free`,
+usa direto (`credentials = {}`, sem checar credencial nenhuma) — **é o
+único provider que garante funcionar sem qualquer configuração prévia**.
+`context7` fica de fora dessa iteração de propósito (corpus de
+documentação, não busca web).
+
+**Testes reais que prova isso** (`tests/unit/search-handler-duckduckgo.test.ts`):
+- `"handleSearch fulfills duckduckgo-free via the HTML scraping path (no API key)"`
+- `"handleSearch fails over to duckduckgo-free when the primary provider errors"`
+
+`tests/unit/search-route.test.ts` linha ~429: comentário confirmando que,
+sem provider configurado, a resposta não é erro 400 — "it promotes the
+fallback-only duckduckgo-free provider so out-of-the-box [search
+works]", com asserção de que a chamada de fallback bate no endpoint real
+do DuckDuckGo lite.
+
+**Alternate provider (failover pós-seleção)**: além do fallback de
+"nenhuma credencial", o handler também escolhe um `alternateProviderId`
+(linhas ~291-327) pra failover se o provider principal falhar em tempo
+de execução — segue a mesma prioridade (não-`fallbackOnly` por custo
+primeiro, só cai pra `duckduckgo-free`/outros `fallbackOnly` como
+último recurso).
 
 ### Health — `GET /api/health` (não-autenticado) e `GET /api/monitoring/health` (autenticado)
 
@@ -132,20 +180,50 @@ priority, enabled}]}`) — configuração explícita, não caixa-preta.
 ### Deploy/self-hosted (`docs/getting-started/QUICK-START.md`)
 
 O OmniRoute é **self-hosted** — não é uma API SaaS de terceiro chamada
-remotamente, é uma peça de infraestrutura que o próprio GG Oferta
-precisaria rodar. Três formas oficiais de instalar:
+remotamente, é uma peça de infraestrutura própria. Três formas oficiais
+de instalar: `npm install -g omniroute`; **Docker** (`docker run -d
+--name omniroute -p 20128:20128 diegosouzapw/omniroute:latest`, imagem
+oficial publicada, `diegosouzapw/omniroute:X.Y.Z` pra pin de versão);
+build a partir do código-fonte. Sobe em `http://localhost:20128`,
+dashboard incluído. É um serviço HTTP comum — sem necessidade de sessão
+interativa Windows nem navegador real (diferente do `collection_worker`).
 
-- `npm install -g omniroute` (recomendado pelo próprio guia).
-- **Docker**: `docker run -d --name omniroute -p 20128:20128
-  diegosouzapw/omniroute:latest` (imagem oficial publicada,
-  `diegosouzapw/omniroute:X.Y.Z` pra pin de versão). **Se encaixa
-  diretamente no `compose.yaml` já existente** — diferente do
-  `collection_worker` (que precisou sair do Docker por causa do Edge/
-  CDP), o OmniRoute é um serviço HTTP comum, sem necessidade de sessão
-  interativa Windows nem navegador real.
-- Build a partir do código-fonte (`git clone` + `npm install` + `npm run dev`).
+**Correção de arquitetura (2026-08-30, por instrução explícita do
+usuário — a leitura anterior deste documento, que dizia "se encaixa
+diretamente no `compose.yaml` já existente" do GG Oferta, estava
+errada):**
 
-Sobe em `http://localhost:20128`, dashboard incluído.
+```
+GG Oferta
+  → AIProviderManager / WebSearchManager
+  → César Core
+  → OmniRoute
+```
+
+- **OmniRoute é infraestrutura central compartilhável** — não fica
+  arquiteturalmente acoplado ao `compose.yaml`/repositório do GG Oferta.
+- **`cesar-core` é um repositório novo, separado** (mesmo padrão já
+  aplicado ao Coupon Collector, `DEC-105`: repositório próprio, nunca
+  misturado ao GG Oferta) — é o **dono da integração com o OmniRoute**.
+  Todo o código que fala HTTP direto com `/api/v1/chat/completions`,
+  `/api/v1/search` etc. vive em `cesar-core`, nunca em
+  `backend/app/ai_provider/` deste repositório.
+- **GG Oferta só terá adapters/client do César Core** — o
+  `AIProviderManager`/`WebSearchManager` (este repositório) chama o
+  César Core, nunca o OmniRoute diretamente. O guardrail já vigente
+  ("Não conectar módulos diretamente a Gemini, OpenAI ou Claude") passa
+  a valer igualmente pra "não conectar módulos diretamente ao
+  OmniRoute" — só o César Core fala com o OmniRoute.
+- **Implantação pode coexistir no mesmo host físico** desde o início
+  (ex.: mesmo Windows Server), mas **serviços, repositórios e arquivos
+  compose permanecem claramente separados** — três repositórios/
+  processos distintos (GG Oferta, César Core, OmniRoute), nunca um
+  `compose.yaml` único misturando os três.
+- **Ainda em aberto** (não decidido aqui): protocolo exato GG Oferta ↔
+  César Core (HTTP interno? fila? biblioteca compartilhada?), e se
+  César Core é exclusivo do GG Oferta ou serve outros projetos do
+  usuário (o nome "infraestrutura central compartilhável" sugere que
+  sim, mas isso não foi confirmado explicitamente ainda).
 
 ## Pré-flight §3 — Estado das 7 perguntas do documento original
 
@@ -168,12 +246,15 @@ Sobe em `http://localhost:20128`, dashboard incluído.
    podem se sobrepor ou substituir parte dessa cascata — decisão de
    política de custo cabe ao usuário, não a este pré-flight.
 6. **Onde ficam as chaves centralizadas no OmniRoute** — parcialmente
-   respondida: só uma chave de inferência (`sk-…`) precisa ficar no GG
-   Oferta (`*_FILE`, mesmo padrão já usado); as chaves dos providers
+   respondida, **atualizada após a correção de arquitetura acima**: a
+   chave de inferência (`sk-…`) do OmniRoute fica com o **César Core**
+   (dono da integração), não com o GG Oferta — o GG Oferta nem chega a
+   ver essa chave, só fala com o César Core. As chaves dos providers
    individuais (Gemini, Groq etc.) migrariam pra dentro do próprio
-   OmniRoute (configuradas no dashboard dele) — implica um novo local de
-   configuração de secrets fora do `.secrets\` atual, ponto que precisa
-   de decisão explícita do usuário antes de codificar.
+   OmniRoute (configuradas no dashboard dele). Onde/como o César Core
+   guarda seus próprios secrets (equivalente ao `.secrets\`/`*_FILE`
+   deste repositório) ainda não foi decidido — repositório novo, sem
+   convenção própria estabelecida ainda.
 7. **Critério de fuzzy/IA vs. regra determinística** — inalterado, seguem
    valendo os guardrails já vigentes do projeto (ex.: Product Identity
    Engine); o OmniRoute não influencia essa decisão.
@@ -208,6 +289,11 @@ em vez de sobre cada provider individualmente — sem o GG Oferta ficar
 arquiteturalmente dependente do OmniRoute.
 
 ## Arquitetura pretendida
+
+*(Desenho original abaixo, mantido por histórico — **superado pela
+correção de arquitetura em "Pré-flight §2 — Deploy/self-hosted" acima**:
+falta a camada `César Core` entre o GG Oferta e o OmniRoute. Ver aquela
+seção para o desenho corrigido e aprovado.)*
 
 ```
 IA:
