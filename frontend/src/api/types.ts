@@ -196,6 +196,7 @@ export interface OfferDetail {
   id: string
   title: string
   image_url: string | null
+  image_fallback_url: string | null
   original_url: string
   last_seen_at: string
   store: { code: string; name: string }
@@ -212,6 +213,7 @@ export interface OfferComparisonItem {
   id: string
   original_url: string
   image_url: string | null
+  image_fallback_url: string | null
   store: { code: string; name: string }
   seller: { name: string } | null
   rating: { average: string; review_count: number; observed_at: string } | null
@@ -231,6 +233,7 @@ export interface OfferSummary {
   id: string
   title: string
   image_url: string | null
+  image_fallback_url: string | null
   last_seen_at: string
   store: { code: string; name: string }
   seller: { name: string } | null

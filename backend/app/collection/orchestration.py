@@ -2468,6 +2468,19 @@ async def _persist_phase_c(
         return True
 
 
+def _maybe_set_canonical_image(product: Product, image_url: str) -> None:
+    """Regra mínima e segura (subtask 4): a primeira imagem válida de um
+    produto com identidade resolvida vira a canônica e nunca é
+    sobrescrita automaticamente depois -- sem heurística de qualidade
+    (sem request HTTP extra para checar dimensão/placeholder, sem
+    "última imagem sempre vence"). Trocar a canônica por uma melhor,
+    se um dia for preciso, é uma decisão explícita, não automática.
+    Só chamado para `Product` com `identity_key` resolvido -- produtos
+    sem identidade nunca são "o mesmo produto entre lojas" de verdade."""
+    if product.canonical_image_url is None:
+        product.canonical_image_url = image_url
+
+
 async def _resolve_offer(session: AsyncSession, store_id: UUID, item: Any) -> Offer:
     seller = await _resolve_seller(session, store_id, item)
     seller_id = seller.id if seller else None
@@ -2482,18 +2495,26 @@ async def _resolve_offer(session: AsyncSession, store_id: UUID, item: Any) -> Of
         resolved_product = await _resolve_global_product(
             session, item.raw_offer.title
         )
+        target_product = None
         if resolved_product is not None:
             current_product = await session.get(Product, offer.product_id)
             if current_product is not None and current_product.identity_key is None:
                 offer.product_id = resolved_product.id
+                target_product = resolved_product
+            elif current_product is not None:
+                target_product = current_product
         if item.raw_offer.image_url is not None:
             offer.image_url = item.raw_offer.image_url
+            if target_product is not None:
+                _maybe_set_canonical_image(target_product, item.raw_offer.image_url)
         _apply_rating_snapshot(offer, item)
         return offer
     product = await _resolve_global_product(session, item.raw_offer.title)
     unresolved_product = product is None
     if product is None:
         product = Product(id=uuid4(), name=item.raw_offer.title[:300])
+    if item.raw_offer.image_url is not None and product.identity_key is not None:
+        _maybe_set_canonical_image(product, item.raw_offer.image_url)
     offer = Offer(
         product_id=product.id,
         store_id=store_id,
@@ -2524,6 +2545,9 @@ async def _resolve_offer(session: AsyncSession, store_id: UUID, item: Any) -> Of
             raise
         if item.raw_offer.image_url is not None:
             winner.image_url = item.raw_offer.image_url
+            winner_product = await session.get(Product, winner.product_id)
+            if winner_product is not None and winner_product.identity_key is not None:
+                _maybe_set_canonical_image(winner_product, item.raw_offer.image_url)
         _apply_rating_snapshot(winner, item)
         return winner
     return offer

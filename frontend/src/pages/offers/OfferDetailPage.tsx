@@ -10,6 +10,7 @@ import type {
 } from '../../api/types'
 import { ConditionBadge } from '../../components/ConditionBadge'
 import { PriceHistoryChart } from '../../components/PriceHistoryChart'
+import { useImageFallbackChain } from '../../hooks/useImageFallbackChain'
 
 const AVAILABILITY_LABELS: Record<OfferAvailability, string> = {
   available: 'Disponível',
@@ -43,6 +44,26 @@ function ratingAverage(value: string) {
   )
 }
 
+// Subtask 4 (auditoria GG Oferta, revisão): componente próprio (não só um
+// bloco inline) para poder receber `key={offer.id}` no chamador -- força
+// o hook de fallback a resetar a tentativa ao navegar para outra oferta,
+// em vez de herdar o estado de falha da oferta anterior.
+function OfferImage({ offer }: { offer: OfferDetail }) {
+  const { src, onError } = useImageFallbackChain([
+    offer.image_url,
+    offer.image_fallback_url,
+  ])
+  return (
+    <div className={`offer-image-panel${src ? '' : ' offer-image-panel--empty'}`}>
+      {src ? (
+        <img className="offer-image" src={src} alt={offer.title} onError={onError} />
+      ) : (
+        <p className="field-hint">Imagem não disponível.</p>
+      )}
+    </div>
+  )
+}
+
 export function OfferDetailView({ offer, comparison }: { offer: OfferDetail; comparison?: OfferComparison | null }) {
   const observation = offer.latest_observation
   return (
@@ -55,20 +76,7 @@ export function OfferDetailView({ offer, comparison }: { offer: OfferDetail; com
       </div>
 
       <div className="offer-detail-grid">
-        <div className={`offer-image-panel${offer.image_url ? '' : ' offer-image-panel--empty'}`}>
-          {offer.image_url ? (
-            <img
-              className="offer-image"
-              src={offer.image_url}
-              alt={offer.title}
-              onError={(event) => {
-                event.currentTarget.style.display = 'none'
-              }}
-            />
-          ) : (
-            <p className="field-hint">Imagem não disponível.</p>
-          )}
-        </div>
+        <OfferImage offer={offer} key={offer.id} />
 
         <div className="offer-facts">
           {offer.rating ? (

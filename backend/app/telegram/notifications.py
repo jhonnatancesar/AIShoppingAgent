@@ -35,7 +35,10 @@ from app.events.models import EventDeliveryCheckpoint
 from app.missions.models import Mission, MissionCriteria, VariantSelectionMode
 from app.observability.metrics import observe_resilience_event
 from app.offers.models import Offer
-from app.offers.presentation import resolve_offer_display_title
+from app.offers.presentation import (
+    resolve_offer_display_title,
+    resolve_offer_image_chain,
+)
 from app.offers.short_links import build_offer_short_url, get_or_create_offer_short_link
 from app.products.models import Product
 from app.stores.models import Store
@@ -117,6 +120,11 @@ class _PreparedMessagePart:
     message_part: int
     text: str
     image_url: str | None = None
+    image_fallback_url: str | None = None
+    """Subtask 4 (revisão): segundo candidato de imagem (normalmente a
+    própria Offer, quando `image_url` é a canônica do Product) -- só
+    tentado se `image_url` falhar como mídia de verdade. `None` quando
+    não há segunda URL diferente da primeira."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -458,12 +466,24 @@ async def _send_part(
         "circuit_failure_threshold": circuit_failure_threshold,
         "circuit_open_seconds": circuit_open_seconds,
     }
-    if part.image_url is not None and len(part.text) <= 1024:
-        try:
-            await send_photo(chat_id, part.image_url, part.text, **kwargs)
-            return
-        except TelegramMediaRejected:
-            pass
+    if len(part.text) <= 1024:
+        # Subtask 4 (revisão): dois candidatos de imagem (canônica do
+        # Product, depois a própria Offer se for diferente) -- só avança
+        # para o próximo quando a rejeição é comprovadamente de MÍDIA
+        # (`TelegramMediaRejected`, os 5 marcadores reais de
+        # `_MEDIA_REJECTION_MARKERS`). Qualquer outro erro (auth, chat
+        # bloqueado, rate limit, infraestrutura) NUNCA é tratado como
+        # "foto quebrada" -- propaga direto, sem tentar a segunda URL
+        # (que falharia pelo mesmo motivo real) e sem cair silenciosamente
+        # para texto, para não mascarar uma falha operacional de verdade.
+        for image_url in (part.image_url, part.image_fallback_url):
+            if image_url is None:
+                continue
+            try:
+                await send_photo(chat_id, image_url, part.text, **kwargs)
+                return
+            except TelegramMediaRejected:
+                continue
     await send_message(chat_id, part.text, **kwargs)
 
 
@@ -583,6 +603,7 @@ async def _prepare_notification_async(
     ) = await _resolve_offer_context_async(session, event)
     link = await get_or_create_offer_short_link(session, offer.id)
     short_url = build_offer_short_url(public_base_url, link.token)
+    image_url, image_fallback_url = resolve_offer_image_chain(offer, product)
     return (
         user.telegram_chat_id,
         (
@@ -599,7 +620,8 @@ async def _prepare_notification_async(
                     installment_options,
                     short_url=short_url,
                 ),
-                offer.image_url,
+                image_url,
+                image_fallback_url,
             ),
         ),
     )
@@ -1106,7 +1128,10 @@ async def _render_prelist_block_async(
         "🔗 Ver anúncio\n"
         f"{_telegram_link(short_url)}" + suffix
     )
-    return _PreparedMessagePart(offer.id, position - 1, text, offer.image_url)
+    image_url, image_fallback_url = resolve_offer_image_chain(offer, product)
+    return _PreparedMessagePart(
+        offer.id, position - 1, text, image_url, image_fallback_url
+    )
 
 
 async def _render_prelist_ready_async(
@@ -1228,7 +1253,8 @@ async def _render_prelist_errata_async(
         "🔗 Ver anúncio\n"
         f"{_telegram_link(short_url)}"
     )
-    return (_PreparedMessagePart(offer.id, 0, text, offer.image_url),)
+    image_url, image_fallback_url = resolve_offer_image_chain(offer, product)
+    return (_PreparedMessagePart(offer.id, 0, text, image_url, image_fallback_url),)
 
 
 _CONDITION_LABELS = {
@@ -1329,7 +1355,7 @@ async def _render_prelist_v2_async(
             "🔗 Ver anúncio\n"
             f"{_telegram_link(short_url)}"
         )
-        entries.append((offer.id, block, offer.image_url))
+        entries.append((offer.id, block, *resolve_offer_image_chain(offer, product)))
 
     parts: list[_PreparedMessagePart] = []
     for store, entries in groups.values():
@@ -1347,16 +1373,26 @@ async def _render_prelist_v2_async(
         # a primeira image_url válida entre as ofertas que acabam entrando
         # nesta parte específica do texto (uma loja pode se dividir em
         # mais de uma parte pelo limite de tamanho; cada parte pega sua
-        # própria primeira imagem válida, nunca a de outra loja).
+        # própria primeira imagem válida, nunca a de outra loja). O
+        # fallback (subtask 4, revisão) sempre acompanha o mesmo par
+        # canônica/Offer da entrada escolhida -- nunca combina a primária
+        # de uma oferta com o fallback de outra.
         current_image: str | None = None
-        for offer_id, block, image_url in entries:
+        current_image_fallback: str | None = None
+        for offer_id, block, image_url, image_fallback_url in entries:
             addition = block + "\n\n"
             if len(current) + len(addition) + len(_PRELIST_SHIPPING_DISCLAIMER) > (
                 _TELEGRAM_TEXT_SAFE_LIMIT
             ):
                 text = current.rstrip() + f"\n\n{_PRELIST_SHIPPING_DISCLAIMER}"
                 parts.append(
-                    _PreparedMessagePart(current_offer, len(parts), text, current_image)
+                    _PreparedMessagePart(
+                        current_offer,
+                        len(parts),
+                        text,
+                        current_image,
+                        current_image_fallback,
+                    )
                 )
                 current = (
                     f"{heading} — continuação\n"
@@ -1364,11 +1400,17 @@ async def _render_prelist_v2_async(
                 )
                 current_offer = offer_id
                 current_image = None
+                current_image_fallback = None
             if current_image is None and image_url is not None:
                 current_image = image_url
+                current_image_fallback = image_fallback_url
             current += addition
         text = current.rstrip() + f"\n\n{_PRELIST_SHIPPING_DISCLAIMER}"
-        parts.append(_PreparedMessagePart(current_offer, len(parts), text, current_image))
+        parts.append(
+            _PreparedMessagePart(
+                current_offer, len(parts), text, current_image, current_image_fallback
+            )
+        )
     if not parts:
         raise TelegramNotificationError("notification_payload_invalid")
     return tuple(parts)

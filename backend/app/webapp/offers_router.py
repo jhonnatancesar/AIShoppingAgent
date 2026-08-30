@@ -23,7 +23,10 @@ from app.collection.contracts import (
 from app.collection.normalization import Availability
 from app.core.errors import ApiError
 from app.database.dependency import get_web_async_session
-from app.offers.presentation import resolve_offer_display_title
+from app.offers.presentation import (
+    resolve_offer_display_title,
+    resolve_offer_image_chain,
+)
 from app.offers.query import (
     OfferPriceHistory,
     PriceHistoryPeriod,
@@ -83,6 +86,7 @@ class OfferDetailResponse(BaseModel):
     id: UUID
     title: str
     image_url: str | None
+    image_fallback_url: str | None
     original_url: str
     last_seen_at: str
     store: StoreOut
@@ -104,6 +108,7 @@ class OfferSummaryOut(BaseModel):
     id: UUID
     title: str
     image_url: str | None
+    image_fallback_url: str | None
     last_seen_at: str
     store: StoreOut
     seller: SellerOut | None
@@ -122,6 +127,7 @@ class ComparisonOfferOut(BaseModel):
     id: UUID
     original_url: str
     image_url: str | None
+    image_fallback_url: str | None
     store: StoreOut
     seller: SellerOut | None
     rating: OfferRatingOut | None
@@ -192,10 +198,14 @@ async def _deny_offer_unavailable(
 
 def _as_response(detail: UserOfferDetail) -> OfferDetailResponse:
     observation = detail.observation
+    image_url, image_fallback_url = resolve_offer_image_chain(
+        detail.offer, detail.product
+    )
     return OfferDetailResponse(
         id=detail.offer.id,
         title=resolve_offer_display_title(detail.product, detail.observation),
-        image_url=detail.offer.image_url,
+        image_url=image_url,
+        image_fallback_url=image_fallback_url,
         original_url=detail.offer.url,
         last_seen_at=detail.offer.last_seen_at.isoformat(),
         store=StoreOut(code=detail.store.code, name=detail.store.name),
@@ -243,10 +253,14 @@ def _as_response(detail: UserOfferDetail) -> OfferDetailResponse:
 
 def _as_summary(detail: UserOfferSummary) -> OfferSummaryOut:
     observation = detail.observation
+    image_url, image_fallback_url = resolve_offer_image_chain(
+        detail.offer, detail.product
+    )
     return OfferSummaryOut(
         id=detail.offer.id,
         title=resolve_offer_display_title(detail.product, detail.observation),
-        image_url=detail.offer.image_url,
+        image_url=image_url,
+        image_fallback_url=image_fallback_url,
         last_seen_at=detail.offer.last_seen_at.isoformat(),
         store=StoreOut(code=detail.store.code, name=detail.store.name),
         seller=SellerOut(name=detail.seller.name) if detail.seller else None,
@@ -291,11 +305,15 @@ def _as_comparison(comparison: UserOfferComparison) -> OfferComparisonResponse:
             and item.offer.rating_observed_at is not None
             else None
         )
+        item_image_url, item_image_fallback_url = resolve_offer_image_chain(
+            item.offer, comparison.product
+        )
         offers.append(
             ComparisonOfferOut(
                 id=item.offer.id,
                 original_url=item.offer.url,
-                image_url=item.offer.image_url,
+                image_url=item_image_url,
+                image_fallback_url=item_image_fallback_url,
                 store=StoreOut(code=item.store.code, name=item.store.name),
                 seller=SellerOut(name=item.seller.name) if item.seller else None,
                 rating=rating,

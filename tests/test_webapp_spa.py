@@ -84,8 +84,8 @@ def test_login_shell_served_without_any_session(dist_dir: Path) -> None:
 
 
 def test_csp_img_src_allowlists_real_store_hosts_without_wildcard(dist_dir: Path) -> None:
-    """TASK-115 (v1.2.5): hosts reais das lojas com Offer.image_url em
-    PROD, nunca 'img-src *'/https: genérico."""
+    """TASK-115 (v1.2.5) + subtask 4 (auditoria GG Oferta, 2026-08-30): hosts
+    reais das 6 lojas com Offer.image_url, nunca 'img-src *'/https: genérico."""
     client = TestClient(_build_app(dist_dir))
 
     response = client.get("/app")
@@ -102,6 +102,8 @@ def test_csp_img_src_allowlists_real_store_hosts_without_wildcard(dist_dir: Path
         "https://images.kabum.com.br",
         "https://media.pichau.com.br",
         "https://img.terabyteshop.com.br",
+        "https://a-static.mlcdn.com.br",
+        "https://http2.mlstatic.com",
     ):
         assert host in img_src
 

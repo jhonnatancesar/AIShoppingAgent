@@ -140,6 +140,52 @@ def test_user_accesses_offer_linked_to_own_mission(
     assert body["latest_observation"]["installments"][0]["installment_count"] == 12
 
 
+def test_offer_without_own_image_falls_back_to_product_canonical_image(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Subtask 4 (auditoria GG Oferta): Offer sem imagem própria + Product
+    com canônica -- a API expõe a canônica, nunca `null` à toa, sem
+    alternativa (nada mais para tentar)."""
+    detail = _detail()
+    detail.offer.image_url = None
+    detail.product.canonical_image_url = "https://media.pichau.com.br/canonica.jpg"
+    monkeypatch.setattr(
+        "app.webapp.offers_router.get_offer_detail_for_user",
+        AsyncMock(return_value=detail),
+    )
+
+    response = client.get(f"/api/v1/offers/{detail.offer.id}", cookies=_cookies())
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["image_url"] == "https://media.pichau.com.br/canonica.jpg"
+    assert body["image_fallback_url"] is None
+
+
+def test_offer_with_canonical_and_different_own_image_exposes_both(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Subtask 4 (revisão, item 2 da checagem final): quando a Offer TEM
+    imagem própria mas o Product também tem canônica DIFERENTE, a API
+    expõe a canônica como principal (`image_url`) e a própria Offer como
+    alternativa (`image_fallback_url`) -- o front-end decide, em runtime,
+    se precisa tentar a alternativa (canônica quebrou ao carregar)."""
+    detail = _detail()
+    assert detail.offer.image_url == "https://images.example/offer.jpg"  # sanity
+    detail.product.canonical_image_url = "https://media.pichau.com.br/canonica.jpg"
+    monkeypatch.setattr(
+        "app.webapp.offers_router.get_offer_detail_for_user",
+        AsyncMock(return_value=detail),
+    )
+
+    response = client.get(f"/api/v1/offers/{detail.offer.id}", cookies=_cookies())
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["image_url"] == "https://media.pichau.com.br/canonica.jpg"
+    assert body["image_fallback_url"] == "https://images.example/offer.jpg"
+
+
 def test_other_user_cannot_access_offer(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:

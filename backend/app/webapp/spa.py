@@ -36,15 +36,19 @@ _SECURITY_HEADERS = {
         "default-src 'self'; base-uri 'none'; frame-ancestors 'none'; "
         "connect-src 'self'; "
         # TASK-115 (v1.2.5, achado real): hosts levantados diretamente de
-        # Offer.image_url em PROD, um por loja com oferta real hoje
-        # (Amazon, KaBuM!, Pichau, Terabyte) -- nunca 'img-src *'/https:
-        # genérico. Magalu/Mercado Livre ainda sem oferta real com imagem
-        # em PROD; adicionar quando houver evidência real do host usado.
+        # Offer.image_url, um por loja -- nunca 'img-src *'/https: genérico.
+        # Magalu e Mercado Livre (subtask 4, auditoria GG Oferta) usam CDNs
+        # próprias e sempre bloqueadas até aqui: `a-static.mlcdn.com.br`
+        # (Magalu) e `http2.mlstatic.com` (Mercado Livre), ambos já
+        # confirmados no código dos providers e nos fixtures reais de
+        # `tests/test_store_providers.py`.
         "img-src 'self' data: "
         "https://m.media-amazon.com "
         "https://images.kabum.com.br "
         "https://media.pichau.com.br "
-        "https://img.terabyteshop.com.br; "
+        "https://img.terabyteshop.com.br "
+        "https://a-static.mlcdn.com.br "
+        "https://http2.mlstatic.com; "
         "style-src 'self'; "
         "script-src 'self'"
     ),

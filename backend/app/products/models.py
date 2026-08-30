@@ -3,7 +3,7 @@
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import CheckConstraint, DateTime, Index, Integer, String, func
+from sqlalchemy import CheckConstraint, DateTime, Index, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PostgreSQLUUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -43,6 +43,11 @@ class Product(Base):
             "identity_version IS NULL OR identity_version > 0",
             name="ck_products_identity_version_positive",
         ),
+        CheckConstraint(
+            "canonical_image_url IS NULL OR "
+            "canonical_image_url ~* '^https?://[^/@?#[:space:]]+([/?#]|$)'",
+            name="ck_products_canonical_image_url_http",
+        ),
         Index(
             "uq_products_identity_key",
             "identity_key",
@@ -70,6 +75,14 @@ class Product(Base):
     family_key: Mapped[str | None] = mapped_column(String(80), nullable=True)
     identity_key: Mapped[str | None] = mapped_column(String(80), nullable=True)
     identity_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    canonical_image_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    """Subtask 4 (auditoria GG Oferta): imagem representativa do produto,
+    reaproveitável entre lojas que vendem exatamente o mesmo item/variante
+    -- nunca compartilhada entre `Product` diferentes (cada linha já é uma
+    identidade/variante própria). Regra de atualização em
+    `app.collection.orchestration._maybe_set_canonical_image`: primeira
+    imagem válida vence e nunca é sobrescrita automaticamente depois (sem
+    heurística de qualidade, sem request HTTP extra)."""
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

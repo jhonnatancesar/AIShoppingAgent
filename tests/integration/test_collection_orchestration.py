@@ -42,6 +42,7 @@ from app.missions.models import (
 )
 from app.missions.service import transition_mission
 from app.offers.models import Offer
+from app.products.models import Product
 from app.stores.models import Store
 from app.users.models import User, UserRole
 from sqlalchemy import func, select, text
@@ -712,6 +713,255 @@ def test_target_reached_state_does_not_leak_between_missions_sharing_an_offer(
     assert (result_b.claimed, result_b.succeeded) == (1, 1)
     assert _target_events(mission_a_id) == 1  # intocado
     assert _target_events(mission_b_id) == 1  # não suprimido pela missão A
+
+
+class _SingleTitleImageProvider:
+    """Sempre devolve o mesmo título (mesma identidade resolvida) com uma
+    URL de imagem controlável -- usada para provar a regra de imagem
+    canônica do Product (subtask 4, auditoria GG Oferta)."""
+
+    def __init__(
+        self, *, source_code: str, external_id: str, image_url: str, title: str
+    ) -> None:
+        self.source_code = source_code
+        self._external_id = external_id
+        self._image_url = image_url
+        self._title = title
+
+    async def collect(self, request: CollectionRequest) -> CollectionResult:
+        completed = request.requested_at.replace(microsecond=500000)
+        return CollectionResult(
+            self.source_code,
+            request.requested_at,
+            completed,
+            (
+                RawCollectedOffer(
+                    source_code=self.source_code,
+                    url=f"https://example.invalid/{self._external_id}",
+                    title=self._title,
+                    collected_at=completed,
+                    external_id=self._external_id,
+                    raw_price="R$ 5.000,00",
+                    raw_currency="BRL",
+                    raw_shipping="Frete grátis",
+                    raw_availability="Em estoque",
+                    image_url=self._image_url,
+                    evidence={"card_text": "safe synthetic evidence"},
+                ),
+            ),
+        )
+
+
+def test_canonical_image_is_set_once_and_never_overwritten_across_stores(
+    integration_database,
+) -> None:
+    """Subtask 4 (auditoria GG Oferta): a primeira imagem válida de um
+    produto com identidade resolvida vira `Product.canonical_image_url` e
+    nunca é sobrescrita automaticamente depois -- nem por uma coleta
+    posterior de OUTRA loja do mesmo produto (sem heurística de
+    qualidade, sem request HTTP extra, sem "última imagem sempre
+    vence"). A `Offer` de cada loja preserva sua própria imagem; só a
+    apresentação (`resolve_offer_image_url`, testado à parte) decide
+    quando cair para a canônica."""
+    now = datetime.now(UTC).replace(microsecond=0)
+    title = "Apple iPhone 17 Pro, 256 GB, preto"
+    with integration_database.sessions.begin() as session:
+        pichau = session.scalar(select(Store).where(Store.code == "pichau"))
+        kabum = session.scalar(select(Store).where(Store.code == "kabum"))
+        user = User(display_name="subtask-4 canonical image", role=UserRole.USER)
+        session.add(user)
+        session.flush()
+        mission = Mission(
+            user_id=user.id,
+            title="subtask 4 canonical image",
+            status=MissionStatus.ACTIVE,
+        )
+        session.add(mission)
+        session.flush()
+        session.add_all(
+            (
+                MissionCriteria(mission_id=mission.id, search_query=title),
+                MissionSchedule(
+                    mission_id=mission.id,
+                    interval_minutes=60,
+                    next_run_at=now,
+                    is_enabled=True,
+                ),
+                MissionSource(mission_id=mission.id, store_id=pichau.id),
+            )
+        )
+        mission_id, kabum_id = mission.id, kabum.id
+
+    def _product_by_offer(external_id: str) -> Product:
+        with integration_database.sessions() as session:
+            offer = session.scalar(
+                select(Offer).where(Offer.external_id == external_id)
+            )
+            assert offer is not None
+            product = session.get(Product, offer.product_id)
+            assert product is not None
+            session.expunge(product)
+            return product
+
+    orchestrator_1 = CollectionOrchestrator(
+        integration_database.async_sessions,
+        CollectionAdapter(
+            (
+                _SingleTitleImageProvider(
+                    source_code="pichau",
+                    external_id="subtask4-pichau",
+                    image_url="https://media.pichau.com.br/iphone.jpg",
+                    title=title,
+                ),
+            )
+        ),
+        ai_manager=_AlwaysMatchAIManager(),
+    )
+    result_1 = asyncio.run(orchestrator_1.run_batch(now=now))
+    assert (result_1.claimed, result_1.succeeded) == (1, 1)
+
+    product_after_cycle_1 = _product_by_offer("subtask4-pichau")
+    assert product_after_cycle_1.identity_key is not None
+    assert (
+        product_after_cycle_1.canonical_image_url
+        == "https://media.pichau.com.br/iphone.jpg"
+    )
+
+    # Ciclo 2: outra loja (Kabum) encontra o MESMO produto (mesmo título/
+    # identidade), com uma imagem DIFERENTE -- não pode virar a canônica.
+    later = now + timedelta(minutes=90)
+    with integration_database.sessions.begin() as session:
+        schedule = session.scalar(
+            select(MissionSchedule).where(MissionSchedule.mission_id == mission_id)
+        )
+        schedule.next_run_at = later
+        session.add(MissionSource(mission_id=mission_id, store_id=kabum_id))
+
+    orchestrator_2 = CollectionOrchestrator(
+        integration_database.async_sessions,
+        CollectionAdapter(
+            (
+                _SingleTitleImageProvider(
+                    source_code="kabum",
+                    external_id="subtask4-kabum",
+                    image_url="https://images.kabum.com.br/iphone-outra-foto.jpg",
+                    title=title,
+                ),
+            )
+        ),
+        ai_manager=_AlwaysMatchAIManager(),
+    )
+    result_2 = asyncio.run(orchestrator_2.run_batch(now=later))
+    assert result_2.succeeded >= 1
+
+    product_after_cycle_2 = _product_by_offer("subtask4-pichau")
+    kabum_offer_product = _product_by_offer("subtask4-kabum")
+    assert kabum_offer_product.id == product_after_cycle_2.id  # mesma identidade global
+    assert (
+        product_after_cycle_2.canonical_image_url
+        == "https://media.pichau.com.br/iphone.jpg"
+    )  # nunca sobrescrita pela foto do Kabum
+
+    with integration_database.sessions() as session:
+        kabum_offer = session.scalar(
+            select(Offer).where(Offer.external_id == "subtask4-kabum")
+        )
+        assert (
+            kabum_offer.image_url
+            == "https://images.kabum.com.br/iphone-outra-foto.jpg"
+        )  # a Offer do Kabum preserva a própria imagem -- só não vira canônica
+
+
+def test_canonical_image_is_independent_across_different_products(
+    integration_database,
+) -> None:
+    """Subtask 4 (auditoria GG Oferta, item 10 da checagem final): a regra
+    de imagem canônica é POR produto/variante -- dois produtos diferentes
+    (identidades distintas) nunca compartilham nem misturam a
+    `canonical_image_url` um do outro. A imagem do iPhone jamais aparece
+    no Galaxy, e vice-versa, mesmo coletados na mesma janela de tempo."""
+    now = datetime.now(UTC).replace(microsecond=0)
+    title_a = "Apple iPhone 17 Pro, 256 GB, preto"
+    title_b = "Samsung Galaxy S24 Ultra 512 GB Titânio"
+    with integration_database.sessions.begin() as session:
+        pichau = session.scalar(select(Store).where(Store.code == "pichau"))
+        kabum = session.scalar(select(Store).where(Store.code == "kabum"))
+        user = User(display_name="subtask-4 variant independence", role=UserRole.USER)
+        session.add(user)
+        session.flush()
+        mission_a = Mission(
+            user_id=user.id,
+            title="subtask 4 variant independence -- iPhone",
+            status=MissionStatus.ACTIVE,
+        )
+        mission_b = Mission(
+            user_id=user.id,
+            title="subtask 4 variant independence -- Galaxy",
+            status=MissionStatus.ACTIVE,
+        )
+        session.add_all((mission_a, mission_b))
+        session.flush()
+        session.add_all(
+            (
+                MissionCriteria(mission_id=mission_a.id, search_query=title_a),
+                MissionSchedule(
+                    mission_id=mission_a.id,
+                    interval_minutes=60,
+                    next_run_at=now,
+                    is_enabled=True,
+                ),
+                MissionSource(mission_id=mission_a.id, store_id=pichau.id),
+                MissionCriteria(mission_id=mission_b.id, search_query=title_b),
+                MissionSchedule(
+                    mission_id=mission_b.id,
+                    interval_minutes=60,
+                    next_run_at=now,
+                    is_enabled=True,
+                ),
+                MissionSource(mission_id=mission_b.id, store_id=kabum.id),
+            )
+        )
+
+    def _product_by_offer(external_id: str) -> Product:
+        with integration_database.sessions() as session:
+            offer = session.scalar(
+                select(Offer).where(Offer.external_id == external_id)
+            )
+            assert offer is not None
+            product = session.get(Product, offer.product_id)
+            assert product is not None
+            session.expunge(product)
+            return product
+
+    orchestrator = CollectionOrchestrator(
+        integration_database.async_sessions,
+        CollectionAdapter(
+            (
+                _SingleTitleImageProvider(
+                    source_code="pichau",
+                    external_id="subtask4-variant-iphone",
+                    image_url="https://media.pichau.com.br/iphone.jpg",
+                    title=title_a,
+                ),
+                _SingleTitleImageProvider(
+                    source_code="kabum",
+                    external_id="subtask4-variant-galaxy",
+                    image_url="https://images.kabum.com.br/galaxy.jpg",
+                    title=title_b,
+                ),
+            )
+        ),
+        ai_manager=_AlwaysMatchAIManager(),
+    )
+    result = asyncio.run(orchestrator.run_batch(now=now))
+    assert (result.claimed, result.succeeded) == (2, 2)
+
+    product_a = _product_by_offer("subtask4-variant-iphone")
+    product_b = _product_by_offer("subtask4-variant-galaxy")
+    assert product_a.id != product_b.id  # identidades distintas, produtos distintos
+    assert product_a.canonical_image_url == "https://media.pichau.com.br/iphone.jpg"
+    assert product_b.canonical_image_url == "https://images.kabum.com.br/galaxy.jpg"
+    assert product_a.canonical_image_url != product_b.canonical_image_url
 
 
 def test_concurrent_claimers_never_duplicate_a_source(integration_database) -> None:

@@ -35,9 +35,11 @@ from app.telegram.notifications import (
     _installment_line,
     _marketplace_party_line,
     _prepare_variant_notification_async,
+    _PreparedMessagePart,
     _rating_line,
     _render_prelist_v2_async,
     _select_installment_summary_option,
+    _send_part,
     _telegram_link,
     process_telegram_authentication_notifications,
     process_telegram_notifications,
@@ -1541,3 +1543,313 @@ async def test_alert_escapes_special_characters_in_dynamic_text(
     assert "Placa <RTX 4070>" not in text
     assert "Loja &amp; Cia" in text
     assert "Loja & Cia\n" not in text
+
+
+def _prepared_part_with_image() -> _PreparedMessagePart:
+    return _PreparedMessagePart(
+        uuid4(), 0, "texto do alerta", "https://example.invalid/foto.jpg"
+    )
+
+
+@pytest.mark.anyio
+async def test_send_part_falls_back_to_text_when_photo_is_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`_send_part` já tratava `TelegramMediaRejected` -- cobertura direta
+    que faltava para este caminho antes da subtask 4 (auditoria GG
+    Oferta)."""
+    from app.telegram.bot_api import TelegramMediaRejected
+
+    calls: list[str] = []
+
+    async def _fake_send_photo(*args: object, **kwargs: object) -> None:
+        calls.append("photo")
+        raise TelegramMediaRejected
+
+    async def _fake_send_message(*args: object, **kwargs: object) -> None:
+        calls.append("message")
+
+    monkeypatch.setattr("app.telegram.notifications.send_photo", _fake_send_photo)
+    monkeypatch.setattr("app.telegram.notifications.send_message", _fake_send_message)
+
+    await _send_part(
+        123,
+        _prepared_part_with_image(),
+        bot_token=SecretStr("token"),
+        timeout_seconds=5.0,
+        retry_after_cap_seconds=5.0,
+        circuit_failure_threshold=5,
+        circuit_open_seconds=5.0,
+    )
+
+    assert calls == ["photo", "message"]
+
+
+@pytest.mark.anyio
+async def test_send_part_propagates_bot_api_error_unrelated_to_media(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Subtask 4 (revisão): `TelegramBotAPIError` (401/403/429/infra) NUNCA
+    é tratado como "foto quebrada" -- só `TelegramMediaRejected` (os 5
+    marcadores reais de `_MEDIA_REJECTION_MARKERS`) aciona o próximo
+    candidato de imagem. Erro operacional de verdade continua propagando,
+    sem tentar a segunda URL (que falharia pelo mesmo motivo) e sem virar
+    texto silenciosamente -- nunca mascarar uma falha real do Telegram."""
+    calls: list[str] = []
+
+    async def _fake_send_photo(*args: object, **kwargs: object) -> None:
+        calls.append("photo")
+        raise TelegramBotAPIError(403, description="bot was blocked by the user")
+
+    async def _fake_send_message(*args: object, **kwargs: object) -> None:
+        calls.append("message")
+
+    monkeypatch.setattr("app.telegram.notifications.send_photo", _fake_send_photo)
+    monkeypatch.setattr("app.telegram.notifications.send_message", _fake_send_message)
+
+    with pytest.raises(TelegramBotAPIError):
+        await _send_part(
+            123,
+            _prepared_part_with_image(),
+            bot_token=SecretStr("token"),
+            timeout_seconds=5.0,
+            retry_after_cap_seconds=5.0,
+            circuit_failure_threshold=5,
+            circuit_open_seconds=5.0,
+        )
+
+    assert calls == ["photo"]  # nunca chega a tentar a segunda URL nem o texto
+
+
+@pytest.mark.anyio
+async def test_send_part_does_not_call_text_fallback_when_photo_succeeds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+
+    async def _fake_send_photo(*args: object, **kwargs: object) -> None:
+        calls.append("photo")
+
+    async def _fake_send_message(*args: object, **kwargs: object) -> None:
+        calls.append("message")
+
+    monkeypatch.setattr("app.telegram.notifications.send_photo", _fake_send_photo)
+    monkeypatch.setattr("app.telegram.notifications.send_message", _fake_send_message)
+
+    await _send_part(
+        123,
+        _prepared_part_with_image(),
+        bot_token=SecretStr("token"),
+        timeout_seconds=5.0,
+        retry_after_cap_seconds=5.0,
+        circuit_failure_threshold=5,
+        circuit_open_seconds=5.0,
+    )
+
+    assert calls == ["photo"]  # nunca chama send_message quando a foto já funcionou
+
+
+@pytest.mark.anyio
+async def test_send_part_does_not_retry_immediately_when_circuit_is_open(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A ampliação do fallback é só para `TelegramMediaRejected`/
+    `TelegramBotAPIError` -- `TelegramBotAPIUnavailable` (circuito aberto)
+    continua propagando, nunca tenta `send_message` imediatamente contra
+    um circuito que já sabemos estar aberto."""
+    from app.telegram.bot_api import TelegramBotAPIUnavailable
+
+    async def _fake_send_photo(*args: object, **kwargs: object) -> None:
+        raise TelegramBotAPIUnavailable()
+
+    monkeypatch.setattr("app.telegram.notifications.send_photo", _fake_send_photo)
+
+    with pytest.raises(TelegramBotAPIUnavailable):
+        await _send_part(
+            123,
+            _prepared_part_with_image(),
+            bot_token=SecretStr("token"),
+            timeout_seconds=5.0,
+            retry_after_cap_seconds=5.0,
+            circuit_failure_threshold=5,
+            circuit_open_seconds=5.0,
+        )
+
+
+@pytest.mark.anyio
+async def test_alert_uses_product_canonical_image_when_offer_has_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Subtask 4: quando a própria Offer não tem imagem, o alerta reusa a
+    canônica do Product (mesmo produto/variante entre lojas) em vez de
+    mandar sempre texto puro."""
+    user = _user()
+    mission = _mission(user)
+    event = _event(mission, event_type="price.decreased.v1")
+    offer, product, store = _offer_context()
+    product.canonical_image_url = "https://media.pichau.com.br/canonica.jpg"
+    session_factory, session = _fake_session_factory()
+    observation = _observation_for(event, offer, kind=MarketplacePartyKind.PLATFORM)
+    session.get.side_effect = [mission, user, offer, product, store, observation, event]
+    session.scalars = AsyncMock(return_value=[])
+    monkeypatch.setattr(
+        "app.telegram.notifications.claim_unconsumed_events_async",
+        AsyncMock(return_value=[event]),
+    )
+    photo_calls: list[tuple] = []
+
+    async def _fake_send_photo(chat_id, photo_url, caption, **kwargs: object) -> None:
+        photo_calls.append((chat_id, photo_url))
+
+    monkeypatch.setattr("app.telegram.notifications.send_photo", _fake_send_photo)
+    monkeypatch.setattr(
+        "app.telegram.notifications.send_message", AsyncMock()
+    )  # não deveria ser chamado
+
+    result = await process_telegram_notifications(
+        session_factory, bot_token=SecretStr("token")
+    )
+
+    assert result.succeeded == 1
+    assert photo_calls == [(123, "https://media.pichau.com.br/canonica.jpg")]
+
+
+@pytest.mark.anyio
+async def test_alert_sends_canonical_first_when_offer_also_has_its_own_image(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Item 6 da checagem final da Subtask 4: canônica válida + Offer TEM
+    imagem própria diferente -- o alerta ainda assim manda a canônica
+    primeiro (é o objetivo da feature) e nunca chega a tentar a segunda
+    URL porque a primeira já funcionou."""
+    user = _user()
+    mission = _mission(user)
+    event = _event(mission, event_type="price.decreased.v1")
+    offer, product, store = _offer_context()
+    offer.image_url = "https://kabum.example.invalid/foto-propria.jpg"
+    product.canonical_image_url = "https://media.pichau.com.br/canonica.jpg"
+    session_factory, session = _fake_session_factory()
+    observation = _observation_for(event, offer, kind=MarketplacePartyKind.PLATFORM)
+    session.get.side_effect = [mission, user, offer, product, store, observation, event]
+    session.scalars = AsyncMock(return_value=[])
+    monkeypatch.setattr(
+        "app.telegram.notifications.claim_unconsumed_events_async",
+        AsyncMock(return_value=[event]),
+    )
+    photo_calls: list[tuple] = []
+
+    async def _fake_send_photo(chat_id, photo_url, caption, **kwargs: object) -> None:
+        photo_calls.append((chat_id, photo_url))
+
+    monkeypatch.setattr("app.telegram.notifications.send_photo", _fake_send_photo)
+    monkeypatch.setattr(
+        "app.telegram.notifications.send_message", AsyncMock()
+    )  # não deveria ser chamado -- a primeira tentativa já funciona
+
+    result = await process_telegram_notifications(
+        session_factory, bot_token=SecretStr("token")
+    )
+
+    assert result.succeeded == 1
+    assert photo_calls == [(123, "https://media.pichau.com.br/canonica.jpg")]
+
+
+@pytest.mark.anyio
+async def test_alert_falls_back_to_offers_own_image_when_canonical_is_rejected_as_media(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Item 7 da checagem final da Subtask 4: canônica rejeitada como
+    mídia (link quebrado/expirado) + Offer com imagem própria válida --
+    o alerta tenta a canônica, recebe `TelegramMediaRejected`, e cai para
+    a imagem própria da Offer como segunda tentativa, ainda como foto
+    (nunca precisa cair para texto)."""
+    from app.telegram.bot_api import TelegramMediaRejected
+
+    user = _user()
+    mission = _mission(user)
+    event = _event(mission, event_type="price.decreased.v1")
+    offer, product, store = _offer_context()
+    offer.image_url = "https://kabum.example.invalid/foto-propria.jpg"
+    product.canonical_image_url = "https://media.pichau.com.br/canonica-quebrada.jpg"
+    session_factory, session = _fake_session_factory()
+    observation = _observation_for(event, offer, kind=MarketplacePartyKind.PLATFORM)
+    session.get.side_effect = [mission, user, offer, product, store, observation, event]
+    session.scalars = AsyncMock(return_value=[])
+    monkeypatch.setattr(
+        "app.telegram.notifications.claim_unconsumed_events_async",
+        AsyncMock(return_value=[event]),
+    )
+    photo_calls: list[tuple] = []
+
+    async def _fake_send_photo(chat_id, photo_url, caption, **kwargs: object) -> None:
+        photo_calls.append((chat_id, photo_url))
+        if photo_url == "https://media.pichau.com.br/canonica-quebrada.jpg":
+            raise TelegramMediaRejected
+
+    message_calls: list[tuple] = []
+
+    async def _fake_send_message(chat_id, text, **kwargs: object) -> None:
+        message_calls.append((chat_id, text))
+
+    monkeypatch.setattr("app.telegram.notifications.send_photo", _fake_send_photo)
+    monkeypatch.setattr("app.telegram.notifications.send_message", _fake_send_message)
+
+    result = await process_telegram_notifications(
+        session_factory, bot_token=SecretStr("token")
+    )
+
+    assert result.succeeded == 1
+    assert photo_calls == [
+        (123, "https://media.pichau.com.br/canonica-quebrada.jpg"),
+        (123, "https://kabum.example.invalid/foto-propria.jpg"),
+    ]
+    assert message_calls == []  # nunca precisou cair para texto puro
+
+
+@pytest.mark.anyio
+async def test_alert_falls_back_to_text_when_both_images_are_rejected_as_media(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Item 8 da checagem final da Subtask 4: canônica E imagem própria da
+    Offer rejeitadas como mídia -- só então o alerta cai para texto puro,
+    depois de esgotar os dois candidatos reais (nunca antes)."""
+    from app.telegram.bot_api import TelegramMediaRejected
+
+    user = _user()
+    mission = _mission(user)
+    event = _event(mission, event_type="price.decreased.v1")
+    offer, product, store = _offer_context()
+    offer.image_url = "https://kabum.example.invalid/foto-propria-quebrada.jpg"
+    product.canonical_image_url = "https://media.pichau.com.br/canonica-quebrada.jpg"
+    session_factory, session = _fake_session_factory()
+    observation = _observation_for(event, offer, kind=MarketplacePartyKind.PLATFORM)
+    session.get.side_effect = [mission, user, offer, product, store, observation, event]
+    session.scalars = AsyncMock(return_value=[])
+    monkeypatch.setattr(
+        "app.telegram.notifications.claim_unconsumed_events_async",
+        AsyncMock(return_value=[event]),
+    )
+    photo_calls: list[tuple] = []
+
+    async def _fake_send_photo(chat_id, photo_url, caption, **kwargs: object) -> None:
+        photo_calls.append((chat_id, photo_url))
+        raise TelegramMediaRejected
+
+    message_calls: list[tuple] = []
+
+    async def _fake_send_message(chat_id, text, **kwargs: object) -> None:
+        message_calls.append((chat_id, text))
+
+    monkeypatch.setattr("app.telegram.notifications.send_photo", _fake_send_photo)
+    monkeypatch.setattr("app.telegram.notifications.send_message", _fake_send_message)
+
+    result = await process_telegram_notifications(
+        session_factory, bot_token=SecretStr("token")
+    )
+
+    assert result.succeeded == 1
+    assert photo_calls == [
+        (123, "https://media.pichau.com.br/canonica-quebrada.jpg"),
+        (123, "https://kabum.example.invalid/foto-propria-quebrada.jpg"),
+    ]
+    assert len(message_calls) == 1
