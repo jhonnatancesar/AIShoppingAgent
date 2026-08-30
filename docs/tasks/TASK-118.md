@@ -1,8 +1,14 @@
 # TASK-118 — Integrar o OmniRoute como camada central de roteamento de IA e Web Search
 
-Status: **Pré-flight em andamento (2026-08-30) — fonte oficial
-confirmada e contratos reais extraídos do código.** Nenhum código,
-configuração, secret ou dependência deste repositório alterados.
+Status: **Pré-flight aprovado conceitualmente pelo usuário (2026-08-30)**
+— fonte oficial confirmada, contratos reais extraídos do código,
+arquitetura GG Oferta → AIProviderManager/WebSearchManager → César Core
+→ OmniRoute decidida (repositório `cesar-core` novo e separado), e as
+decisões de protocolo/escopo/credenciais/secrets/fallback fechadas
+(`DEC-107`, §4/§5). Restam só 3 pontos genuinamente em aberto (ver "O
+que realmente continua em aberto"). Nenhum código, configuração, secret
+ou dependência deste repositório alterados — implementação segue não
+iniciada.
 
 ## Pré-flight §1 — Fonte oficial e referência de commit
 
@@ -222,59 +228,167 @@ GG Oferta
   compose permanecem claramente separados** — três repositórios/
   processos distintos (GG Oferta, César Core, OmniRoute), nunca um
   `compose.yaml` único misturando os três.
-- **Ainda em aberto** (não decidido aqui): protocolo exato GG Oferta ↔
-  César Core (HTTP interno? fila? biblioteca compartilhada?), e se
-  César Core é exclusivo do GG Oferta ou serve outros projetos do
-  usuário (o nome "infraestrutura central compartilhável" sugere que
-  sim, mas isso não foi confirmado explicitamente ainda).
+## Pré-flight §4 — Decisões fechadas pela arquitetura do César Core (aprovadas pelo usuário, 2026-08-30)
+
+Estas cinco decisões **encerram** os pontos 2 (parcialmente), 4, 5
+(parcialmente) e 6 das "7 perguntas do documento original" (seção
+histórica abaixo) e o protocolo GG Oferta ↔ César Core que ficara em
+aberto na correção de arquitetura anterior. Registradas aqui como
+decisão do usuário, não inferidas.
+
+### 1. Protocolo GG Oferta ↔ César Core
+
+**HTTP interno com API versionada** — nunca biblioteca Python
+compartilhada como contrato entre repositórios. Motivo explícito: César
+Core é processo/repositório independente e precisa poder servir
+futuramente aplicações implementadas em outras stacks (não só Python).
+
+Exemplo de superfície:
+```
+POST /v1/ai/generate
+POST /v1/search
+GET  /health
+GET  /ready
+GET  /v1/capabilities
+```
+
+Fila **não é** o transporte padrão pra IA/Search síncrono. Fila pode
+ser adicionada futuramente só para operações assíncronas específicas —
+não substitui o HTTP síncrono.
+
+### 2. Escopo do César Core
+
+**Multi-aplicação desde o nascimento** — não é um serviço interno
+exclusivo do GG Oferta que por acaso vive num repositório separado.
+Registro de aplicações desde o início: `gg_oferta = ACTIVE`,
+`claudiao = RESERVED / NOT_CONFIGURED`. GG Oferta é só o **primeiro
+consumidor**, não o único previsto. Esta pergunta está fechada — não
+deve ser reaberta em rodadas futuras.
+
+### 3. Contrato de Web Search
+
+**Contrato central genérico e neutro** — o César Core **não conhece**
+conceitos de domínio do GG Oferta (`MarketPriceAssessment`, `Offer`,
+`Product`, `Mission` etc.). É o **GG Oferta** quem traduz sua
+necessidade de negócio pro contrato genérico do César Core (query,
+filtros, tipo de busca), nunca o inverso. Isso também fecha a
+granularidade da abstração de Web Search: existe uma camada própria no
+GG Oferta (`WebSearchManager`, paralela ao `AI Provider Manager`) que
+faz essa tradução antes de chamar o César Core.
+
+### 4. Credenciais de provider (Gemini/Groq/OpenRouter/etc.)
+
+**Estado arquitetural final**: essas credenciais ficam configuradas no
+**OmniRoute**, não no GG Oferta. Depois da migração completa, o GG
+Oferta **não deve continuar armazenando permanentemente** credenciais
+individuais desses providers.
+
+**Durante o rollout**: as credenciais/implementações antigas (a cascata
+gratuita atual, `CLAUDE.md`) podem permanecer **temporariamente** como
+rollback/disaster fallback — documentado explicitamente aqui como
+**estado de transição, nunca arquitetura final**. Isso também fecha a
+pergunta 5 original (reconciliação com a cascata gratuita atual): a
+cascata direta vira mecanismo transitório de rollback, removível por
+feature flag, não uma peça permanente da arquitetura.
+
+### 5. Secrets do César Core
+
+César Core tem secrets **próprios**, separados dos do GG Oferta.
+Convenção V1: arquivos locais, suporte `*_FILE` (mesmo padrão já usado
+neste repositório), ACL apropriada, nunca em Git, nunca em log, **nunca
+compartilhar o diretório de secrets do GG Oferta** (`.secrets\` deste
+repositório fica exclusivo dele).
+
+## Pré-flight §5 — Arquitetura de fallback (migração e estado final)
+
+### Durante a migração (rollout)
+
+```
+GG Oferta
+  → AIProviderManager
+  → CesarCoreAIProvider
+  → César Core
+  → OmniRoute
+  → providers
+```
+
+Se o César Core/OmniRoute estiver **estruturalmente indisponível**, o
+`AIProviderManager` pode usar **temporariamente** a cascata direta
+antiga (Gemini → Groq → OpenRouter) — serve só como rollback/disaster
+fallback durante o rollout, removível por feature flag.
+
+**Regra explícita contra fallback duplicado**: se o OmniRoute respondeu
+e já executou seu próprio fallback interno (3 camadas, §2 acima), o GG
+Oferta **não** deve repetir Gemini/Groq/OpenRouter de novo por cima —
+isso duplicaria tentativas e mascararia qual camada realmente falhou.
+
+Mesma filosofia pra Search durante o rollout:
+```
+CesarCoreSearchProvider
+  → falha estrutural do César Core/OmniRoute
+  → FirecrawlSearchProvider direto (transitório/rollback, não arquitetura final)
+```
+
+### Estado final desejado (pós-migração)
+
+```
+GG Oferta
+  → AIProviderManager
+  → César Core
+  → OmniRoute
+  → providers
+```
+
+Sem `CesarCoreAIProvider` como camada de fallback-para-cascata-antiga
+nomeada — a cascata direta antiga deixa de existir como caminho de
+produção normal, só resta enquanto o feature flag de rollback estiver
+ativo. O mesmo vale para Search (sem `FirecrawlSearchProvider` direto
+como caminho padrão).
 
 ## Pré-flight §3 — Estado das 7 perguntas do documento original
 
-1. **O que é o OmniRoute de verdade** — ✅ respondida acima (§1/§2).
-2. **Fallback quando o OmniRoute está indisponível** — parcialmente
-   informada: o OmniRoute já resolve fallback *entre providers que ele
-   gerencia* (3 camadas, §2). Falta decisão do usuário só pro caso
-   "OmniRoute inteiro fora do ar" (cascata local de emergência vs. falha
-   explícita) — **decisão ainda em aberto, não assumida aqui**.
+*(Histórico — ver §4/§5 acima para o estado real e definitivo de cada
+uma após a arquitetura do César Core ser aprovada, 2026-08-30. Não
+reabrir as que já constam fechadas ali.)*
+
+1. **O que é o OmniRoute de verdade** — ✅ fechada (§1/§2).
+2. **Fallback quando o OmniRoute está indisponível** — ✅ fechada (§5).
 3. **Como declarar "requisito mínimo de qualidade/capacidade" por
-   chamada** — ainda em aberto; o contrato do OmniRoute não define isso
-   por si (é decisão de como o GG Oferta chama o `chat/completions`,
-   ex.: por `model` explícito vs. deixar o roteamento decidir).
-4. **Granularidade da abstração de Web Search** — ainda em aberto
-   (módulo novo dedicado vs. extensão do `AI Provider Manager`); agora
-   com o contrato real do `/v1/search` em mãos pra informar essa decisão.
-5. **Reconciliação com a cascata gratuita atual** (Gemini → Groq →
-   OpenRouter) — ainda em aberto; achado relevante: o OmniRoute tem
-   providers gratuitos nativos (Kiro, OpenCode Free, AnySearch) que
-   podem se sobrepor ou substituir parte dessa cascata — decisão de
-   política de custo cabe ao usuário, não a este pré-flight.
-6. **Onde ficam as chaves centralizadas no OmniRoute** — parcialmente
-   respondida, **atualizada após a correção de arquitetura acima**: a
-   chave de inferência (`sk-…`) do OmniRoute fica com o **César Core**
-   (dono da integração), não com o GG Oferta — o GG Oferta nem chega a
-   ver essa chave, só fala com o César Core. As chaves dos providers
-   individuais (Gemini, Groq etc.) migrariam pra dentro do próprio
-   OmniRoute (configuradas no dashboard dele). Onde/como o César Core
-   guarda seus próprios secrets (equivalente ao `.secrets\`/`*_FILE`
-   deste repositório) ainda não foi decidido — repositório novo, sem
-   convenção própria estabelecida ainda.
-7. **Critério de fuzzy/IA vs. regra determinística** — inalterado, seguem
-   valendo os guardrails já vigentes do projeto (ex.: Product Identity
-   Engine); o OmniRoute não influencia essa decisão.
+   chamada** — **segue em aberto**, ver "O que realmente continua em
+   aberto" abaixo.
+4. **Granularidade da abstração de Web Search** — ✅ fechada (§4.3):
+   `WebSearchManager`, módulo próprio paralelo ao `AI Provider Manager`.
+5. **Reconciliação com a cascata gratuita atual** — ✅ fechada (§4.4):
+   vira mecanismo transitório de rollback, não permanente.
+6. **Onde ficam as chaves centralizadas no OmniRoute** — ✅ fechada
+   (§4.4/§4.5): providers individuais ficam no OmniRoute; César Core
+   guarda só sua própria chave de inferência, secrets próprios (§4.5).
+7. **Critério de fuzzy/IA vs. regra determinística** — inalterado,
+   guardrails já vigentes do projeto continuam valendo; o OmniRoute/
+   César Core não influencia essa decisão (nunca foi uma pergunta real
+   sobre a integração, é só uma reafirmação).
 
-## Pré-flight — ainda faltando antes de fechar
+## O que realmente continua em aberto
 
-Decisões que só o usuário pode tomar (não inventadas aqui):
-- Fallback pro caso "OmniRoute inteiro indisponível" (pergunta 2).
-- Onde/como rodar o OmniRoute em produção (mesmo Windows Server via
-  Docker Compose existente é o caminho mais natural pelo que foi
-  encontrado, mas não é uma decisão já tomada).
-- Se as chaves dos providers individuais (Gemini/Groq/OpenRouter) migram
-  pra dentro do OmniRoute ou continuam só no GG Oferta com o OmniRoute
-  só roteando (pergunta 6).
-- Granularidade da abstração de Web Search (pergunta 4).
-- Política de custo final reconciliando a cascata gratuita atual com os
-  providers gratuitos nativos do OmniRoute (pergunta 5).
+Só o que de fato ainda precisa de escolha — nada mantido por inércia do
+documento antigo:
+
+1. **Como declarar "requisito mínimo de qualidade/capacidade" por
+   chamada** (ex.: precisa de function calling, visão, determinado nível
+   de raciocínio) através do contrato HTTP genérico do César Core, sem
+   reintroduzir no GG Oferta a complexidade que o OmniRoute deveria
+   absorver.
+2. **Como a política de custo (gratuito → free tier → pago) é expressa/
+   imposta no caminho novo** (GG Oferta → César Core → OmniRoute) em
+   regime permanente — ligado ao ponto 1; sabemos que a cascata antiga
+   vira só rollback transitório, mas o mecanismo permanente de "nunca
+   pago irrestrito sem necessidade real" pelo contrato genérico ainda
+   não foi definido.
+3. **Onde/como o OmniRoute e o César Core rodam em produção de fato**
+   (mesmo host físico do GG Oferta foi mencionado como possibilidade
+   inicial, nunca como decisão firme) e **como o César Core é
+   implantado/supervisionado** (Windows Service? Task Scheduler? Docker?
+   — repositório novo, sem convenção de deploy própria ainda).
 
 Nenhuma implementação de código, migration, secret ou config foi feita
 nesta rodada — só leitura/registro do pré-flight, conforme pedido.
@@ -336,8 +450,11 @@ Scraping avançado (quando Web Search não basta):
   Firecrawl só para busca (ex.: `market_research`, TASK-113).
 - Nova abstração de Web Search (módulo a definir no pré-flight).
 - `backend/app/core/config.py`/secrets — chaves hoje individuais por
-  provider podem ser substituídas por configuração de acesso ao
-  OmniRoute, mantendo o padrão `*_FILE` já vigente.
+  provider deixam de existir permanentemente aqui (`DEC-107`, §4.4);
+  substituídas por uma única credencial de acesso ao **César Core**
+  (nunca ao OmniRoute diretamente), mantendo o padrão `*_FILE` já
+  vigente. As credenciais individuais atuais podem continuar existindo
+  temporariamente como rollback (§5), atrás de feature flag.
 - Observabilidade/telemetria de chamadas de IA e busca já existente
   (`app/observability/`) — precisa continuar distinguindo provider,
   modelo, motivo de fallback, rota gratuita vs. paga, e chamadas que
@@ -346,29 +463,35 @@ Scraping avançado (quando Web Search não basta):
 ## Critérios de aceite
 
 - `AI Provider Manager` continua sendo o único ponto de acesso interno
-  à IA; nenhum módulo de domínio passa a chamar o OmniRoute ou um
-  provider diretamente.
-- Existe uma abstração interna própria para Web Search, com a mesma
-  disciplina de não vazar a API do OmniRoute para o domínio.
+  à IA; nenhum módulo de domínio passa a chamar o César Core, o
+  OmniRoute ou um provider diretamente (`DEC-107`, §4.1).
+- Existe uma abstração interna própria para Web Search
+  (`WebSearchManager`), com a mesma disciplina de não vazar o contrato
+  do César Core/OmniRoute para o domínio.
 - Política de custo (gratuito → free tier → pago) é respeitada e
   observável — dá para saber, por chamada, qual rota foi usada e por
-  quê.
+  quê. Mecanismo permanente pelo contrato genérico do César Core
+  **ainda em aberto** (ver "O que realmente continua em aberto").
 - Firecrawl deixa de ser usado para Web Search genérica; uso
   remanescente é só scraping avançado, auditável e reduzido em volume
-  real (não só em teoria).
-- Fallback seguro quando o OmniRoute está indisponível (mecanismo exato
-  a decidir no pré-flight) — nenhuma funcionalidade essencial do GG
-  Oferta trava por indisponibilidade externa sem alternativa.
+  real (não só em teoria). `FirecrawlSearchProvider` direto vira só
+  rollback transitório (§5), não caminho padrão.
+- Fallback seguro quando o César Core/OmniRoute está indisponível —
+  arquitetura decidida em §5 (rollback temporário pra cascata antiga,
+  removível por feature flag, sem fallback duplicado quando o OmniRoute
+  já executou o próprio fallback interno).
 - PROD e DEV continuam com credenciais e dados completamente separados;
-  nenhuma chave em código/repositório/log/Telegram.
-- Migração incremental: OmniRoute integrado atrás das abstrações
-  existentes primeiro, validado com uso real, só depois remoção de
-  infraestrutura antiga que se tornar redundante.
+  nenhuma chave em código/repositório/log/Telegram. Secrets do César
+  Core nunca compartilham diretório com os do GG Oferta (`DEC-107`, §4.5).
+- Migração incremental: César Core/OmniRoute integrado atrás das
+  abstrações existentes primeiro, validado com uso real, só depois
+  remoção do fallback transitório antigo (por feature flag).
 
 ## Riscos e pontos a decidir no pré-flight
 
-*(Lista original, mantida por histórico — ver "Pré-flight §3" acima para
-o estado real de cada uma após a investigação de 2026-08-30.)*
+*(Lista original, mantida por histórico — ver "Pré-flight §3/§4/§5"
+acima para o estado real e definitivo de cada uma, 2026-08-30. A maioria
+já está fechada; não reabrir.)*
 
 1. O que exatamente é o OmniRoute (API real, autenticação, contrato de
    requisição/resposta, SDK oficial ou HTTP direto) — nada disso pode
@@ -395,14 +518,19 @@ o estado real de cada uma após a investigação de 2026-08-30.)*
 
 ## Estratégia de migração (alto nível, sem interrupção)
 
-Integrar o OmniRoute atrás das abstrações já existentes primeiro
-(`AI Provider Manager` e a nova abstração de Web Search), sem remover
-nenhum provider/mecanismo atual. Validar comportamento real (provider
-usado, fallback, custo, disponibilidade) antes de qualquer remoção.
-Reduzir uso de Firecrawl para Web Search só depois da nova rota provada
-em produção. Remoção de infraestrutura antiga (providers individuais,
-uso de Firecrawl para busca) é etapa final, condicionada a validação —
-nunca simultânea à integração inicial.
+*(Arquitetura concreta de fallback/migração já decidida em "Pré-flight
+§5" acima — esta seção é o resumo de alto nível, consistente com ela.)*
+
+Integrar o César Core/OmniRoute atrás das abstrações já existentes
+primeiro (`AI Provider Manager` e `WebSearchManager`), sem remover
+nenhum provider/mecanismo atual — a cascata direta antiga vira rollback
+transitório atrás de feature flag (§5), não é removida na integração
+inicial. Validar comportamento real (provider usado, fallback, custo,
+disponibilidade) antes de qualquer remoção. Reduzir uso de Firecrawl
+para Web Search só depois da nova rota provada em produção. Remoção do
+fallback transitório antigo (providers individuais, uso de Firecrawl
+para busca) é etapa final, condicionada a validação — nunca simultânea
+à integração inicial.
 
 ## Testes (quando a TASK for implementada)
 

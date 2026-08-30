@@ -60,16 +60,50 @@
   gratuita (`costPerQuery: 0`) mas **ainda exige uma API key
   configurada** (`authType: "apikey"`) — não é um fallback sem
   configuração nenhuma.
-- **Das 7 perguntas originais da TASK-118**: a primeira (o que é o
-  OmniRoute) está respondida com evidência real; a segunda (fallback se
-  o OmniRoute cair) fica parcialmente respondida (o OmniRoute já resolve
-  fallback entre os providers que ele gerencia; falta só decisão do
-  usuário pro caso do OmniRoute inteiro cair); as demais 5 permanecem em
-  aberto, aguardando decisão explícita do usuário -- nenhuma foi
-  assumida ou decidida por conta própria nesta rodada.
-- **Nada implementado**: só leitura/registro do pré-flight, por
-  instrução explícita ("por enquanto você só vai atualizar documentação
-  e fazer pré-flight").
+- **Atualização mesma data — pré-flight aprovado conceitualmente,
+  decisões arquiteturais fechadas pelo usuário** (detalhe completo em
+  `docs/tasks/TASK-118.md`, "Pré-flight §4/§5"):
+  1. **Protocolo GG Oferta ↔ César Core**: HTTP interno com API
+     versionada (`POST /v1/ai/generate`, `POST /v1/search`, `GET
+     /health`, `GET /ready`, `GET /v1/capabilities`) -- nunca biblioteca
+     Python compartilhada (César Core precisa servir futuramente outras
+     stacks). Fila não é o transporte padrão pra IA/Search síncrono.
+  2. **Escopo do César Core**: multi-aplicação desde o nascimento
+     (`gg_oferta = ACTIVE`, `claudiao = RESERVED/NOT_CONFIGURED`) -- GG
+     Oferta é só o primeiro consumidor, pergunta fechada em definitivo.
+  3. **Contrato de Web Search**: genérico e neutro -- César Core nunca
+     conhece conceitos de domínio do GG Oferta (`MarketPriceAssessment`,
+     `Offer`, `Product`, `Mission`); tradução fica no `WebSearchManager`
+     do GG Oferta.
+  4. **Credenciais de provider**: Gemini/Groq/OpenRouter/etc. ficam no
+     OmniRoute; GG Oferta não armazena permanentemente essas chaves após
+     a migração. Durante rollout, a cascata direta antiga pode continuar
+     temporariamente como rollback/disaster fallback -- documentado
+     explicitamente como estado de transição, nunca arquitetura final.
+  5. **Secrets do César Core**: próprios, nunca compartilham diretório
+     com os do GG Oferta; V1 = arquivos locais, `*_FILE`, ACL própria,
+     nunca Git/log.
+  - **Arquitetura de fallback decidida**: durante a migração, `GG Oferta
+     → AIProviderManager → CesarCoreAIProvider → César Core → OmniRoute
+     → providers`, com rollback temporário pra cascata antiga só se o
+     César Core/OmniRoute estiver estruturalmente indisponível --
+     **nunca fallback duplicado** (se o OmniRoute já executou seu
+     próprio fallback interno, o GG Oferta não repete Gemini/Groq/
+     OpenRouter por cima). Mesma filosofia pra Search
+     (`CesarCoreSearchProvider` → `FirecrawlSearchProvider` direto como
+     rollback transitório). Estado final desejado, sem a camada de
+     rollback: `GG Oferta → AIProviderManager → César Core → OmniRoute
+     → providers`.
+  - Isso fecha as perguntas 2 (fallback), 4 (granularidade do Web
+    Search), 5 (reconciliação com a cascata gratuita) e 6 (onde ficam as
+    chaves) das "7 perguntas originais". Restam genuinamente em aberto:
+    como declarar requisito mínimo de qualidade/capacidade por chamada,
+    o mecanismo permanente de política de custo pelo contrato genérico, e
+    onde/como o César Core e o OmniRoute rodam de fato em produção.
+- **Nada implementado em nenhuma das duas rodadas**: só leitura/registro
+  do pré-flight, por instrução explícita ("por enquanto você só vai
+  atualizar documentação e fazer pré-flight"; depois, "não implementar
+  código ainda").
 
 ## DEC-106 — TASK-106: Coupon Collector evolui pra auto-configuração real, validado nas 4 lojas
 
