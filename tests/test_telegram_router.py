@@ -14,6 +14,7 @@ from app.main import app
 from app.missions.models import MissionStatus
 from app.missions.query import MissionReferenceError
 from app.missions.service import MissionCreationError, MissionTransitionConditionError
+from app.quotas import QuotaExceededError, QuotaKind
 from app.telegram.confirmation import ConfirmationError
 from app.telegram.contracts import TelegramChatType, TelegramMessage
 from app.telegram.limits import TelegramUpdateReservation
@@ -3208,6 +3209,56 @@ async def test_known_error_at_confirmed_execution_is_replied_and_clears_pending(
 async def test_unexpected_error_at_confirmed_execution_is_not_masked_and_propagates(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Qualquer erro de fato inesperado (não catalogado) continua subindo
+    sem virar sucesso nem resposta genérica -- diferente de
+    `MissionCreationError`/`QuotaExceededError`, que TASK-118/subtask 1
+    passaram a tratar explicitamente por serem erros de domínio
+    conhecidos (ver os testes abaixo)."""
+    fake_user = _fake_user(
+        pending_intent={
+            "kind": "create_mission",
+            "search_query": "notebook gamer",
+            "target_amount": None,
+            "target_currency": None,
+            "sources": [],
+        }
+    )
+    _patch_user(monkeypatch, fake_user)
+    _patch_resolve_answer(monkeypatch, True)
+
+    async def _raise(*args: object, **kwargs: object) -> object:
+        raise RuntimeError("conexão com o banco perdida no meio da transação")
+
+    monkeypatch.setattr(
+        "app.telegram.router.create_mission_from_criteria_async", _raise
+    )
+    adapter = _FakeAdapter(_intent())
+
+    with pytest.raises(RuntimeError, match="conexão com o banco"):
+        await receive_telegram_webhook(
+            update=_update(
+                message=_TelegramIncomingMessage(
+                    text="sim",
+                    date=1754586000,
+                    chat=_TelegramChat(id=222, type=TelegramChatType.PRIVATE),
+                    from_=_TelegramSender(id=222, first_name="Fulano"),
+                )
+            ),
+            x_telegram_bot_api_secret_token="correct-secret",
+            adapters=_adapters(adapter),  # type: ignore[arg-type]
+            settings=_settings(),
+            session=_async_session(),
+        )
+
+
+@pytest.mark.anyio
+async def test_mission_creation_error_at_confirmed_execution_is_replied_and_clears_pending(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regressão do bug relatado: antes desta correção, `MissionCreationError`
+    caía no `except Exception` genérico e subia sem resposta nenhuma ao
+    Telegram (silêncio total). Agora recebe a mesma mensagem amigável que
+    a Web já usa para o mesmo erro, sem vazar o texto técnico interno."""
     fake_user = _fake_user(
         pending_intent={
             "kind": "create_mission",
@@ -3226,23 +3277,148 @@ async def test_unexpected_error_at_confirmed_execution_is_not_masked_and_propaga
     monkeypatch.setattr(
         "app.telegram.router.create_mission_from_criteria_async", _raise
     )
+    send_calls = _patch_send_message(monkeypatch)
     adapter = _FakeAdapter(_intent())
 
-    with pytest.raises(MissionCreationError):
-        await receive_telegram_webhook(
-            update=_update(
-                message=_TelegramIncomingMessage(
-                    text="sim",
-                    date=1754586000,
-                    chat=_TelegramChat(id=222, type=TelegramChatType.PRIVATE),
-                    from_=_TelegramSender(id=222, first_name="Fulano"),
-                )
-            ),
-            x_telegram_bot_api_secret_token="correct-secret",
-            adapters=_adapters(adapter),  # type: ignore[arg-type]
-            settings=_settings(),
-            session=_async_session(),
-        )
+    response = await receive_telegram_webhook(
+        update=_update(
+            message=_TelegramIncomingMessage(
+                text="sim",
+                date=1754586000,
+                chat=_TelegramChat(id=222, type=TelegramChatType.PRIVATE),
+                from_=_TelegramSender(id=222, first_name="Fulano"),
+            )
+        ),
+        x_telegram_bot_api_secret_token="correct-secret",
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        settings=_settings(),
+        session=_async_session(),
+    )
+
+    assert response.status_code == 204
+    assert fake_user.pending_intent is None
+    assert (
+        send_calls[0][1]
+        == "Não foi possível criar a missão. Tente novamente mais tarde."
+    )
+    assert "pichau" not in send_calls[0][1]
+
+
+@pytest.mark.anyio
+async def test_quota_exceeded_error_at_mission_creation_is_replied_with_actions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regressão do bug relatado: `QuotaExceededError` também caía no
+    `except Exception` genérico e o usuário nunca sabia por que a missão
+    não foi criada."""
+    fake_user = _fake_user(
+        pending_intent={
+            "kind": "create_mission",
+            "search_query": "notebook gamer",
+            "target_amount": None,
+            "target_currency": None,
+            "sources": [],
+        }
+    )
+    _patch_user(monkeypatch, fake_user)
+    _patch_resolve_answer(monkeypatch, True)
+    error = QuotaExceededError(
+        QuotaKind.ACTIVE_MISSIONS,
+        limit=5,
+        current=5,
+        message="Você já tem 5/5 missões ativas.",
+        actions=("pause_mission", "cancel_mission", "manage_missions"),
+    )
+
+    async def _raise(*args: object, **kwargs: object) -> object:
+        raise error
+
+    monkeypatch.setattr(
+        "app.telegram.router.create_mission_from_criteria_async", _raise
+    )
+    send_calls = _patch_send_message(monkeypatch)
+    adapter = _FakeAdapter(_intent())
+
+    response = await receive_telegram_webhook(
+        update=_update(
+            message=_TelegramIncomingMessage(
+                text="sim",
+                date=1754586000,
+                chat=_TelegramChat(id=222, type=TelegramChatType.PRIVATE),
+                from_=_TelegramSender(id=222, first_name="Fulano"),
+            )
+        ),
+        x_telegram_bot_api_secret_token="correct-secret",
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        settings=_settings(),
+        session=_async_session(),
+    )
+
+    assert response.status_code == 204
+    assert fake_user.pending_intent is None
+    reply = send_calls[0][1]
+    assert "Você já tem 5/5 missões ativas." in reply
+    assert "/pausar" in reply
+    assert "/cancelar_missao" in reply
+    assert "/listar_missoes" in reply
+
+
+@pytest.mark.anyio
+async def test_quota_exceeded_error_at_mission_resume_is_replied_with_actions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mesmo bug, mas no caminho de `/retomar`: `transition_mission_async`
+    também pode levantar `QuotaExceededError` (RESUME reativa consumo de
+    cota) e passava pelo mesmo `except Exception` mudo."""
+    mission_id = uuid4()
+    fake_user = _fake_user(
+        pending_intent={
+            "kind": "mission_command",
+            "mission_id": str(mission_id),
+            "mission_title": "notebook gamer",
+            "command": "resume",
+            "expected_state_version": 1,
+        }
+    )
+    _patch_user(monkeypatch, fake_user)
+    _patch_resolve_answer(monkeypatch, True)
+    error = QuotaExceededError(
+        QuotaKind.ACTIVE_MISSIONS,
+        limit=5,
+        current=5,
+        message="Você já tem 5/5 missões ativas.",
+        actions=("pause_mission", "cancel_mission", "manage_missions"),
+    )
+
+    async def _raise(*args: object, **kwargs: object) -> object:
+        raise error
+
+    monkeypatch.setattr("app.telegram.router.transition_mission_async", _raise)
+    send_calls = _patch_send_message(monkeypatch)
+    adapter = _FakeAdapter(_intent())
+    session = _async_session()
+    session.get.return_value = SimpleNamespace(user_id=fake_user.id)
+
+    response = await receive_telegram_webhook(
+        update=_update(
+            message=_TelegramIncomingMessage(
+                text="sim",
+                date=1754586000,
+                chat=_TelegramChat(id=222, type=TelegramChatType.PRIVATE),
+                from_=_TelegramSender(id=222, first_name="Fulano"),
+            )
+        ),
+        x_telegram_bot_api_secret_token="correct-secret",
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        settings=_settings(),
+        session=session,
+    )
+
+    assert response.status_code == 204
+    assert fake_user.pending_intent is None
+    reply = send_calls[0][1]
+    assert "Você já tem 5/5 missões ativas." in reply
+    assert "/pausar" in reply
 
 
 @pytest.mark.anyio

@@ -73,6 +73,7 @@ from app.missions.query import (
 )
 from app.missions.service import (
     InvalidMissionTransitionError,
+    MissionCreationError,
     MissionEditConditionError,
     MissionNotFoundError,
     MissionTransitionConditionError,
@@ -85,6 +86,7 @@ from app.missions.service import (
 )
 from app.observability.metrics import observe_resilience_event
 from app.privacy.notice import PRIVACY_COMMAND, privacy_notice
+from app.quotas import QuotaExceededError
 from app.stores.models import Store
 from app.telegram.adapter import TelegramIntentAdapter
 from app.telegram.authentication import (
@@ -309,6 +311,39 @@ _KNOWN_DISPATCH_ERRORS = (
     MissionReferenceError,
     MissionIntentError,
 )
+
+_MISSION_CREATION_FAILED_REPLY = (
+    "Não foi possível criar a missão. Tente novamente mais tarde."
+)
+"""Mesma mensagem de `webapp/missions_router.py` para `MissionCreationError`
+-- a causa (loja da V1 não semeada) é uma falha operacional interna, nunca
+do usuário, então `str(error)` nunca é exposto no chat."""
+
+_QUOTA_ACTION_HINTS: dict[str, str] = {
+    "pause_mission": "pausar uma missão existente (/pausar)",
+    "cancel_mission": "cancelar uma missão que não usa mais (/cancelar_missao)",
+    "manage_missions": "ver suas missões (/listar_missoes)",
+    "reduce_mission_stores": "editar uma missão para usar menos lojas (/editar_missao)",
+    "wait_for_daily_reset": "tentar novamente amanhã",
+}
+
+
+def _describe_quota_error(error: QuotaExceededError) -> str:
+    """`error` já traz uma mensagem PT-BR pronta (`quotas/service.py`);
+    aqui só traduzimos `error.actions` (códigos usados pela Web para
+    montar botões) em sugestões de texto, já que o Telegram não tem
+    ação clicável equivalente."""
+    hints = [
+        _QUOTA_ACTION_HINTS[action]
+        for action in error.actions
+        if action in _QUOTA_ACTION_HINTS
+    ]
+    if not hints:
+        return str(error)
+    lines = [str(error), "", "O que você pode fazer:"]
+    lines.extend(f"• {hint}" for hint in hints)
+    return "\n".join(lines)
+
 
 _EDIT_MISSION_GUIDED_KINDS = (
     "await_edit_paused_choice",
@@ -847,6 +882,20 @@ async def _resolve_pending_intent(
             extra={"mission_error": type(error).__name__},
         )
         return str(error)
+    except QuotaExceededError as error:
+        user.pending_intent = None
+        logger.warning(
+            "telegram_webhook_mission_failed",
+            extra={"mission_error": type(error).__name__},
+        )
+        return _describe_quota_error(error)
+    except MissionCreationError as error:
+        user.pending_intent = None
+        logger.warning(
+            "telegram_webhook_mission_failed",
+            extra={"mission_error": type(error).__name__},
+        )
+        return _MISSION_CREATION_FAILED_REPLY
     except Exception:
         user.pending_intent = None
         raise
