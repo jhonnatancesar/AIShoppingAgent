@@ -29,8 +29,10 @@
   arquiteturalmente ao repositório/compose do GG Oferta. A cadeia
   aprovada é `GG Oferta → AIProviderManager/WebSearchManager → César
   Core → OmniRoute` — `cesar-core` é um **repositório novo e separado**
-  (mesmo padrão já aplicado ao Coupon Collector, `DEC-105`), dono da
-  integração com o OmniRoute; o GG Oferta só terá adapters/client do
+  (`https://github.com/jhonnatancesar/cesar-core.git`, confirmado
+  existente e vazio em 2026-08-30; mesmo padrão já aplicado ao Coupon
+  Collector, `DEC-105`), dono da integração com o OmniRoute; o GG Oferta
+  só terá adapters/client do
   César Core, nunca fala com o OmniRoute diretamente. Implantação pode
   coexistir no mesmo host físico desde o início, mas serviços/repos/
   compose ficam claramente separados.

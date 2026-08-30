@@ -202,9 +202,12 @@ GG Oferta
 
 - **OmniRoute é infraestrutura central compartilhável** — não fica
   arquiteturalmente acoplado ao `compose.yaml`/repositório do GG Oferta.
-- **`cesar-core` é um repositório novo, separado** (mesmo padrão já
-  aplicado ao Coupon Collector, `DEC-105`: repositório próprio, nunca
-  misturado ao GG Oferta) — é o **dono da integração com o OmniRoute**.
+- **`cesar-core` é um repositório novo, separado**
+  (`https://github.com/jhonnatancesar/cesar-core.git`, confirmado
+  existente e ainda vazio via `git ls-remote` em 2026-08-30 — mesmo
+  padrão já aplicado ao Coupon Collector, `DEC-105`: repositório
+  próprio, nunca misturado ao GG Oferta) — é o **dono da integração com
+  o OmniRoute**.
   Todo o código que fala HTTP direto com `/api/v1/chat/completions`,
   `/api/v1/search` etc. vive em `cesar-core`, nunca em
   `backend/app/ai_provider/` deste repositório.
