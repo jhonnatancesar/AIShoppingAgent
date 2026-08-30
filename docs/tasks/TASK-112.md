@@ -37,8 +37,13 @@ serialização real por banco (`SELECT ... FOR UPDATE` + reconsulta
 pós-lock, ordenada por `store_id`) -- corrida de pause/cancel concorrente
 corrigida e coberta por teste de concorrência real.
 
-Fase 3A concluída e commitada localmente (`471e898`, 2026-08-26, rodada
-4 de correções; `DEC-100`); publicação em `origin/main` ainda pendente.
+Fase 3A concluída, commitada (`471e898`, 2026-08-26, rodada
+4 de correções; `DEC-100`) e publicada em `origin/main`. Fase 3B também
+concluída e publicada (`9f95351`, `DEC-101`, ver §233 abaixo) — as
+quatro fases estão publicadas e implantadas em PROD (cascata
+`v1.2.0`-`v1.2.9` de 2026-08-28; confirmado por `git merge-base
+--is-ancestor` em 2026-08-30, corrigindo a nota anterior de "publicação
+pendente").
 Prova que UMA necessidade `(MonitoringItem, store)` executa UMA
 coleta real e distribui o resultado por fan-out individual de Mission.
 `CollectionCriteria` canônico (`app.products.identity.canonical_

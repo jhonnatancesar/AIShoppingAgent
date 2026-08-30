@@ -1,12 +1,14 @@
 # TASK-098 — Histórico e gráficos de preço por produto/variante
 
-Status: **CONCLUÍDA NO DEV (2026-08-27)** — backend
+Status: **CONCLUÍDA, publicada em `origin/main` (`e0ccea4`) e implantada
+em PROD** (parte da cascata `v1.2.0`-`v1.2.9` de 2026-08-28) — backend
 (`GET /api/v1/offers/{offer_id}/price-history`), frontend
 (`PriceHistoryChart`) e suíte de testes completos (unitários,
 integração PostgreSQL real com 10 cenários dedicados, `EXPLAIN ANALYZE`
 de índice contra volume sintético). Ver "Registro de implementação" no
-final deste documento. Publicação em `origin/main` pendente. Sem
-deploy — `PROD INTOCADA`.
+final deste documento. *(Nota 2026-08-30: este status estava registrado
+como "publicação pendente" até uma sincronização de documentação
+confirmar, por `git merge-base --is-ancestor`, que já estava publicado.)*
 
 ## Dependência obrigatória
 

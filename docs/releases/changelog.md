@@ -4,7 +4,102 @@
 TASK-108, TASK-109 concluídas nesse intervalo sem registro aqui) --
 ver `docs/internal/roadmap.md` para o histórico completo.*
 
-## 2026-08-26 — TASK-112 fase 3A: coleta compartilhada durável com fan-out individual (commitada localmente `471e898`, aguardando publicação em `origin/main`)
+*Nota (2026-08-30): as entradas de TASK-098/TASK-110/TASK-112 fase
+3A-3B/TASK-113 abaixo foram escritas retroativamente numa sessão de
+sincronização de documentação -- também um gap sem registro aqui até
+agora, mesmo padrão da nota acima. Todos os commits citados já estavam
+confirmadamente publicados em `origin/main` antes desta sincronização
+(`git merge-base --is-ancestor`).*
+
+## 2026-08-28 — Deploy da V1.2 em produção e correções pós-deploy (`v1.2.0` a `v1.2.9`)
+
+- release V1.2 implantada em produção; cascata de dez tags no mesmo dia,
+  todas descendentes lineares (`9ad49e1` → `517a5fe`);
+- `v1.2.1` (`DEC-103`): `host.docker.internal` não resolvia dentro dos
+  containers (DNS externo do `daemon.json`, herdado do incidente
+  Tailscale de 2026-08-20, também capturava os nomes mágicos
+  `*.docker.internal`) -- corrigido com `extra_hosts: host-gateway`
+  escopado só ao `ops_controller`;
+- `v1.2.2` (`DEC-104`): worker Windows nativo crashava no primeiro start
+  real por secret obrigatório ausente -- configuração padronizada por
+  `scripts\manage_collection_worker_config.ps1`; ACL de `.secrets\`
+  corrigida (`BUILTIN\Users` tinha leitura herdada indevida);
+- `v1.2.3` (`312bde8`, citado como TASK-114/115/116 nas mensagens de
+  commit, sem TASK formal -- mesmo padrão da TASK-093, `DEC-076`):
+  identidade de CPU deixa de classificar placa-mãe (X870E/B550) como
+  `Product category=cpu` só por menção de compatibilidade Ryzen/Intel
+  (suporte novo a Intel Core i3/i5/i7/i9); título/imagem do alerta e da
+  oferta na Web passam a usar o título bruto real da `PriceObservation`
+  em vez do nome do `Product` compartilhado; pré-lista passa a incluir
+  imagem por bloco/loja; script de reparo de histórico
+  (`repair_cpu_identity_misclassification.py`);
+- `v1.2.4`: corrige o próprio script de reparo (FK `offers.seller_id`
+  não resolvia por faltar `import Seller`);
+- `v1.2.5`: CSP `img-src` bloqueava toda imagem real de oferta no
+  browser -- allowlist adicionada para os hosts reais de PROD (Amazon,
+  KaBuM!, Pichau, Terabyte), nunca wildcard;
+- `v1.2.6` (TASK-116): corrige `TypeError` real numa coleta Kabum --
+  `resolve_product_market_mode` ainda chamava `_is_high_activity` com a
+  assinatura antiga; `HIGH_ACTIVITY` passa a ser chaveado por
+  `(store_id, scope_id)` em vez de loja inteira;
+- `v1.2.7`: corrige grid blowout da imagem do card de oferta no mobile;
+- `v1.2.8`: atalho "Entrar como admin" no login + item de navegação
+  condicional "Administração" na área do usuário;
+- `v1.2.9`: corrige corrida de navegação introduzida pelo atalho acima
+  (guard declarativo passa a ser única fonte de verdade do redirecionamento
+  pós-login).
+- `origin/main` em `517a5fe`; Alembic no head `20260828_0001`.
+
+## 2026-08-27 — TASK-113: avaliação inteligente de preço, pesquisa de mercado e qualidade dos alertas (`03b7370`, `8ad5709`)
+
+- absorve e implementa o item 17 da V1.2 (menor preço histórico externo);
+- `MarketPriceAssessment` (single-flight crash-safe por lease) e
+  `MissionProductAlertState` (checkpoint por `(mission_id, product_id)`,
+  chave por `product_id` via Product Identity Engine da TASK-097);
+- TTL/re-alert/material improvement determinísticos; Firecrawl (duas
+  buscas + fallback `/v2/scrape`) mais `AI Provider Manager`;
+- `/v2/search` validado ponta a ponta contra a API real da Firecrawl
+  (`success: true`, resultados reais Amazon/KaBuM); `/v2/scrape` validado
+  só por documentação e testes mockados;
+- decisão completa em `DEC-102`, detalhe em `docs/tasks/TASK-113.md`.
+
+## 2026-08-26 — TASK-112 fase 3B: fila justa unificada e política de cadência (`9f95351`)
+
+- `CollectionOrchestrator` de produção passa a chamar `claim_due_work`,
+  scheduler único que reserva fairness antes de qualquer lock de loja
+  (`FOR UPDATE SKIP LOCKED` real, não mais token comparado por
+  igualdade) e claima Mission solta + `MonitoringItem` numa lista única;
+- nova política de cadência (`app.collection.cadence`): NORMAL 45-75min,
+  PROMO_CALENDAR/HIGH_ACTIVITY 30-45min (piso absoluto), atividade
+  comercial detectada por loja a partir de `PriceObservation` já
+  persistida, sem IA;
+- migration `20260826_0001`; suíte de integração 152/152 (depois
+  corrigida para 166/166 pela TASK-116, ver entrada de 2026-08-28);
+- decisão completa em `DEC-101`.
+
+## 2026-08-27 — TASK-110: corrige `docs/architecture/providers.md` (`36351bd`)
+
+- tabela de fontes selecionáveis corrigida para as 6 reais (Pichau/
+  Terabyte/Amazon/Kabum/Magalu/Mercado Livre -- Magalu e Mercado Livre
+  estavam ausentes/como "Futuro");
+- transporte de navegador corrigido para Edge/CDP nativo Windows
+  (TASK-109), removendo a descrição obsoleta de Chromium headed/Xvfb/
+  Docker.
+
+## 2026-08-27 — TASK-098: histórico e gráficos de preço por produto/variante (`e0ccea4`)
+
+- último item da V1.2 (item 18, `DEC-081`/`DEC-082`);
+- `GET /api/v1/offers/{offer_id}/price-history` ancorado em `Offer`,
+  `PriceHistoryChart.tsx` integrado em `OfferDetailPage.tsx`;
+- unitários de aritmética de período/métricas, contrato HTTP + SQL
+  compilado, 10 cenários de integração contra PostgreSQL real e
+  `EXPLAIN ANALYZE` contra volume sintético confirmando que nenhum
+  índice novo foi necessário;
+- desvio do desenho aprovado corrigido durante os testes: resolução de
+  moeda passa a priorizar a observação da própria `Offer` âncora antes
+  de outras `Offer`s do `Product`.
+
+## 2026-08-26 — TASK-112 fase 3A: coleta compartilhada durável com fan-out individual (`471e898`)
 
 - uma necessidade `(MonitoringItem, store)` executa UMA coleta real
   (provider 1x, `Offer`/`PriceObservation` persistidos 1x) e distribui

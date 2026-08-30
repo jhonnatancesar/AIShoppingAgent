@@ -33,37 +33,52 @@ A V1 permite pesquisar Pichau, Terabyte, Amazon, Kabum, Magalu e Mercado Livre, 
 
 `docs/internal/project-context.md` registra o estado vivo; `docs/internal/roadmap.md` registra a ordem de trabalho; `docs/tasks/` contém o escopo unitário.
 
-## Continuidade no servidor — estado atual em 2026-08-20
+## Continuidade no servidor — estado atual em 2026-08-28
 
-O ambiente autoritativo é `C:\App\AIShoppingAgent`, no Windows Server. A
-`main` está em `df7609b446612ff106c150a72902c99306c3ab58` (tag
-`v1.0.10`), igual a `origin/main`. `v1.0.8` corrigiu o formato do link do
-Telegram ("Ver anúncio") com `parse_mode="HTML"`; `v1.0.9` corrigiu a
-causa raiz real (`AISHOPPING_AUTH_PUBLIC_BASE_URL` faltando no
-`telegram_notifier`). `v1.0.10` (`DEC-070`): diagnóstico dedicado (sem
-evasão) confirmou bloqueio persistente de Cloudflare Bot Management na
-Terabyte (`server: cloudflare`, `cf-mitigated: challenge`, cookie
-`__cf_bm`, 403 em homepage/busca/produto; Chrome comum no mesmo IP do
-servidor carrega normal, Playwright do coletor não). Duas ações: (1)
-**Terabyte desativada** (`stores.is_active=false`, ação de dados
-reversível, aplicada antes do deploy de código); (2)
-`TerabyteProvider.resolve_installment_options` removido -- quando
-reativada, a Terabyte não navega mais para página individual só por
-parcelamento, usa só o card (como Amazon/KaBuM!). Confirmado no container
-recém-implantado que o método já não existe e que `is_active` continua
-`false` depois do deploy (deploy de código nunca mexe em dado). Pichau,
-Amazon, KaBuM! inalterados. O head do
-Alembic continua
-`20260817_0001` (migration de `offer_installment_options`, aplicada com
-`alembic upgrade head` a partir de `20260811_0001`, passando por
-`20260816_0001`/`20260816_0002`). Backup operacional validado antes da
-migration (`backups/postgres-20260817T231541Z-pre-v1.0.7.dump`,
-restauração testada em banco de validação separado). TASK-077, TASK-084,
-TASK-088 e TASK-089 (com `DEC-069`) estão concluídas e publicadas;
-nenhuma TASK está pendente no momento. Apresentação Telegram já
-mostra `💰 À vista`/`💳 Parcelado` dinamicamente; interpretação de pedido
-de compra parcelada pelo usuário ("quero em 6x") foi explicitamente
-adiada para uma V2, sem código residual desta rodada. O WSL2 opera com
-limite de 4 GB, swap de 2 GB e reclaim gradual. Somente schedules de
-missões `active` podem ficar habilitados; `cancelled`, `completed` e
-`expired` ficam desabilitados.
+**Nota de proveniência:** este bloco foi reconstruído a partir do
+histórico Git (`origin/main`, tags, `docs/internal/decision-log.md`)
+numa sessão de sincronização de documentação, sem acesso SSH/RDP direto
+ao Windows Server nesta rodada. Os fatos abaixo são verificáveis por
+`git log`/`git tag`; as descrições de comportamento ao vivo em PROD
+citam o `DEC-` correspondente como fonte, não uma verificação própria
+desta sessão.
+
+A V1.2 foi implantada em produção em 2026-08-28 numa cascata de dez
+tags no mesmo dia, `v1.2.0` a `v1.2.9`, todas descendentes lineares
+umas das outras (sem divergência de histórico). `origin/main` está em
+`517a5fe` (`v1.2.9`); o head do Alembic é `20260828_0001` (migration
+`rescope_store_activity_state`). Resumo da cascata, do mais antigo ao
+mais recente: `v1.2.0`/`v1.2.1`/`v1.2.2` fecham lacunas operacionais do
+worker nativo Windows encontradas no próprio deploy — `DEC-103`
+(`host.docker.internal` não resolvia dentro dos containers; corrigido
+com `extra_hosts: host-gateway` só no `ops_controller`, sem mexer no
+DNS global) e `DEC-104` (worker crashava no primeiro start real por
+faltar secrets obrigatórios; padronizado por
+`scripts\manage_collection_worker_config.ps1`, e ACL de `.secrets\`
+corrigida para excluir `BUILTIN\Users` herdado). `v1.2.3` a `v1.2.9` são
+achados reais de PROD depois do deploy, sem TASK formal registrada em
+`docs/tasks/` (mesma lacuna já aceita para a TASK-093, `DEC-076`), mas
+citados como TASK-114/115/116 nas mensagens de commit — **não
+confundir com as TASK-117/TASK-118 atuais**, que tratam de assunto
+totalmente diferente (verificação de e-mail via Cloudflare Access e
+integração OmniRoute) e foram renumeradas justamente para não colidir
+com estes números já usados: placas-mãe X870E/B550 sendo classificadas
+como `Product category=cpu` (guard determinístico por frase de ligação
+em `products/identity.py`, reparo de histórico via
+`scripts/repair_cpu_identity_misclassification.py`); título/imagem do
+alerta e da oferta na Web passam a usar o título bruto real da
+`PriceObservation` em vez do nome do `Product` compartilhado; e
+`HIGH_ACTIVITY` deixou de ser detectado pela loja inteira e passou a
+ser chaveado por `(store_id, scope_id)`. As últimas quatro tags
+(`v1.2.5`/`v1.2.6`/`v1.2.7`/`v1.2.8`/`v1.2.9`) são correções pontuais de
+webapp encontradas ao vivo: CSP `img-src` bloqueando imagens reais das
+lojas, `TypeError` num caminho de coleta que ainda usava a assinatura
+antiga de `_is_high_activity`, grid do card de oferta estourando altura
+no mobile, e uma corrida de navegação no atalho "Entrar como admin".
+TASK-077, TASK-084, TASK-088, TASK-089, TASK-098, TASK-110, TASK-112
+(todas as fases) e TASK-113 estão concluídas e publicadas em
+`origin/main` — confirmado por `git merge-base --is-ancestor`, não só
+pela documentação, que estava desatualizada nesse ponto até esta
+sincronização. Terabyte (`DEC-070`) e o restante do estado de dados
+descrito na entrada anterior deste arquivo não foram reauditados nesta
+sessão — apenas o histórico de código/deploy foi confirmado.

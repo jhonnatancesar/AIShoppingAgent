@@ -1,7 +1,41 @@
 # Project Context
 
+**Estado da V1.2 (2026-08-30, sincronização de documentação) — release
+publicada e implantada em PROD, documentação estava atrasada:** esta
+entrada corrige as duas anteriores (mantidas abaixo por histórico), que
+diziam TASK-098/TASK-110/TASK-112 fase 3B/TASK-113 como "commitadas
+localmente, publicação pendente". Verificação por `git merge-base
+--is-ancestor` nesta sessão confirmou que todas já eram ancestrais de
+`origin/main` mesmo antes desta rodada -- a publicação de fato aconteceu,
+só a nota "pendente" nunca foi atualizada depois. Além disso,
+`origin/main` avançou 12 commits desde a última sincronização: uma
+cascata de dez tags no mesmo dia (`v1.2.0` a `v1.2.9`, 2026-08-28,
+`517a5fe`) implantou a V1.2 em PROD e registrou correções encontradas ao
+vivo depois do deploy -- `DEC-103` (`host.docker.internal` não resolvia
+dentro dos containers, corrigido com `host-gateway` escopado ao
+`ops_controller`), `DEC-104` (worker Windows nativo crashava no primeiro
+start por secret obrigatório ausente, padronizado por
+`scripts\manage_collection_worker_config.ps1`, mais correção de ACL de
+`.secrets\`), e um conjunto sem TASK formal citado como TASK-114/115/116
+nas mensagens de commit (mesmo padrão de lacuna já aceito para a
+TASK-093, `DEC-076`): identidade de CPU rejeitando placas-mãe
+mal-classificadas, título/imagem real da oferta em vez do nome
+compartilhado do `Product`, escopo do `HIGH_ACTIVITY` corrigido de "loja
+inteira" para `(store_id, scope_id)`, CSP de imagens, grid mobile e
+corrida no atalho de login admin. Detalhe completo em
+`docs/internal/roadmap.md` (tabela) e `docs/internal/decision-log.md`.
+**Importante:** TASK-114/115/116 (já usadas e publicadas) não têm
+relação com as TASK-117/TASK-118 registradas nesta mesma sessão
+(verificação de e-mail via Cloudflare Access e integração OmniRoute,
+ainda só desenho, sem código) -- os arquivos locais desses dois desenhos
+originalmente usavam os números 114/115 e foram renumerados justamente
+para não colidir com o trabalho acima, já publicado antes deles
+existirem. Esta sincronização foi só documental: nenhum código,
+migration ou dado foi alterado.
+
 **Estado da V1.2 (2026-08-27) — release acumulada pronta, ainda não
-publicada:** nenhuma TASK ativa de implementação da V1.2 permanece em
+publicada (nota: descrição de "publicação pendente" superada pela
+entrada acima -- a publicação já tinha acontecido):** nenhuma TASK ativa de implementação da V1.2 permanece em
 aberto. TASK-098 (histórico e gráficos de preço), TASK-110 (docs de
 providers), TASK-112 fase 3B (fila justa/cadência unificada) e TASK-113
 (avaliação inteligente de preço) estão concluídas localmente, sem
@@ -1652,3 +1686,76 @@ rodada em `docs/installation/secrets.md` — só a subseção de rotação dos
 dois estava faltando, agora adicionada. Nenhuma mudança funcional de
 coleta/dados — só infraestrutura de deploy do worker nativo. Ver
 `docs/tasks/TASK-109.md` para o registro completo.
+
+**Atualização 2026-08-28 (deploy da V1.2 em PROD, `v1.2.0` a `v1.2.9`,
+`DEC-103`/`DEC-104`):** depois do fechamento acima, a V1.2 foi
+implantada em produção. `v1.2.1` corrigiu `host.docker.internal` não
+resolvendo dentro de nenhum container -- causa raiz era o override de
+DNS externo (`1.1.1.1`/`8.8.8.8`) em `daemon.json`, herdado desde o
+incidente de Tailscale/MagicDNS de 2026-08-20, sendo também aplicado aos
+nomes mágicos `*.docker.internal`; corrigido com `extra_hosts:
+host-gateway` só no `ops_controller` (único consumidor de
+`WINDOWS_OPS_AGENT_URL`), validado com uma chamada HMAC `STATUS` real.
+`v1.2.2` fechou uma dívida já registrada em
+`windows-collection-worker.md` ("mecanismo de armazenamento local ainda
+não padronizado"): o worker crashava no primeiro start real por faltar
+`AISHOPPING_DATABASE_PASSWORD`/`AISHOPPING_GEMINI_API_KEY_ADMIN_DEV`;
+corrigido com `scripts\manage_collection_worker_config.ps1`
+(variáveis de Máquina do Windows para config não secreta, referências
+`*_FILE` para os mesmos arquivos de `.secrets\` já usados pelo Docker) e
+uma correção de ACL encontrada na mesma auditoria (`BUILTIN\Users`
+herdava leitura sobre `.secrets\`; restrito às três identidades reais:
+`Administrator`, `Administrators`, `SYSTEM`).
+
+`v1.2.3` (`312bde8`, citado nas mensagens de commit como TASK-114/115/116,
+sem arquivo formal -- mesmo padrão de lacuna já aceito para a TASK-093,
+`DEC-076`) resolveu três achados reais pós-deploy: (1) `_cpu()`/
+`_intel_cpu()` (`products/identity.py`) classificavam placas-mãe
+(X870E/B550) como `Product category=cpu` só por o título mencionar
+compatibilidade com Ryzen/Intel; corrigido com guard determinístico por
+frase de ligação e categoria auto-declarada (nunca IA/fuzzy, nunca regra
+de loja/modelo específica), com suporte novo a Intel Core i3/i5/i7/i9;
+`scripts/repair_cpu_identity_misclassification.py` repara o histórico já
+persistido (`--dry-run`/`--apply`, idempotente); (2)
+`resolve_offer_display_title()` (`app/offers/presentation.py`, novo) usa
+o título bruto real da `PriceObservation` em vez do nome do `Product`
+(identidade global, pode ser compartilhada por ofertas diferentes) na
+pré-lista, errata, alertas e nas páginas de oferta da Web; pré-lista
+passa a incluir a primeira imagem válida de cada bloco/loja; (3) a Web
+(`OfferDetailPage.tsx`) parou de reservar 320px vazios sem foto e moveu
+parcelamento/CTA para junto do preço. `v1.2.4` corrigiu o próprio script
+de reparo (`--apply` real em PROD quebrava por não importar o model
+`Seller`, necessário para o SQLAlchemy resolver a FK `offers.seller_id`
+no flush). Dois commits só de teste (`16631ee`/`d2dacf0`, sem tag nova)
+fecharam a cobertura de integração da mudança de cadência (20+23 testes
+novos contra PostgreSQL real).
+
+`v1.2.5` corrigiu a CSP: `img-src 'self' data:` bloqueava toda imagem
+real de oferta no browser (bloqueio client-side silencioso -- `curl`
+direto na URL sempre respondia 200, só o `<img>` real na SPA nunca
+carregava); allowlist adicionada só para os hosts reais levantados de
+`Offer.image_url` em PROD (Amazon, KaBuM!, Pichau, Terabyte -- Magalu e
+Mercado Livre ainda sem oferta real com imagem em PROD, não
+adicionados por não terem evidência real ainda), nunca wildcard
+genérico. `v1.2.6` (TASK-116) corrigiu um `TypeError` real numa coleta
+Kabum: `resolve_product_market_mode` ainda chamava `_is_high_activity`
+com a assinatura antiga, sem `scope_id`/`mission_ids` -- a correção
+estrutural da fase 3B (que mudou `HIGH_ACTIVITY` de "loja inteira" para
+`(store_id, scope_id)`) não tinha propagado para esse chamador.
+`v1.2.7` corrigiu um grid blowout da imagem do card de oferta no mobile
+(`min-h-0` na `<img>`, CSS Grid respeitando altura do container em vez
+do tamanho intrínseco da foto). `v1.2.8` adicionou um atalho "Entrar
+como admin" na tela de login (mesma autenticação, só muda o destino
+pós-login) e um item de navegação condicional "Administração" na área
+do usuário. `v1.2.9` corrigiu uma corrida introduzida pelo próprio
+atalho: o `navigate()` imperativo do handler e o guard declarativo no
+topo do componente disputavam o redirecionamento pós-login, e o guard
+sempre vencia, ignorando qual botão foi clicado -- corrigido removendo o
+`navigate()` imperativo, guard declarativo lendo um estado
+`destinationOverride` como única fonte de verdade.
+
+`origin/main` está em `517a5fe` (`v1.2.9`); Alembic no head
+`20260828_0001`. Esta entrada foi escrita numa sessão de sincronização
+de documentação (2026-08-30) a partir do histórico Git e do
+`decision-log.md` -- sem SSH/RDP direto ao Windows Server nesta rodada,
+sem alteração de código/migration/dado.

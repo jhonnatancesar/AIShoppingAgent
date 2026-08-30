@@ -1,6 +1,9 @@
 # TASK-110 — Atualizar `docs/architecture/providers.md`
 
-Status: **Formalizada (planejada, não iniciada).**
+Status: **CONCLUÍDA e publicada em `origin/main` (`36351bd`).** *(Nota
+2026-08-30: este status estava registrado como "planejada, não
+iniciada" até uma sincronização de documentação corrigir para o estado
+real, confirmado por `git log`/`git merge-base --is-ancestor`.)*
 
 ## Objetivo
 

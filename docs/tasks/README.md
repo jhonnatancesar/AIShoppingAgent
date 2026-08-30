@@ -13,12 +13,13 @@ product_id)`; evita Firecrawl/IA repetidos por Mission/usuário via
 Product Identity Engine, TASK-097 — nunca `MonitoringItem` genérico)
 com single-flight crash-safe, incluindo busca Firecrawl dedicada a
 histórico externo de preço. Implementação (código + migration
-`20260827_0001`) commitada localmente — commit principal `03b7370`,
-commit documental posterior `8ad5709`. `/v2/search` da Firecrawl
-validado ponta a ponta com chamada real à API de produção; `/v2/scrape`
-segue validado só contra documentação oficial e testes
-mockados/focados (não bloqueia a TASK). **Ainda sem push/deploy desta
-rodada acumulada — PROD continua intocada.** Ver `docs/tasks/TASK-113.md`.
+`20260827_0001`) — commit principal `03b7370`, commit documental
+posterior `8ad5709`. `/v2/search` da Firecrawl validado ponta a ponta
+com chamada real à API de produção; `/v2/scrape` segue validado só
+contra documentação oficial e testes mockados/focados (não bloqueia a
+TASK). **Concluída, publicada em `origin/main` e implantada em PROD**
+como parte da cascata `v1.2.0`-`v1.2.9` de 2026-08-28 (confirmado por
+`git merge-base --is-ancestor` em 2026-08-30). Ver `docs/tasks/TASK-113.md`.
 
 **Atividade atual (atualizada em 2026-08-27):** TASK-104A (Magalu) e
 TASK-104B (Mercado Livre) concluídas e publicadas em `origin/main`;
@@ -30,21 +31,29 @@ usuário — as dependências que a bloqueavam (TASK-107/TASK-108) já foram
 concluídas, retomada depende de novo pedido. TASK-107 (cotas) concluída e
 publicada. TASK-108 (fila justa/pacing) concluída e publicada em
 `origin/main`. TASK-109 (worker Windows nativo) concluída e publicada.
-TASK-110 (documentação de providers) concluída, commitada localmente
-(`36351bd`), publicação pendente. TASK-111 (asserção de teste) concluída
+TASK-110 (documentação de providers) concluída e publicada em
+`origin/main` (`36351bd`). TASK-111 (asserção de teste) concluída
 e publicada em `origin/main` (`471e898`, junto da TASK-112 fase 3A).
-TASK-112 (vínculo de missões/coleta compartilhada) **funcionalmente
-concluída** — fases 1/2/3A (`1dca734`/`5d05767`/`471e898`) publicadas em
-`origin/main`; fase 3B (`9f95351`) concluída localmente, publicação
-pendente. TASK-113 (avaliação inteligente de preço, absorve e implementa
-o item 17 da V1.2) **concluída no DEV**, commitada localmente (`03b7370`
-implementação, `8ad5709` documentação/validação Firecrawl), publicação
-em `origin/main` pendente. **TASK-098 (histórico e gráficos de preço,
-último item ativo da V1.2) concluída no DEV** (backend, frontend, testes
-unitários e de integração PostgreSQL real, `EXPLAIN ANALYZE`) —
-publicação em `origin/main` pendente. **Nenhuma TASK ativa de
-implementação da V1.2 permanece em aberto** — o que resta é só a
-publicação da release acumulada (TASK-110/112 fase 3B/113/098).
+TASK-112 (vínculo de missões/coleta compartilhada) **concluída** —
+todas as quatro fases, incluindo a 3B (`1dca734`/`5d05767`/`471e898`/
+`9f95351`), publicadas em `origin/main`. TASK-113 (avaliação inteligente
+de preço, absorve e implementa o item 17 da V1.2) **concluída e
+publicada** (`03b7370` implementação, `8ad5709` documentação/validação
+Firecrawl). **TASK-098 (histórico e gráficos de preço, último item da
+V1.2) concluída e publicada** (`e0ccea4`; backend, frontend, testes
+unitários e de integração PostgreSQL real, `EXPLAIN ANALYZE`). Todos os
+18 itens da V1.2 estão portanto publicados em `origin/main` **e
+implantados em produção**: `v1.2.0` a `v1.2.9` (2026-08-28, HEAD
+`517a5fe`) fizeram o deploy e fecharam achados reais de PROD sem TASK
+formal própria (citados como TASK-114/115/116 nas mensagens de commit —
+identidade de CPU, título/imagem real da oferta, escopo do
+HIGH_ACTIVITY por `(store, scope)`, CSP de imagens, layout mobile,
+atalho de login admin; detalhe em `docs/internal/roadmap.md` e
+`docs/internal/decision-log.md`, `DEC-103`/`DEC-104`). **Nenhuma TASK
+ativa de implementação da V1.2 permanece em aberto** — esta nota de
+"publicação pendente" ficou desatualizada por alguns dias e foi
+corrigida em 2026-08-30 (confirmado por `git merge-base
+--is-ancestor`, não só pela documentação anterior).
 
 **TASK-103 concluída e publicada (`610a997`):** comparação de Offers
 autorizadas do mesmo produto/variante global resolvido. Ver
@@ -67,11 +76,11 @@ Ver `docs/tasks/TASK-100.md` e `DEC-084`.
 fluxos de identidade da TASK-097, commit `e9610c3`. Ver `docs/tasks/TASK-099.md` e
 `DEC-083`.
 
-**TASK-098 concluída no DEV:** histórico e gráficos
+**TASK-098 concluída, publicada em `origin/main` (`e0ccea4`) e implantada
+em PROD** (parte da cascata `v1.2.0`-`v1.2.9`): histórico e gráficos
 exclusivamente por identidade global de produto/variante; movida para o
 último item da V1.2 pela `DEC-081`. Ver `docs/tasks/TASK-098.md`
 ("Registro de implementação") e `docs/architecture/price-history.md`.
-Publicação em `origin/main` pendente; sem deploy; PROD intocada.
 
 **TASK-097 concluída, aprovada e publicada:** identidade global
 determinística de produto/variante e escolha de variantes para pedidos genéricos

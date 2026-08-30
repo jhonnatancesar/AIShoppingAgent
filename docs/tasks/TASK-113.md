@@ -1,7 +1,12 @@
 # TASK-113 — Avaliação inteligente de preço, pesquisa de mercado e qualidade dos alertas
 
-Status: **DESENHO FECHADO (2026-08-27) — pronta para implementação
-futura, nenhuma linha de código/migration escrita ainda.** O pré-flight
+Status: **CONCLUÍDA, publicada em `origin/main` (`03b7370` implementação,
+`8ad5709` documentação/validação Firecrawl) e implantada em PROD**
+(parte da cascata `v1.2.0`-`v1.2.9` de 2026-08-28; confirmado por `git
+merge-base --is-ancestor` em 2026-08-30 — este status estava registrado
+como "desenho fechado, nenhuma linha de código escrita" até essa
+sincronização). Ver §39-42 para o registro real da implementação. O
+pré-flight
 (§32) foi executado (3 agentes de auditoria read-only) e revisado pelo
 usuário em três rodadas de correção; o resultado final, já aprovado,
 está em **§33 — Desenho final aprovado**, que é a fonte de verdade para
