@@ -1,5 +1,101 @@
 # Decision Log
 
+## DEC-106 — TASK-106: Coupon Collector evolui pra auto-configuração real, validado nas 4 lojas
+
+- **Data:** 2026-08-30.
+- **Classificação:** Continuação do `DEC-105` (repositório separado) --
+  registra a evolução real do Coupon Collector numa sessão intensa de
+  investigação ao vivo + implementação, tudo fora deste repositório
+  (`AIShoppingAgent-cupom`, já publicado em
+  `https://github.com/jhonnatancesar/AIShoppingAgent-cupom`, branch
+  `master`, HEAD `447de95`). Nenhum código deste repositório foi
+  alterado.
+- **Ponto de partida:** headless causava bloqueio 403 real em Magalu/
+  Mercado Livre (achado real, corrigido pra `--start-minimized`, mesma
+  escolha já validada pelo `EdgeCdpSupervisor` do `collection_worker`
+  principal -- nunca headless). Depois desse fix, Amazon e Magalu ainda
+  não achavam nenhum cupom real.
+- **Achados reais que exigiam investigação, não suposição** (diagnóstico
+  ao vivo do DOM real, sessão autenticada com conta de pesquisa dedicada
+  -- nunca a pessoal do usuário):
+  1. **Bug de arquitetura**: `browser.new_context()` por loja criava
+     contexto isolado tipo anônimo, sem os cookies do perfil dedicado --
+     login manual nunca "aparecia" pro scanner. Corrigido pra reaproveitar
+     `browser.contexts[0]` (contexto real do perfil), uma página nova por
+     loja, contexto nunca fechado.
+  2. **Amazon mudou de UI** desde a auditoria original do `DEC-093`: hoje
+     mostra só "Você paga R$X com o cupom" (preço final, clip coupon
+     automático, sem valor de desconto isolado declarado) -- o regex
+     antigo (`Cupom de R$X de desconto`) nunca batia com o fraseado real
+     atual. Nunca infere o desconto comparando com outro preço ambíguo do
+     card -- só a evidência literal do preço final.
+  3. **Magalu nunca tinha fonte de busca** (só home/ofertas, sem campanha
+     ativa no momento da investigação) -- as páginas de busca real
+     (mesma UX que o `MagaluSearchTransport` do projeto principal já usa)
+     têm cupom o tempo todo em várias categorias, e nunca eram visitadas.
+     Faltava também o regex de percentual (só valor fixo existia).
+  4. **Mercado Livre**: seletor genérico de produto nunca batia com os
+     cards REAIS de cupom (`div.coupon-card` na página `/cupons`, ~73 por
+     página; `.poly-card:has(.poly-coupons__wrapper)` no carrossel da
+     home). 4 fraseados reais confirmados (fixo/percentual, cupom antes/
+     depois do valor), incluindo campos extras já presentes na página
+     ("Compra mínima"/"Limite de") agora extraídos como
+     `minimum_purchase_amount`/`maximum_discount_amount` reais. Carrossel
+     tem lazy-load real (só 2 de 23 cards apareciam sem rolar a página).
+  5. **Marcador de bloqueio "captcha" com falso positivo**: qualquer
+     rodapé padrão "Protegido por reCAPTCHA" (ex.: tela de login do ML)
+     disparava bloqueio incorretamente. Marcadores agora exigem
+     linguagem de desafio ativo; matching de marcador ganhou normalização
+     de acento (NFKD) -- os marcadores em português nunca bateriam contra
+     o texto real acentuado antes disso.
+- **Decisão do usuário sobre ritmo**: fila sempre sequencial (já era),
+  mais pausa configurável entre interações
+  (`delay_between_requests_seconds`) e cooldown próprio na troca de loja
+  (`cooldown_between_stores_seconds`) -- nunca framed como evasão
+  anti-bot (que continua fora de escopo, `TASK-106.md`), e sim como ritmo
+  humano/respeitoso; a cadência normal já é de 1h/30min, sem pressa
+  nenhuma pra render qualquer coisa mais rápido.
+- **Decisão do usuário sobre "aprender"**: não bastava alertar sobre uma
+  possível fonte de cupom nova (ex.: badge "AQUI TEM 9.9", que só existe
+  durante campanha sazonal) -- tinha que **auto-configurar de verdade**,
+  sem precisar editar `config.json` manualmente (a janela de uma
+  promoção passa rápido demais pra depender de intervenção humana).
+  Implementado como descoberta + verificação determinística: link
+  candidato (texto curto + palavra-chave, nunca link de produto
+  individual) é visitado NA MESMA RODADA, roda a mesma extração de
+  evidência real já usada em qualquer fonte, e só é adotado (passa a ser
+  escaneado sozinho toda rodada futura) se achar cupom de verdade --
+  nunca confia no texto do link isolado, nunca é "IA decidindo", é
+  comparação determinística de evidência literal. Corrigido no caminho:
+  o mesmo banner promocional gerava uma URL de rastreamento diferente a
+  cada carregamento de página (`click1.mercadolivre.com.br/.../count?a=
+  <token>` mudando toda vez), o que fazia o mesmo candidato "descobrir"
+  de novo a cada rodada -- identidade do candidato passou a ser o texto
+  do badge (estável), e a URL adotada é o destino final já resolvido
+  (depois de seguir o redirecionamento de verdade), nunca o link frágil
+  original.
+- **Outras duas melhorias menores pedidas pelo usuário**: cupom `active`
+  que não é confirmado numa rodada completa (sem bloqueio/erro) vira
+  `expired` automaticamente (comparação real de histórico, não
+  inferência); texto literal de esgotamento/validade ("Está esgotando!",
+  "Vence amanhã", "Válido até X"), quando a página escrever isso, é
+  capturado e anexado à evidência -- genérico pra qualquer loja, nunca
+  calcula data relativa nem decide status estruturado sozinho.
+- **Validado ao vivo, sessão autenticada real** (não só sintaxe/lógica):
+  Amazon 0→18 evidências reais, Kabum 90 (já funcionava, mantido),
+  Magalu 0→24, Mercado Livre 0 (bloqueado)→148+ (carrossel + área de
+  cupons + descoberta automática). Login manual implementado via
+  `login_manual.py` -- abre o perfil dedicado numa URL pública, usuário
+  loga manualmente com conta de pesquisa dedicada (nunca a pessoal); o
+  script nunca digita nenhuma credencial.
+- **Login manual — nota de segurança**: o usuário confirmou
+  explicitamente que usou uma conta de pesquisa separada (não a pessoal)
+  justamente para isolar qualquer risco de bloqueio/banimento dessa
+  investigação da conta real.
+- **Publicado**: todos os commits (12 ao todo, do transporte Edge/CDP
+  inicial até a auto-configuração e a documentação atualizada do README)
+  já estão em `origin/master` do `AIShoppingAgent-cupom`.
+
 ## DEC-105 — TASK-106: Coupon Collector vive em repositório separado, nunca em `app/coupons/`
 
 - **Data:** 2026-08-30.

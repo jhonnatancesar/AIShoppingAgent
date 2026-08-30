@@ -47,7 +47,7 @@
 | Store Provider Mercado Livre | TASK-104B | Concluída e publicada em `origin/main` (`22a9062`); Playwright normal primário e Edge/CDP como último recurso (`DEC-091`) |
 | Store Provider Shopee | TASK-104C | Adiada; bloqueio anti-bot confirmado mesmo autenticado (Edge/CDP, login real, sessão persistente) — nenhum código de provider escrito (`DEC-092`) |
 | Reativação da Terabyte via Edge/CDP | TASK-105 | Concluída e publicada em `origin/main` (`31df942`); Cloudflare bloqueava só o Chromium gerenciado pelo Playwright — mesma infra CDP da Magalu reaproveitada como transporte primário/único, sem fallback Playwright; `stores.is_active` volta a `true` por migration (`20260822_0009`) |
-| Pesquisa de cupons | TASK-106 | **Retomada, em desenvolvimento fora deste repositório (`DEC-105`, 2026-08-30)** — arquitetura de subsistema independente (`DEC-093`, auditoria real Amazon/Kabum/Magalu/ML) preservada, mas o código vive num repositório separado (`AIShoppingAgent-cupom`, decisão explícita para desacoplamento fácil), Edge/CDP dedicado, validado ao vivo contra Kabum. Nenhum código deste repositório foi alterado |
+| Pesquisa de cupons | TASK-106 | **Retomada, desenvolvimento avançado fora deste repositório (`DEC-105`/`DEC-106`, 2026-08-30)** — arquitetura de subsistema independente (`DEC-093`, auditoria real Amazon/Kabum/Magalu/ML) preservada, código vive num repositório separado já publicado (`AIShoppingAgent-cupom`, decisão explícita para desacoplamento fácil). Validado ao vivo nas 4 lojas com sessão autenticada: Amazon 18, Kabum 90, Magalu 24, Mercado Livre 148+ evidências reais. Auto-configuração real (descobre e adota fonte de cupom nova sem editar config), expiração por ausência, hint de status/validade. Nenhum código deste repositório foi alterado |
 | Histórico e gráficos por produto/variante | TASK-098 | **Concluída e publicada em `origin/main`** — último item da V1.2 (`DEC-081`/`DEC-082`); backend, frontend e suíte de testes completa (unitários, integração PostgreSQL real, `EXPLAIN ANALYZE`); publicação confirmada por `git merge-base --is-ancestor` em 2026-08-30, faz parte do deploy `v1.2.0`-`v1.2.9` |
 | Cotas e capacidade por usuário | TASK-107 | Concluída e publicada em `origin/main` (`ac34725`/`faa939c`/`83a9572`/`d61951a`); `max_active_missions=5`, `max_store_slots=18`, `max_daily_searches=30`, nunca pausa/cancela automaticamente, UX obrigatória com ações contextuais, override por ADMIN (`DEC-094`) |
 | Fila justa e controle de carga | TASK-108 | **Concluída (2026-08-24) e publicada em `origin/main`** — fila justa por usuário (cooldown 1–3 min, `DEC-095`) reaproveitada do WIP sobre a arquitetura final da TASK-109; nova camada de pacing GLOBAL por loja (`StoreThrottleState`, auditoria confirmou que não existia antes) e config persistida editável pelo ADMIN (`CollectionQueueConfig`, sem depender só de `.env`); os 2 testes de integração legados que falhavam por um bug pré-existente não relacionado (dedupe da TASK-093 x contrato de alertas) voltaram a passar após a correção separada `DEC-097` (`742dcf2`, também publicada) |
@@ -380,8 +380,9 @@ V1.2) publicada. Todos os 18 itens da V1.2 estão portanto concluídos,
 publicados em `origin/main` e implantados em produção — confirmado por
 `git merge-base --is-ancestor` em 2026-08-30 (a documentação estava
 desatualizada nesse ponto até então, corrigida nesta sincronização).
-TASK-106 (cupons) segue em pausa por decisão do usuário, fora do escopo
-formal da V1.2. Depois do deploy, uma cascata de dez tags no mesmo dia
+TASK-106 (cupons) foi retomada (`DEC-105`/`DEC-106`, 2026-08-30) e está
+em desenvolvimento avançado, fora do escopo formal da V1.2 e fora deste
+repositório (`AIShoppingAgent-cupom`, já publicado). Depois do deploy, uma cascata de dez tags no mesmo dia
 (`v1.2.0` a `v1.2.9`) registrou correções operacionais e achados reais de
 PROD sem TASK formal própria — ver TASK-114/115/116 na tabela acima e
 `docs/internal/decision-log.md` (`DEC-103`/`DEC-104`) para o detalhe.

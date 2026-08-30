@@ -1,14 +1,20 @@
 # TASK-106 — Pesquisa de cupons
 
-Status: **Em desenvolvimento, fora deste repositório (`DEC-105`,
-2026-08-30, retifica `DEC-093`).** Código real existe e já foi validado
-ao vivo (Kabum, Edge/CDP dedicado — cupons reais encontrados e
-persistidos), mas vive num repositório totalmente separado
-(`https://github.com/jhonnatancesar/AIShoppingAgent-cupom.git`), nunca
-como `app/coupons/` aqui — decisão explícita do usuário, para poder
-desacoplar/mover para outra máquina sem tocar neste projeto. Nenhum
-código deste repositório foi alterado. Ver `DEC-105` para o detalhe
-completo da retificação arquitetural.
+Status: **Em desenvolvimento avançado, fora deste repositório (`DEC-105`/
+`DEC-106`, 2026-08-30, retifica `DEC-093`).** Validado ao vivo nas 4
+lojas com sessão autenticada real: Amazon 18, Kabum 90, Magalu 24,
+Mercado Livre 148+ evidências reais de cupom persistidas numa rodada.
+Inclui auto-configuração real (descobre e adota fonte de cupom nova,
+ex.: campanha sazonal "9.9", sem precisar editar config manualmente),
+expiração automática de cupom que some, e captura de hint de status/
+validade quando a página declarar. Vive num repositório totalmente
+separado, já publicado
+(`https://github.com/jhonnatancesar/AIShoppingAgent-cupom`, branch
+`master`) — nunca como `app/coupons/` aqui, decisão explícita do
+usuário, para poder desacoplar/mover para outra máquina sem tocar neste
+projeto. Nenhum código deste repositório foi alterado. Ver `DEC-105`
+(decisão de repositório separado) e `DEC-106` (evolução completa,
+achados reais e validação) para o detalhe.
 
 ## Objetivo
 
