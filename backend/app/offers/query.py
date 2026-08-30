@@ -53,6 +53,12 @@ class MissionOfferLink:
     offer: Offer
     product: Product
     store: Store
+    condition: OfferCondition | None
+    """`None` só quando a oferta ainda não tem nenhuma `PriceObservation`
+    (recém-descoberta, sem coleta de preço ainda) -- nunca confundir com
+    `OfferCondition.UNKNOWN` (observação existe, condição indeterminada).
+    Subtask 3 (auditoria GG Oferta): antes, a tela de missão nem carregava
+    esse dado."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -410,9 +416,17 @@ async def list_current_offer_links_for_mission(
         and criteria.variant_selection_mode is VariantSelectionMode.PENDING
     ):
         return ()
+    latest_observation_id = (
+        select(PriceObservation.id)
+        .where(PriceObservation.offer_id == Offer.id)
+        .order_by(PriceObservation.observed_at.desc(), PriceObservation.id.desc())
+        .limit(1)
+        .correlate(Offer)
+        .scalar_subquery()
+    )
     rows = (
         await session.execute(
-            select(Offer, Product, Store)
+            select(Offer, Product, Store, PriceObservation.condition)
             .join(Product, Product.id == Offer.product_id)
             .join(Store, Store.id == Offer.store_id)
             .join(
@@ -421,6 +435,9 @@ async def list_current_offer_links_for_mission(
             )
             .join(Mission, Mission.id == MissionOfferRelevance.mission_id)
             .outerjoin(MissionCriteria, MissionCriteria.mission_id == Mission.id)
+            .outerjoin(
+                PriceObservation, PriceObservation.id == latest_observation_id
+            )
             .where(
                 Mission.id == mission_id,
                 Mission.user_id == user_id,
@@ -433,11 +450,11 @@ async def list_current_offer_links_for_mission(
         )
     ).all()
     latest_seen_by_store: dict[UUID, datetime] = {}
-    for offer, _product, store in rows:
+    for offer, _product, store, _condition in rows:
         latest_seen_by_store.setdefault(store.id, offer.last_seen_at)
     return tuple(
-        MissionOfferLink(offer=offer, product=product, store=store)
-        for offer, product, store in rows
+        MissionOfferLink(offer=offer, product=product, store=store, condition=condition)
+        for offer, product, store, condition in rows
         if offer.last_seen_at == latest_seen_by_store[store.id]
     )
 

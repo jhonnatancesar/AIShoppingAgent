@@ -1,5 +1,79 @@
 # Decision Log
 
+## DEC-108 — Auditoria GG Oferta (subtask 3): condição Novo/Usado consolidada nas 6 lojas, supersede `DEC-076` para Pichau/Terabyte/KaBuM!
+
+- **Data:** 2026-08-30.
+- **Classificação:** Correção de regra de negócio (código + testes), sem
+  migration. Escopo: só condição Novo/Usado; não altera matching, imagem
+  ou qualquer outra parte do pipeline de coleta.
+- **Decisão anterior (`DEC-076`, 2026-08-22), citada aqui sem reescrever
+  história:** *"Na Amazon, a validação real confirmou a regra da
+  plataforma: ausência desses marcadores na oferta principal significa
+  `new`; **demais providers continuam `unknown` sem evidência**."* Ou
+  seja, `DEC-076` só previu o fallback "sem evidência = novo" para a
+  Amazon; todas as demais lojas (à época: Pichau, Terabyte, KaBuM!)
+  deveriam permanecer `unknown` sem evidência explícita. `TASK-104B`
+  (Mercado Livre) já havia estendido esse mesmo fallback para o Mercado
+  Livre, também documentado e não alterado aqui.
+- **Decisão nova, aprovada explicitamente pelo usuário nesta auditoria:**
+  Pichau, Terabyte e KaBuM! não vendem usado no escopo atual do GG
+  Oferta — a condição dessas três lojas passa a ser **sempre `NEW`**,
+  nunca `unknown`. Isto **substitui `DEC-076` especificamente para essas
+  três lojas** (Amazon e Mercado Livre continuam exatamente como
+  `DEC-076`/`TASK-104B` já definiam — nenhuma mudança nelas).
+- **Motivo:** decisão de produto — o próprio catálogo dessas lojas, no
+  escopo comercial atual da V1, não inclui oferta usada; `unknown` nessas
+  três só gerava ruído (rótulo "condição não identificada" sem nenhum
+  caso real de ambiguidade por trás).
+- **Comportamento atual (código):** `_FIXED_NEW_CONDITION = "Novo"` em
+  `backend/app/collection/providers/stores.py`, atribuído em `extract()`
+  de `PichauProvider`/`TerabyteProvider`/`KabumProvider` — nenhuma
+  tentativa de detecção, ao contrário de Amazon/Mercado Livre/Magalu (que
+  continuam procurando evidência real de usado/seminovo/recondicionado
+  antes de assumir novo). Teste de regressão dedicado:
+  `tests/test_store_providers.py::test_pichau_terabyte_kabum_are_always_new_condition`.
+- **Magalu — não é regressão, é a spec (`TASK-104A`) que ficou desatualizada:**
+  o fallback "sem evidência de usado = novo" da Magalu já estava correto
+  no código antes desta auditoria (`_magalu_card_condition`, mesmo
+  comportamento de Amazon/Mercado Livre); é o texto de `TASK-104A`
+  ("condição... só é preenchida com evidência real") que contradizia essa
+  regra e foi corrigido nesta data — ver nota no próprio arquivo.
+- **Magalu — evidência real de badge, registrada de forma durável (não
+  depende de nenhum arquivo local continuar existindo):**
+  - **Origem:** captura real ao vivo da própria sessão de validação da
+    TASK-104A, em 2026-08-22 (`offer.badges` do JSON SSR é capturado
+    desde então, mas nunca havia sido inspecionado para condição). A
+    captura original ficou em `tmp/magalu-edge-next-data.json`, uma pasta
+    **não versionada** — este parágrafo, e não o arquivo, é o registro
+    permanente do achado.
+  - **Valor observado:** `text: "produtousado"` (badge concatenado, sem
+    espaço) dentro de `badges: [{"imageUrl": "...", "text":
+    "produtousado"}]`.
+  - **Amostra:** 39 ofertas capturadas; **32 delas** traziam esse badge.
+  - **Correlação:** as **32** ofertas com o badge também tinham "Usado:"
+    no início do título. **Nenhum caso de badge USED isolado** (badge
+    presente sem "Usado:" no título, ou vice-versa) foi observado nesta
+    amostra.
+  - **Badge promocional, não de condição:** o único outro valor visto,
+    `"fazum21"`, é claramente uma campanha (mesmo padrão de selo já
+    documentado para cupons) — nunca tratado como sinal de condição.
+  - **Preservação da evidência:** o objeto do badge real foi copiado byte
+    a byte (confirmado por comparação direta) para dentro de um teste
+    versionado — `tests/test_store_providers.py::
+    test_magalu_used_badge_from_real_captured_evidence_marks_condition_used`
+    (badge real, título sem "Usado:", prova que o badge é fonte
+    independente) e `::test_magalu_promotional_badge_is_not_mistaken_for_condition`
+    (badge `"fazum21"`, confirma que não é lido como condição). Esses
+    testes são a evidência permanente; `tmp/magalu-edge-next-data.json`
+    pode ser apagado sem perda de rastreabilidade.
+  - **Implementação:** `_magalu_badge_condition()` em `stores.py`, checada
+    antes do título — defesa em profundidade para um título futuro sem o
+    prefixo "Usado:" (cenário não observado nesta amostra, mas plausível).
+- **Se uma auditoria futura encontrar Pichau/Terabyte/KaBuM! como
+  `unknown` de novo:** isso é regressão desta decisão (`DEC-108`), não um
+  comportamento a "restaurar" — a intenção correta e vigente é sempre
+  `NEW` para essas três lojas.
+
 ## DEC-107 — TASK-118: pré-flight do OmniRoute com fonte oficial fixada e contratos reais extraídos do código
 
 - **Data:** 2026-08-30.

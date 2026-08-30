@@ -27,6 +27,16 @@ Web e Telegram das lojas atuais. Condição, preço, parcelamento, avaliação e
 disponibilidade seguem os contratos compartilhados e só são preenchidos com
 evidência real.
 
+**Correção (`DEC-108`, 2026-08-30, auditoria GG Oferta subtask 3):** a frase
+acima sobre **condição** ficou desatualizada frente à regra definitiva
+aprovada nesta data — não muda o código (o fallback já era este na prática),
+só corrige a especificação escrita. A regra vigente para Magalu é a mesma de
+Amazon/Mercado Livre: evidência real de usado/seminovo/recondicionado →
+condição correspondente; ausência de evidência → `NEW` (nunca `unknown`).
+Vendedor/entrega (linha acima, "Regra própria da origem") não mudam — ausência
+de evidência de `seller_kind`/`fulfillment_kind` continua `unknown`, nunca
+presumida.
+
 A avaliação continua sendo um snapshot da própria `Offer` na Magalu:
 `rating_average` e `review_count` somente são preenchidos juntos quando a
 origem os publicar; ausência de evidência permanece `NULL`, nunca zero.

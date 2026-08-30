@@ -179,7 +179,15 @@ def _observation_for(
     *,
     field: str = "observation_id",
     kind: MarketplacePartyKind | None = None,
+    condition: OfferCondition | None = OfferCondition.UNKNOWN,
 ) -> PriceObservation:
+    """`condition` default é `UNKNOWN` de propósito (subtask 3, revisão):
+    neutro para os testes que não são sobre condição, sem fingir "Novo"
+    quando isso não faz parte do que o teste está verificando. Passar
+    `condition=None` (fora do enum, só possível num objeto em memória,
+    nunca persistido de verdade -- `PriceObservation.condition` é
+    NOT NULL) serve para provar que o renderer do Telegram não quebra
+    mesmo nesse caso adversário."""
     return PriceObservation(
         id=uuid4() if field not in event.payload else UUID(str(event.payload[field])),
         offer_id=offer.id,
@@ -187,6 +195,7 @@ def _observation_for(
         amount="1.00",
         currency="BRL",
         total_amount="1.00",
+        condition=condition,
         availability="available",
         observed_at=NOW,
         seller_kind=kind,
@@ -906,6 +915,10 @@ async def test_prelist_ready_sends_one_block_when_only_one_store_answered(
     assert "R$ 1.900,00" in sent[0]
     assert store.name in sent[0]
     assert sent[0].count("🏪") == 1  # só uma loja respondeu ainda
+    # subtask 3: condição sempre presente na pré-lista, mesmo quando o
+    # fixture não define uma condição específica (default neutro UNKNOWN)
+    # -- nunca "Novo" inventado, nunca KeyError.
+    assert "📋 Condição não identificada" in sent[0]
     assert "Frete não incluído. Consulte o valor na loja." in sent[0]
     attempt = session.add.call_args.args[0]
     assert attempt.consumer_name == TELEGRAM_PRELIST_CONSUMER
@@ -1028,6 +1041,9 @@ async def test_prelist_errata_message_frames_correction_vs_first_find(
     assert result.succeeded == 1
     assert "ATUALIZAÇÃO DA PRÉ-LISTA" in sent[0]
     assert "R$ 1.500,00" in sent[0]
+    # subtask 3: condição sempre presente, mesmo com o default neutro do
+    # fixture (UNKNOWN) -- nunca "Novo" inventado, nunca KeyError.
+    assert "📋 Condição não identificada" in sent[0]
     assert "Frete não incluído. Consulte o valor na loja." in sent[0]
 
 
@@ -1321,6 +1337,59 @@ async def test_alert_omits_installment_line_when_offer_has_no_confirmed_option(
     text = sent[0]
     assert "💳" not in text
     assert "💰 À vista: R$ 4.499,90\n↘️ Preço anterior" in text
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("condition", "expected_label"),
+    [
+        (OfferCondition.NEW, "📋 Novo"),
+        (OfferCondition.USED, "📋 Usado"),
+        (OfferCondition.REFURBISHED, "📋 Recondicionado"),
+        (OfferCondition.UNKNOWN, "📋 Condição não identificada"),
+        # `None` não é um estado real de `PriceObservation.condition`
+        # (coluna NOT NULL) -- só é alcançável num objeto em memória fora
+        # do fluxo normal. Prova que o renderer nunca levanta KeyError
+        # mesmo nesse caso adversário, reaproveitando o texto canônico de
+        # UNKNOWN em vez de inventar "Novo" ou quebrar (revisão pedida na
+        # subtask 3).
+        (None, "📋 Condição não identificada"),
+    ],
+)
+async def test_alert_shows_condition_line(
+    monkeypatch: pytest.MonkeyPatch,
+    condition: OfferCondition | None,
+    expected_label: str,
+) -> None:
+    """Subtask 3 (auditoria GG Oferta): o alerta principal (o mais comum) não
+    imprimia condição -- o dado já chegava até aqui, só faltava no template."""
+    user = _user()
+    mission = _mission(user)
+    event = _event(mission, event_type="price.decreased.v1")
+    offer, product, store = _offer_context()
+    session_factory, session = _fake_session_factory()
+    observation = _observation_for(
+        event, offer, kind=MarketplacePartyKind.PLATFORM, condition=condition
+    )
+    session.get.side_effect = [mission, user, offer, product, store, observation, event]
+    session.scalars = AsyncMock(return_value=[])
+    monkeypatch.setattr(
+        "app.telegram.notifications.claim_unconsumed_events_async",
+        AsyncMock(return_value=[event]),
+    )
+    sent: list[str] = []
+
+    async def _send(chat_id: int, text: str, *, bot_token, **kwargs: object) -> None:
+        sent.append(text)
+
+    monkeypatch.setattr("app.telegram.notifications.send_message", _send)
+
+    result = await process_telegram_notifications(
+        session_factory, bot_token=SecretStr("token")
+    )
+
+    assert result.succeeded == 1
+    assert expected_label in sent[0]
 
 
 @pytest.mark.anyio

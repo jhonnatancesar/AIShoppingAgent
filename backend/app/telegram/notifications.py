@@ -901,6 +901,7 @@ def _render_alert(
         raise TelegramNotificationError("notification_payload_invalid")
     display_name = html.escape(resolve_offer_display_title(product, observation))
     mission_title_safe = html.escape(mission_title)
+    condition_line = f"📋 {_condition_label(observation.condition)}\n"
     marketplace_line = _marketplace_party_line(store, observation)
     rating_line = _rating_line(offer)
     link_line = _telegram_link(short_url)
@@ -915,6 +916,7 @@ def _render_alert(
                 "📉 O PREÇO CAIU\n\n"
                 f"{display_name}\n\n"
                 f"🏪 {html.escape(store.name)}\n"
+                f"{condition_line}"
                 f"{marketplace_line}"
                 f"{rating_line}"
                 f"💰 À vista: {format_money(current_total, currency)}\n"
@@ -932,6 +934,7 @@ def _render_alert(
                 "🔥 PREÇO-ALVO ENCONTRADO\n\n"
                 f"{display_name}\n\n"
                 f"🏪 {html.escape(store.name)}\n"
+                f"{condition_line}"
                 f"{marketplace_line}"
                 f"{rating_line}"
                 f"💰 À vista: {format_money(current_total, currency)}\n"
@@ -1093,6 +1096,7 @@ async def _render_prelist_block_async(
     text = (
         prefix + f"{number} {display_name}\n"
         f"🏪 {html.escape(store.name)}\n"
+        f"📋 {_condition_label(observation.condition)}\n"
         f"{_marketplace_party_line(store, observation)}"
         f"{_rating_line(offer)}"
         f"💰 À vista: {format_money(amount, currency)}\n"
@@ -1215,6 +1219,7 @@ async def _render_prelist_errata_async(
         f"{note}\n\n"
         f"1️⃣ {display_name}\n"
         f"🏪 {html.escape(store.name)}\n"
+        f"📋 {_condition_label(observation.condition)}\n"
         f"{_marketplace_party_line(store, observation)}"
         f"{_rating_line(offer)}"
         f"💰 À vista: {format_money(current_amount, currency)}\n"
@@ -1232,6 +1237,16 @@ _CONDITION_LABELS = {
     OfferCondition.USED: "Usado",
     OfferCondition.UNKNOWN: "Condição não identificada",
 }
+
+
+def _condition_label(condition: OfferCondition | None) -> str:
+    """`PriceObservation.condition` é `NOT NULL` no banco (sempre um dos 4
+    membros do enum) -- `None` não é um estado real de domínio, só podia
+    vir de um objeto construído fora do fluxo normal. Mesmo assim, nunca
+    levanta `KeyError`: qualquer valor fora do enum reaproveita o mesmo
+    texto canônico de `UNKNOWN` ("condição não identificada"), nunca
+    inventa "Novo" nem omite silenciosamente o problema."""
+    return _CONDITION_LABELS.get(condition, _CONDITION_LABELS[OfferCondition.UNKNOWN])
 _AVAILABILITY_LABELS = {
     Availability.AVAILABLE: "✅ Disponível",
     Availability.UNKNOWN: "⚪ Disponibilidade não confirmada",

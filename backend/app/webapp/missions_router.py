@@ -25,6 +25,7 @@ from app.authorization import (
     authorize,
     deny_resource_unavailable,
 )
+from app.collection.contracts import OfferCondition
 from app.core.config import get_settings
 from app.core.errors import ApiError
 from app.database.dependency import get_web_async_session
@@ -145,6 +146,9 @@ class MissionOfferLinkOut(BaseModel):
     store_code: str
     store_name: str
     last_seen_at: str
+    condition: OfferCondition | None
+    """`None` só quando a oferta ainda não tem nenhuma observação de preço
+    -- nunca inventado. Ver `app.offers.query.MissionOfferLink.condition`."""
 
 
 class MissionDetailResponse(BaseModel):
@@ -400,6 +404,7 @@ def _as_detail(
                 store_code=item.store.code,
                 store_name=item.store.name,
                 last_seen_at=item.offer.last_seen_at.isoformat(),
+                condition=item.condition,
             )
             for item in offer_links
         ],

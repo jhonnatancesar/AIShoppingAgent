@@ -152,6 +152,7 @@ export interface MissionOfferLink {
   store_code: string
   store_name: string
   last_seen_at: string
+  condition: OfferCondition | null
 }
 
 export interface MissionDetail extends MissionSummary {

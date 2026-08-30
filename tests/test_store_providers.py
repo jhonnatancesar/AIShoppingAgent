@@ -111,6 +111,31 @@ def test_extracts_sanitized_store_card(
     assert offers[0].evidence["card_text"]
 
 
+@pytest.mark.parametrize(
+    "provider_type", [PichauProvider, TerabyteProvider, KabumProvider]
+)
+def test_pichau_terabyte_kabum_are_always_new_condition(provider_type) -> None:
+    """Subtask 3 (auditoria GG Oferta): Pichau/Terabyte/KaBuM! não vendem
+    usado no escopo atual -- condição é sempre NEW, nunca UNKNOWN, e
+    nunca inferida por preço ou qualquer outro sinal (decisão que
+    substitui `DEC-076` especificamente para essas três lojas)."""
+    html = next(
+        html for candidate, html, _eid, _img in CASES if candidate is provider_type
+    )
+
+    async def scenario():
+        async with BrowserSession() as session:
+            page = await session.new_page()
+            await page.set_content(html)
+            return await provider_type().extract(page, NOW)
+
+    offer = asyncio.run(scenario())[0]
+    normalized = PriceNormalizer().normalize_offer(offer)
+
+    assert offer.raw_condition == "Novo"
+    assert normalized.condition is OfferCondition.NEW
+
+
 def test_amazon_uses_only_explicit_shipping_and_availability_evidence() -> None:
     html = (
         '<div data-component-type="s-search-result" data-asin="B0E2E">'
@@ -185,6 +210,9 @@ def test_magalu_card_without_rating_preserves_unknown_instead_of_zero() -> None:
 
     assert normalized.rating_average is None
     assert normalized.review_count is None
+    # Subtask 3: sem marcador de usado/seminovo/recondicionado no título,
+    # a condição é NEW -- nunca UNKNOWN, nunca inferida pelo preço.
+    assert normalized.condition is OfferCondition.NEW
 
 
 def test_mercado_livre_extracts_multiple_cards_and_only_explicit_evidence() -> None:
@@ -227,14 +255,20 @@ def test_mercado_livre_extracts_multiple_cards_and_only_explicit_evidence() -> N
                     seller="Trocafy",
                     condition="Recondicionado",
                 )
+                + card(
+                    "MLB300",
+                    seller="Trocafy",
+                    condition="Usado",
+                )
             )
             return await MercadoLivreProvider().extract(page, NOW)
 
     offers = asyncio.run(scenario())
     first = PriceNormalizer().normalize_offer(offers[0])
     second = PriceNormalizer().normalize_offer(offers[1])
+    third = PriceNormalizer().normalize_offer(offers[2])
 
-    assert len(offers) == 2
+    assert len(offers) == 3
     assert offers[0].seller_kind is MarketplacePartyKind.PLATFORM
     assert first.condition is OfferCondition.NEW
     assert first.rating_average == Decimal("4.8")
@@ -243,6 +277,9 @@ def test_mercado_livre_extracts_multiple_cards_and_only_explicit_evidence() -> N
     assert second.condition is OfferCondition.REFURBISHED
     assert second.rating_average is None
     assert second.review_count is None
+    # Subtask 3: badge estruturado `.poly-component__item-condition` com
+    # "Usado" -> OfferCondition.USED (evidência real, não inferida).
+    assert third.condition is OfferCondition.USED
 
 
 def test_mercado_livre_edge_is_primary_and_playwright_never_touched(
@@ -524,6 +561,103 @@ def test_magalu_search_uses_ssr_json_and_returns_multiple_without_playwright(
     assert result.offers[1].raw_review_count is None
 
 
+def _magalu_offer_item(*, title: str, badges: list) -> dict:
+    return {
+        "id": "product-1",
+        "offerId": "offer-1",
+        "path": "/produto-1/p/product-1/",
+        "title": title,
+        "image": "https://a-static.mlcdn.com.br/{w}x{h}/item-1.jpg",
+        "available": True,
+        "offers": [
+            {
+                "seller": {"id": "magazineluiza"},
+                "bestPrice": {"totalAmount": 3299},
+                "bestInstallmentPlan": {
+                    "installment": 10,
+                    "installmentAmount": 329,
+                    "totalAmount": 3299,
+                    "paymentMethodDescription": "sem juros",
+                },
+                "badges": badges,
+            }
+        ],
+    }
+
+
+def _collect_magalu_single_offer(item: dict) -> RawCollectedOffer:
+    html = (
+        '<script id="__NEXT_DATA__" type="application/json">'
+        + json.dumps({"props": {"pageProps": {"data": {"search": {"items": [item]}}}}})
+        + "</script>"
+    )
+
+    class StaticTransport:
+        async def fetch_html(self, url: str) -> str:
+            return html
+
+    provider = MagaluProvider(
+        clock=lambda: NOW,
+        search_transport=StaticTransport(),
+        availability_fallback_max_candidates=0,
+    )
+    request = CollectionRequest(
+        source_code="magalu",
+        search_query="Galaxy S24 Ultra",
+        requested_at=NOW,
+        mission_id=uuid4(),
+    )
+    result = asyncio.run(provider.collect(request))
+    return result.offers[0]
+
+
+def test_magalu_used_badge_from_real_captured_evidence_marks_condition_used() -> None:
+    """Subtask 3: badge real capturado ao vivo em `tmp/magalu-edge-next-data.json`
+    (sessão de validação da TASK-104A) -- `{"text": "produtousado", ...}`.
+    Título deliberadamente SEM "usado" para provar que o badge é uma fonte
+    de evidência independente do título, não apenas redundante com ele."""
+    item = _magalu_offer_item(
+        title="Samsung Galaxy S24 Ultra 512GB Titânio Cinza",
+        badges=[
+            {
+                "imageUrl": (
+                    "https://i.mlcdn.com.br/selo-ml/{w}x{h}/"
+                    "d3ae6610-3a09-11ef-8d27-3eaeed8b6162.png"
+                ),
+                "text": "produtousado",
+            }
+        ],
+    )
+
+    offer = _collect_magalu_single_offer(item)
+    normalized = PriceNormalizer().normalize_offer(offer)
+
+    assert normalized.condition is OfferCondition.USED
+
+
+def test_magalu_promotional_badge_is_not_mistaken_for_condition() -> None:
+    """O único outro valor de badge visto na amostra real (`fazum21`,
+    claramente promocional -- mesmo padrão de selo de campanha citado em
+    `DEC-` do Coupon Collector) não deve ser interpretado como condição."""
+    item = _magalu_offer_item(
+        title="Samsung Galaxy S24 Ultra 512GB Titânio Cinza",
+        badges=[
+            {
+                "imageUrl": (
+                    "https://i.mlcdn.com.br/selo-ml/{w}x{h}/"
+                    "9a91b0e6-7a99-11ef-983d-1a6882f79d62.png"
+                ),
+                "text": "fazum21",
+            }
+        ],
+    )
+
+    offer = _collect_magalu_single_offer(item)
+    normalized = PriceNormalizer().normalize_offer(offer)
+
+    assert normalized.condition is OfferCondition.NEW
+
+
 def test_magalu_transport_failure_does_not_use_playwright_fallback(monkeypatch) -> None:
     calls = 0
 
@@ -632,6 +766,36 @@ def test_magalu_detail_reuses_structured_condition_and_availability() -> None:
             )
 
     assert asyncio.run(scenario()) == ("Novo", "Disponível")
+
+
+@pytest.mark.parametrize(
+    ("provider_type", "schema_condition", "expected_label"),
+    [
+        (MagaluProvider, "UsedCondition", "Usado"),
+        (MercadoLivreProvider, "NewCondition", "Novo"),
+        (MercadoLivreProvider, "UsedCondition", "Usado"),
+    ],
+)
+def test_marketplace_detail_condition_from_structured_data(
+    provider_type, schema_condition, expected_label
+) -> None:
+    """Subtask 3: Magalu e Mercado Livre usam o mesmo mapeamento JSON-LD
+    (`itemCondition`, schema.org) na página de detalhe -- o caso NEW da
+    Magalu já tinha teste próprio; estes cobrem as células que faltavam
+    (usado em ambas, novo no Mercado Livre)."""
+    html = (
+        "<script type=\"application/ld+json\">"
+        f'{{"@type":"Product","itemCondition":"https://schema.org/{schema_condition}"}}'
+        "</script>"
+    )
+
+    async def scenario():
+        async with BrowserSession() as session:
+            page = await session.new_page()
+            await page.set_content(html)
+            return await provider_type().resolve_offer_condition(page)
+
+    assert asyncio.run(scenario()) == expected_label
 
 
 def test_amazon_collects_exact_rating_evidence_from_card_accessibility() -> None:

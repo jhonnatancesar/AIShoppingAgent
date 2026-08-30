@@ -117,6 +117,17 @@ def _parse_pichau_installment_row(text: str) -> RawInstallmentOption | None:
         return None
 
 
+_FIXED_NEW_CONDITION = "Novo"
+"""Pichau/Terabyte/KaBuM! não vendem usado no escopo atual do GG Oferta --
+decisão de produto (subtask 3 da auditoria GG Oferta) que substitui
+`DEC-076` especificamente para essas três lojas; `DEC-076` original
+previa `unknown` sem evidência para "demais providers" além da Amazon.
+Documentado em `docs/internal/decision-log.md`. Ao contrário de
+Amazon/Mercado Livre/Magalu (que procuram evidência real de usado antes
+de assumir novo), aqui não há nenhuma tentativa de detecção -- a
+condição é sempre `NEW`, nunca inferida por ausência de sinal."""
+
+
 class PichauProvider(PlaywrightStoreProvider):
     """TASK-109: Edge/CDP é o único transporte -- sem `cdp_transport`
     configurado, falha explícita, nunca Chromium gerenciado (fechamento
@@ -181,6 +192,8 @@ class PichauProvider(PlaywrightStoreProvider):
         rows = await page.locator(self.result_selector).evaluate_all(
             """cards => cards.map(card => { const text = card.innerText || ''; const unavailable = !!card.querySelector('[class*="out_of_stock"]') || /esgotado|indispon[ií]vel|sem estoque/i.test(text); const available = !unavailable && !!card.querySelector('[class*="availability_span_available"]'); const image = card.querySelector('img.mui-rfxowm-media'); const rating = card.querySelector('[itemprop="ratingValue"], [data-rating], [aria-label*="estrela"]'); const reviews = card.querySelector('[itemprop="reviewCount"], [itemprop="ratingCount"], [aria-label*="avalia"], [aria-label*="classifica"]'); return {url: card.href, title: card.querySelector('h2')?.textContent, price: card.querySelector('[class*="price_vista"]')?.textContent, external_id: new URL(card.href).pathname.split('/').filter(Boolean).pop(), image: image?.currentSrc || image?.src, availability: unavailable ? 'Esgotado' : available ? 'Disponível' : null, evidence: text, rating_average: rating?.getAttribute('content') || rating?.getAttribute('data-rating') || rating?.getAttribute('aria-label'), review_count: reviews?.getAttribute('content') || reviews?.getAttribute('aria-label'), parcelado: card.querySelector('[class*="price_parcelado_text"]')?.textContent, total: card.querySelector('[class*="price_total"]')?.textContent}; })"""
         )
+        for row in rows:
+            row["condition"] = _FIXED_NEW_CONDITION
         rows = _apply_installment_summary(rows, text_key="parcelado", total_key="total")
         return self.offers_from_rows(rows, collected_at)
 
@@ -272,6 +285,8 @@ class TerabyteProvider(PlaywrightStoreProvider):
         rows = await page.locator(self.result_selector).evaluate_all(
             """links => links.map(link => { const card = link.closest('.product-item') || link.parentElement?.parentElement; const match = new URL(link.href).pathname.match(/\\/produto\\/(\\d+)/); const estoque = card?.getAttribute('data-tss-estoque'); const text = card?.innerText || ''; const unavailable = estoque === '0' || /esgotado|indispon[ií]vel/i.test(text); const available = !unavailable && estoque === '1'; const image = card?.querySelector('img.image-thumbnail'); const rating = card?.querySelector('[itemprop="ratingValue"], [data-rating], [aria-label*="estrela"]'); const reviews = card?.querySelector('[itemprop="reviewCount"], [itemprop="ratingCount"], [aria-label*="avalia"], [aria-label*="classifica"]'); return {url: link.href, title: link.textContent || link.title, price: card?.querySelector('.product-item__new-price span')?.textContent, external_id: match?.[1], image: image?.currentSrc || image?.src, availability: unavailable ? 'Esgotado' : available ? 'Disponível' : null, evidence: text, rating_average: rating?.getAttribute('content') || rating?.getAttribute('data-rating') || rating?.getAttribute('aria-label'), review_count: reviews?.getAttribute('content') || reviews?.getAttribute('aria-label'), juros: card?.querySelector('.product-item__juros')?.textContent}; })"""
         )
+        for row in rows:
+            row["condition"] = _FIXED_NEW_CONDITION
         rows = _apply_installment_summary(rows, text_key="juros")
         return self.offers_from_rows(rows, collected_at)
 
@@ -470,6 +485,7 @@ class KabumProvider(PlaywrightStoreProvider):
             external_id = row.get("external_id")
             if external_id and external_id not in seen:
                 seen.add(external_id)
+                row["condition"] = _FIXED_NEW_CONDITION
                 unique.append(row)
         return self.offers_from_rows(unique, collected_at)
 
@@ -770,6 +786,7 @@ def _magalu_rows_from_next_data(html: str) -> list[dict[str, object]]:
                     if available is False
                     else None
                 ),
+                "badges": offer.get("badges"),
                 "evidence": json.dumps(
                     {
                         "available": available,
@@ -798,7 +815,36 @@ def _magalu_party_kind(value: str | None) -> MarketplacePartyKind:
     )
 
 
-def _magalu_card_condition(title: object) -> str:
+def _magalu_badge_condition(badges: object) -> str | None:
+    """Evidência real capturada ao vivo (subtask 3, `tmp/magalu-edge-next-data.json`,
+    sessão de validação da TASK-104A): oferta usada carrega
+    `badges: [{"text": "produtousado", ...}]` -- valor concatenado sem
+    separador, por isso o teste de substring (não a mesma regex com
+    fronteira de palavra usada no título). Nas 39 ofertas da amostra real,
+    as 32 com esse badge tinham TODAS também "Usado:" no título (nenhum
+    caso de badge sem evidência equivalente no título, nem o contrário) --
+    ainda assim mantido como segunda fonte de evidência, defesa em
+    profundidade caso apareça um título sem o prefixo no futuro. O único
+    outro valor de badge observado na amostra (`"fazum21"`) é claramente
+    promocional, não de condição -- não tratado aqui."""
+    if not isinstance(badges, list):
+        return None
+    texts = " ".join(
+        str(badge.get("text") or "")
+        for badge in badges
+        if isinstance(badge, dict)
+    ).casefold()
+    if re.search(r"recondicionado|refurbished|renewed", texts):
+        return "Recondicionado"
+    if re.search(r"usado|seminovo", texts):
+        return "Usado"
+    return None
+
+
+def _magalu_card_condition(title: object, badges: object = None) -> str:
+    from_badge = _magalu_badge_condition(badges)
+    if from_badge is not None:
+        return from_badge
     text = str(title or "").strip()
     if re.search(
         r"(?:^|[\s:(-])(?:recondicionado|refurbished|renewed)(?:$|[\s:)-])",
@@ -875,7 +921,9 @@ class MagaluProvider(PlaywrightStoreProvider):
             row["seller_kind"] = (
                 _magalu_party_kind(seller_id).value if seller_id else None
             )
-            row["condition"] = _magalu_card_condition(row.get("title"))
+            row["condition"] = _magalu_card_condition(
+                row.get("title"), row.get("badges")
+            )
         prepared = _apply_installment_summary(
             rows, text_key="installmentText", total_key="installmentTotal"
         )

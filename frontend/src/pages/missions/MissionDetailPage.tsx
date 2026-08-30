@@ -4,6 +4,7 @@ import { ApiError } from '../../api/client'
 import { missionsApi } from '../../api/missions'
 import type { MissionDetail, QuotaErrorDetails } from '../../api/types'
 import { STATUS_LABELS, STORE_LABELS } from './statusLabels'
+import { ConditionBadge } from '@/components/ConditionBadge'
 import { QuotaExceededNotice, quotaDetailsFromError } from '@/components/QuotaExceededNotice'
 
 const STORE_CODES = ['pichau', 'terabyte', 'amazon', 'kabum', 'magalu', 'mercadolivre']
@@ -239,6 +240,12 @@ export function MissionDetailPage() {
                 <Link to={`/app/offers/${offer.id}`}>
                   {offer.title} — {offer.store_name}
                 </Link>
+                {offer.condition ? (
+                  <>
+                    {' '}
+                    · <ConditionBadge condition={offer.condition} />
+                  </>
+                ) : null}
               </li>
             ))}
           </ul>

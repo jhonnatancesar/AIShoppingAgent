@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
+from app.collection.contracts import OfferCondition
 from app.core.errors import register_api_error_handler
 from app.database.dependency import get_web_async_session
 from app.missions.models import Mission, MissionStatus
@@ -291,7 +292,11 @@ def test_get_mission_exposes_links_to_relevant_offers(
     )
     monkeypatch.setattr(
         "app.webapp.missions_router.list_current_offer_links_for_mission",
-        AsyncMock(return_value=(MissionOfferLink(offer, product, store),)),
+        AsyncMock(
+            return_value=(
+                MissionOfferLink(offer, product, store, condition=OfferCondition.USED),
+            )
+        ),
     )
 
     response = client.get(
@@ -307,8 +312,49 @@ def test_get_mission_exposes_links_to_relevant_offers(
             "store_code": "pichau",
             "store_name": "Pichau",
             "last_seen_at": offer.last_seen_at.isoformat(),
+            "condition": "used",
         }
     ]
+
+
+def test_get_mission_offer_link_condition_is_none_without_observation(
+    client: TestClient, owner: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Subtask 3 (auditoria GG Oferta): oferta recém-descoberta, ainda sem
+    nenhuma `PriceObservation` -- a API nunca inventa uma condição, expõe
+    `null` explicitamente (nunca confundido com `unknown`, que significa
+    'houve observação, mas sem evidência de condição')."""
+    mission = _mission(user_id=owner.id)
+    detail = MissionDetail(mission, None, [], None, [])
+    store = Store(
+        id=uuid4(), code="pichau", name="Pichau", base_url="https://pichau.com.br"
+    )
+    product = Product(id=uuid4(), name="RTX 5070 Ti")
+    offer = Offer(
+        id=uuid4(),
+        product_id=product.id,
+        store_id=store.id,
+        url="https://pichau.com.br/produto",
+        last_seen_at=datetime.now(UTC),
+    )
+    monkeypatch.setattr(
+        "app.webapp.missions_router.get_mission_detail_for_user",
+        AsyncMock(return_value=detail),
+    )
+    monkeypatch.setattr(
+        "app.webapp.missions_router.list_current_offer_links_for_mission",
+        AsyncMock(
+            return_value=(MissionOfferLink(offer, product, store, condition=None),)
+        ),
+    )
+
+    response = client.get(
+        f"/api/v1/missions/{mission.id}",
+        cookies={WEB_SESSION_COOKIE_NAME: "raw-token-canary"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["offers"][0]["condition"] is None
 
 
 def test_select_multiple_family_variants_uses_owned_mission(

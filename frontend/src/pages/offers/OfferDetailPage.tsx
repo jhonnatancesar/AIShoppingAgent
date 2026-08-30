@@ -1,22 +1,15 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { ApiError } from '../../api/client'
 import { offersApi } from '../../api/offers'
 import type {
   MarketplacePartyKind,
   OfferAvailability,
-  OfferCondition,
   OfferComparison,
   OfferDetail,
 } from '../../api/types'
+import { ConditionBadge } from '../../components/ConditionBadge'
 import { PriceHistoryChart } from '../../components/PriceHistoryChart'
-
-const CONDITION_LABELS: Record<OfferCondition, string> = {
-  new: 'Novo',
-  refurbished: 'Recondicionado',
-  used: 'Usado',
-  unknown: 'Condição não identificada',
-}
 
 const AVAILABILITY_LABELS: Record<OfferAvailability, string> = {
   available: 'Disponível',
@@ -140,12 +133,12 @@ export function OfferDetailView({ offer, comparison }: { offer: OfferDetail; com
 }
 
 function OfferFacts({ offer, observation }: { offer: OfferDetail; observation: OfferDetail['latest_observation'] }) {
-  const facts: [string, string][] = [['Loja', offer.store.name]]
+  const facts: [string, ReactNode][] = [['Loja', offer.store.name]]
   if (offer.seller?.name) facts.push(['Vendedor', offer.seller.name])
   if (observation?.seller_kind) facts.push(['Tipo de vendedor', PARTY_LABELS[observation.seller_kind]])
   const delivery = observation?.fulfillment ?? (observation?.fulfillment_kind ? PARTY_LABELS[observation.fulfillment_kind] : null)
   if (delivery) facts.push(['Entrega', delivery])
-  if (observation) facts.push(['Condição', CONDITION_LABELS[observation.condition]])
+  if (observation) facts.push(['Condição', <ConditionBadge key="condition" condition={observation.condition} />])
   if (observation) facts.push(['Disponibilidade', AVAILABILITY_LABELS[observation.availability]])
   return (
     <dl>
@@ -174,7 +167,7 @@ function ComparisonSection({ comparison, currentOfferId }: { comparison?: OfferC
               const observation = item.latest_observation
               const installment = observation?.installments[0]
               return <div key={item.id} className={`rounded-lg border p-3 ${item.id === currentOfferId ? 'border-primary bg-primary/5' : 'border-border'}`}>
-                <div className="flex items-start justify-between gap-3"><div><p className="text-sm font-medium">{item.seller?.name ?? item.store.name}</p><p className="text-xs text-muted-foreground">{observation ? `${CONDITION_LABELS[observation.condition]} · ${AVAILABILITY_LABELS[observation.availability]}` : 'Sem preço atual'}</p></div>{item.id === currentOfferId ? <span className="rounded-full bg-primary px-2 py-0.5 text-xs text-primary-foreground">Atual</span> : null}</div>
+                <div className="flex items-start justify-between gap-3"><div><p className="text-sm font-medium">{item.seller?.name ?? item.store.name}</p><p className="flex items-center gap-1.5 text-xs text-muted-foreground">{observation ? <><ConditionBadge condition={observation.condition} /> · {AVAILABILITY_LABELS[observation.availability]}</> : 'Sem preço atual'}</p></div>{item.id === currentOfferId ? <span className="rounded-full bg-primary px-2 py-0.5 text-xs text-primary-foreground">Atual</span> : null}</div>
                 {observation ? <><p className="mt-2 text-lg font-semibold">{money(observation.total_amount, observation.currency)}</p><p className="text-xs text-muted-foreground">À vista {money(observation.amount, observation.currency)}{observation.shipping_amount === null ? ' · frete não informado' : ` · frete ${money(observation.shipping_amount, observation.currency)}`}</p></> : null}
                 {installment ? <p className="mt-1 text-xs">{installment.installment_count}x de {money(installment.installment_amount, observation!.currency)}{installment.interest_kind === 'interest_free' ? ' sem juros' : ''}</p> : null}
                 {item.rating ? <p className="mt-1 text-xs">⭐ {ratingAverage(item.rating.average)} · {item.rating.review_count.toLocaleString('pt-BR')}</p> : null}
