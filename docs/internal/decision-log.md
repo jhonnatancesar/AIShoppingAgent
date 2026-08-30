@@ -96,14 +96,58 @@
      → providers`.
   - Isso fecha as perguntas 2 (fallback), 4 (granularidade do Web
     Search), 5 (reconciliação com a cascata gratuita) e 6 (onde ficam as
-    chaves) das "7 perguntas originais". Restam genuinamente em aberto:
-    como declarar requisito mínimo de qualidade/capacidade por chamada,
-    o mecanismo permanente de política de custo pelo contrato genérico, e
-    onde/como o César Core e o OmniRoute rodam de fato em produção.
-- **Nada implementado em nenhuma das duas rodadas**: só leitura/registro
+    chaves) das "7 perguntas originais".
+- **Atualização mesma data — as últimas 3 decisões fechadas, lista de
+  bloqueadores zerada** (detalhe completo em `docs/tasks/TASK-118.md`,
+  "Pré-flight §6 a §10"):
+  6. **Qualidade/capacidade (Policy Layer)**: GG Oferta nunca escolhe
+     provider/model, só envia requisitos neutros separados em
+     `application`/`service`/`purpose`/`requirements`
+     (`structured_output`/`reasoning`/`vision`/`tool_calling`) mais um
+     `service_class` neutro (`economy`/`standard`/`quality`). A Policy
+     Layer, dentro do César Core, resolve a combinação. Contrato
+     precisa continuar válido pro futuro consumidor "Claudião", nunca
+     hardcoded pro GG Oferta.
+  7. **Política de custo**: César Core é a autoridade que sabe quanto
+     cada `application` pode gastar (`FREE_ONLY`/`FREE_PREFERRED`/
+     `PAID_ALLOWED`, `max_cost_per_request`/`daily_budget`/
+     `monthly_budget`) -- só o contrato/modelo precisa estar preparado
+     nesta rodada, não a gestão financeira completa. Divisão de
+     responsabilidade explícita: César Core decide autorização/política/
+     limites; OmniRoute continua dono de disponibilidade de provider,
+     quota, cooldown, circuit breaker, fallback entre providers e
+     roteamento em si -- César Core nunca reimplementa isso, só traduz
+     a política permitida pro `combo`/rota do OmniRoute (conceito real,
+     confirmado no pré-flight §2 via `/api/combos`).
+  8. **Topologia PROD V1**: mesmo Windows Server físico, três
+     deployments independentes (`C:\App\AIShoppingAgent`,
+     `C:\App\cesar-core`, `C:\App\omniroute`), cada um com repo/config/
+     secrets/lifecycle próprios, sem compose compartilhado. Rede Docker
+     externa conceitual `cesar-platform` entre os três. César Core
+     expõe endpoint acessível pelo host local (não só rede Docker
+     interna), porque o `collection_worker` do GG Oferta roda nativo no
+     Windows (TASK-109) e precisa alcançá-lo via `localhost`.
+  9. **Exposição pública**: nenhuma (sem `core.ggoferta.com`/
+     `omniroute.ggoferta.com`, sem Cloudflare pra APIs internas) --
+     Internet só alcança `ggoferta.com` → GG Oferta; César Core e
+     OmniRoute são infraestrutura interna.
+  10. **Supervisão**: lifecycle próprio por container
+      (`restart: unless-stopped` + healthcheck); `/ready` do César Core
+      distingue Core vivo / OmniRoute alcançável / capacidade de IA /
+      capacidade de Search -- falha de um provider upstream isolado
+      nunca derruba o César Core inteiro (já isolado por provider no
+      circuit breaker do próprio OmniRoute, §2).
+  - **Lista de decisões arquiteturais bloqueadoras da TASK-118: vazia.**
+    Nenhuma incompatibilidade real encontrada entre essas decisões e os
+    contratos reais do OmniRoute confirmados no pré-flight. Restam só
+    detalhes de implementação (esquema exato de payload do contrato
+    César Core, tradução exata `service_class`→`combo`, mecanismo de
+    deploy/supervisão do César Core no Windows) -- nenhum bloqueia
+    começar a implementar.
+- **Nada implementado em nenhuma das três rodadas**: só leitura/registro
   do pré-flight, por instrução explícita ("por enquanto você só vai
   atualizar documentação e fazer pré-flight"; depois, "não implementar
-  código ainda").
+  código ainda" repetido em cada rodada).
 
 ## DEC-106 — TASK-106: Coupon Collector evolui pra auto-configuração real, validado nas 4 lojas
 

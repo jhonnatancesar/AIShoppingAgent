@@ -1,14 +1,19 @@
 # TASK-118 — Integrar o OmniRoute como camada central de roteamento de IA e Web Search
 
-Status: **Pré-flight aprovado conceitualmente pelo usuário (2026-08-30)**
-— fonte oficial confirmada, contratos reais extraídos do código,
-arquitetura GG Oferta → AIProviderManager/WebSearchManager → César Core
-→ OmniRoute decidida (repositório `cesar-core` novo e separado), e as
-decisões de protocolo/escopo/credenciais/secrets/fallback fechadas
-(`DEC-107`, §4/§5). Restam só 3 pontos genuinamente em aberto (ver "O
-que realmente continua em aberto"). Nenhum código, configuração, secret
-ou dependência deste repositório alterados — implementação segue não
-iniciada.
+Status: **Pré-flight fechado — zero decisões arquiteturais bloqueadoras
+(2026-08-30).** Fonte oficial confirmada, contratos reais extraídos do
+código, arquitetura completa decidida: `GG Oferta →
+AIProviderManager/WebSearchManager → César Core → OmniRoute`
+(repositório `cesar-core` novo e separado), protocolo, escopo,
+contrato de Web Search, credenciais, secrets, fallback de migração,
+contrato de qualidade/capacidade (Policy Layer), política de custo,
+topologia PROD V1 (três deployments independentes no mesmo host),
+exposição pública (nenhuma nova) e supervisão/lifecycle — todos
+fechados (`DEC-107`, §4 a §10). Restam só detalhes de implementação
+(esquema exato de payload, mecanismo de deploy do César Core no
+Windows), nunca decisão arquitetural. Nenhum código, configuração,
+secret ou dependência deste repositório alterados — implementação
+segue não iniciada, aguardando autorização explícita pra começar.
 
 ## Pré-flight §1 — Fonte oficial e referência de commit
 
@@ -368,27 +373,159 @@ reabrir as que já constam fechadas ali.)*
    César Core não influencia essa decisão (nunca foi uma pergunta real
    sobre a integração, é só uma reafirmação).
 
-## O que realmente continua em aberto
+## Pré-flight §6 — Contrato de qualidade/capacidade (Policy Layer)
 
-Só o que de fato ainda precisa de escolha — nada mantido por inércia do
-documento antigo:
+Fecha o ponto 1 de "O que realmente continua em aberto" (revisão
+anterior). Decisão do usuário, 2026-08-30.
 
-1. **Como declarar "requisito mínimo de qualidade/capacidade" por
-   chamada** (ex.: precisa de function calling, visão, determinado nível
-   de raciocínio) através do contrato HTTP genérico do César Core, sem
-   reintroduzir no GG Oferta a complexidade que o OmniRoute deveria
-   absorver.
-2. **Como a política de custo (gratuito → free tier → pago) é expressa/
-   imposta no caminho novo** (GG Oferta → César Core → OmniRoute) em
-   regime permanente — ligado ao ponto 1; sabemos que a cascata antiga
-   vira só rollback transitório, mas o mecanismo permanente de "nunca
-   pago irrestrito sem necessidade real" pelo contrato genérico ainda
-   não foi definido.
-3. **Onde/como o OmniRoute e o César Core rodam em produção de fato**
-   (mesmo host físico do GG Oferta foi mencionado como possibilidade
-   inicial, nunca como decisão firme) e **como o César Core é
-   implantado/supervisionado** (Windows Service? Task Scheduler? Docker?
-   — repositório novo, sem convenção de deploy própria ainda).
+**O consumidor (GG Oferta) nunca escolhe provider/model.** O contrato
+com o César Core recebe só requisitos **neutros**, separados em quatro
+eixos:
+
+- `application` — quem está chamando (`gg_oferta`, futuramente
+  `claudiao`).
+- `service` — qual serviço interno do consumidor está chamando (ex.:
+  `market_research`, `product_identity`).
+- `purpose` — pra que serve a chamada (ex.: `search_grounding`,
+  `intent_interpretation`, `canonicalization`).
+- `requirements` — capacidades necessárias, nunca provider/model:
+  `structured_output`, `reasoning`, `vision`, `tool_calling`.
+
+Mais um eixo ortogonal, **`service_class`** neutro: `economy` |
+`standard` | `quality`.
+
+A combinação `application + purpose + requirements + service_class` é
+resolvida pela **Policy Layer** (dentro do César Core) — nunca pelo GG
+Oferta. GG Oferta nunca solicita diretamente Gemini/Groq/Claude ou um
+model id específico. **O contrato precisa continuar válido pro futuro
+consumidor "Claudião"** — por isso é genérico por `application`, nunca
+hardcoded pro GG Oferta.
+
+## Pré-flight §7 — Política de custo
+
+Fecha o ponto 2 de "O que realmente continua em aberto" (revisão
+anterior). Decisão do usuário, 2026-08-30.
+
+**César Core é a autoridade que sabe QUANTO cada `application` pode
+gastar** — não o GG Oferta, não o OmniRoute.
+
+Classes de política: `FREE_ONLY` | `FREE_PREFERRED` | `PAID_ALLOWED`.
+A política de uma `application`/`purpose` pode carregar
+`max_cost_per_request`, `daily_budget`, `monthly_budget`.
+
+**Não é necessário implementar toda a gestão financeira nesta rodada
+("118A")** — só o contrato/modelo arquitetural precisa estar preparado
+antes de fechar o pré-flight.
+
+**Divisão de responsabilidade, explícita e não-negociável:**
+
+| Responsabilidade | Dono |
+|---|---|
+| `application` authorization, `purpose` policy, cost permission, limits, `requirements` | **César Core** |
+| Provider availability, quota, cooldown, circuit breaker, provider fallback, routing | **OmniRoute** |
+
+César Core **não reimplementa fallback provider por provider** — isso
+já existe dentro do OmniRoute (3 camadas de resiliência, §2 acima).
+César Core só decide a política **permitida** (`service_class` +
+orçamento) e traduz isso pro route/profile/combo apropriado do
+OmniRoute (o conceito de `combo` — `/api/combos`, estratégias
+`priority`/`weighted`/`fusion` — já existe no OmniRoute real, confirmado
+no pré-flight §2; César Core não inventa um mecanismo de roteamento
+paralelo, só aciona o que já existe com os parâmetros certos).
+
+## Pré-flight §8 — Topologia PROD V1
+
+Fecha o ponto 3 de "O que realmente continua em aberto" (revisão
+anterior). Decisão do usuário, 2026-08-30.
+
+**Estado inicial: mesmo Windows Server físico, três deployments
+independentes:**
+
+```
+C:\App\AIShoppingAgent   (GG Oferta -- repo, config, secrets, lifecycle próprios)
+C:\App\cesar-core        (César Core -- repo, config, secrets, lifecycle próprios)
+C:\App\omniroute         (OmniRoute -- repo/imagem, config, secrets, lifecycle próprios)
+```
+
+GG Oferta e César Core **não compartilham `compose.yaml`**. OmniRoute
+permanece serviço/deployment separado dos outros dois. Rede Docker
+externa compartilhada, conceitualmente `cesar-platform`, pra comunicação
+entre containers dos três.
+
+**O `collection_worker` do GG Oferta roda nativo no Windows (TASK-109,
+fora do Docker)** — por isso o César Core também precisa expor um
+endpoint acessível pelo **host local** (não só pela rede Docker
+interna), nunca público na Internet.
+
+Fluxo de comunicação:
+
+```
+Windows collection_worker (nativo)
+  → localhost / endpoint interno do César Core
+
+GG Oferta (containers)
+  → rede interna (cesar-platform)
+  → César Core
+
+César Core
+  → rede interna (cesar-platform)
+  → OmniRoute
+```
+
+## Pré-flight §9 — Exposição pública
+
+Decisão do usuário, 2026-08-30.
+
+**Não criar** `core.ggoferta.com` nem `omniroute.ggoferta.com`. Nenhuma
+API interna (César Core, OmniRoute) exposta via Cloudflare/Tunnel.
+Internet continua só: `Internet → ggoferta.com → GG Oferta`. César Core
+e OmniRoute são **infraestrutura interna**, sem rota pública própria.
+
+## Pré-flight §10 — Supervisão / lifecycle
+
+Decisão do usuário, 2026-08-30.
+
+César Core e OmniRoute têm lifecycle **próprio**, cada um: container
+com `restart: unless-stopped` + healthcheck.
+
+Superfície de saúde do César Core: `GET /health`, `GET /ready`,
+`GET /v1/capabilities` (já fixados no protocolo, §4.1). **`/ready`
+precisa distinguir estados**, nunca um booleano único:
+
+- Core (processo do César Core) vivo.
+- OmniRoute alcançável (rede/health do OmniRoute responde).
+- Capacidade de IA disponível.
+- Capacidade de Search disponível.
+
+Falha de **um** provider upstream individual (ex.: Gemini fora do ar)
+**não significa** que o César Core inteiro está indisponível — o
+OmniRoute já isola isso por provider (circuit breaker, §2); o `/ready`
+do César Core só fica negativo quando a capacidade inteira (IA ou
+Search) não tem nenhum caminho viável, não por um provider isolado
+falhar.
+
+## Decisões arquiteturais bloqueadoras da TASK-118 — estado final
+
+**Vazia.** Todas as decisões arquiteturais que bloqueavam o início da
+implementação (protocolo, escopo, contrato de Web Search, credenciais,
+secrets, fallback, qualidade/capacidade, política de custo, topologia,
+exposição, supervisão) estão fechadas (§4 a §10). Nenhuma incompatibilidade
+real foi encontrada entre essas decisões e os contratos reais do
+OmniRoute confirmados no pré-flight (§2) — em particular, o conceito de
+`combo`/estratégia de roteamento que a Policy Layer do César Core
+precisa acionar já existe de verdade no OmniRoute (`/api/combos`),
+não é uma suposição.
+
+Pontos que seguem como **detalhe de implementação** (não bloqueiam
+começar, são resolvidos durante a implementação em si, não neste
+pré-flight): esquema exato de request/response do contrato César Core
+(`/v1/ai/generate`, `/v1/search` — campos concretos pra
+`application`/`purpose`/`requirements`/`service_class`); como o César
+Core traduz `service_class`/orçamento pro `combo` exato do OmniRoute;
+mecanismo de deploy/supervisão do César Core no Windows (Task
+Scheduler? Windows Service? — mesma família de decisão operacional já
+resolvida pro `collection_worker`, TASK-109, mas ainda não replicada
+aqui).
 
 Nenhuma implementação de código, migration, secret ou config foi feita
 nesta rodada — só leitura/registro do pré-flight, conforme pedido.
@@ -470,8 +607,9 @@ Scraping avançado (quando Web Search não basta):
   do César Core/OmniRoute para o domínio.
 - Política de custo (gratuito → free tier → pago) é respeitada e
   observável — dá para saber, por chamada, qual rota foi usada e por
-  quê. Mecanismo permanente pelo contrato genérico do César Core
-  **ainda em aberto** (ver "O que realmente continua em aberto").
+  quê. Mecanismo definido no contrato César Core (§7: `FREE_ONLY`/
+  `FREE_PREFERRED`/`PAID_ALLOWED` + orçamentos, César Core traduz pro
+  `combo` do OmniRoute).
 - Firecrawl deixa de ser usado para Web Search genérica; uso
   remanescente é só scraping avançado, auditável e reduzido em volume
   real (não só em teoria). `FirecrawlSearchProvider` direto vira só
