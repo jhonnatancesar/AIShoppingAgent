@@ -9,8 +9,9 @@ from typing import Literal
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import Date, cast, exists, func, select
+from sqlalchemy import Date, and_, cast, exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from app.collection.contracts import OfferCondition
 from app.collection.models import (
@@ -78,14 +79,64 @@ class UserOfferComparison:
     offers: tuple[UserComparisonOffer, ...]
 
 
+def _relevance_matches_current_criteria(*, criteria, product):
+    """Regra única de elegibilidade (subtask 2): uma classificação
+    histórica MATCH/POSSIBLE_MATCH só continua contando se o produto
+    ainda corresponde à família/variante/seleção ATUAIS da missão que a
+    gerou -- nunca confia perpetuamente numa classificação antiga.
+
+    Até esta correção, `list_current_offer_links_for_mission` já aplicava
+    esta regra só para a tela de uma missão (TASK-097); `_accessible_offer_exists`
+    e `offer_for_user_statement` (tela geral de Ofertas e detalhe de
+    oferta) nunca a reaplicavam, então uma oferta de variante/família
+    diferente da selecionada podia continuar aparecendo fora do contexto
+    da missão para sempre. As três consultas agora chamam esta mesma
+    função -- nunca mais duas implementações independentes do mesmo
+    critério.
+
+    `criteria` pode vir de um outerjoin (missão sem `MissionCriteria`
+    ainda, caso não deveria existir na prática mas não é assumido);
+    `criteria.mission_id` (coluna NOT NULL) é o sentinela de "nenhuma
+    linha casou". Fiel ao comportamento já existente: só `request_kind
+    == PRODUCT_FAMILY` recebe a checagem extra -- `SPECIFIC_PRODUCT` e
+    `GENERIC_CATEGORY` continuam confiando só na classificação."""
+    return or_(
+        criteria.mission_id.is_(None),
+        criteria.request_kind != ProductRequestKind.PRODUCT_FAMILY.value,
+        and_(
+            product.identity_key.is_not(None),
+            product.family_key == criteria.requested_family_key,
+            or_(
+                criteria.requested_variant.is_(None),
+                product.variant == criteria.requested_variant,
+            ),
+            or_(
+                criteria.variant_selection_mode != VariantSelectionMode.SELECTED,
+                exists(
+                    select(MissionProductSelection.product_id).where(
+                        MissionProductSelection.mission_id == criteria.mission_id,
+                        MissionProductSelection.product_id == product.id,
+                    )
+                ),
+            ),
+        ),
+    )
+
+
 def _accessible_offer_exists(*, user_id: UUID):
+    relevant_product = aliased(Product)
     return exists(
         select(MissionOfferRelevance.offer_id)
         .join(Mission, Mission.id == MissionOfferRelevance.mission_id)
+        .outerjoin(MissionCriteria, MissionCriteria.mission_id == Mission.id)
+        .join(relevant_product, relevant_product.id == Offer.product_id)
         .where(
             MissionOfferRelevance.offer_id == Offer.id,
             Mission.user_id == user_id,
             MissionOfferRelevance.classification.in_(_ACCESSIBLE_RELEVANCE),
+            _relevance_matches_current_criteria(
+                criteria=MissionCriteria, product=relevant_product
+            ),
         )
     )
 
@@ -181,7 +232,10 @@ async def list_user_offers(
 
 
 def offer_for_user_statement(*, offer_id: UUID, user_id: UUID):
-    """Statement fail-closed: NO_MATCH e missões alheias nunca autorizam."""
+    """Statement fail-closed: NO_MATCH, missões alheias e relevância
+    desatualizada (produto que não corresponde mais à família/variante/
+    seleção atual da missão, ver `_relevance_matches_current_criteria`)
+    nunca autorizam."""
     return (
         select(Offer, Product, Store, Seller)
         .join(Product, Product.id == Offer.product_id)
@@ -192,10 +246,14 @@ def offer_for_user_statement(*, offer_id: UUID, user_id: UUID):
             MissionOfferRelevance.offer_id == Offer.id,
         )
         .join(Mission, Mission.id == MissionOfferRelevance.mission_id)
+        .outerjoin(MissionCriteria, MissionCriteria.mission_id == Mission.id)
         .where(
             Offer.id == offer_id,
             Mission.user_id == user_id,
             MissionOfferRelevance.classification.in_(_ACCESSIBLE_RELEVANCE),
+            _relevance_matches_current_criteria(
+                criteria=MissionCriteria, product=Product
+            ),
         )
         .order_by(Mission.id)
         .limit(1)
@@ -352,19 +410,6 @@ async def list_current_offer_links_for_mission(
         and criteria.variant_selection_mode is VariantSelectionMode.PENDING
     ):
         return ()
-    selected_ids: set[UUID] | None = None
-    if (
-        criteria is not None
-        and criteria.request_kind == ProductRequestKind.PRODUCT_FAMILY.value
-        and criteria.variant_selection_mode is VariantSelectionMode.SELECTED
-    ):
-        selected_ids = set(
-            await session.scalars(
-                select(MissionProductSelection.product_id).where(
-                    MissionProductSelection.mission_id == mission_id
-                )
-            )
-        )
     rows = (
         await session.execute(
             select(Offer, Product, Store)
@@ -375,35 +420,24 @@ async def list_current_offer_links_for_mission(
                 MissionOfferRelevance.offer_id == Offer.id,
             )
             .join(Mission, Mission.id == MissionOfferRelevance.mission_id)
+            .outerjoin(MissionCriteria, MissionCriteria.mission_id == Mission.id)
             .where(
                 Mission.id == mission_id,
                 Mission.user_id == user_id,
                 MissionOfferRelevance.classification.in_(_ACCESSIBLE_RELEVANCE),
+                _relevance_matches_current_criteria(
+                    criteria=MissionCriteria, product=Product
+                ),
             )
             .order_by(Store.code, Offer.last_seen_at.desc(), Offer.id)
         )
     ).all()
-    eligible_rows = tuple(
-        (offer, product, store)
-        for offer, product, store in rows
-        if criteria is None
-        or criteria.request_kind != ProductRequestKind.PRODUCT_FAMILY.value
-        or (
-            product.identity_key is not None
-            and product.family_key == criteria.requested_family_key
-            and (
-                criteria.requested_variant is None
-                or product.variant == criteria.requested_variant
-            )
-            and (selected_ids is None or product.id in selected_ids)
-        )
-    )
     latest_seen_by_store: dict[UUID, datetime] = {}
-    for offer, _product, store in eligible_rows:
+    for offer, _product, store in rows:
         latest_seen_by_store.setdefault(store.id, offer.last_seen_at)
     return tuple(
         MissionOfferLink(offer=offer, product=product, store=store)
-        for offer, product, store in eligible_rows
+        for offer, product, store in rows
         if offer.last_seen_at == latest_seen_by_store[store.id]
     )
 
