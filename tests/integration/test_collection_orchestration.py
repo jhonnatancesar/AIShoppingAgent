@@ -15,7 +15,10 @@ from app.collection.adapter import CollectionAdapter
 from app.collection.contracts import (
     CollectionRequest,
     CollectionResult,
+    InstallmentInterestKind,
+    MarketplacePartyKind,
     RawCollectedOffer,
+    RawInstallmentOption,
 )
 from app.collection.errors import ProviderBlockedError
 from app.collection.models import (
@@ -43,7 +46,7 @@ from app.missions.models import (
 from app.missions.service import transition_mission
 from app.offers.models import Offer
 from app.products.models import Product
-from app.stores.models import Store
+from app.stores.models import Seller, Store
 from app.users.models import User, UserRole
 from sqlalchemy import func, select, text
 
@@ -2096,3 +2099,989 @@ def test_price_change_creates_new_observation(integration_database) -> None:
         assert len(observations) == 2
         assert observations[0].amount == Decimal("1900.0000")
         assert observations[1].amount == Decimal("1500.0000")
+
+
+class _MinimalEvidenceOfferProvider:
+    """Subtask 6 (auditoria de preços/dedupe): reproduz a forma REAL de uma
+    observação de PROD com duplicação confirmada (offer KaBuM! real,
+    `raw_evidence` sem frete/disponibilidade/parcelamento) -- ao contrário
+    de `_ControllableOfferProvider` (sempre define `raw_shipping`), aqui
+    esses campos ficam `None`/vazios de propósito, igual ao card real."""
+
+    def __init__(self, source_code: str, raw_price: str) -> None:
+        self.source_code = source_code
+        self.raw_price = raw_price
+
+    async def collect(self, request: CollectionRequest) -> CollectionResult:
+        completed = request.requested_at.replace(microsecond=500000)
+        return CollectionResult(
+            self.source_code,
+            request.requested_at,
+            completed,
+            (
+                RawCollectedOffer(
+                    source_code=self.source_code,
+                    url="https://example.invalid/subtask6-minimal-evidence",
+                    title="Subtask 6 minimal evidence GPU",
+                    collected_at=completed,
+                    external_id="subtask6-minimal-evidence-offer",
+                    raw_price=self.raw_price,
+                    raw_currency="BRL",
+                    evidence={"card_text": "safe synthetic evidence"},
+                ),
+            ),
+        )
+
+
+def test_kabum_minimal_evidence_identical_state_does_not_duplicate(
+    integration_database,
+) -> None:
+    """Subtask 6: tentativa de reprodução do bug confirmado em PROD (~30%
+    de redundância real em KaBuM!/Amazon, 0% em Pichau/Terabyte) usando a
+    forma mínima de evidência real (sem frete/disponibilidade/parcelamento
+    -- `condition`/`availability` caem em UNKNOWN, `shipping_amount` fica
+    `None`), com o código ATUAL do orquestrador."""
+    now = datetime.now(UTC).replace(microsecond=0)
+    mission_id, pichau_id, kabum_id = _seed_due_mission(
+        integration_database.sessions, now
+    )
+    provider = _MinimalEvidenceOfferProvider("kabum", "R$ 1.999,98")
+    orchestrator = CollectionOrchestrator(
+        integration_database.async_sessions,
+        CollectionAdapter((provider,)),
+        ai_manager=_AlwaysMatchAIManager(),
+    )
+    asyncio.run(orchestrator.run_batch(now=now))
+
+    due_at = now + timedelta(minutes=30)
+    _rearm_schedule(integration_database.sessions, mission_id, kabum_id, due_at)
+    asyncio.run(orchestrator.run_batch(now=due_at))
+
+    with integration_database.sessions.begin() as session:
+        observations = list(
+            session.scalars(
+                select(PriceObservation).order_by(PriceObservation.observed_at)
+            )
+        )
+        assert len(observations) == 1, (
+            "reproduziu o bug de PROD: 2a coleta comercialmente idêntica "
+            "gravou observação redundante com evidência mínima (kabum)"
+        )
+
+
+class _CommercialStateOfferProvider:
+    """Subtask 6 (correção de causa raiz do dedupe Amazon/KaBuM!):
+    provider controlável cobrindo os campos que distinguem essas lojas do
+    controle Pichau/Terabyte -- disponibilidade, seller_kind/
+    fulfillment_kind, parcelamento -- todos ajustáveis entre `run_batch`."""
+
+    def __init__(
+        self,
+        source_code: str,
+        raw_price: str,
+        *,
+        raw_availability: str | None = "Em estoque",
+        raw_fulfillment: str | None = None,
+        raw_condition: str | None = None,
+        seller_kind: MarketplacePartyKind | None = None,
+        fulfillment_kind: MarketplacePartyKind | None = None,
+        installment_options: tuple[RawInstallmentOption, ...] = (),
+        url: str = "https://example.invalid/subtask6-commercial-state-offer",
+        external_id: str = "subtask6-commercial-state-offer",
+    ) -> None:
+        self.source_code = source_code
+        self.raw_price = raw_price
+        self.raw_availability = raw_availability
+        self.raw_fulfillment = raw_fulfillment
+        self.raw_condition = raw_condition
+        self.seller_kind = seller_kind
+        self.fulfillment_kind = fulfillment_kind
+        self.installment_options = installment_options
+        self.url = url
+        self.external_id = external_id
+
+    async def collect(self, request: CollectionRequest) -> CollectionResult:
+        completed = request.requested_at.replace(microsecond=500000)
+        return CollectionResult(
+            self.source_code,
+            request.requested_at,
+            completed,
+            (
+                RawCollectedOffer(
+                    source_code=self.source_code,
+                    url=self.url,
+                    title="Subtask 6 commercial state GPU",
+                    collected_at=completed,
+                    external_id=self.external_id,
+                    raw_price=self.raw_price,
+                    raw_currency="BRL",
+                    raw_availability=self.raw_availability,
+                    raw_fulfillment=self.raw_fulfillment,
+                    raw_condition=self.raw_condition,
+                    seller_kind=self.seller_kind,
+                    fulfillment_kind=self.fulfillment_kind,
+                    evidence={"card_text": "safe synthetic evidence"},
+                    installment_options=self.installment_options,
+                ),
+            ),
+        )
+
+
+def _seed_due_mission_for_store(sessions, now: datetime, *, store_code: str) -> tuple:
+    """Subtask 6: mesma forma de `_seed_due_mission`, mas para uma loja
+    arbitrária (Amazon aqui) -- `_seed_due_mission` é fixo em Pichau/
+    KaBuM! e é reaproveitado por muitos outros testes, não deve mudar."""
+    with sessions.begin() as session:
+        store = session.scalar(select(Store).where(Store.code == store_code))
+        user = User(display_name="Subtask 6 synthetic", role=UserRole.USER)
+        session.add(user)
+        session.flush()
+        mission = Mission(
+            user_id=user.id,
+            title="Subtask 6 commercial state",
+            status=MissionStatus.ACTIVE,
+        )
+        session.add(mission)
+        session.flush()
+        session.add_all(
+            (
+                MissionCriteria(mission_id=mission.id, search_query="synthetic GPU"),
+                MissionSchedule(
+                    mission_id=mission.id,
+                    interval_minutes=60,
+                    next_run_at=now,
+                    is_enabled=True,
+                ),
+                MissionSource(mission_id=mission.id, store_id=store.id),
+            )
+        )
+        return mission.id, store.id
+
+
+def test_amazon_identical_commercial_state_does_not_duplicate(
+    integration_database,
+) -> None:
+    """Subtask 6 (regressão do bug real de PROD): coleta 1 grava; coleta 2
+    comercialmente idêntica -- mesmo preço, mesma disponibilidade, mesmo
+    seller/fulfillment já enriquecidos (a forma real de uma Offer Amazon
+    confirmada em PROD) -- NÃO grava nova PriceObservation."""
+    now = datetime.now(UTC).replace(microsecond=0)
+    mission_id, amazon_id = _seed_due_mission_for_store(
+        integration_database.sessions, now, store_code="amazon"
+    )
+    provider = _CommercialStateOfferProvider(
+        "amazon",
+        "R$ 919,98",
+        raw_availability="Disponível",
+        raw_fulfillment="Prime",
+        seller_kind=MarketplacePartyKind.PLATFORM,
+        fulfillment_kind=MarketplacePartyKind.PLATFORM,
+    )
+    orchestrator = CollectionOrchestrator(
+        integration_database.async_sessions,
+        CollectionAdapter((provider,)),
+        ai_manager=_AlwaysMatchAIManager(),
+    )
+    asyncio.run(orchestrator.run_batch(now=now))
+
+    due_at = now + timedelta(minutes=30)
+    _rearm_schedule(integration_database.sessions, mission_id, amazon_id, due_at)
+    asyncio.run(orchestrator.run_batch(now=due_at))
+
+    with integration_database.sessions.begin() as session:
+        observations = list(
+            session.scalars(
+                select(PriceObservation).order_by(PriceObservation.observed_at)
+            )
+        )
+        assert len(observations) == 1
+
+
+def test_amazon_availability_change_creates_new_observation(
+    integration_database,
+) -> None:
+    """Subtask 6: mesmo preço, mesmo seller/fulfillment -- só a
+    disponibilidade muda -- precisa gravar nova observação (Amazon)."""
+    now = datetime.now(UTC).replace(microsecond=0)
+    mission_id, amazon_id = _seed_due_mission_for_store(
+        integration_database.sessions, now, store_code="amazon"
+    )
+    provider = _CommercialStateOfferProvider(
+        "amazon",
+        "R$ 919,98",
+        raw_availability="Disponível",
+        raw_fulfillment="Prime",
+        seller_kind=MarketplacePartyKind.PLATFORM,
+        fulfillment_kind=MarketplacePartyKind.PLATFORM,
+    )
+    orchestrator = CollectionOrchestrator(
+        integration_database.async_sessions,
+        CollectionAdapter((provider,)),
+        ai_manager=_AlwaysMatchAIManager(),
+    )
+    asyncio.run(orchestrator.run_batch(now=now))
+
+    provider.raw_availability = "Indisponível"
+    due_at = now + timedelta(minutes=30)
+    _rearm_schedule(integration_database.sessions, mission_id, amazon_id, due_at)
+    asyncio.run(orchestrator.run_batch(now=due_at))
+
+    with integration_database.sessions.begin() as session:
+        observations = list(
+            session.scalars(
+                select(PriceObservation).order_by(PriceObservation.observed_at)
+            )
+        )
+        assert len(observations) == 2
+
+
+def test_kabum_installment_change_creates_new_observation(
+    integration_database,
+) -> None:
+    """Subtask 6: mesmo preço -- só o parcelamento muda (10x sem juros ->
+    6x sem juros) -- precisa gravar nova observação (KaBuM!), mesmo com
+    todos os outros 9 campos idênticos."""
+    now = datetime.now(UTC).replace(microsecond=0)
+    mission_id, pichau_id, kabum_id = _seed_due_mission(
+        integration_database.sessions, now
+    )
+    provider = _CommercialStateOfferProvider(
+        "kabum",
+        "R$ 1.999,98",
+        raw_availability=None,
+        installment_options=(
+            RawInstallmentOption(
+                installment_count=10,
+                raw_amount="R$ 199,99",
+                interest_kind=InstallmentInterestKind.INTEREST_FREE,
+                is_highlighted=True,
+            ),
+        ),
+    )
+    orchestrator = CollectionOrchestrator(
+        integration_database.async_sessions,
+        CollectionAdapter((provider,)),
+        ai_manager=_AlwaysMatchAIManager(),
+    )
+    asyncio.run(orchestrator.run_batch(now=now))
+
+    provider.installment_options = (
+        RawInstallmentOption(
+            installment_count=6,
+            raw_amount="R$ 333,33",
+            interest_kind=InstallmentInterestKind.INTEREST_FREE,
+            is_highlighted=True,
+        ),
+    )
+    due_at = now + timedelta(minutes=30)
+    _rearm_schedule(integration_database.sessions, mission_id, kabum_id, due_at)
+    asyncio.run(orchestrator.run_batch(now=due_at))
+
+    with integration_database.sessions.begin() as session:
+        observations = list(
+            session.scalars(
+                select(PriceObservation).order_by(PriceObservation.observed_at)
+            )
+        )
+        assert len(observations) == 2
+
+
+def test_condition_change_creates_new_observation(integration_database) -> None:
+    """Subtask 6: mesmo preço -- só a condição muda (Novo -> Usado) --
+    precisa gravar nova observação (Amazon, evidência real de condição)."""
+    now = datetime.now(UTC).replace(microsecond=0)
+    mission_id, amazon_id = _seed_due_mission_for_store(
+        integration_database.sessions, now, store_code="amazon"
+    )
+    provider = _CommercialStateOfferProvider(
+        "amazon", "R$ 919,98", raw_availability="Disponível", raw_condition="Novo"
+    )
+    orchestrator = CollectionOrchestrator(
+        integration_database.async_sessions,
+        CollectionAdapter((provider,)),
+        ai_manager=_AlwaysMatchAIManager(),
+    )
+    asyncio.run(orchestrator.run_batch(now=now))
+
+    provider.raw_condition = "Usado"
+    due_at = now + timedelta(minutes=30)
+    _rearm_schedule(integration_database.sessions, mission_id, amazon_id, due_at)
+    asyncio.run(orchestrator.run_batch(now=due_at))
+
+    with integration_database.sessions.begin() as session:
+        observations = list(
+            session.scalars(
+                select(PriceObservation).order_by(PriceObservation.observed_at)
+            )
+        )
+        assert len(observations) == 2
+
+
+def test_fulfillment_change_creates_new_observation(integration_database) -> None:
+    """Subtask 6: mesmo preço -- só o texto de fulfillment muda (Prime ->
+    nenhum) -- precisa gravar nova observação (Amazon)."""
+    now = datetime.now(UTC).replace(microsecond=0)
+    mission_id, amazon_id = _seed_due_mission_for_store(
+        integration_database.sessions, now, store_code="amazon"
+    )
+    provider = _CommercialStateOfferProvider(
+        "amazon",
+        "R$ 919,98",
+        raw_availability="Disponível",
+        raw_fulfillment="Prime",
+    )
+    orchestrator = CollectionOrchestrator(
+        integration_database.async_sessions,
+        CollectionAdapter((provider,)),
+        ai_manager=_AlwaysMatchAIManager(),
+    )
+    asyncio.run(orchestrator.run_batch(now=now))
+
+    provider.raw_fulfillment = None
+    due_at = now + timedelta(minutes=30)
+    _rearm_schedule(integration_database.sessions, mission_id, amazon_id, due_at)
+    asyncio.run(orchestrator.run_batch(now=due_at))
+
+    with integration_database.sessions.begin() as session:
+        observations = list(
+            session.scalars(
+                select(PriceObservation).order_by(PriceObservation.observed_at)
+            )
+        )
+        assert len(observations) == 2
+
+
+def test_seller_kind_change_creates_new_observation(integration_database) -> None:
+    """Subtask 6: mesmo preço -- só seller_kind/fulfillment_kind mudam
+    (platform -> marketplace_partner) -- precisa gravar nova observação
+    (Amazon, marketplace real com vendedores terceiros)."""
+    now = datetime.now(UTC).replace(microsecond=0)
+    mission_id, amazon_id = _seed_due_mission_for_store(
+        integration_database.sessions, now, store_code="amazon"
+    )
+    provider = _CommercialStateOfferProvider(
+        "amazon",
+        "R$ 919,98",
+        raw_availability="Disponível",
+        seller_kind=MarketplacePartyKind.PLATFORM,
+        fulfillment_kind=MarketplacePartyKind.PLATFORM,
+    )
+    orchestrator = CollectionOrchestrator(
+        integration_database.async_sessions,
+        CollectionAdapter((provider,)),
+        ai_manager=_AlwaysMatchAIManager(),
+    )
+    asyncio.run(orchestrator.run_batch(now=now))
+
+    provider.seller_kind = MarketplacePartyKind.MARKETPLACE_PARTNER
+    provider.fulfillment_kind = MarketplacePartyKind.MARKETPLACE_PARTNER
+    due_at = now + timedelta(minutes=30)
+    _rearm_schedule(integration_database.sessions, mission_id, amazon_id, due_at)
+    asyncio.run(orchestrator.run_batch(now=due_at))
+
+    with integration_database.sessions.begin() as session:
+        observations = list(
+            session.scalars(
+                select(PriceObservation).order_by(PriceObservation.observed_at)
+            )
+        )
+        assert len(observations) == 2
+
+
+def test_url_change_alone_does_not_create_new_observation(integration_database) -> None:
+    """Subtask 6 (item 5 da checagem): a URL real da Amazon muda a cada
+    busca (token de sessão -- achado real da auditoria de PROD), sem
+    representar mudança comercial nenhuma. Estado comercial canônico
+    idêntico + URL diferente -> NÃO grava nova observação."""
+    now = datetime.now(UTC).replace(microsecond=0)
+    mission_id, amazon_id = _seed_due_mission_for_store(
+        integration_database.sessions, now, store_code="amazon"
+    )
+    provider = _CommercialStateOfferProvider(
+        "amazon",
+        "R$ 919,98",
+        raw_availability="Disponível",
+        raw_fulfillment="Prime",
+        seller_kind=MarketplacePartyKind.PLATFORM,
+        fulfillment_kind=MarketplacePartyKind.PLATFORM,
+        url="https://www.amazon.com.br/dp/B0FQPCRG7P?token=sessao-1",
+    )
+    orchestrator = CollectionOrchestrator(
+        integration_database.async_sessions,
+        CollectionAdapter((provider,)),
+        ai_manager=_AlwaysMatchAIManager(),
+    )
+    asyncio.run(orchestrator.run_batch(now=now))
+
+    # mesmo external_id (ASIN real), URL de sessao diferente -- exatamente
+    # o padrao observado em PROD entre duas buscas da mesma oferta.
+    provider.url = "https://www.amazon.com.br/dp/B0FQPCRG7P?token=sessao-2"
+    due_at = now + timedelta(minutes=30)
+    _rearm_schedule(integration_database.sessions, mission_id, amazon_id, due_at)
+    asyncio.run(orchestrator.run_batch(now=due_at))
+
+    with integration_database.sessions.begin() as session:
+        observations = list(
+            session.scalars(
+                select(PriceObservation).order_by(PriceObservation.observed_at)
+            )
+        )
+        assert len(observations) == 1
+
+
+class _RendezvousOfferProvider:
+    """Subtask 6 (prova da trava por Offer): duas missões due no MESMO
+    run_batch -- a Fase A delas roda em paralelo de verdade (asyncio
+    gather, só a Fase C é serializada por mission_id). Uma barreira
+    asyncio força as duas coletas da mesma Offer a avançarem para a
+    persistência quase ao mesmo tempo, maximizando a chance real de
+    interleaving na seção crítica que a trava por Offer precisa cobrir --
+    sem a trava, isto reproduziria a duplicata real de PROD."""
+
+    source_code = "kabum"
+
+    def __init__(self, raw_price: str, *, parties: int) -> None:
+        self.raw_price = raw_price
+        self._barrier = asyncio.Barrier(parties)
+
+    async def collect(self, request: CollectionRequest) -> CollectionResult:
+        try:
+            async with asyncio.timeout(5):
+                await self._barrier.wait()
+        except (TimeoutError, asyncio.BrokenBarrierError):
+            pass
+        completed = request.requested_at.replace(microsecond=500000)
+        return CollectionResult(
+            self.source_code,
+            request.requested_at,
+            completed,
+            (
+                RawCollectedOffer(
+                    source_code=self.source_code,
+                    url="https://example.invalid/subtask6-race-offer",
+                    title="Subtask 6 race GPU",
+                    collected_at=completed,
+                    external_id="subtask6-race-offer",
+                    raw_price=self.raw_price,
+                    raw_currency="BRL",
+                    evidence={"card_text": "safe synthetic evidence"},
+                ),
+            ),
+        )
+
+
+def test_two_missions_racing_the_same_offer_never_duplicate(
+    integration_database,
+) -> None:
+    """Subtask 6 (item 5 da checagem -- o mais importante): duas missões
+    DIFERENTES, mesma loja, mesmo produto (mesmo external_id -> mesma
+    Offer), ambas due no MESMO run_batch, forçadas via barreira a
+    processar a MESMA Offer concorrentemente com estado comercial
+    idêntico. Sem a trava SELECT FOR UPDATE por Offer, as duas podiam ler
+    a mesma "última observação" antes de qualquer commit e ambas
+    decidirem "não redundante" -- exatamente o mecanismo suspeito do bug
+    real de PROD. Com a trava: só UMA nova PriceObservation."""
+    now = datetime.now(UTC).replace(microsecond=0)
+    with integration_database.sessions.begin() as session:
+        kabum = session.scalar(select(Store).where(Store.code == "kabum"))
+        kabum_id = kabum.id
+        for label in ("A", "B"):
+            user = User(
+                display_name=f"Subtask 6 race mission {label}", role=UserRole.USER
+            )
+            session.add(user)
+            session.flush()
+            mission = Mission(
+                user_id=user.id,
+                title=f"Subtask 6 race mission {label}",
+                status=MissionStatus.ACTIVE,
+            )
+            session.add(mission)
+            session.flush()
+            session.add_all(
+                (
+                    MissionCriteria(mission_id=mission.id, search_query="race GPU"),
+                    MissionSchedule(
+                        mission_id=mission.id,
+                        interval_minutes=60,
+                        next_run_at=now,
+                        is_enabled=True,
+                    ),
+                    MissionSource(mission_id=mission.id, store_id=kabum_id),
+                )
+            )
+
+    provider = _RendezvousOfferProvider("R$ 1.999,98", parties=2)
+    orchestrator = CollectionOrchestrator(
+        integration_database.async_sessions,
+        CollectionAdapter((provider,)),
+        ai_manager=_AlwaysMatchAIManager(),
+        max_concurrency=2,
+        store_min_interval_seconds=_NEUTRAL_STORE_INTERVAL_SECONDS,
+        max_concurrent_user_batches=2,
+    )
+    result = asyncio.run(orchestrator.run_batch(now=now))
+
+    assert result.claimed == 2
+    assert result.succeeded == 2
+    with integration_database.sessions.begin() as session:
+        observations = list(session.scalars(select(PriceObservation)))
+        assert len(observations) == 1, (
+            "duas missoes concorrentes na mesma Offer duplicaram a "
+            "observacao -- a trava por Offer nao esta funcionando"
+        )
+
+
+class _OppositeOrderTwoOfferProvider:
+    """Subtask 6 (teste de deadlock): duas Offers reais e distintas, mas o
+    PREÇO relativo entre elas se INVERTE a cada chamada de `collect` --
+    exatamente o que `_limit_intermediate_candidates` usa como critério de
+    ordenação (preço genuinamente volátil, como as flash sales reais de
+    KaBuM! encontradas na auditoria de PROD). Isso força a ordem de
+    SELEÇÃO COMERCIAL das duas Offers a ficar oposta entre as duas
+    coletas concorrentes -- sem ordenação separada de travas por
+    `offer.id`, isso deadlockearia."""
+
+    source_code = "kabum"
+
+    def __init__(self) -> None:
+        self._call_count = 0
+        self._barrier = asyncio.Barrier(2)
+
+    async def collect(self, request: CollectionRequest) -> CollectionResult:
+        self._call_count += 1
+        # chamada 1: X mais barato que Y / chamada 2: Y mais barato que X.
+        x_price, y_price = (
+            ("R$ 100,00", "R$ 200,00")
+            if self._call_count == 1
+            else ("R$ 200,00", "R$ 100,00")
+        )
+        try:
+            async with asyncio.timeout(5):
+                await self._barrier.wait()
+        except (TimeoutError, asyncio.BrokenBarrierError):
+            pass
+        completed = request.requested_at.replace(microsecond=500000)
+        return CollectionResult(
+            self.source_code,
+            request.requested_at,
+            completed,
+            (
+                RawCollectedOffer(
+                    source_code=self.source_code,
+                    url="https://example.invalid/subtask6-deadlock-x",
+                    title="Subtask 6 deadlock GPU X",
+                    collected_at=completed,
+                    external_id="subtask6-deadlock-x",
+                    raw_price=x_price,
+                    raw_currency="BRL",
+                    evidence={"card_text": "safe synthetic evidence"},
+                ),
+                RawCollectedOffer(
+                    source_code=self.source_code,
+                    url="https://example.invalid/subtask6-deadlock-y",
+                    title="Subtask 6 deadlock GPU Y",
+                    collected_at=completed,
+                    external_id="subtask6-deadlock-y",
+                    raw_price=y_price,
+                    raw_currency="BRL",
+                    evidence={"card_text": "safe synthetic evidence"},
+                ),
+            ),
+        )
+
+
+def test_two_missions_opposite_offer_order_never_deadlocks(
+    integration_database,
+) -> None:
+    """Subtask 6 (item 4 da checagem -- teste de deadlock): missão A e
+    missão B compartilham DUAS Offers reais, recebidas em ordem comercial
+    OPOSTA (preço relativo invertido entre as duas coletas -- volatilidade
+    real), executando concorrentemente no MESMO `run_batch`. Sem a
+    ordenação determinística de travas por `offer.id` (separada da ordem
+    de seleção comercial), isso reproduziria um deadlock real do
+    PostgreSQL. Timeout curto: um deadlock/hang fica evidente como falha
+    do teste, não como travamento indefinido da suíte."""
+    now = datetime.now(UTC).replace(microsecond=0)
+    with integration_database.sessions.begin() as session:
+        kabum = session.scalar(select(Store).where(Store.code == "kabum"))
+        kabum_id = kabum.id
+        for label in ("A", "B"):
+            user = User(
+                display_name=f"Subtask 6 deadlock mission {label}",
+                role=UserRole.USER,
+            )
+            session.add(user)
+            session.flush()
+            mission = Mission(
+                user_id=user.id,
+                title=f"Subtask 6 deadlock mission {label}",
+                status=MissionStatus.ACTIVE,
+            )
+            session.add(mission)
+            session.flush()
+            session.add_all(
+                (
+                    MissionCriteria(
+                        mission_id=mission.id, search_query="deadlock GPU"
+                    ),
+                    MissionSchedule(
+                        mission_id=mission.id,
+                        interval_minutes=60,
+                        next_run_at=now,
+                        is_enabled=True,
+                    ),
+                    MissionSource(mission_id=mission.id, store_id=kabum_id),
+                )
+            )
+
+    provider = _OppositeOrderTwoOfferProvider()
+    orchestrator = CollectionOrchestrator(
+        integration_database.async_sessions,
+        CollectionAdapter((provider,)),
+        ai_manager=_AlwaysMatchAIManager(),
+        max_concurrency=2,
+        store_min_interval_seconds=_NEUTRAL_STORE_INTERVAL_SECONDS,
+        max_concurrent_user_batches=2,
+    )
+
+    async def _run_with_timeout():
+        return await asyncio.wait_for(orchestrator.run_batch(now=now), timeout=10)
+
+    result = asyncio.run(_run_with_timeout())
+
+    assert result.claimed == 2
+    assert result.succeeded == 2, (
+        "uma das duas coletas falhou -- possivel deadlock detectado e "
+        "abortado pelo PostgreSQL"
+    )
+    with integration_database.sessions.begin() as session:
+        observations = list(session.scalars(select(PriceObservation)))
+        # duas Offers reais e distintas, preco genuinamente mudou entre as
+        # duas coletas para cada uma -- no maximo 2 observacoes por Offer
+        # (uma por valor de preco realmente visto), nunca mais que isso.
+        assert 2 <= len(observations) <= 4
+        amounts = {str(o.amount) for o in observations}
+        assert amounts <= {"100.0000", "200.0000"}
+
+
+class _MixedExistingAndNewOfferProvider:
+    """Subtask 6 (teste de deadlock -- caminho específico do
+    `begin_nested()`): devolve uma Offer JÁ EXISTENTE (será mutada --
+    `image_url` muda -- sem `begin_nested`, fica só "suja" na sessão) e
+    uma Offer GENUINAMENTE NOVA (aciona `begin_nested`, que força flush
+    incondicional de TODO o estado pendente, mesmo com `autoflush=False`
+    -- é exatamente o furo apontado: se isso acontecesse ANTES da fase
+    global de travas, a Offer existente seria flushada/travada na ordem
+    de iteração, não na ordem global). A ordem relativa entre as duas se
+    inverte a cada chamada via preço (mesmo mecanismo do teste anterior)."""
+
+    source_code = "kabum"
+
+    def __init__(self, existing_external_id: str, new_external_id: str) -> None:
+        self.existing_external_id = existing_external_id
+        self.new_external_id = new_external_id
+        self._call_count = 0
+        self._barrier = asyncio.Barrier(2)
+
+    async def collect(self, request: CollectionRequest) -> CollectionResult:
+        self._call_count += 1
+        existing_price, new_price = (
+            ("R$ 100,00", "R$ 200,00")
+            if self._call_count == 1
+            else ("R$ 200,00", "R$ 100,00")
+        )
+        try:
+            async with asyncio.timeout(5):
+                await self._barrier.wait()
+        except (TimeoutError, asyncio.BrokenBarrierError):
+            pass
+        completed = request.requested_at.replace(microsecond=500000)
+        return CollectionResult(
+            self.source_code,
+            request.requested_at,
+            completed,
+            (
+                RawCollectedOffer(
+                    source_code=self.source_code,
+                    url="https://example.invalid/subtask6-existing-offer",
+                    title="Subtask 6 begin_nested GPU existing",
+                    collected_at=completed,
+                    external_id=self.existing_external_id,
+                    raw_price=existing_price,
+                    raw_currency="BRL",
+                    # muda a cada chamada -- forca a mutacao de
+                    # `offer.image_url` no ramo "offer ja existe" de
+                    # `_resolve_offer`, sem `begin_nested` proprio.
+                    image_url=f"https://example.invalid/img-{self._call_count}.jpg",
+                    evidence={"card_text": "safe synthetic evidence"},
+                ),
+                RawCollectedOffer(
+                    source_code=self.source_code,
+                    url="https://example.invalid/subtask6-new-offer",
+                    title="Subtask 6 begin_nested GPU new",
+                    collected_at=completed,
+                    external_id=self.new_external_id,
+                    raw_price=new_price,
+                    raw_currency="BRL",
+                    evidence={"card_text": "safe synthetic evidence"},
+                ),
+            ),
+        )
+
+
+def test_two_missions_mixed_existing_and_new_offer_never_deadlocks(
+    integration_database,
+) -> None:
+    """Subtask 6 (item 5 da checagem -- furo específico do
+    `begin_nested()`): força o caminho exato que você apontou -- uma
+    Offer JÁ EXISTENTE (mutação de `image_url`, sem `begin_nested`
+    próprio) processada ANTES de uma Offer GENUINAMENTE NOVA (aciona
+    `begin_nested`, que flusha TUDO que está pendente na sessão,
+    incondicionalmente) -- com a ordem relativa entre as duas invertida
+    entre duas missões concorrentes. Na implementação vulnerável (mutar +
+    resolver tudo ANTES da fase global de travas), isso reproduziria o
+    deadlock; na implementação corrigida (identificação somente leitura
+    -> trava global -> só então `_resolve_offer`), não deve nem chegar
+    perto de travar."""
+    now = datetime.now(UTC).replace(microsecond=0)
+    existing_external_id = "subtask6-mixed-existing"
+    new_external_id = "subtask6-mixed-new"
+
+    # Semeia a Offer "existente" ANTES da corrida -- uma missao solitaria,
+    # coleta unica, sem concorrencia nenhuma.
+    seed_mission_id, seed_kabum_id = _seed_due_mission_for_store(
+        integration_database.sessions, now, store_code="kabum"
+    )
+    seed_provider = _CommercialStateOfferProvider(
+        "kabum", "R$ 100,00", external_id=existing_external_id
+    )
+    seed_orchestrator = CollectionOrchestrator(
+        integration_database.async_sessions,
+        CollectionAdapter((seed_provider,)),
+        ai_manager=_AlwaysMatchAIManager(),
+    )
+    seed_result = asyncio.run(seed_orchestrator.run_batch(now=now))
+    assert seed_result.succeeded == 1
+
+    later = now + timedelta(minutes=30)
+    with integration_database.sessions.begin() as session:
+        kabum = session.scalar(select(Store).where(Store.code == "kabum"))
+        kabum_id = kabum.id
+        for label in ("A", "B"):
+            user = User(
+                display_name=f"Subtask 6 mixed mission {label}", role=UserRole.USER
+            )
+            session.add(user)
+            session.flush()
+            mission = Mission(
+                user_id=user.id,
+                title=f"Subtask 6 mixed mission {label}",
+                status=MissionStatus.ACTIVE,
+            )
+            session.add(mission)
+            session.flush()
+            session.add_all(
+                (
+                    MissionCriteria(mission_id=mission.id, search_query="begin_nested GPU"),
+                    MissionSchedule(
+                        mission_id=mission.id,
+                        interval_minutes=60,
+                        next_run_at=later,
+                        is_enabled=True,
+                    ),
+                    MissionSource(mission_id=mission.id, store_id=kabum_id),
+                )
+            )
+
+    provider = _MixedExistingAndNewOfferProvider(existing_external_id, new_external_id)
+    orchestrator = CollectionOrchestrator(
+        integration_database.async_sessions,
+        CollectionAdapter((provider,)),
+        ai_manager=_AlwaysMatchAIManager(),
+        max_concurrency=2,
+        store_min_interval_seconds=_NEUTRAL_STORE_INTERVAL_SECONDS,
+        max_concurrent_user_batches=2,
+    )
+
+    async def _run_with_timeout():
+        return await asyncio.wait_for(orchestrator.run_batch(now=later), timeout=10)
+
+    result = asyncio.run(_run_with_timeout())
+
+    assert result.claimed == 2
+    assert result.succeeded == 2, (
+        "uma das duas coletas falhou -- possivel deadlock detectado e "
+        "abortado pelo PostgreSQL no caminho existente+mutacao / "
+        "novo+begin_nested"
+    )
+    with integration_database.sessions.begin() as session:
+        offers = list(
+            session.scalars(
+                select(Offer).where(
+                    Offer.external_id.in_([existing_external_id, new_external_id])
+                )
+            )
+        )
+        assert len(offers) == 2
+
+
+class _TwoNewSellersOppositeOrderProvider:
+    """Subtask 6 (item 5 da checagem -- conflito de INSERT concorrente em
+    unique constraint, `uq_sellers_store_external_id`): duas Offers de
+    dois Sellers GENUINAMENTE NOVOS (nunca vistos), preço relativo
+    invertido a cada chamada para forçar ordem comercial oposta entre
+    duas coletas concorrentes. Nenhuma linha física existe ainda para
+    nenhum dos dois Sellers -- não há o que travar com `FOR UPDATE`; só a
+    trava transacional por chave lógica (`pg_advisory_xact_lock`)
+    protege contra o Postgres bloquear (e potencialmente deadlockear) dois
+    `INSERT` concorrentes na mesma constraint, em ordem cruzada. Amazon
+    (não KaBuM!) de propósito: `Seller` só pode existir sob uma loja
+    `source_type='marketplace'` (trigger real do banco), e só Amazon está
+    marcada assim nesta base."""
+
+    source_code = "amazon"
+
+    def __init__(self) -> None:
+        self._call_count = 0
+        self._barrier = asyncio.Barrier(2)
+
+    async def collect(self, request: CollectionRequest) -> CollectionResult:
+        self._call_count += 1
+        p_price, q_price = (
+            ("R$ 100,00", "R$ 200,00")
+            if self._call_count == 1
+            else ("R$ 200,00", "R$ 100,00")
+        )
+        try:
+            async with asyncio.timeout(5):
+                await self._barrier.wait()
+        except (TimeoutError, asyncio.BrokenBarrierError):
+            pass
+        completed = request.requested_at.replace(microsecond=500000)
+        return CollectionResult(
+            self.source_code,
+            request.requested_at,
+            completed,
+            (
+                RawCollectedOffer(
+                    source_code=self.source_code,
+                    url="https://example.invalid/subtask6-seller-p-offer",
+                    title="Subtask 6 new seller GPU P",
+                    collected_at=completed,
+                    external_id="subtask6-seller-p-offer",
+                    seller_external_id="subtask6-new-seller-p",
+                    seller_name="Vendedor P",
+                    raw_price=p_price,
+                    raw_currency="BRL",
+                    evidence={"card_text": "safe synthetic evidence"},
+                ),
+                RawCollectedOffer(
+                    source_code=self.source_code,
+                    url="https://example.invalid/subtask6-seller-q-offer",
+                    title="Subtask 6 new seller GPU Q",
+                    collected_at=completed,
+                    external_id="subtask6-seller-q-offer",
+                    seller_external_id="subtask6-new-seller-q",
+                    seller_name="Vendedor Q",
+                    raw_price=q_price,
+                    raw_currency="BRL",
+                    evidence={"card_text": "safe synthetic evidence"},
+                ),
+            ),
+        )
+
+
+def test_two_missions_creating_two_new_sellers_opposite_order_never_deadlocks(
+    integration_database,
+) -> None:
+    """Subtask 6 (item 5 da checagem -- caminho específico apontado:
+    conflito de `INSERT` concorrente, não `FOR UPDATE`): duas missões
+    diferentes tentam criar os MESMOS dois Sellers novos (`uq_sellers_
+    store_external_id`), em ordem comercial oposta entre si (preço
+    relativo invertido). Sem a trava transacional por chave lógica
+    (`pg_advisory_xact_lock`, ordenada globalmente), TX1 poderia inserir
+    P e esperar por Q enquanto TX2 insere Q e espera por P -- ciclo real
+    do Postgres, mesmo sem nenhum `SELECT ... FOR UPDATE` envolvido, já
+    que nenhuma das duas linhas existia antes. Timeout curto: hang vira
+    falha evidente, não travamento da suíte."""
+    now = datetime.now(UTC).replace(microsecond=0)
+    with integration_database.sessions.begin() as session:
+        amazon = session.scalar(select(Store).where(Store.code == "amazon"))
+        amazon_id = amazon.id
+        for label in ("A", "B"):
+            user = User(
+                display_name=f"Subtask 6 new-seller mission {label}",
+                role=UserRole.USER,
+            )
+            session.add(user)
+            session.flush()
+            mission = Mission(
+                user_id=user.id,
+                title=f"Subtask 6 new-seller mission {label}",
+                status=MissionStatus.ACTIVE,
+            )
+            session.add(mission)
+            session.flush()
+            session.add_all(
+                (
+                    MissionCriteria(
+                        mission_id=mission.id, search_query="new seller GPU"
+                    ),
+                    MissionSchedule(
+                        mission_id=mission.id,
+                        interval_minutes=60,
+                        next_run_at=now,
+                        is_enabled=True,
+                    ),
+                    MissionSource(mission_id=mission.id, store_id=amazon_id),
+                )
+            )
+
+    provider = _TwoNewSellersOppositeOrderProvider()
+    orchestrator = CollectionOrchestrator(
+        integration_database.async_sessions,
+        CollectionAdapter((provider,)),
+        ai_manager=_AlwaysMatchAIManager(),
+        max_concurrency=2,
+        store_min_interval_seconds=_NEUTRAL_STORE_INTERVAL_SECONDS,
+        max_concurrent_user_batches=2,
+    )
+
+    async def _run_with_timeout():
+        return await asyncio.wait_for(orchestrator.run_batch(now=now), timeout=10)
+
+    result = asyncio.run(_run_with_timeout())
+
+    assert result.claimed == 2
+    assert result.succeeded == 2, (
+        "uma das duas coletas falhou -- possivel deadlock detectado e "
+        "abortado pelo PostgreSQL entre dois INSERT concorrentes de "
+        "Seller na mesma unique constraint"
+    )
+    with integration_database.sessions.begin() as session:
+        sellers = list(
+            session.scalars(
+                select(Seller).where(
+                    Seller.external_id.in_(
+                        ["subtask6-new-seller-p", "subtask6-new-seller-q"]
+                    )
+                )
+            )
+        )
+        # exatamente um Seller por chave logica -- nenhuma duplicacao
+        # apesar das duas transacoes tentarem criar os dois ao mesmo tempo.
+        assert len(sellers) == 2
+        offers = list(
+            session.scalars(
+                select(Offer).where(
+                    Offer.external_id.in_(
+                        [
+                            "subtask6-seller-p-offer",
+                            "subtask6-seller-q-offer",
+                        ]
+                    )
+                )
+            )
+        )
+        assert len(offers) == 2

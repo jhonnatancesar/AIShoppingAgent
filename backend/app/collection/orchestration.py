@@ -76,7 +76,9 @@ from app.collection.models import (
 )
 from app.collection.normalization import (
     Availability,
+    NormalizedCollectedOffer,
     NormalizedCollectionResult,
+    NormalizedInstallmentOption,
     PriceNormalizer,
 )
 from app.collection.persistence import finish_collection_run, start_collection_run
@@ -1869,17 +1871,104 @@ async def _persist_phase_a(
         )
 
         pending: list[_PendingOffer] = []
-        seen_offer_keys: set[tuple[str | None, str | None, str]] = set()
+
+        # Subtask 6 (correção estrutural de deadlock -- race entre
+        # missões concorrentes na MESMA Offer/Product): a Fase A de
+        # missões diferentes roda em paralelo de verdade (`asyncio.
+        # gather`, comentário da classe acima) -- só a Fase C é
+        # serializada por `mission_id`.
+        #
+        # Três passos, nesta ordem exata, nunca misturados:
+        #
+        # 1) IDENTIFICAÇÃO SOMENTE LEITURA (`_preview_existing_offer_and_
+        #    product`) -- zero mutação, zero `session.add`, zero
+        #    `begin_nested()`. Precisa ser assim: `Session.begin_nested()`
+        #    força `flush()` incondicional de TODO o estado pendente da
+        #    sessão antes do SAVEPOINT, mesmo com `autoflush=False` (só
+        #    afeta flush automático antes de query). Se `_resolve_offer`
+        #    (que cria Seller/Offer/Product novos via `begin_nested()`)
+        #    rodasse aqui, misturado com o loop, o `begin_nested()` de um
+        #    item flusharia -- e travaria -- uma mutação pendente de um
+        #    item ANTERIOR (ex. `canonical_image_url`) na ordem de
+        #    iteração comercial, não na ordem global determinística.
+        #
+        # 2) TRAVA GLOBAL, sobre uma sessão comprovadamente limpa (nenhum
+        #    flush ainda ocorreu): todas as Offers já existentes,
+        #    ordenadas por `offer.id`, depois todos os Products já
+        #    existentes, ordenados por `product_id` -- sempre nessa ordem
+        #    relativa entre as duas fases, em toda transação, nunca na
+        #    ordem de seleção comercial (que pode variar entre duas
+        #    coletas quase simultâneas da mesma Offer -- preço é critério
+        #    de `_limit_intermediate_candidates` e pode oscilar de
+        #    verdade, ex. flash sale). `SELECT ... FOR UPDATE`, não
+        #    `asyncio.Lock` -- mesmo motivo do lock de `CollectionRun`:
+        #    continua correto com múltiplos processos de worker.
+        #
+        # 3) RESOLUÇÃO DE VERDADE (`_resolve_offer`, com mutação/criação
+        #    e `begin_nested()` quando preciso) -- agora seguro: qualquer
+        #    linha que já existia está travada antes de qualquer flush
+        #    poder tocá-la; linhas genuinamente novas não têm concorrência
+        #    de ordem entre transações (o retry por `IntegrityError` já
+        #    cobre a corrida de criação).
+        #
+        # A ordem de seleção comercial (`final_offers`, decide qual
+        # sobrevivente "vence" na Amazon etc.) continua completamente
+        # intocada nos três passos.
+        items_by_key: dict[tuple[str | None, str | None, str], Any] = {}
+        preview: dict[
+            tuple[str | None, str | None, str], tuple[Offer | None, Product | None]
+        ] = {}
+        creation_lock_keys: set[str] = set()
         for item in final_offers:
             identity_key = (
                 item.seller_external_id,
                 item.raw_offer.external_id,
                 item.raw_offer.external_id or item.raw_offer.url,
             )
-            if identity_key in seen_offer_keys:
+            if identity_key in items_by_key:
                 continue
-            seen_offer_keys.add(identity_key)
+            items_by_key[identity_key] = item
+            preview[identity_key] = await _preview_existing_offer_and_product(
+                session, claim.store_id, item
+            )
+            creation_lock_keys |= _creation_lock_keys(claim.store_id, item)
+
+        # Fase 0 (correção estrutural de deadlock, segunda rodada): trava
+        # transacional por CHAVE LÓGICA (`pg_advisory_xact_lock`, não
+        # `SELECT ... FOR UPDATE`, porque as linhas podem ainda nem
+        # existir) para todo Seller/Product/Offer que este lote possa vir
+        # a CRIAR -- sempre antes das fases de linha física abaixo e de
+        # `_resolve_offer`. Ver docstring de `_creation_lock_keys`.
+        await _acquire_creation_locks(session, frozenset(creation_lock_keys))
+
+        offer_ids = sorted(
+            {o.id for o, _ in preview.values() if o is not None}
+        )
+        for offer_id in offer_ids:
+            await session.scalar(
+                select(Offer.id).where(Offer.id == offer_id).with_for_update()
+            )
+        product_ids = sorted(
+            {p.id for _, p in preview.values() if p is not None}
+        )
+        for product_id in product_ids:
+            await session.scalar(
+                select(Product.id)
+                .where(Product.id == product_id)
+                .with_for_update()
+            )
+
+        resolved_offers: dict[tuple[str | None, str | None, str], Offer] = {}
+        resolved_items: list[
+            tuple[tuple[str | None, str | None, str], Any]
+        ] = []
+        for identity_key, item in items_by_key.items():
             offer = await _resolve_offer(session, claim.store_id, item)
+            resolved_offers[identity_key] = offer
+            resolved_items.append((identity_key, item))
+
+        for identity_key, item in resolved_items:
+            offer = resolved_offers[identity_key]
             # DEC-048/TASK-063: escopado por missão -- duas missões
             # diferentes que coletem a mesma Offer nao compartilham mais o
             # "ultimo preco visto" para fins de cruzamento de alvo.
@@ -1906,8 +1995,9 @@ async def _persist_phase_a(
                 )
                 .limit(1)
             )
+            current_state = _CommercialState.from_normalized_offer(item)
             redundant = False
-            if latest is not None and _same_commercial_state(latest, item):
+            if latest is not None and _same_commercial_state(latest, current_state):
                 latest_installments = list(
                     await session.scalars(
                         select(OfferInstallmentOption).where(
@@ -1917,7 +2007,7 @@ async def _persist_phase_a(
                 )
                 redundant = _installment_snapshot(
                     latest_installments
-                ) == _installment_snapshot(item.installment_options)
+                ) == _installment_snapshot(current_state.installments)
 
             if redundant:
                 # TASK-093: estado comercial (preço, moeda, disponibilidade,
@@ -1928,24 +2018,28 @@ async def _persist_phase_a(
                 # a oferta.
                 observation = latest
             else:
+                # Subtask 6 (correção de causa raiz): construído a partir
+                # de `current_state` -- a MESMA instância comparada acima
+                # -- nunca relendo `item` de novo (ver docstring de
+                # `_CommercialState`).
                 observation = PriceObservation(
                     offer_id=offer.id,
                     collection_run_id=run.id,
-                    amount=item.amount,
-                    currency=item.currency,
-                    shipping_amount=item.shipping_amount,
-                    total_amount=item.total_amount,
-                    fulfillment=item.fulfillment,
-                    seller_kind=item.seller_kind,
-                    fulfillment_kind=item.fulfillment_kind,
-                    condition=item.condition,
-                    availability=item.availability,
+                    amount=current_state.amount,
+                    currency=current_state.currency,
+                    shipping_amount=current_state.shipping_amount,
+                    total_amount=current_state.total_amount,
+                    fulfillment=current_state.fulfillment,
+                    seller_kind=current_state.seller_kind,
+                    fulfillment_kind=current_state.fulfillment_kind,
+                    condition=current_state.condition,
+                    availability=current_state.availability,
                     observed_at=item.raw_offer.collected_at,
                     raw_evidence=_raw_evidence(item.raw_offer),
                 )
                 session.add(observation)
                 await session.flush()
-                for option in item.installment_options:
+                for option in current_state.installments:
                     session.add(
                         OfferInstallmentOption(
                             price_observation_id=observation.id,
@@ -1957,7 +2051,7 @@ async def _persist_phase_a(
                             is_highlighted=option.is_highlighted,
                         )
                     )
-                if item.installment_options:
+                if current_state.installments:
                     await session.flush()
             offer.last_seen_at = item.raw_offer.collected_at
 
@@ -2479,6 +2573,92 @@ def _maybe_set_canonical_image(product: Product, image_url: str) -> None:
     sem identidade nunca são "o mesmo produto entre lojas" de verdade."""
     if product.canonical_image_url is None:
         product.canonical_image_url = image_url
+
+
+async def _preview_existing_offer_and_product(
+    session: AsyncSession, store_id: UUID, item: Any
+) -> tuple[Offer | None, Product | None]:
+    """Subtask 6 (correção estrutural de deadlock): identificação SOMENTE
+    LEITURA -- nenhum `session.add`, nenhuma mutação, nenhum
+    `begin_nested()`. `Session.begin_nested()` força `flush()`
+    incondicional de TODO o estado pendente da sessão antes do SAVEPOINT
+    (`SessionTransaction._take_snapshot`, `if not is_begin and not
+    self.session._flushing: self.session.flush()`) -- isso vale mesmo com
+    `autoflush=False`, que só afeta o flush automático antes de queries.
+    `_resolve_offer` (chamado depois, só após a fase global de travas)
+    pode disparar `begin_nested()` ao criar Seller/Offer/Product novos; se
+    isso acontecesse ANTES da ordem global estar completa, uma mutação
+    pendente de uma Offer JÁ processada (ex. `canonical_image_url`) seria
+    flushada -- e travada -- na ordem de iteração comercial, reabrindo o
+    mesmo risco de deadlock. Por isso esta função só enxerga o que JÁ
+    EXISTE (sem criar nada), para a fase de travas rodar sobre um estado
+    de sessão garantidamente limpo."""
+    external_id = item.seller_external_id
+    seller_id: UUID | None = None
+    if external_id:
+        seller = await session.scalar(
+            select(Seller).where(
+                Seller.store_id == store_id, Seller.external_id == external_id
+            )
+        )
+        seller_id = seller.id if seller is not None else None
+    offer = await _find_offer(
+        session, store_id, seller_id, item.raw_offer.external_id, item.raw_offer.url
+    )
+    if offer is None:
+        return None, None
+    product = await session.get(Product, offer.product_id)
+    return offer, product
+
+
+def _creation_lock_keys(store_id: UUID, item: Any) -> frozenset[str]:
+    """Subtask 6 (correção estrutural de deadlock, segunda rodada):
+    chaves lógicas (naturais, conhecidas ANTES de qualquer `INSERT`) dos
+    recursos que `_resolve_offer` pode precisar CRIAR para este item --
+    Seller (`uq_sellers_store_external_id`), Product
+    (`uq_products_identity_key`) e a própria Offer (as 4 unique indexes
+    em `_OFFER_IDENTITY_INDEXES`, todas cobertas pela mesma tupla de
+    identidade já usada para deduplicar itens no loop).
+
+    Travar por Offer/Product JÁ EXISTENTES (`SELECT ... FOR UPDATE`, mais
+    acima) não basta: dois `INSERT` concorrentes na MESMA unique
+    constraint (nenhuma linha existe ainda, então não há o que
+    `FOR UPDATE`) também podem deadlockear -- o Postgres bloqueia um
+    `INSERT` quando outra transação já tem um `INSERT` não commitado na
+    mesma chave, exatamente como um lock real; se TX1 insere A e espera
+    por B enquanto TX2 insere B e espera por A, é um ciclo genuíno.
+    `resolve_product_variant`/`item.seller_external_id` já são conhecidos
+    aqui, sem consulta nenhuma -- por isso dá para travar por CHAVE
+    LÓGICA, não por linha física (que ainda não existe)."""
+    keys: set[str] = set()
+    identity_key = (
+        item.seller_external_id,
+        item.raw_offer.external_id,
+        item.raw_offer.external_id or item.raw_offer.url,
+    )
+    keys.add(f"offer:{store_id}:{identity_key}")
+    if item.seller_external_id:
+        keys.add(f"seller:{store_id}:{item.seller_external_id}")
+    product_identity = resolve_product_variant(item.raw_offer.title)
+    if product_identity is not None:
+        keys.add(f"product:{product_identity.identity_key}")
+    return frozenset(keys)
+
+
+async def _acquire_creation_locks(session: AsyncSession, keys: frozenset[str]) -> None:
+    """Subtask 6: `pg_advisory_xact_lock` por chave lógica (não um lock
+    global único) -- travas transacionais, liberadas automaticamente no
+    commit/rollback, uma por chave lógica distinta, adquiridas em ordem
+    GLOBAL determinística (ordenação lexicográfica das chaves) para que
+    nenhuma transação concorrente possa adquiri-las em ordem cruzada.
+    `hashtextextended(..., 0)` gera o `bigint` que `pg_advisory_xact_lock`
+    exige a partir de uma chave textual arbitrária -- colisão de hash só
+    causaria serialização desnecessária entre chaves diferentes, nunca um
+    problema de corretude."""
+    for key in sorted(keys):
+        await session.execute(
+            select(func.pg_advisory_xact_lock(func.hashtextextended(key, 0)))
+        )
 
 
 async def _resolve_offer(session: AsyncSession, store_id: UUID, item: Any) -> Offer:
@@ -3270,6 +3450,46 @@ def _failure_log_context(error: Exception) -> dict[str, Any]:
 def _constraint_name(error: IntegrityError) -> str | None:
     diagnostic = getattr(error.orig, "diag", None)
     return getattr(diagnostic, "constraint_name", None)
+
+
+@dataclass(frozen=True, slots=True)
+class _CommercialState:
+    """Auditoria GG Oferta (Subtask 6, correção de causa raiz): estado
+    comercial da coleta ATUAL materializado uma única vez a partir de
+    `item`. `seller_kind`/`fulfillment_kind`/`installment_options` em
+    `NormalizedCollectedOffer` são `@property` recalculadas a cada acesso
+    a partir de `raw_offer` (de propósito, para refletir enriquecimento
+    tardio -- ver `normalization.py`); ler `item` uma vez só aqui e reusar
+    esta mesma instância tanto na checagem de redundância quanto na
+    construção de `PriceObservation`/`OfferInstallmentOption` garante que
+    a decisão e a persistência nunca leem valores potencialmente
+    diferentes entre duas leituras de `item`."""
+
+    amount: Decimal
+    currency: str
+    shipping_amount: Decimal | None
+    total_amount: Decimal
+    fulfillment: str | None
+    seller_kind: MarketplacePartyKind | None
+    fulfillment_kind: MarketplacePartyKind | None
+    condition: OfferCondition
+    availability: Availability
+    installments: tuple[NormalizedInstallmentOption, ...]
+
+    @classmethod
+    def from_normalized_offer(cls, item: NormalizedCollectedOffer) -> _CommercialState:
+        return cls(
+            amount=item.amount,
+            currency=item.currency,
+            shipping_amount=item.shipping_amount,
+            total_amount=item.total_amount,
+            fulfillment=item.fulfillment,
+            seller_kind=item.seller_kind,
+            fulfillment_kind=item.fulfillment_kind,
+            condition=item.condition,
+            availability=item.availability,
+            installments=item.installment_options,
+        )
 
 
 def _same_commercial_state(latest: PriceObservation, item: Any) -> bool:

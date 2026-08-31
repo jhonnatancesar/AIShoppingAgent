@@ -471,8 +471,9 @@ def test_persist_phase_a_marks_offers_needing_ai(monkeypatch) -> None:
         target_currency=None,
     )
     session = _mock_async_session()
-    # scalar: run, criteria, previous(=None), latest(=None) (TASK-093)
-    session.scalar.side_effect = [run, criteria, None, None]
+    # scalar: run, criteria, offer lock, product lock (Subtask 6),
+    # previous(=None), latest(=None) (TASK-093)
+    session.scalar.side_effect = [run, criteria, None, None, None, None]
     # get: Mission, MissionOfferRelevance cache (None -> needs AI), Product (display_name=None)
     product = SimpleNamespace(display_name=None)
     session.get.side_effect = [mission, None, product]
@@ -558,7 +559,7 @@ def test_persist_phase_a_creates_installment_options_tied_to_new_observation(
         target_currency=None,
     )
     session = _mock_async_session()
-    session.scalar.side_effect = [run, criteria, None, None]  # +latest (TASK-093)
+    session.scalar.side_effect = [run, criteria, None, None, None, None]  # +offer lock +product lock (Subtask 6) +latest (TASK-093)
     product = SimpleNamespace(display_name=None)
     session.get.side_effect = [mission, None, product]
     offer = SimpleNamespace(id=offer_id, product_id=product_id)
@@ -636,7 +637,7 @@ def test_persist_phase_a_adds_no_installment_row_when_offer_has_none(
         target_currency=None,
     )
     session = _mock_async_session()
-    session.scalar.side_effect = [run, criteria, None, None]  # +latest (TASK-093)
+    session.scalar.side_effect = [run, criteria, None, None, None, None]  # +offer lock +product lock (Subtask 6) +latest (TASK-093)
     product = SimpleNamespace(display_name=None)
     session.get.side_effect = [mission, None, product]
     offer = SimpleNamespace(id=offer_id, product_id=product_id)
@@ -680,9 +681,10 @@ def test_persist_phase_a_limits_generic_search_candidates_per_source(
         target_currency=None,
     )
     session = _mock_async_session()
-    # scalar: run, criteria, depois previous+latest (TASK-093) por
-    # sobrevivente (5, dentro do pool intermediário de 8 da TASK-094)
-    session.scalar.side_effect = [run, criteria] + [None] * 10
+    # scalar: run, criteria, depois lock (Subtask 6) + previous+latest
+    # (TASK-093) por sobrevivente (5, dentro do pool intermediário de 8
+    # da TASK-094)
+    session.scalar.side_effect = [run, criteria] + [None] * 16
     product = SimpleNamespace(display_name="Cadeira")
     # get: Mission, depois (relevance_cache, product) por sobrevivente.
     session.get.side_effect = [mission] + [None, product] * 5
@@ -769,8 +771,8 @@ def test_persist_phase_a_specific_search_not_limited(monkeypatch) -> None:
         target_currency=None,
     )
     session = _mock_async_session()
-    # previous+latest (TASK-093) por sobrevivente (5, sem corte)
-    session.scalar.side_effect = [run, criteria] + [None] * 10
+    # lock (Subtask 6) + previous+latest (TASK-093) por sobrevivente (5, sem corte)
+    session.scalar.side_effect = [run, criteria] + [None] * 16
     product = SimpleNamespace(display_name="RTX 5070 Ti")
     session.get.side_effect = [mission] + [None, product] * 5
     offer_stub = SimpleNamespace(id=uuid4(), product_id=uuid4())

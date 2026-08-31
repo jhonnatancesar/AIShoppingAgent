@@ -139,6 +139,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from decimal import Decimal
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import and_, exists, func, or_, select, update
@@ -169,8 +170,11 @@ from app.collection.orchestration import (
     _RUNNING_INDEX,
     ClaimedCollection,
     PriceObservationComparison,
+    _acquire_creation_locks,
     _apply_rating_snapshot,
+    _CommercialState,
     _constraint_name,
+    _creation_lock_keys,
     _deterministic_product_relevance,
     _failure_code,
     _installment_snapshot,
@@ -178,6 +182,7 @@ from app.collection.orchestration import (
     _PendingOffer,
     _persist_phase_c,
     _PhaseAOutcome,
+    _preview_existing_offer_and_product,
     _raw_evidence,
     _record_failure,
     _resolve_offer,
@@ -379,17 +384,71 @@ async def _persist_shared_offers_and_finish(
     a run de nenhuma Mission específica."""
     async with session_factory() as session, session.begin():
         results: list[_SharedOfferResult] = []
-        seen_offer_keys: set[tuple[str | None, str | None, str]] = set()
+
+        # Subtask 6 (correção estrutural de deadlock -- mesmo raciocínio
+        # de `orchestration.py`, ver docstring de
+        # `_preview_existing_offer_and_product`): três passos, nesta
+        # ordem exata. 1) identificação SOMENTE LEITURA (sem
+        # `begin_nested()`, que força flush incondicional mesmo com
+        # `autoflush=False`); 2) trava global -- todas as Offers já
+        # existentes por `offer.id`, depois todos os Products já
+        # existentes por `product_id`, sempre nessa ordem relativa; 3)
+        # resolução de verdade (`_resolve_offer`, com mutação/criação),
+        # agora segura. Ordem de seleção comercial abaixo continua
+        # intocada.
+        items_by_key: dict[tuple[str | None, str | None, str], Any] = {}
+        preview: dict[
+            tuple[str | None, str | None, str], tuple[Offer | None, Product | None]
+        ] = {}
+        creation_lock_keys: set[str] = set()
         for item in normalized.offers:
             identity_key = (
                 item.seller_external_id,
                 item.raw_offer.external_id,
                 item.raw_offer.external_id or item.raw_offer.url,
             )
-            if identity_key in seen_offer_keys:
+            if identity_key in items_by_key:
                 continue
-            seen_offer_keys.add(identity_key)
+            items_by_key[identity_key] = item
+            preview[identity_key] = await _preview_existing_offer_and_product(
+                session, store_id, item
+            )
+            creation_lock_keys |= _creation_lock_keys(store_id, item)
+
+        # Fase 0 (correção estrutural de deadlock, segunda rodada -- mesmo
+        # raciocínio de `orchestration.py`, ver docstring de
+        # `_creation_lock_keys`): trava transacional por chave lógica para
+        # todo Seller/Product/Offer que este lote possa vir a criar.
+        await _acquire_creation_locks(session, frozenset(creation_lock_keys))
+
+        offer_ids = sorted(
+            {o.id for o, _ in preview.values() if o is not None}
+        )
+        for offer_id in offer_ids:
+            await session.scalar(
+                select(Offer.id).where(Offer.id == offer_id).with_for_update()
+            )
+        product_ids = sorted(
+            {p.id for _, p in preview.values() if p is not None}
+        )
+        for product_id in product_ids:
+            await session.scalar(
+                select(Product.id)
+                .where(Product.id == product_id)
+                .with_for_update()
+            )
+
+        resolved_offers: dict[tuple[str | None, str | None, str], Offer] = {}
+        resolved_items: list[
+            tuple[tuple[str | None, str | None, str], Any]
+        ] = []
+        for identity_key, item in items_by_key.items():
             offer = await _resolve_offer(session, store_id, item)
+            resolved_offers[identity_key] = offer
+            resolved_items.append((identity_key, item))
+
+        for identity_key, item in resolved_items:
+            offer = resolved_offers[identity_key]
             latest = await session.scalar(
                 select(PriceObservation)
                 .where(PriceObservation.offer_id == offer.id)
@@ -398,8 +457,9 @@ async def _persist_shared_offers_and_finish(
                 )
                 .limit(1)
             )
+            current_state = _CommercialState.from_normalized_offer(item)
             redundant = False
-            if latest is not None and _same_commercial_state(latest, item):
+            if latest is not None and _same_commercial_state(latest, current_state):
                 latest_installments = list(
                     await session.scalars(
                         select(OfferInstallmentOption).where(
@@ -409,31 +469,35 @@ async def _persist_shared_offers_and_finish(
                 )
                 redundant = _installment_snapshot(
                     latest_installments
-                ) == _installment_snapshot(item.installment_options)
+                ) == _installment_snapshot(current_state.installments)
             if redundant:
                 # TASK-093: estado comercial idêntico ao já registrado
                 # (dedupe ENTRE coletas ao longo do tempo, DEC-097) --
                 # não grava PriceObservation redundante.
                 observation = latest
             else:
+                # Subtask 6 (correção de causa raiz): construído a partir
+                # de `current_state` -- a MESMA instância comparada acima
+                # -- nunca relendo `item` de novo (ver docstring de
+                # `_CommercialState`).
                 observation = PriceObservation(
                     offer_id=offer.id,
                     collection_run_id=run_id,
-                    amount=item.amount,
-                    currency=item.currency,
-                    shipping_amount=item.shipping_amount,
-                    total_amount=item.total_amount,
-                    fulfillment=item.fulfillment,
-                    seller_kind=item.seller_kind,
-                    fulfillment_kind=item.fulfillment_kind,
-                    condition=item.condition,
-                    availability=item.availability,
+                    amount=current_state.amount,
+                    currency=current_state.currency,
+                    shipping_amount=current_state.shipping_amount,
+                    total_amount=current_state.total_amount,
+                    fulfillment=current_state.fulfillment,
+                    seller_kind=current_state.seller_kind,
+                    fulfillment_kind=current_state.fulfillment_kind,
+                    condition=current_state.condition,
+                    availability=current_state.availability,
                     observed_at=item.raw_offer.collected_at,
                     raw_evidence=_raw_evidence(item.raw_offer),
                 )
                 session.add(observation)
                 await session.flush()
-                for option in item.installment_options:
+                for option in current_state.installments:
                     session.add(
                         OfferInstallmentOption(
                             price_observation_id=observation.id,
@@ -445,7 +509,7 @@ async def _persist_shared_offers_and_finish(
                             is_highlighted=option.is_highlighted,
                         )
                     )
-                if item.installment_options:
+                if current_state.installments:
                     await session.flush()
             offer.last_seen_at = item.raw_offer.collected_at
             _apply_rating_snapshot(offer, item)
