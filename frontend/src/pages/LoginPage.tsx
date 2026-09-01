@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { Navigate, useLocation } from 'react-router-dom'
 import { motion } from 'motion/react'
-import { Bot, LockKeyhole, ShieldCheck } from 'lucide-react'
+import { Bot, LockKeyhole } from 'lucide-react'
 import { ApiError } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
 import { ThemeToggle } from '@/components/ThemeToggle'
@@ -13,24 +13,28 @@ interface LocationState {
   from?: { pathname?: string }
 }
 
+/** Login único (Subtask 8): sem escolha de perfil/role -- o servidor
+ * autentica e devolve o papel real da conta; o destino pós-login é
+ * sempre `/app` (ou a página que o usuário tentou abrir antes de ser
+ * redirecionado para cá), nunca uma rota "de admin" escolhida aqui. */
 export function LoginPage() {
   const { user, login } = useAuth()
   const location = useLocation()
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
-  const [pending, setPending] = useState<'app' | 'admin' | null>(null)
-  const [destinationOverride, setDestinationOverride] = useState<string | null>(null)
+  const [pending, setPending] = useState(false)
 
   if (user) {
     const state = location.state as LocationState | null
-    const destination = destinationOverride || state?.from?.pathname || '/app'
+    const destination = state?.from?.pathname || '/app'
     return <Navigate to={destination} replace />
   }
 
-  async function doLogin(destination: string | null) {
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
     setError(null)
-    setDestinationOverride(destination)
+    setPending(true)
     try {
       await login(username, password)
     } catch (submitError) {
@@ -40,19 +44,8 @@ export function LoginPage() {
         setError('Não foi possível entrar. Tente novamente.')
       }
     } finally {
-      setPending(null)
+      setPending(false)
     }
-  }
-
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    setPending('app')
-    await doLogin(null)
-  }
-
-  async function handleAdminSubmit() {
-    setPending('admin')
-    await doLogin('/admin')
   }
 
   return (
@@ -91,11 +84,8 @@ export function LoginPage() {
             {error}
           </p>
         ) : null}
-        <Button className="w-full" size="lg" type="submit" disabled={pending !== null}>
-          <LockKeyhole />{pending === 'app' ? 'Entrando…' : 'Entrar'}
-        </Button>
-        <Button className="w-full" size="lg" variant="outline" type="button" disabled={pending !== null} onClick={handleAdminSubmit}>
-          <ShieldCheck />{pending === 'admin' ? 'Entrando…' : 'Entrar como admin'}
+        <Button className="w-full" size="lg" type="submit" disabled={pending}>
+          <LockKeyhole />{pending ? 'Entrando…' : 'Entrar'}
         </Button>
         <p className="text-center text-xs leading-relaxed text-muted-foreground">
           Sua senha é a mesma criada pelo link enviado no Telegram.

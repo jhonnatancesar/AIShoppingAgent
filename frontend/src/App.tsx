@@ -1,6 +1,6 @@
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { AuthProvider } from './auth/AuthContext'
-import { AdminLayout, AppLayout } from './components/Layout'
+import { AppLayout } from './components/Layout'
 import { RequireAdmin, RequireAuth } from './components/ProtectedRoute'
 import { AdminHome } from './pages/AdminHome'
 import { AppHome } from './pages/AppHome'
@@ -33,12 +33,10 @@ export default function App() {
             <Route path="/app/offers/:offerId" element={<OfferDetailPage />} />
             <Route path="/app/account" element={<AccountPage />} />
             <Route path="/app/suporte" element={<FeedbackPage />} />
-          </Route>
-        </Route>
 
-        <Route element={<RequireAdmin />}>
-          <Route element={<AdminLayout />}>
-            <Route path="/admin" element={<AdminHome />} />
+            <Route element={<RequireAdmin />}>
+              <Route path="/admin" element={<AdminHome />} />
+            </Route>
           </Route>
         </Route>
 
