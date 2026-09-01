@@ -13,6 +13,7 @@ import { MissionsListPage } from './pages/missions/MissionsListPage'
 import { NotFound } from './pages/NotFound'
 import { ProductSearchPage } from './pages/search/ProductSearchPage'
 import { AccountPage } from './pages/account/AccountPage'
+import { FeedbackPage } from './pages/FeedbackPage'
 
 export default function App() {
   return (
@@ -31,6 +32,7 @@ export default function App() {
             <Route path="/app/offers" element={<OffersListPage />} />
             <Route path="/app/offers/:offerId" element={<OfferDetailPage />} />
             <Route path="/app/account" element={<AccountPage />} />
+            <Route path="/app/suporte" element={<FeedbackPage />} />
           </Route>
         </Route>
 

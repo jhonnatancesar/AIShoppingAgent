@@ -1,6 +1,6 @@
 import { useState, type ComponentType } from 'react'
 import { motion } from 'motion/react'
-import { Bot, Home, LogOut, Menu, Search, ShieldCheck, ShoppingBag, Target, UserRound, X } from 'lucide-react'
+import { Bot, Home, LifeBuoy, LogOut, Menu, Search, ShieldCheck, ShoppingBag, Target, UserRound, X } from 'lucide-react'
 import { NavLink, Outlet } from 'react-router-dom'
 import { useAuth } from '@/auth/AuthContext'
 import { Badge } from '@/components/ui/badge'
@@ -16,6 +16,7 @@ const USER_NAV: NavItem[] = [
   { to: '/app/offers', label: 'Ofertas', icon: ShoppingBag },
   { to: '/app/missions', label: 'Missões', icon: Target },
   { to: '/app/account', label: 'Minha conta', icon: UserRound },
+  { to: '/app/suporte', label: 'Suporte', icon: LifeBuoy },
 ]
 
 const ADMIN_NAV: NavItem[] = [

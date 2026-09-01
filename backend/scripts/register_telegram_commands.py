@@ -24,6 +24,11 @@ _COMMANDS = [
     {"command": "recuperar", "description": "Criar ou recuperar sua senha"},
     {"command": "sair", "description": "Encerrar a sessão autenticada"},
     {"command": "vincular", "description": "Vincular uma conta Web com código"},
+    {"command": "suporte", "description": "Relatar um erro ou pedir ajuda"},
+    {
+        "command": "sugerir_loja",
+        "description": "Sugerir uma loja para pesquisarmos",
+    },
     {"command": "preferencias", "description": "Configurar notificações"},
     {"command": "privacidade", "description": "Consultar uso e proteção de dados"},
 ]

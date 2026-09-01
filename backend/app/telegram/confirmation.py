@@ -314,6 +314,122 @@ def describe_edit_mission(payload: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+# Subtask 7 da auditoria GG Oferta: fluxos determinísticos de /suporte e
+# /sugerir_loja -- mesmo par confirmar/cancelar da TASK-058, nenhuma
+# passagem por IA. A confirmação nunca promete prazo de resposta nem de
+# implementação.
+
+_SUPPORT_TYPE_OPTIONS: dict[str, str] = {"1": "bug", "2": "support"}
+
+_SUPPORT_TYPE_PROMPT = (
+    "🛠️ Qual é o motivo do contato?\n\n"
+    "1 — Erro/Bug\n"
+    "2 — Outro suporte\n\n"
+    "Digite o número."
+)
+
+_SUPPORT_TYPE_RETRY = "Não entendi.\n\n1 — Erro/Bug\n2 — Outro suporte\n\nDigite 1 ou 2."
+
+_SUPPORT_DESCRIPTION_PROMPT = "✍️ Descreva o que aconteceu, em poucas linhas."
+
+_SUPPORT_DESCRIPTION_RETRY = "A descrição não pode ficar vazia. Descreva o que aconteceu."
+
+_SUPPORT_TYPE_LABELS: dict[str, str] = {"bug": "Erro/Bug", "support": "Outro suporte"}
+
+
+def describe_support_type_prompt() -> str:
+    return _SUPPORT_TYPE_PROMPT
+
+
+def describe_support_type_retry() -> str:
+    return _SUPPORT_TYPE_RETRY
+
+
+def resolve_support_type_choice(raw: str) -> str | None:
+    return _SUPPORT_TYPE_OPTIONS.get(raw.strip())
+
+
+def describe_support_description_prompt() -> str:
+    return _SUPPORT_DESCRIPTION_PROMPT
+
+
+def describe_support_description_retry() -> str:
+    return _SUPPORT_DESCRIPTION_RETRY
+
+
+def stage_support_feedback(*, kind: str, message: str) -> dict[str, Any]:
+    return {"kind": "support_feedback", "feedback_kind": kind, "message": message}
+
+
+def describe_support_feedback(payload: dict[str, Any]) -> str:
+    label = _SUPPORT_TYPE_LABELS[payload["feedback_kind"]]
+    lines = [
+        "📩 Confirmar envio?",
+        "",
+        f"Tipo: {label}",
+        f"Mensagem: {payload['message']}",
+        "",
+        _CONFIRMATION_SUFFIX,
+    ]
+    return "\n".join(lines)
+
+
+_STORE_SUGGESTION_NAME_PROMPT = "🏪 Qual loja você quer sugerir?"
+_STORE_SUGGESTION_NAME_RETRY = "O nome da loja não pode ficar vazio. Qual loja você quer sugerir?"
+_STORE_SUGGESTION_URL_PROMPT = (
+    "🔗 Se quiser, envie o link da loja.\n\nPara pular, envie 0."
+)
+_STORE_SUGGESTION_COMMENT_PROMPT = (
+    "💬 Se quiser, deixe um comentário.\n\nPara pular, envie 0."
+)
+_SKIP_TOKENS = frozenset({"0", "pular"})
+
+
+def describe_store_suggestion_name_prompt() -> str:
+    return _STORE_SUGGESTION_NAME_PROMPT
+
+
+def describe_store_suggestion_name_retry() -> str:
+    return _STORE_SUGGESTION_NAME_RETRY
+
+
+def describe_store_suggestion_url_prompt() -> str:
+    return _STORE_SUGGESTION_URL_PROMPT
+
+
+def describe_store_suggestion_comment_prompt() -> str:
+    return _STORE_SUGGESTION_COMMENT_PROMPT
+
+
+def resolve_optional_step(raw: str) -> str | None:
+    """`None` quando o usuário pulou a etapa opcional (URL/comentário)."""
+    text = raw.strip()
+    if not text or text.casefold() in _SKIP_TOKENS:
+        return None
+    return text
+
+
+def stage_store_suggestion(
+    *, store_name: str, store_url: str | None = None, comment: str | None = None
+) -> dict[str, Any]:
+    return {
+        "kind": "store_suggestion",
+        "store_name": store_name,
+        "store_url": store_url,
+        "comment": comment,
+    }
+
+
+def describe_store_suggestion(payload: dict[str, Any]) -> str:
+    lines = ["📩 Confirmar sugestão?", "", f"Loja: {payload['store_name']}"]
+    if payload.get("store_url"):
+        lines.append(f"Link: {payload['store_url']}")
+    if payload.get("comment"):
+        lines.append(f"Comentário: {payload['comment']}")
+    lines.extend(["", _CONFIRMATION_SUFFIX])
+    return "\n".join(lines)
+
+
 def _format_target(amount: str | None, currency: str | None) -> str:
     if amount is None or currency is None:
         return "sem alvo"

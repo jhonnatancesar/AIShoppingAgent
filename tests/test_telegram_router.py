@@ -9,6 +9,7 @@ from uuid import uuid4
 import pytest
 from app.ai_provider import AIProviderQuotaExceeded, AIProviderUnavailable
 from app.core.config import Settings
+from app.feedback.models import FeedbackChannel, FeedbackKind
 from app.intent import Intent, IntentKind, IntentParameters
 from app.main import app
 from app.missions.models import MissionStatus
@@ -21,6 +22,8 @@ from app.telegram.limits import TelegramUpdateReservation
 from app.telegram.models import TelegramUpdateDisposition
 from app.telegram.router import (
     TelegramUpdate,
+    _apply_store_suggestion_name,
+    _apply_support_description,
     _dispatch_intent,
     _handle_message,
     _resolve_pending_intent,
@@ -5250,3 +5253,370 @@ def test_registered_telegram_commands_use_only_bot_api_compatible_names() -> Non
         name.replace("_", "").isalnum() and name == name.lower() for name in names
     )
     assert all("-" not in name for name in names)
+
+
+# --- Subtask 7 da auditoria GG Oferta: /ajuda honesto, /suporte,
+# /sugerir_loja e Futuro determinístico de Shopee/AliExpress -------------
+
+
+@pytest.mark.anyio
+async def test_ajuda_lists_vincular_suporte_sugerir_loja_and_site(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_user(monkeypatch, _fake_user())
+    send_calls = _patch_send_message(monkeypatch)
+    adapter = _FakeAdapter(_intent())
+
+    await receive_telegram_webhook(
+        update=_update(
+            message=_TelegramIncomingMessage(
+                text="/ajuda",
+                date=1754586000,
+                chat=_TelegramChat(id=222, type=TelegramChatType.PRIVATE),
+                from_=_TelegramSender(id=222, first_name="Fulano"),
+            )
+        ),
+        x_telegram_bot_api_secret_token="correct-secret",
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        settings=_settings(),
+        session=_async_session(),
+    )
+
+    body = send_calls[0][1]
+    assert "/vincular" in body
+    assert "/suporte" in body
+    assert "/sugerir_loja" in body
+    assert "ggoferta.com" in body
+    assert adapter.calls == []
+
+
+@pytest.mark.anyio
+async def test_ajuda_labels_upgrade_as_futuro_not_functional(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_user(monkeypatch, _fake_user())
+    send_calls = _patch_send_message(monkeypatch)
+    adapter = _FakeAdapter(_intent())
+
+    await receive_telegram_webhook(
+        update=_update(
+            message=_TelegramIncomingMessage(
+                text="/ajuda",
+                date=1754586000,
+                chat=_TelegramChat(id=222, type=TelegramChatType.PRIVATE),
+                from_=_TelegramSender(id=222, first_name="Fulano"),
+            )
+        ),
+        x_telegram_bot_api_secret_token="correct-secret",
+        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        settings=_settings(),
+        session=_async_session(),
+    )
+
+    body = send_calls[0][1]
+    assert "/upgrade" in body
+    upgrade_line = next(line for line in body.splitlines() if "/upgrade" in line)
+    assert "futuro" in upgrade_line.lower()
+
+
+@pytest.mark.anyio
+async def test_support_command_starts_type_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user = _fake_user()
+    reply = await _handle_message(
+        _message("/suporte"),
+        user=user,
+        adapters=_adapters(_FakeAdapter(AssertionError("AI must not run"))),  # type: ignore[arg-type]
+        session=_async_session(),
+        auth_public_base_url="https://example.test",
+        created_now=False,
+    )
+
+    assert user.pending_intent == {"kind": "await_support_type"}
+    assert "Erro/Bug" in reply
+
+
+@pytest.mark.anyio
+async def test_support_type_invalid_choice_retries_without_clearing_state() -> None:
+    user = _registered_user(pending_intent={"kind": "await_support_type"})
+
+    reply = await _resolve_pending_intent(
+        _message("9"), adapters={}, session=_async_session(), user=user
+    )
+
+    assert user.pending_intent == {"kind": "await_support_type"}
+    assert "não entendi" in reply.lower()
+
+
+def test_support_description_empty_retries_without_clearing_state() -> None:
+    """`TelegramMessage` já recusa texto em branco no contrato, então esta
+    validação nunca é exercitada pelo webhook real -- testada direto na
+    função pura, mesmo padrão de `parse_target_amount_entry("")` em
+    `tests/test_telegram_confirmation.py`."""
+    user = _registered_user(
+        pending_intent={"kind": "await_support_description", "feedback_kind": "bug"}
+    )
+
+    reply = _apply_support_description("   ", user=user)
+
+    assert user.pending_intent == {
+        "kind": "await_support_description",
+        "feedback_kind": "bug",
+    }
+    assert "vazia" in reply.lower()
+
+
+@pytest.mark.anyio
+async def test_support_flow_end_to_end_persists_only_after_confirmation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    create = AsyncMock()
+    monkeypatch.setattr("app.telegram.router.create_feedback_async", create)
+    user = _registered_user(pending_intent={"kind": "await_support_type"})
+    session = _async_session()
+
+    type_reply = await _resolve_pending_intent(
+        _message("1"), adapters={}, session=session, user=user
+    )
+    assert user.pending_intent["kind"] == "await_support_description"
+    assert "Descreva" in type_reply
+
+    description_reply = await _resolve_pending_intent(
+        _message("O gráfico de preço não carrega."),
+        adapters={},
+        session=session,
+        user=user,
+    )
+    assert user.pending_intent["kind"] == "support_feedback"
+    assert "Confirmar envio" in description_reply
+    create.assert_not_awaited()
+
+    _patch_resolve_answer(monkeypatch, True)
+    confirm_reply = await _resolve_pending_intent(
+        _message("sim"), adapters={}, session=session, user=user
+    )
+
+    create.assert_awaited_once()
+    assert create.await_args.kwargs["kind"] == FeedbackKind.BUG
+    assert create.await_args.kwargs["channel"] == FeedbackChannel.TELEGRAM
+    assert create.await_args.kwargs["message"] == "O gráfico de preço não carrega."
+    assert user.pending_intent is None
+    assert "prazo" not in confirm_reply.lower()
+
+
+@pytest.mark.anyio
+async def test_support_flow_cancel_does_not_persist(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    create = AsyncMock()
+    monkeypatch.setattr("app.telegram.router.create_feedback_async", create)
+    user = _registered_user(
+        pending_intent={
+            "kind": "support_feedback",
+            "feedback_kind": "bug",
+            "message": "erro qualquer",
+        }
+    )
+    _patch_resolve_answer(monkeypatch, False)
+
+    reply = await _resolve_pending_intent(
+        _message("não"), adapters={}, session=_async_session(), user=user
+    )
+
+    create.assert_not_awaited()
+    assert user.pending_intent is None
+    assert "cancelei" in reply.lower()
+
+
+@pytest.mark.anyio
+async def test_suggest_store_command_starts_name_prompt() -> None:
+    user = _fake_user()
+    reply = await _handle_message(
+        _message("/sugerir_loja"),
+        user=user,
+        adapters={},
+        session=_async_session(),
+        auth_public_base_url="https://example.test",
+        created_now=False,
+    )
+
+    assert user.pending_intent == {"kind": "await_store_suggestion_name"}
+    assert "loja" in reply.lower()
+
+
+def test_suggest_store_name_empty_retries_without_clearing_state() -> None:
+    """Mesma razão de `test_support_description_empty_retries_without_clearing_state`:
+    `TelegramMessage` nunca entrega texto em branco, então a validação é
+    testada direto na função pura."""
+    user = _registered_user(pending_intent={"kind": "await_store_suggestion_name"})
+
+    reply = _apply_store_suggestion_name("", user=user)
+
+    assert user.pending_intent == {"kind": "await_store_suggestion_name"}
+    assert "vazio" in reply.lower()
+
+
+@pytest.mark.anyio
+async def test_suggest_store_flow_skips_optional_url_and_comment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    create = AsyncMock()
+    monkeypatch.setattr("app.telegram.router.create_feedback_async", create)
+    user = _registered_user(pending_intent={"kind": "await_store_suggestion_name"})
+    session = _async_session()
+
+    await _resolve_pending_intent(
+        _message("Loja Nova"), adapters={}, session=session, user=user
+    )
+    assert user.pending_intent["kind"] == "await_store_suggestion_url"
+
+    await _resolve_pending_intent(
+        _message("0"), adapters={}, session=session, user=user
+    )
+    assert user.pending_intent["kind"] == "await_store_suggestion_comment"
+    assert user.pending_intent["store_url"] is None
+
+    confirm_prompt = await _resolve_pending_intent(
+        _message("pular"), adapters={}, session=session, user=user
+    )
+    assert user.pending_intent["kind"] == "store_suggestion"
+    assert "Loja Nova" in confirm_prompt
+
+    _patch_resolve_answer(monkeypatch, True)
+    await _resolve_pending_intent(
+        _message("sim"), adapters={}, session=session, user=user
+    )
+
+    create.assert_awaited_once()
+    assert create.await_args.kwargs["kind"] == FeedbackKind.STORE_SUGGESTION
+    assert create.await_args.kwargs["store_name"] == "Loja Nova"
+    assert create.await_args.kwargs["store_url"] is None
+    assert create.await_args.kwargs["message"] is None
+    assert user.pending_intent is None
+
+
+@pytest.mark.anyio
+async def test_suggest_store_flow_with_url_and_comment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    create = AsyncMock()
+    monkeypatch.setattr("app.telegram.router.create_feedback_async", create)
+    user = _registered_user(
+        pending_intent={
+            "kind": "await_store_suggestion_url",
+            "store_name": "Loja Nova",
+        }
+    )
+    session = _async_session()
+
+    await _resolve_pending_intent(
+        _message("https://lojanova.example.com"),
+        adapters={},
+        session=session,
+        user=user,
+    )
+    assert user.pending_intent["store_url"] == "https://lojanova.example.com"
+
+    await _resolve_pending_intent(
+        _message("Vende peças raras"), adapters={}, session=session, user=user
+    )
+    assert user.pending_intent["kind"] == "store_suggestion"
+    assert user.pending_intent["comment"] == "Vende peças raras"
+
+    _patch_resolve_answer(monkeypatch, True)
+    await _resolve_pending_intent(
+        _message("sim"), adapters={}, session=session, user=user
+    )
+
+    assert create.await_args.kwargs["store_url"] == "https://lojanova.example.com"
+    assert create.await_args.kwargs["message"] == "Vende peças raras"
+
+
+@pytest.mark.anyio
+async def test_suggest_store_url_rejects_javascript_scheme_and_keeps_state() -> None:
+    user = _registered_user(
+        pending_intent={
+            "kind": "await_store_suggestion_url",
+            "store_name": "Loja Nova",
+        }
+    )
+
+    reply = await _resolve_pending_intent(
+        _message("javascript:alert(1)"),
+        adapters={},
+        session=_async_session(),
+        user=user,
+    )
+
+    assert "http" in reply.lower()
+    assert user.pending_intent == {
+        "kind": "await_store_suggestion_url",
+        "store_name": "Loja Nova",
+    }
+
+
+@pytest.mark.anyio
+async def test_shopee_mention_during_create_mission_sources_replies_futuro() -> None:
+    user = _registered_user(
+        pending_intent={
+            "kind": "await_create_mission_sources",
+            "search_query": "rtx 5070",
+            "model": None,
+            "display_query": None,
+            "target_amount": None,
+            "target_currency": None,
+        }
+    )
+
+    reply = await _resolve_pending_intent(
+        _message("Shopee"), adapters={}, session=_async_session(), user=user
+    )
+
+    assert "shopee" in reply.lower()
+    assert "futuro" in reply.lower()
+    assert user.pending_intent["kind"] == "await_create_mission_sources"
+
+
+@pytest.mark.anyio
+async def test_aliexpress_mention_during_edit_add_sources_replies_futuro() -> None:
+    user = _registered_user(
+        pending_intent={
+            "kind": "await_edit_add_sources",
+            "mission_id": str(uuid4()),
+            "mission_title": "RTX 5070 Ti",
+            "expected_state_version": 1,
+            "current_sources": ["pichau"],
+            "option_map": {"1": "kabum", "2": "amazon"},
+            "auto_paused": False,
+        }
+    )
+
+    reply = await _resolve_pending_intent(
+        _message("quero da aliexpress"),
+        adapters={},
+        session=_async_session(),
+        user=user,
+    )
+
+    assert "aliexpress" in reply.lower()
+    assert "futuro" in reply.lower()
+    assert user.pending_intent["kind"] == "await_edit_add_sources"
+
+
+@pytest.mark.anyio
+async def test_shopee_mention_in_free_text_description_skips_ai_entirely() -> None:
+    user = _registered_user(pending_intent=_awaiting_mission_description())
+    adapter = _FakeAdapter(AssertionError("AI must not run"))
+
+    reply = await _resolve_pending_intent(
+        _message("Quero um mouse da Shopee"),
+        adapters=_adapters(adapter),
+        session=_async_session(),
+        user=user,
+    )
+
+    assert adapter.calls == []
+    assert "shopee" in reply.lower()
+    assert "futuro" in reply.lower()
+    assert user.pending_intent is None

@@ -56,6 +56,15 @@ from app.database.dependency import (
     get_telegram_async_engine,
     get_telegram_async_session,
 )
+from app.feedback import (
+    FeedbackChannel,
+    FeedbackKind,
+    FeedbackValidationError,
+    create_feedback_async,
+    validate_feedback_message,
+    validate_store_name,
+    validate_store_url,
+)
 from app.intent import Intent, IntentInterpreter, IntentKind
 from app.missions.models import (
     Mission,
@@ -121,6 +130,16 @@ from app.telegram.confirmation import (
     describe_mission_command_choice_retry,
     describe_no_editable_mission,
     describe_pause_for_edit,
+    describe_store_suggestion,
+    describe_store_suggestion_comment_prompt,
+    describe_store_suggestion_name_prompt,
+    describe_store_suggestion_name_retry,
+    describe_store_suggestion_url_prompt,
+    describe_support_description_prompt,
+    describe_support_description_retry,
+    describe_support_feedback,
+    describe_support_type_prompt,
+    describe_support_type_retry,
     missing_store_options,
     parse_multi_numbered_choice,
     parse_single_numbered_choice,
@@ -128,12 +147,16 @@ from app.telegram.confirmation import (
     resolve_answer,
     resolve_create_mission_sources,
     resolve_edit_source_selection,
+    resolve_optional_step,
+    resolve_support_type_choice,
     stage_await_create_mission_sources,
     stage_create_mission,
     stage_edit_mission,
     stage_mission_command,
     stage_mission_command_choice,
     stage_pause_for_edit,
+    stage_store_suggestion,
+    stage_support_feedback,
 )
 from app.telegram.contracts import (
     TelegramChatType,
@@ -206,6 +229,8 @@ _LIST_MISSIONS_COMMAND = "/listar_missoes"
 _LIST_MISSIONS_ALIASES = frozenset(
     {_LIST_MISSIONS_COMMAND, "/listar-missoes", "missoes", "missões"}
 )
+_SUPPORT_COMMAND = "/suporte"
+_SUGGEST_STORE_COMMAND = "/sugerir_loja"
 _LIST_MISSIONS_DISPLAY_LIMIT = 15
 _MISSION_DESCRIPTION_TTL = timedelta(minutes=10)
 _AWAIT_CREATE_MISSION_DESCRIPTION = "await_create_mission_description"
@@ -282,10 +307,16 @@ _HELP_REPLY = (
     "/cadastro — completar seu perfil\n"
     "/entrar — acessar sua conta\n"
     "/recuperar — criar ou recuperar sua senha\n"
+    "/vincular — vincular esta conta ao site https://ggoferta.com\n"
     "/sair — encerrar a sessão\n\n"
+    "🆘 AJUDA E FEEDBACK\n"
+    "/suporte — relatar um erro ou pedir ajuda\n"
+    "/sugerir_loja — sugerir uma loja para pesquisarmos\n\n"
     "⚙️ CONFIGURAÇÕES\n"
     "/preferencias — configurar notificações\n"
-    "/privacidade — entender o uso e a proteção dos seus dados"
+    "/privacidade — entender o uso e a proteção dos seus dados\n"
+    "/upgrade — mudar de perfil de conta (futuro)\n\n"
+    "🌐 Acompanhe suas missões e ofertas também pelo site https://ggoferta.com."
 )
 
 _MISSION_HELP_REPLY = (
@@ -296,6 +327,25 @@ _MISSION_HELP_REPLY = (
     "• RTX 5070 Ti na Kabum\n"
     "• mouse gamer"
 )
+
+
+_UNSUPPORTED_STORE_REPLIES: dict[str, str] = {
+    "shopee": "🔜 Shopee ainda não é suportada. Futuro.",
+    "aliexpress": "🔜 AliExpress ainda não é suportado. Futuro.",
+}
+"""Subtask 7 da auditoria GG Oferta: Shopee/AliExpress são conhecidas mas
+não fazem parte das 6 lojas selecionáveis da V1 -- nunca viram opção de
+loja, nunca passam pela IA. Uma menção explícita nestes dois tokens,
+durante seleção/criação/edição de lojas, cai aqui em vez do erro
+genérico "não entendi" ou de qualquer interpretação livre."""
+
+
+def _detect_unsupported_store_mention(text: str) -> str | None:
+    normalized = text.casefold()
+    for token, reply in _UNSUPPORTED_STORE_REPLIES.items():
+        if token in normalized:
+            return reply
+    return None
 
 
 class MissionIntentError(ValueError):
@@ -310,6 +360,7 @@ _KNOWN_DISPATCH_ERRORS = (
     MissionTransitionConditionError,
     MissionReferenceError,
     MissionIntentError,
+    FeedbackValidationError,
 )
 
 _MISSION_CREATION_FAILED_REPLY = (
@@ -358,6 +409,18 @@ _EDIT_MISSION_GUIDED_KINDS = (
 nenhum deles executa nada sozinho, só avança até o payload
 `"kind": "edit_mission"` (ou `"pause_for_edit"`) já existente."""
 
+_FEEDBACK_PENDING_KINDS = (
+    "await_support_type",
+    "await_support_description",
+    "support_feedback",
+    "await_store_suggestion_name",
+    "await_store_suggestion_url",
+    "await_store_suggestion_comment",
+    "store_suggestion",
+)
+"""Subtask 7: passos do /suporte e do /sugerir_loja, do primeiro prompt
+até o payload final de confirmação -- todos exigem só `FEEDBACK_SUBMIT`."""
+
 _PENDING_INTENT_PERMISSIONS: dict[str, Permission] = {
     _AWAIT_CREATE_MISSION_DESCRIPTION: Permission.MISSION_CREATE,
     "create_mission": Permission.MISSION_CREATE,
@@ -370,6 +433,7 @@ _PENDING_INTENT_PERMISSIONS: dict[str, Permission] = {
     # permissão de qualquer outro comando de ciclo de vida.
     "pause_for_edit": Permission.MISSION_TRANSITION,
     **{kind: Permission.MISSION_EDIT for kind in _EDIT_MISSION_GUIDED_KINDS},
+    **dict.fromkeys(_FEEDBACK_PENDING_KINDS, Permission.FEEDBACK_SUBMIT),
 }
 """`"mission_command"` cai no default (`MISSION_TRANSITION`) do `.get`."""
 
@@ -739,6 +803,14 @@ async def _handle_message(
     if lowered == _UPGRADE_COMMAND:
         authorize(session, user, Permission.PROFILE_MANAGE)
         return _UPGRADE_REPLY
+    if lowered == _SUPPORT_COMMAND:
+        authorize(session, user, Permission.FEEDBACK_SUBMIT)
+        user.pending_intent = {"kind": "await_support_type"}
+        return describe_support_type_prompt()
+    if lowered == _SUGGEST_STORE_COMMAND:
+        authorize(session, user, Permission.FEEDBACK_SUBMIT)
+        user.pending_intent = {"kind": "await_store_suggestion_name"}
+        return describe_store_suggestion_name_prompt()
     if lowered == PREFERENCES_COMMAND or lowered.startswith(f"{PREFERENCES_COMMAND} "):
         authorize(session, user, Permission.NOTIFICATION_PREFERENCES_MANAGE)
         return handle_preferences_command(user, lowered)
@@ -858,6 +930,16 @@ async def _resolve_pending_intent(
         return await _apply_mission_command_choice(
             message.text, session=session, user=user
         )
+    if kind == "await_support_type":
+        return _apply_support_type_choice(message.text, user=user)
+    if kind == "await_support_description":
+        return _apply_support_description(message.text, user=user)
+    if kind == "await_store_suggestion_name":
+        return _apply_store_suggestion_name(message.text, user=user)
+    if kind == "await_store_suggestion_url":
+        return _apply_store_suggestion_url(message.text, user=user)
+    if kind == "await_store_suggestion_comment":
+        return _apply_store_suggestion_comment(message.text, user=user)
 
     try:
         confirmed = await resolve_answer(message.text)
@@ -927,6 +1009,11 @@ async def _apply_create_mission_description(
         user.pending_intent = None
         return _CREATE_MISSION_FLOW_EXPIRED
 
+    unsupported_reply = _detect_unsupported_store_mention(message.text)
+    if unsupported_reply is not None:
+        user.pending_intent = None
+        return unsupported_reply
+
     # O estado é single-shot: até uma falha externa devolve o usuário a IDLE.
     user.pending_intent = None
     authorize(session, user, Permission.AI_INTERPRET)
@@ -961,6 +1048,9 @@ def _apply_create_mission_sources_answer(text: str, *, user: User) -> str:
     determinística (sem IA); resposta inválida mantém o mesmo estado
     pendente e pede de novo -- nunca cria a missão nem volta a passar pelo
     `IntentInterpreter`."""
+    unsupported_reply = _detect_unsupported_store_mention(text)
+    if unsupported_reply is not None:
+        return unsupported_reply
     payload = user.pending_intent
     sources = resolve_create_mission_sources(text)
     if sources is None:
@@ -975,6 +1065,68 @@ def _apply_create_mission_sources_answer(text: str, *, user: User) -> str:
     )
     user.pending_intent = create_payload
     return describe_create_mission(create_payload)
+
+
+def _apply_support_type_choice(text: str, *, user: User) -> str:
+    chosen = resolve_support_type_choice(text)
+    if chosen is None:
+        return describe_support_type_retry()
+    user.pending_intent = {"kind": "await_support_description", "feedback_kind": chosen}
+    return describe_support_description_prompt()
+
+
+def _apply_support_description(text: str, *, user: User) -> str:
+    description = text.strip()
+    if not description:
+        return describe_support_description_retry()
+    try:
+        validate_feedback_message(description)
+    except FeedbackValidationError as error:
+        return str(error)
+    payload = stage_support_feedback(
+        kind=user.pending_intent["feedback_kind"], message=description
+    )
+    user.pending_intent = payload
+    return describe_support_feedback(payload)
+
+
+def _apply_store_suggestion_name(text: str, *, user: User) -> str:
+    name = text.strip()
+    if not name:
+        return describe_store_suggestion_name_retry()
+    try:
+        validate_store_name(name)
+    except FeedbackValidationError as error:
+        return str(error)
+    user.pending_intent = {"kind": "await_store_suggestion_url", "store_name": name}
+    return describe_store_suggestion_url_prompt()
+
+
+def _apply_store_suggestion_url(text: str, *, user: User) -> str:
+    payload = user.pending_intent
+    url = resolve_optional_step(text)
+    if url is not None:
+        try:
+            validate_store_url(url)
+        except FeedbackValidationError as error:
+            return str(error)
+    user.pending_intent = {
+        "kind": "await_store_suggestion_comment",
+        "store_name": payload["store_name"],
+        "store_url": url,
+    }
+    return describe_store_suggestion_comment_prompt()
+
+
+def _apply_store_suggestion_comment(text: str, *, user: User) -> str:
+    payload = user.pending_intent
+    create_payload = stage_store_suggestion(
+        store_name=payload["store_name"],
+        store_url=payload.get("store_url"),
+        comment=resolve_optional_step(text),
+    )
+    user.pending_intent = create_payload
+    return describe_store_suggestion(create_payload)
 
 
 async def _apply_mission_variant_choice(
@@ -1469,6 +1621,9 @@ def _start_remove_sources(
 
 
 def _apply_edit_add_sources(text: str, *, user: User) -> str:
+    unsupported_reply = _detect_unsupported_store_mention(text)
+    if unsupported_reply is not None:
+        return unsupported_reply
     payload = user.pending_intent
     selected = resolve_edit_source_selection(text, option_map=payload["option_map"])
     if selected is None:
@@ -1553,7 +1708,41 @@ async def _execute_pending_intent(
         return await _execute_edit_mission(payload, session=session, user=user)
     if kind == "pause_for_edit":
         return await _execute_pause_for_edit(payload, session=session, user=user)
+    if kind == "support_feedback":
+        return await _execute_support_feedback(payload, session=session, user=user)
+    if kind == "store_suggestion":
+        return await _execute_store_suggestion(payload, session=session, user=user)
     return await _execute_mission_command(payload, session=session, user=user)
+
+
+async def _execute_support_feedback(
+    payload: dict[str, Any], *, session: AsyncSession, user: User
+) -> str:
+    authorize(session, user, Permission.FEEDBACK_SUBMIT)
+    await create_feedback_async(
+        session,
+        user_id=user.id,
+        kind=FeedbackKind(payload["feedback_kind"]),
+        channel=FeedbackChannel.TELEGRAM,
+        message=payload["message"],
+    )
+    return "✅ Recebemos sua mensagem. Obrigado por avisar!"
+
+
+async def _execute_store_suggestion(
+    payload: dict[str, Any], *, session: AsyncSession, user: User
+) -> str:
+    authorize(session, user, Permission.FEEDBACK_SUBMIT)
+    await create_feedback_async(
+        session,
+        user_id=user.id,
+        kind=FeedbackKind.STORE_SUGGESTION,
+        channel=FeedbackChannel.TELEGRAM,
+        message=payload.get("comment"),
+        store_name=payload["store_name"],
+        store_url=payload.get("store_url"),
+    )
+    return "✅ Sugestão registrada. Obrigado!"
 
 
 async def _execute_create_mission(

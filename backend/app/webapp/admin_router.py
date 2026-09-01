@@ -43,6 +43,16 @@ from app.core.errors import ApiError
 from app.database.dependency import get_session
 from app.database.time import utc_now
 from app.events.models import ConsumptionOutcome, Event, EventConsumptionAttempt
+from app.feedback import (
+    FeedbackChannel,
+    FeedbackKind,
+    FeedbackNotFoundError,
+    FeedbackStatus,
+    UserFeedback,
+    count_feedback,
+    list_feedback,
+    update_feedback_status,
+)
 from app.missions.models import (
     Mission,
     MissionCommand,
@@ -1013,3 +1023,102 @@ def update_queue_config(
     )
     session.commit()
     return effective
+
+
+# --- Feedback (subtask 7 da auditoria GG Oferta) ------------------------
+# Só leitura/transição de status -- criação é exclusiva de
+# `app.webapp.feedback_router` (Web) e `app.telegram.router` (Telegram),
+# ambos via `app.feedback.create_feedback_async`. Nenhum ticketing:
+# apenas listar/filtrar e marcar reviewed/closed.
+
+
+class FeedbackItem(BaseModel):
+    id: UUID
+    user_id: UUID | None
+    user_display_name: str | None
+    kind: FeedbackKind
+    channel: FeedbackChannel
+    message: str | None
+    store_name: str | None
+    store_url: str | None
+    status: FeedbackStatus
+    created_at: datetime
+
+
+class FeedbackListResponse(BaseModel):
+    items: list[FeedbackItem]
+    limit: int
+    offset: int
+    total: int
+
+
+class FeedbackStatusUpdateRequest(BaseModel):
+    status: FeedbackStatus
+
+
+def _feedback_item(session: Session, feedback: UserFeedback) -> FeedbackItem:
+    user = session.get(User, feedback.user_id) if feedback.user_id else None
+    return FeedbackItem(
+        id=feedback.id,
+        user_id=feedback.user_id,
+        user_display_name=user.display_name if user else None,
+        kind=feedback.kind,
+        channel=feedback.channel,
+        message=feedback.message,
+        store_name=feedback.store_name,
+        store_url=feedback.store_url,
+        status=feedback.status,
+        created_at=feedback.created_at,
+    )
+
+
+@router.get("/feedback", response_model=FeedbackListResponse)
+def list_feedback_endpoint(
+    status_filter: FeedbackStatus | None = Query(default=None, alias="status"),
+    kind_filter: FeedbackKind | None = Query(default=None, alias="kind"),
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    session: Session = Depends(get_session),
+    _: User = Depends(require_admin_web_session),
+) -> FeedbackListResponse:
+    """Mesmo contrato de paginação de `list_missions` (`limit`/`offset`/
+    `total`, mais recente primeiro) -- nunca listagem ilimitada."""
+    items = list_feedback(
+        session, status=status_filter, kind=kind_filter, limit=limit, offset=offset
+    )
+    total = count_feedback(session, status=status_filter, kind=kind_filter)
+    return FeedbackListResponse(
+        items=[_feedback_item(session, feedback) for feedback in items],
+        limit=limit,
+        offset=offset,
+        total=total,
+    )
+
+
+@router.patch("/feedback/{feedback_id}", response_model=FeedbackItem)
+def update_feedback_status_endpoint(
+    feedback_id: UUID,
+    payload: FeedbackStatusUpdateRequest,
+    session: Session = Depends(get_session),
+    actor: User = Depends(require_admin_web_session),
+) -> FeedbackItem:
+    try:
+        feedback = update_feedback_status(
+            session, feedback_id=feedback_id, status=payload.status
+        )
+    except FeedbackNotFoundError as error:
+        raise ApiError(
+            status_code=404,
+            code="feedback_not_found",
+            message="Registro não encontrado.",
+        ) from error
+    _audit(
+        session,
+        actor,
+        "admin.feedback.status_updated",
+        "user_feedback",
+        feedback.id,
+        {"status": payload.status.value},
+    )
+    session.commit()
+    return _feedback_item(session, feedback)

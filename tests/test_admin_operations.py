@@ -6,21 +6,30 @@ from uuid import uuid4
 
 import pytest
 from app.admin.service_ops import ManagedService, ServiceState
-from app.core.errors import register_api_error_handler
+from app.core.errors import ApiError, register_api_error_handler
 from app.database.dependency import get_session
+from app.feedback.models import (
+    FeedbackChannel,
+    FeedbackKind,
+    FeedbackStatus,
+    UserFeedback,
+)
 from app.missions.models import Mission, MissionStatus
 from app.ops_controller import Command
 from app.users.models import User, UserLifecycleStatus, UserRole
 from app.webapp.admin_router import (
     DeleteUserRequest,
+    FeedbackStatusUpdateRequest,
     MissionCommandRequest,
     ServiceActionRequest,
     UpdateUserRequest,
     api_keys_status,
     delete_user,
+    list_feedback_endpoint,
     mission_command,
     router,
     service_action,
+    update_feedback_status_endpoint,
     update_user,
 )
 from app.webapp.dependency import WEB_SESSION_COOKIE_NAME
@@ -216,3 +225,126 @@ def test_admin_pauses_and_resumes_user_mission_with_audit(
 def test_mission_history_has_restrictive_owner_reference() -> None:
     foreign_key = next(iter(Mission.__table__.c.user_id.foreign_keys))
     assert foreign_key.ondelete == "RESTRICT"
+
+
+def _feedback(
+    *,
+    kind: FeedbackKind = FeedbackKind.BUG,
+    channel: FeedbackChannel = FeedbackChannel.WEB,
+    status: FeedbackStatus = FeedbackStatus.NEW,
+    user_id=None,
+) -> UserFeedback:
+    return UserFeedback(
+        id=uuid4(),
+        user_id=user_id,
+        kind=kind,
+        channel=channel,
+        message="Mensagem de teste",
+        store_name=None,
+        store_url=None,
+        status=status,
+        created_at=datetime(2026, 9, 1, tzinfo=UTC),
+    )
+
+
+def test_user_is_blocked_from_admin_feedback_list(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = FastAPI()
+    register_api_error_handler(app)
+    app.include_router(router)
+    session = MagicMock()
+    app.dependency_overrides[get_session] = lambda: session
+    monkeypatch.setattr(
+        "app.webapp.dependency.get_web_session_user",
+        lambda *a, **k: _user(UserRole.USER),
+    )
+    response = TestClient(app).get(
+        "/api/v1/admin/feedback", cookies={WEB_SESSION_COOKIE_NAME: "token"}
+    )
+    assert response.status_code == 403
+
+
+def test_admin_feedback_list_rejects_limit_above_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Nunca listagem ilimitada: `limit` acima do teto (100) é rejeitado
+    pelo próprio contrato HTTP, antes de qualquer consulta ao banco."""
+    app = FastAPI()
+    register_api_error_handler(app)
+    app.include_router(router)
+    app.dependency_overrides[get_session] = lambda: MagicMock()
+    monkeypatch.setattr(
+        "app.webapp.dependency.get_web_session_user",
+        lambda *a, **k: _user(UserRole.ADMIN),
+    )
+    response = TestClient(app).get(
+        "/api/v1/admin/feedback?limit=500",
+        cookies={WEB_SESSION_COOKIE_NAME: "token"},
+    )
+    assert response.status_code == 422
+
+
+def test_list_feedback_endpoint_maps_items_and_resolves_user_display_name() -> None:
+    actor = _user()
+    reporter = _user(UserRole.USER)
+    feedback = _feedback(user_id=reporter.id)
+    session = FakeSession()
+    session.scalars = lambda _statement: [feedback]
+    session.scalar = lambda _statement: 1
+    session.get = lambda _model, _id: reporter
+
+    result = list_feedback_endpoint(
+        status_filter=None,
+        kind_filter=None,
+        limit=20,
+        offset=0,
+        session=session,
+        _=actor,
+    )
+
+    assert len(result.items) == 1
+    assert result.limit == 20
+    assert result.offset == 0
+    assert result.total == 1
+    item = result.items[0]
+    assert item.id == feedback.id
+    assert item.kind is FeedbackKind.BUG
+    assert item.channel is FeedbackChannel.WEB
+    assert item.user_display_name == reporter.display_name
+
+
+def test_update_feedback_status_endpoint_updates_and_audits() -> None:
+    actor = _user()
+    feedback = _feedback()
+    session = FakeSession()
+    session.get = lambda _model, _id: feedback
+
+    result = update_feedback_status_endpoint(
+        feedback.id,
+        FeedbackStatusUpdateRequest(status=FeedbackStatus.REVIEWED),
+        session,
+        actor,
+    )
+
+    assert result.status is FeedbackStatus.REVIEWED
+    assert feedback.status is FeedbackStatus.REVIEWED
+    assert any(
+        entry.action == "admin.feedback.status_updated" for entry in session.added
+    )
+
+
+def test_update_feedback_status_endpoint_404_for_missing_feedback() -> None:
+    actor = _user()
+    session = FakeSession()
+    session.get = lambda _model, _id: None
+
+    with pytest.raises(ApiError) as exc_info:
+        update_feedback_status_endpoint(
+            uuid4(),
+            FeedbackStatusUpdateRequest(status=FeedbackStatus.CLOSED),
+            session,
+            actor,
+        )
+
+    assert exc_info.value.status_code == 404

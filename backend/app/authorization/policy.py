@@ -36,6 +36,12 @@ class Permission(StrEnum):
     ADMIN_PANEL_ACCESS = "admin_panel.access"
     """TASK-091 (item 1 da V1.2): acesso à área `/admin` da aplicação web
     -- DEV/ADMIN exclusivo, nunca USER (`DEC-073`)."""
+    FEEDBACK_SUBMIT = "feedback.submit"
+    """Enviar bug/suporte/sugestão de loja, de qualquer usuário
+    autenticado (subtask 7 da auditoria GG Oferta). Listar/mudar status é
+    exclusivo DEV/ADMIN, mas usa `ADMIN_PANEL_ACCESS`
+    (`require_admin_web_session`) -- mesmo recorte que todo o resto de
+    `app.webapp.admin_router`, sem uma segunda permissão paralela."""
 
 
 class AuthorizationDenialReason(StrEnum):
@@ -75,6 +81,7 @@ _USER_PERMISSIONS = frozenset(
         Permission.PURCHASE_TRAIL_READ,
         Permission.AI_INTERPRET,
         Permission.AI_PROFILE_USER,
+        Permission.FEEDBACK_SUBMIT,
     }
 )
 _ADMIN_PERMISSIONS = _USER_PERMISSIONS | {
