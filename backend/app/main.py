@@ -15,9 +15,11 @@ from .offers.router import router as offers_router
 from .telegram.router import router as telegram_router
 from .webapp.account_router import router as webapp_account_router
 from .webapp.admin_router import router as webapp_admin_router
+from .webapp.auth_router import router as webapp_auth_router
 from .webapp.feedback_router import router as webapp_feedback_router
 from .webapp.missions_router import router as webapp_missions_router
 from .webapp.offers_router import router as webapp_offers_router
+from .webapp.registration_router import router as webapp_registration_router
 from .webapp.router import router as webapp_router
 from .webapp.search_router import router as webapp_search_router
 from .webapp.spa import register_spa
@@ -46,9 +48,11 @@ app.include_router(telegram_router)
 app.include_router(webapp_router)
 app.include_router(webapp_account_router)
 app.include_router(webapp_admin_router)
+app.include_router(webapp_auth_router)
 app.include_router(webapp_feedback_router)
 app.include_router(webapp_missions_router)
 app.include_router(webapp_offers_router)
+app.include_router(webapp_registration_router)
 app.include_router(webapp_search_router)
 # TASK-091: catch-all client-side de /app e /admin -- deve ser o último
 # registrado, para nunca sombrear nenhuma rota de API acima.

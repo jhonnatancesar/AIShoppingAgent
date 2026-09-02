@@ -5,6 +5,8 @@ import { RequireAdmin, RequireAuth } from './components/ProtectedRoute'
 import { AdminHome } from './pages/AdminHome'
 import { AppHome } from './pages/AppHome'
 import { LoginPage } from './pages/LoginPage'
+import { RegisterPage } from './pages/RegisterPage'
+import { RecoverPasswordPage } from './pages/RecoverPasswordPage'
 import { MissionCreatePage } from './pages/missions/MissionCreatePage'
 import { MissionDetailPage } from './pages/missions/MissionDetailPage'
 import { OfferDetailPage } from './pages/offers/OfferDetailPage'
@@ -21,6 +23,8 @@ export default function App() {
       <Routes>
         <Route path="/" element={<Navigate to="/app" replace />} />
         <Route path="/login" element={<LoginPage />} />
+        <Route path="/cadastro" element={<RegisterPage />} />
+        <Route path="/recuperar" element={<RecoverPasswordPage />} />
 
         <Route element={<RequireAuth />}>
           <Route element={<AppLayout />}>

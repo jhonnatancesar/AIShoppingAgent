@@ -127,11 +127,11 @@ async def advance_registration(
     if step == "username":
         if skip:
             raise RegistrationError("nome de usuário é obrigatório, não pode pular")
-        username = _validate_username(answer)
+        username = validate_username(answer)
         await _ensure_username_available(username, session=session, user=user)
         user.username = username
     elif step == "email":
-        user.email = None if skip else _validate_email(answer)
+        user.email = None if skip else validate_email(answer)
     elif step == "favorite_stores":
         user.favorite_stores = [] if skip else _parse_stores(answer)
     else:
@@ -147,7 +147,7 @@ async def advance_registration(
     return _PROMPTS[next_step]
 
 
-def _validate_username(raw: str) -> str:
+def validate_username(raw: str) -> str:
     username = raw.strip()
     if not username or len(username) > 32:
         raise RegistrationError(
@@ -177,8 +177,8 @@ async def _ensure_username_available(
         )
 
 
-def _validate_email(raw: str) -> str:
-    email = raw.strip()
+def validate_email(raw: str) -> str:
+    email = raw.strip().lower()
     if len(email) > 254 or not _EMAIL_PATTERN.match(email):
         raise RegistrationError(
             'Esse e-mail não parece válido.\n\nTente novamente ou responda "pular".'

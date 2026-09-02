@@ -392,6 +392,87 @@ def _revoke_web_sessions(session: Session, *, user_id: UUID, now: datetime) -> N
     )
 
 
+async def _revoke_web_sessions_async(
+    session: AsyncSession, *, user_id: UUID, now: datetime
+) -> None:
+    await session.execute(
+        update(WebSession)
+        .where(
+            WebSession.user_id == user_id,
+            WebSession.revoked_at.is_(None),
+        )
+        .values(revoked_at=now)
+    )
+
+
+def change_password_with_current(
+    session: Session,
+    *,
+    user: User,
+    current_password: str,
+    new_password: str,
+    now: datetime | None = None,
+) -> str:
+    """Troca de senha autenticada (Web, "Minha conta") -- Subtask 9.
+    Verifica a senha atual antes de aceitar a nova (por isso não
+    reaproveita `set_new_password_async`, que é para os fluxos de
+    challenge/código, sem esse passo). Rotaciona a sessão Web atual
+    (`issue_web_session` já revoga todas e emite uma nova -- "sessão
+    atual preservada/rotacionada com segurança", nunca uma segunda
+    implementação) e revoga as sessões do Telegram. Devolve o novo token
+    bruto para o chamador setar o cookie."""
+    current = _aware_now(now)
+    credential = session.get(UserCredential, user.id)
+    if credential is None or not verify_password(credential.password_hash, current_password):
+        raise AuthenticationError("A senha atual informada está incorreta.")
+    normalized = validate_password(new_password, username=user.username)
+    credential.password_hash = hash_password(normalized)
+    credential.password_changed_at = current
+    credential.failed_login_attempts = 0
+    credential.login_window_started_at = None
+    credential.login_locked_until = None
+    _revoke_sessions(session, user_id=user.id, now=current)
+    raw_token = issue_web_session(session, user=user, now=current)
+    _audit(session, user.id, "authentication.password_changed")
+    return raw_token
+
+
+async def set_new_password_async(
+    session: AsyncSession,
+    *,
+    user: User,
+    new_password: str,
+    now: datetime | None = None,
+) -> None:
+    """Núcleo assíncrono compartilhado de "definir/trocar a senha e
+    invalidar tudo" (Subtask 9) -- usado pelos fluxos novos de
+    `VerificationChallenge` (recuperação Web, recuperação/alteração
+    iniciadas pelo Telegram), nunca uma segunda política de senha:
+    reaproveita `validate_password`/`hash_password` (`passwords.py`),
+    mesmas regras do `/auth` e do login Web. Revoga incondicionalmente
+    todas as sessões Web e Telegram -- diferente de
+    `_complete_password_change` (que preserva nada porque não há sessão
+    "atual" nesses fluxos: quem confirma o código ainda não está
+    autenticado em lugar nenhum)."""
+    current = _aware_now(now)
+    normalized = validate_password(new_password, username=user.username)
+    encoded = hash_password(normalized)
+    credential = await session.get(UserCredential, user.id)
+    if credential is None:
+        session.add(
+            UserCredential(user_id=user.id, password_hash=encoded, password_changed_at=current)
+        )
+    else:
+        credential.password_hash = encoded
+        credential.password_changed_at = current
+        credential.failed_login_attempts = 0
+        credential.login_window_started_at = None
+        credential.login_locked_until = None
+    await _revoke_sessions_async(session, user_id=user.id, now=current)
+    await _revoke_web_sessions_async(session, user_id=user.id, now=current)
+    _audit(session, user.id, "authentication.password_reset")
+
+
 def _verify_login_password(
     session: Session,
     *,
@@ -488,7 +569,14 @@ def _complete_password_change(
         credential.failed_login_attempts = 0
         credential.login_window_started_at = None
         credential.login_locked_until = None
+        # Subtask 9 (correção de gap encontrado no preflight): esta troca
+        # já revogava as sessões do Telegram (`UserAuthSession`), mas
+        # nunca as sessões Web (`WebSession`) -- uma sessão de navegador
+        # roubada continuava válida indefinidamente após troca/recuperação
+        # de senha feita pelo link `/auth`. Mesma política now aplicada
+        # de forma uniforme nos dois canais.
         _revoke_sessions(session, user_id=user.id, now=now)
+        _revoke_web_sessions(session, user_id=user.id, now=now)
     action_name = {
         CredentialAction.SET_PASSWORD: "authentication.password_set",
         CredentialAction.CHANGE_PASSWORD: "authentication.password_changed",

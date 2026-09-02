@@ -83,6 +83,23 @@ def test_login_shell_served_without_any_session(dist_dir: Path) -> None:
     assert response.status_code == 200
 
 
+@pytest.mark.parametrize("path", ["/cadastro", "/recuperar"])
+def test_registration_and_recovery_shells_served_without_any_session(
+    dist_dir: Path, path: str
+) -> None:
+    """Achado do preflight da Subtask 9: `/cadastro` e `/recuperar` foram
+    adicionadas a `frontend/src/App.tsx`, mas a whitelist de rotas da SPA
+    (`_SPA_OWNED_TOP_LEVEL_SEGMENTS`) não foi atualizada -- um reload de
+    página (ou link direto) nessas rotas caía num `404` real de backend em
+    vez da casca da SPA."""
+    client = TestClient(_build_app(dist_dir))
+
+    response = client.get(path)
+
+    assert response.status_code == 200
+    assert "spa shell" in response.text
+
+
 def test_csp_img_src_allowlists_real_store_hosts_without_wildcard(dist_dir: Path) -> None:
     """TASK-115 (v1.2.5) + subtask 4 (auditoria GG Oferta, 2026-08-30): hosts
     reais das 6 lojas com Offer.image_url, nunca 'img-src *'/https: genérico."""

@@ -25,11 +25,7 @@ from app.authentication.models import (
     UserCredential,
     WebSession,
 )
-from app.authentication.passwords import (
-    PasswordPolicyError,
-    hash_password,
-    validate_password,
-)
+from app.authentication.passwords import PasswordPolicyError
 from app.collection.models import (
     CollectionQueueConfig,
     CollectionRun,
@@ -64,6 +60,8 @@ from app.missions.models import (
 from app.missions.service import MissionTransitionError, transition_mission
 from app.stores.models import Store
 from app.users.models import User, UserLifecycleStatus, UserRole
+from app.users.registration import RegistrationError
+from app.users.service import UserAlreadyExistsError, create_user_with_password
 from app.webapp.dependency import require_admin_web_session
 
 router = APIRouter(prefix="/api/v1/admin", tags=["web-admin"])
@@ -428,23 +426,31 @@ def create_user(
     session: Session = Depends(get_session),
     actor: User = Depends(require_admin_web_session),
 ) -> UserItem:
+    """Subtask 9: reaproveita `create_user_with_password` (mesmo caminho
+    do cadastro Web self-service) -- corrige de forma natural o achado do
+    preflight (colisão de username/e-mail aqui virava 500 não tratado,
+    sem `IntegrityError` capturado)."""
     try:
-        password = validate_password(payload.password, username=payload.username)
-    except PasswordPolicyError as error:
+        user = create_user_with_password(
+            session,
+            username=payload.username,
+            email=payload.email.strip() if payload.email else None,
+            password=payload.password,
+            role=payload.role,
+            display_name=payload.display_name,
+        )
+    except (RegistrationError, PasswordPolicyError) as error:
         raise ApiError(
             status_code=422, code="invalid_password", message=str(error)
         ) from error
-    user = User(
-        display_name=payload.display_name.strip(),
-        username=payload.username.strip().lower(),
-        email=payload.email.strip().lower() if payload.email else None,
-        role=payload.role,
-        is_active=True,
-        lifecycle_status=UserLifecycleStatus.ACTIVE,
-    )
-    session.add(user)
-    session.flush()
-    session.add(UserCredential(user_id=user.id, password_hash=hash_password(password)))
+    except UserAlreadyExistsError as error:
+        raise ApiError(
+            status_code=409,
+            code=f"{error.field}_taken",
+            message="Nome de usuário ou e-mail já em uso.",
+        ) from error
+    user.is_active = True
+    user.lifecycle_status = UserLifecycleStatus.ACTIVE
     _audit(
         session,
         actor,

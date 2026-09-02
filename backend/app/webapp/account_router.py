@@ -4,10 +4,14 @@ import re
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, status
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from fastapi import APIRouter, Depends, Response, status
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.authentication.delivery import email_delivery_available
+from app.authentication.passwords import PasswordPolicyError
+from app.authentication.service import AuthenticationError, change_password_with_current
 from app.authentication.telegram_linking import (
     TelegramLinkError,
     TelegramLinkRateLimited,
@@ -17,7 +21,7 @@ from app.authentication.telegram_linking import (
     unlink_telegram,
 )
 from app.authorization import AuthorizationDenied, Permission, authorize
-from app.core.config import get_settings
+from app.core.config import Settings, get_settings
 from app.core.errors import ApiError
 from app.database.dependency import get_session
 from app.database.time import utc_now
@@ -26,6 +30,7 @@ from app.quotas import get_quota_usage, next_daily_reset_at, resolve_quota_limit
 from app.users.models import User, UserRole
 from app.users.registration import PREFERRED_CATEGORY_CODES
 from app.webapp.dependency import require_web_session
+from app.webapp.router import set_csrf_cookie, set_session_cookie
 
 router = APIRouter(prefix="/api/v1/account", tags=["webapp-account"])
 
@@ -50,6 +55,8 @@ class AccountProfileOut(BaseModel):
     display_name: str
     username: str | None
     email: str | None
+    email_verified_at: str | None
+    email_verification_available: bool
     role: UserRole
     telegram_linked: bool
     telegram_link_status: TelegramLinkStatus
@@ -88,7 +95,7 @@ class AccountProfileUpdate(BaseModel):
     def normalize_email(cls, value: str | None) -> str | None:
         if value is None or not value.strip():
             return None
-        normalized = value.strip()
+        normalized = value.strip().lower()
         if not _EMAIL_PATTERN.match(normalized):
             raise ValueError("e-mail inválido")
         return normalized
@@ -170,6 +177,10 @@ def _as_account(
         display_name=user.display_name,
         username=user.username,
         email=user.email,
+        email_verified_at=(
+            user.email_verified_at.isoformat() if user.email_verified_at else None
+        ),
+        email_verification_available=email_delivery_available(get_settings()),
         role=user.role,
         telegram_linked=user.telegram_user_id is not None,
         telegram_link_status=link_status,
@@ -240,6 +251,18 @@ def update_account_profile(
     user.email = payload.email
     user.favorite_stores = payload.favorite_stores
     user.preferred_categories = payload.preferred_categories
+    try:
+        session.flush()
+    except IntegrityError as error:
+        # Subtask 9 (validação de segurança): `uq_users_email` só passou a
+        # existir nesta subtask -- antes, dois usuários podiam ter o mesmo
+        # e-mail em silêncio; agora essa colisão precisa virar 409, nunca
+        # um 500 não tratado subindo do flush.
+        raise ApiError(
+            status_code=409,
+            code="email_taken",
+            message="Esse e-mail já está em uso por outra conta.",
+        ) from error
     return _as_account(session, user)
 
 
@@ -311,3 +334,58 @@ def delete_telegram_link(
         link_status=TelegramLinkStatus.NOT_LINKED,
         link_expires_at=None,
     )
+
+
+class ChangePasswordRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    current_password: SecretStr = Field(min_length=1, max_length=128)
+    new_password: SecretStr = Field(min_length=1, max_length=128)
+    new_password_confirmation: SecretStr = Field(min_length=1, max_length=128)
+
+
+@router.put(
+    "/password",
+    operation_id="change_user_account_password",
+    summary="Alterar a própria senha (autenticado)",
+)
+def change_account_password(
+    payload: ChangePasswordRequest,
+    response: Response,
+    user: User = Depends(require_web_session),
+    session: Session = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> AccountProfileOut:
+    """Subtask 9: verifica a senha atual antes de aceitar a nova
+    (`change_password_with_current`); a sessão Web atual é rotacionada
+    (revogada + reemitida), então o cookie precisa ser trocado aqui --
+    nunca deixa o navegador com um cookie que a troca de senha acabou de
+    invalidar."""
+    _authorize_account(session, user, Permission.PROFILE_MANAGE)
+    if (
+        payload.new_password.get_secret_value()
+        != payload.new_password_confirmation.get_secret_value()
+    ):
+        raise ApiError(
+            status_code=422,
+            code="password_confirmation_mismatch",
+            message="As senhas informadas não conferem.",
+        )
+    try:
+        raw_token = change_password_with_current(
+            session,
+            user=user,
+            current_password=payload.current_password.get_secret_value(),
+            new_password=payload.new_password.get_secret_value(),
+        )
+    except AuthenticationError as error:
+        raise ApiError(
+            status_code=422,
+            code="current_password_invalid",
+            message="A senha atual informada está incorreta.",
+        ) from error
+    except PasswordPolicyError as error:
+        raise ApiError(status_code=422, code="weak_password", message=str(error)) from error
+    set_session_cookie(response, raw_token=raw_token, settings=settings)
+    set_csrf_cookie(response, settings=settings)
+    return _as_account(session, user)

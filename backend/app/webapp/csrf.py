@@ -17,7 +17,7 @@ herdaria nada).
 
 **Desenho final: CSRF é propriedade da autenticação por `WebSession`, não
 de nenhum router.** `validate_csrf` (esta função) é o núcleo de baixo
-nível, com exatamente duas fontes de uso -- nunca uma terceira, para
+nível. Existem hoje três fontes diretas de uso, nunca uma quarta, para
 nunca duplicar a defesa:
 
 1. `app.webapp.router.create_web_session` (login) chama diretamente, via
@@ -25,7 +25,12 @@ nunca duplicar a defesa:
    `WebSession` nesse ponto (é o que cria a primeira), então não há como
    passar pela dependência de sessão; usa o cookie CSRF anônimo emitido
    pela casca da SPA antes do login.
-2. `app.webapp.dependency.require_web_session` chama internamente, depois
+2. `app.webapp.registration_router.register_web_user` (cadastro Web
+   self-service, Subtask 9) chama diretamente pelo mesmo motivo exato do
+   login: também cria a primeira `WebSession` de uma identidade, então
+   também não existe sessão prévia para passar por
+   `require_web_session`.
+3. `app.webapp.dependency.require_web_session` chama internamente, depois
    de resolver a sessão, só para métodos mutáveis -- é essa dependência
    (não o router) que qualquer endpoint autenticado por WebSession em
    qualquer módulo deve usar; a proteção CSRF vem embutida nela.

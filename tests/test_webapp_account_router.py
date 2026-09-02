@@ -3,6 +3,7 @@
 from datetime import UTC, datetime
 from uuid import uuid4
 
+from app.core.errors import register_api_error_handler
 from app.database.dependency import get_session
 from app.users.models import User, UserRole
 from app.webapp.account_router import router
@@ -39,12 +40,16 @@ class _SyncSession:
     def add(self, _value) -> None:
         return None
 
+    def flush(self) -> None:
+        return None
+
     def commit(self) -> None:
         return None
 
 
 def _client(user: User) -> TestClient:
     app = FastAPI()
+    register_api_error_handler(app)
     app.include_router(router)
     session = _SyncSession()
     app.dependency_overrides[require_web_session] = lambda: user
@@ -131,3 +136,116 @@ def test_profile_rejects_unknown_store_without_mutating_user() -> None:
     assert response.status_code == 422
     assert user.display_name == "Cliente"
     assert user.favorite_stores == ["amazon"]
+
+
+def test_profile_email_collision_is_409_never_500() -> None:
+    """Validação de segurança (Subtask 9): `uq_users_email` só passou a
+    existir nesta subtask -- uma colisão real no flush precisa virar 409,
+    nunca o `IntegrityError` cru subindo como 500."""
+    from sqlalchemy.exc import IntegrityError
+
+    user = _user()
+
+    class _CollidingSession(_SyncSession):
+        def flush(self) -> None:
+            raise IntegrityError("UPDATE users ...", {}, Exception("uq_users_email"))
+
+    app = FastAPI()
+    register_api_error_handler(app)
+    app.include_router(router)
+    app.dependency_overrides[require_web_session] = lambda: user
+    app.dependency_overrides[get_session] = lambda: _CollidingSession()
+    response = TestClient(app).put(
+        "/api/v1/account/profile",
+        json={
+            "display_name": "Cliente",
+            "email": "outro_usuario@example.com",
+            "favorite_stores": [],
+            "preferred_categories": [],
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "email_taken"
+
+
+# --- Alterar senha (Subtask 9) -------------------------------------------
+
+
+def _password_payload(**overrides: object) -> dict[str, object]:
+    defaults: dict[str, object] = {
+        "current_password": "Senha#Atual123",
+        "new_password": "Senha#Nova456",
+        "new_password_confirmation": "Senha#Nova456",
+    }
+    defaults.update(overrides)
+    return defaults
+
+
+def test_change_password_success_rotates_session_cookie(monkeypatch) -> None:
+    user = _user()
+    monkeypatch.setattr(
+        "app.webapp.account_router.change_password_with_current",
+        lambda *a, **k: "novo-token-canario",
+    )
+
+    response = _client(user).put("/api/v1/account/password", json=_password_payload())
+
+    assert response.status_code == 200
+    assert response.cookies.get("aishopping_session") == "novo-token-canario"
+
+
+def test_change_password_confirmation_mismatch_is_422() -> None:
+    response = _client(_user()).put(
+        "/api/v1/account/password",
+        json=_password_payload(new_password_confirmation="Outra#Coisa789"),
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "password_confirmation_mismatch"
+
+
+def test_change_password_wrong_current_password_is_422_never_500(monkeypatch) -> None:
+    from app.authentication.service import AuthenticationError
+
+    def _fail(*a: object, **k: object) -> None:
+        raise AuthenticationError("senha atual incorreta")
+
+    monkeypatch.setattr(
+        "app.webapp.account_router.change_password_with_current", _fail
+    )
+
+    response = _client(_user()).put(
+        "/api/v1/account/password", json=_password_payload(current_password="errada")
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "current_password_invalid"
+
+
+def test_change_password_weak_new_password_is_422(monkeypatch) -> None:
+    from app.authentication.passwords import PasswordPolicyError
+
+    def _fail(*a: object, **k: object) -> None:
+        raise PasswordPolicyError("Essa senha é muito comum ou previsível.")
+
+    monkeypatch.setattr(
+        "app.webapp.account_router.change_password_with_current", _fail
+    )
+
+    response = _client(_user()).put(
+        "/api/v1/account/password",
+        json=_password_payload(new_password="senha123", new_password_confirmation="senha123"),
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "weak_password"
+
+
+def test_change_password_rejects_extra_fields() -> None:
+    response = _client(_user()).put(
+        "/api/v1/account/password",
+        json=_password_payload(role="ADMIN"),
+    )
+
+    assert response.status_code == 422

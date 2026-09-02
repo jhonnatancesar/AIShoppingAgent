@@ -69,6 +69,8 @@ export interface AccountProfile {
   display_name: string
   username: string | null
   email: string | null
+  email_verified_at: string | null
+  email_verification_available: boolean
   role: UserRole
   telegram_linked: boolean
   telegram_link_status: 'not_linked' | 'pending' | 'linked'

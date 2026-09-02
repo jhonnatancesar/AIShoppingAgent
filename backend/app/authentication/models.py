@@ -319,6 +319,100 @@ class TelegramLinkToken(Base):
     )
 
 
+class VerificationPurpose(StrEnum):
+    """Subtask 9: distinto de `CredentialAction` -- `VerificationChallenge`
+    nunca concede sessão sozinho, só autoriza a troca de senha ou marca
+    `User.email_verified_at`."""
+
+    PASSWORD_RESET = "password_reset"
+    PASSWORD_CHANGE = "password_change"
+    EMAIL_VERIFICATION = "email_verification"
+
+
+class VerificationChannel(StrEnum):
+    TELEGRAM = "telegram"
+    EMAIL = "email"
+
+
+class VerificationChallenge(Base):
+    """Código curto (purpose x channel), compartilhado entre Web e
+    Telegram -- distinto de `CredentialActionToken` (token longo de link,
+    sempre amarrado a Telegram). Nunca persiste o código em texto puro,
+    só `code_hash` (mesmo `token_digest` usado pelos demais tokens deste
+    módulo). `used_at` é o único estado terminal -- diferente de
+    `CredentialActionToken`, não existe `invalidated_at` separado: um
+    challenge substituído por um novo é expirado (`expires_at` movido
+    para agora), nunca marcado como usado sem confirmação real."""
+
+    __tablename__ = "verification_challenges"
+    __table_args__ = (
+        CheckConstraint(
+            "purpose IN ('password_reset', 'password_change', 'email_verification')",
+            name="ck_verification_challenges_purpose_values",
+        ),
+        CheckConstraint(
+            "channel IN ('telegram', 'email')",
+            name="ck_verification_challenges_channel_values",
+        ),
+        CheckConstraint(
+            "attempts >= 0", name="ck_verification_challenges_attempts_non_negative"
+        ),
+        Index(
+            "ix_verification_challenges_user_purpose",
+            "user_id",
+            "purpose",
+            "expires_at",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    purpose: Mapped[VerificationPurpose] = mapped_column(
+        Enum(
+            VerificationPurpose,
+            name="verification_challenge_purpose_values",
+            native_enum=False,
+            create_constraint=False,
+            values_callable=lambda enum: [member.value for member in enum],
+            length=32,
+        ),
+        nullable=False,
+    )
+    channel: Mapped[VerificationChannel] = mapped_column(
+        Enum(
+            VerificationChannel,
+            name="verification_challenge_channel_values",
+            native_enum=False,
+            create_constraint=False,
+            values_callable=lambda enum: [member.value for member in enum],
+            length=16,
+        ),
+        nullable=False,
+    )
+    code_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    used_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    attempts: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+        server_default=func.now(),
+    )
+
+
 class AdminApiKey(Base):
     """Estrutura reservada; autenticação e emissão permanecem desabilitadas."""
 

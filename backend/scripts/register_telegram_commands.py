@@ -22,6 +22,7 @@ _COMMANDS = [
     {"command": "cadastro", "description": "Cadastrar dados básicos do seu perfil"},
     {"command": "entrar", "description": "Autenticar por senha"},
     {"command": "recuperar", "description": "Criar ou recuperar sua senha"},
+    {"command": "alterar_senha", "description": "Alterar sua senha"},
     {"command": "sair", "description": "Encerrar a sessão autenticada"},
     {"command": "vincular", "description": "Vincular uma conta Web com código"},
     {"command": "suporte", "description": "Relatar um erro ou pedir ajuda"},

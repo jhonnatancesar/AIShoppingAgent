@@ -21,6 +21,7 @@ _SECRET_FILE_FIELDS = {
     "telegram_bot_token": "telegram_bot_token_file",
     "ops_controller_secret": "ops_controller_secret_file",
     "telegram_webhook_secret": "telegram_webhook_secret_file",
+    "verification_code_pepper": "verification_code_pepper_file",
 }
 _MAX_SECRET_FILE_BYTES = 16 * 1024
 
@@ -68,6 +69,14 @@ class Settings(BaseSettings):
     telegram_bot_token_file: Path | None = None
     telegram_webhook_secret: SecretStr | None = None
     telegram_webhook_secret_file: Path | None = None
+    # Subtask 9 (validação de segurança): pepper de HMAC para
+    # `VerificationChallenge.code_hash` -- o código é curto (6 dígitos,
+    # só 1.000.000 de valores), então um digest sem segredo (SHA-256 puro)
+    # seria trivial de forçar offline se o banco vazasse. `None` (padrão)
+    # bloqueia criação/confirmação de challenge com um erro claro em vez
+    # de cair para um hash inseguro -- nunca um fallback silencioso.
+    verification_code_pepper: SecretStr | None = None
+    verification_code_pepper_file: Path | None = None
     ops_controller_url: str | None = None
     ops_controller_secret: SecretStr | None = None
     ops_controller_secret_file: Path | None = None
@@ -216,6 +225,13 @@ class Settings(BaseSettings):
     readiness_timeout_seconds: float = Field(default=1.0, gt=0, le=10)
     worker_metrics_port: int = Field(default=9464, ge=1, le=65535)
     auth_public_base_url: str = Field(default="http://localhost:8000", min_length=1)
+    # Subtask 9 (auditoria GG Oferta): `None` (padrão) -- nenhum provider
+    # real de e-mail existe ainda no projeto. `email_delivery_available`
+    # (`app.authentication.delivery`) só libera o canal `email` quando
+    # este campo tiver um identificador real (ex.: "sendgrid"); até lá, a
+    # infraestrutura de VerificationChallenge/e-mail fica pronta, mas
+    # nunca finge um envio que não aconteceu.
+    email_delivery_provider: str | None = None
     # TASK-091 (item 1 da V1.2): diretório do build estático da SPA
     # (`frontend/dist`, gerado por `npm run build`). `None` (padrão) resolve
     # para o `frontend/dist` do próprio checkout, relativo a este arquivo --

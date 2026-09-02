@@ -5605,6 +5605,81 @@ async def test_aliexpress_mention_during_edit_add_sources_replies_futuro() -> No
 
 
 @pytest.mark.anyio
+async def test_change_password_command_delivers_code_in_reply_never_asks_for_password(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Subtask 9: `/alterar_senha` nunca aceita a senha nova no chat -- só
+    entrega um código curto (o próprio texto da resposta é a entrega) e
+    direciona para a página Web."""
+    user = _fake_user()
+    user.telegram_chat_id = 222
+    challenge = SimpleNamespace(id=uuid4())
+    monkeypatch.setattr(
+        "app.telegram.router.create_challenge_async",
+        AsyncMock(return_value=(challenge, "482913")),
+    )
+
+    reply = await _handle_message(
+        _message("/alterar_senha"),
+        user=user,
+        adapters={},
+        session=_async_session(),
+        auth_public_base_url="https://ggoferta.com",
+        created_now=False,
+        verification_code_pepper="pepper-de-teste-nao-real",
+    )
+
+    assert "482913" in reply
+    assert "senha" in reply.lower()
+    assert "recuperar" in reply.lower()
+    assert "nunca" in reply.lower()
+
+
+@pytest.mark.anyio
+async def test_change_password_command_without_linked_chat_replies_gracefully() -> None:
+    user = _fake_user()
+    user.telegram_chat_id = None
+
+    reply = await _handle_message(
+        _message("/alterar_senha"),
+        user=user,
+        adapters={},
+        session=_async_session(),
+        auth_public_base_url="https://ggoferta.com",
+        created_now=False,
+    )
+
+    assert "não encontrei" in reply.lower()
+
+
+@pytest.mark.anyio
+async def test_change_password_command_rate_limited_replies_without_crashing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.authentication.verification import ChallengeRateLimited
+
+    user = _fake_user()
+    user.telegram_chat_id = 222
+
+    async def _fail(*a: object, **k: object) -> None:
+        raise ChallengeRateLimited("Tente novamente mais tarde.")
+
+    monkeypatch.setattr("app.telegram.router.create_challenge_async", _fail)
+
+    reply = await _handle_message(
+        _message("/alterar_senha"),
+        user=user,
+        adapters={},
+        session=_async_session(),
+        auth_public_base_url="https://ggoferta.com",
+        created_now=False,
+        verification_code_pepper="pepper-de-teste-nao-real",
+    )
+
+    assert "muitas solicitações" in reply.lower()
+
+
+@pytest.mark.anyio
 async def test_shopee_mention_in_free_text_description_skips_ai_entirely() -> None:
     user = _registered_user(pending_intent=_awaiting_mission_description())
     adapter = _FakeAdapter(AssertionError("AI must not run"))

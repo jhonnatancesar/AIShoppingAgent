@@ -13,6 +13,12 @@ export interface NotificationPreferencesUpdate {
   notify_target_reached: boolean
 }
 
+export interface ChangePasswordRequest {
+  current_password: string
+  new_password: string
+  new_password_confirmation: string
+}
+
 export const accountApi = {
   get: () => api.get<AccountProfile>('/account'),
   getQuota: () => api.get<AccountQuota>('/account/quota'),
@@ -20,6 +26,8 @@ export const accountApi = {
     api.put<AccountProfile>('/account/profile', payload),
   updateNotifications: (payload: NotificationPreferencesUpdate) =>
     api.put<AccountProfile>('/account/notification-preferences', payload),
+  changePassword: (payload: ChangePasswordRequest) =>
+    api.put<AccountProfile>('/account/password', payload),
   startTelegramLink: () => api.post<TelegramLinkChallenge>('/account/telegram-link', {}),
   unlinkTelegram: () => api.del<AccountProfile>('/account/telegram-link'),
 }

@@ -55,7 +55,7 @@ class WebSessionUser(BaseModel):
     role: UserRole
 
 
-def _set_session_cookie(
+def set_session_cookie(
     response: Response, *, raw_token: str, settings: Settings
 ) -> None:
     response.set_cookie(
@@ -69,7 +69,7 @@ def _set_session_cookie(
     )
 
 
-def _set_csrf_cookie(response: Response, *, settings: Settings) -> str:
+def set_csrf_cookie(response: Response, *, settings: Settings) -> str:
     """Gira o cookie CSRF na fronteira de login (mesmo princípio da
     rotação de `WebSession`: nunca reaproveitar um identificador através de
     uma troca de privilégio). Não é `httpOnly` -- a SPA precisa ler o valor
@@ -87,7 +87,7 @@ def _set_csrf_cookie(response: Response, *, settings: Settings) -> str:
     return raw_csrf_token
 
 
-def _as_web_session_user(user: User) -> WebSessionUser:
+def as_web_session_user(user: User) -> WebSessionUser:
     return WebSessionUser(
         id=user.id,
         display_name=user.display_name,
@@ -134,9 +134,9 @@ def create_web_session(
             message="Usuário ou senha inválidos.",
         ) from error
     raw_token = issue_web_session(session, user=user)
-    _set_session_cookie(response, raw_token=raw_token, settings=settings)
-    _set_csrf_cookie(response, settings=settings)
-    return _as_web_session_user(user)
+    set_session_cookie(response, raw_token=raw_token, settings=settings)
+    set_csrf_cookie(response, settings=settings)
+    return as_web_session_user(user)
 
 
 @router.delete(
@@ -173,4 +173,4 @@ def get_current_web_session(
         require_web_session
     ),  # GET é seguro, CSRF é pulado internamente
 ) -> WebSessionUser:
-    return _as_web_session_user(user)
+    return as_web_session_user(user)

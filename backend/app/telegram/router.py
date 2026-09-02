@@ -32,7 +32,11 @@ from app.ai_provider import (
     build_admin_dev_ai_provider_manager,
     build_user_ai_provider_manager,
 )
-from app.authentication.models import CredentialAction
+from app.authentication.models import (
+    CredentialAction,
+    VerificationChannel,
+    VerificationPurpose,
+)
 from app.authentication.service import (
     AuthenticationError,
     AuthenticationRateLimited,
@@ -44,6 +48,7 @@ from app.authentication.telegram_linking import (
     TelegramLinkError,
     complete_telegram_link,
 )
+from app.authentication.verification import ChallengeRateLimited, create_challenge_async
 from app.authorization import (
     AuthorizationDenied,
     Permission,
@@ -231,6 +236,7 @@ _LIST_MISSIONS_ALIASES = frozenset(
 )
 _SUPPORT_COMMAND = "/suporte"
 _SUGGEST_STORE_COMMAND = "/sugerir_loja"
+_CHANGE_PASSWORD_COMMAND = "/alterar_senha"
 _LIST_MISSIONS_DISPLAY_LIMIT = 15
 _MISSION_DESCRIPTION_TTL = timedelta(minutes=10)
 _AWAIT_CREATE_MISSION_DESCRIPTION = "await_create_mission_description"
@@ -307,6 +313,7 @@ _HELP_REPLY = (
     "/cadastro — completar seu perfil\n"
     "/entrar — acessar sua conta\n"
     "/recuperar — criar ou recuperar sua senha\n"
+    "/alterar_senha — alterar sua senha\n"
     "/vincular — vincular esta conta ao site https://ggoferta.com\n"
     "/sair — encerrar a sessão\n\n"
     "🆘 AJUDA E FEEDBACK\n"
@@ -666,6 +673,11 @@ async def _process_authenticated_message(
                 adapters=adapters,
                 session=session,
                 auth_public_base_url=settings.auth_public_base_url,
+                verification_code_pepper=(
+                    settings.verification_code_pepper.get_secret_value()
+                    if settings.verification_code_pepper is not None
+                    else None
+                ),
                 created_now=authentication.created_now,
             )
         except AuthorizationDenied as error:
@@ -721,6 +733,7 @@ async def _handle_message(
     session: AsyncSession,
     auth_public_base_url: str,
     created_now: bool,
+    verification_code_pepper: str | None = None,
 ) -> str | None:
     lowered = message.text.strip().lower()
     if lowered == _HELP_COMMAND:
@@ -811,6 +824,14 @@ async def _handle_message(
         authorize(session, user, Permission.FEEDBACK_SUBMIT)
         user.pending_intent = {"kind": "await_store_suggestion_name"}
         return describe_store_suggestion_name_prompt()
+    if lowered == _CHANGE_PASSWORD_COMMAND:
+        authorize(session, user, Permission.PROFILE_MANAGE)
+        return await _start_change_password_flow(
+            session=session,
+            user=user,
+            auth_public_base_url=auth_public_base_url,
+            verification_code_pepper=verification_code_pepper,
+        )
     if lowered == PREFERENCES_COMMAND or lowered.startswith(f"{PREFERENCES_COMMAND} "):
         authorize(session, user, Permission.NOTIFICATION_PREFERENCES_MANAGE)
         return handle_preferences_command(user, lowered)
@@ -1351,6 +1372,44 @@ def _start_manual_command_flow(
     payload = stage_mission_command_choice(missions=candidates, command=command)
     user.pending_intent = payload
     return describe_mission_command_choice_prompt(candidates, command=command)
+
+
+async def _start_change_password_flow(
+    *,
+    session: AsyncSession,
+    user: User,
+    auth_public_base_url: str,
+    verification_code_pepper: str | None,
+) -> str:
+    """Subtask 9: `/alterar_senha` nunca aceita a senha nova aqui no
+    chat -- só entrega um código curto (o próprio texto desta resposta É
+    a entrega pelo Telegram, sem uma segunda chamada a `send_message`) e
+    direciona para a página Web onde o código + a nova senha são
+    confirmados juntos (`VerificationChallenge`, mesmo domínio da
+    recuperação Web/`/recuperar`)."""
+    if user.telegram_chat_id is None:
+        return "Não encontrei seu chat vinculado. Tente novamente mais tarde."
+    if verification_code_pepper is None:
+        # Validação de segurança: `Settings.verification_code_pepper`
+        # ausente nunca vira um fallback silencioso para hash sem segredo.
+        return "Alteração de senha temporariamente indisponível. Tente novamente mais tarde."
+    try:
+        _challenge, code = await create_challenge_async(
+            session,
+            user_id=user.id,
+            purpose=VerificationPurpose.PASSWORD_CHANGE,
+            channel=VerificationChannel.TELEGRAM,
+            pepper=verification_code_pepper,
+        )
+    except ChallengeRateLimited:
+        return "⏳ Muitas solicitações em pouco tempo.\n\nAguarde um pouco e tente novamente."
+    base = auth_public_base_url.rstrip("/")
+    return (
+        f"🔐 Código para alterar sua senha: {code}\n\n"
+        f"Acesse {base}/recuperar e informe o código junto com sua nova senha.\n\n"
+        "Esse código é pessoal, de uso único e expira em 10 minutos.\n\n"
+        "Nunca vou pedir sua senha aqui no chat."
+    )
 
 
 async def _start_cancel_mission_flow(*, session: AsyncSession, user: User) -> str:

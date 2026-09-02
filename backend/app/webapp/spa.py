@@ -71,9 +71,12 @@ _CATCH_ALL_METHODS = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"]
 # construção: só o que está aqui vira casca da SPA -- qualquer caminho não
 # listado (rota de API futura, typo, o que for) é `404` de verdade, mesmo
 # que ninguém tenha atualizado esta lista. Precisa espelhar exatamente as
-# rotas de `frontend/src/App.tsx` (`/`, `/login`, `/app`, `/admin`, e seus
-# descendentes via roteamento client-side do React Router).
-_SPA_OWNED_TOP_LEVEL_SEGMENTS = frozenset({"", "login", "app", "admin"})
+# rotas de `frontend/src/App.tsx` (`/`, `/login`, `/cadastro`, `/recuperar`,
+# `/app`, `/admin`, e seus descendentes via roteamento client-side do React
+# Router).
+_SPA_OWNED_TOP_LEVEL_SEGMENTS = frozenset(
+    {"", "login", "cadastro", "recuperar", "app", "admin"}
+)
 
 
 def _is_spa_owned_path(full_path: str) -> bool:

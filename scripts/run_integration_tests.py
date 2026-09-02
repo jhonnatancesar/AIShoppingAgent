@@ -162,6 +162,7 @@ def _child_environment(
             "AISHOPPING_GROQ_API_KEY": "integration-local-boundary",
             "AISHOPPING_TELEGRAM_BOT_TOKEN": "integration-local-boundary",
             "AISHOPPING_TELEGRAM_WEBHOOK_SECRET": "integration-local-boundary",
+            "AISHOPPING_VERIFICATION_CODE_PEPPER": "integration-local-boundary",
             "AISHOPPING_OBSERVABILITY_ENABLED": "false",
             "AISHOPPING_INTEGRATION_RUN_ID": resources.run_id,
             "AISHOPPING_INTEGRATION_TEMPLATE_DATABASE": resources.database_name,

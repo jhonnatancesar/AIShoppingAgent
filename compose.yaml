@@ -34,6 +34,11 @@ services:
       AISHOPPING_FIRECRAWL_API_KEY_FILE: /run/secrets/firecrawl_api_key
       AISHOPPING_TELEGRAM_BOT_TOKEN_FILE: /run/secrets/telegram_bot_token
       AISHOPPING_TELEGRAM_WEBHOOK_SECRET_FILE: /run/secrets/telegram_webhook_secret
+      # Subtask 9 (validação de segurança): pepper de HMAC do código de 6
+      # dígitos do VerificationChallenge -- nunca cai para hash sem
+      # segredo (SHA-256 puro seria trivial de forçar offline num espaço
+      # de só 1.000.000 de valores). Só o `api` cria/confirma challenges.
+      AISHOPPING_VERIFICATION_CODE_PEPPER_FILE: /run/secrets/verification_code_pepper
       AISHOPPING_OPS_CONTROLLER_URL: http://ops_controller:8010
       AISHOPPING_OPS_CONTROLLER_SECRET_FILE: /run/secrets/ops_controller_secret
       AISHOPPING_OBSERVABILITY_ENABLED: "true"
@@ -74,6 +79,7 @@ services:
       - telegram_bot_token
       - telegram_webhook_secret
       - ops_controller_secret
+      - verification_code_pepper
     depends_on:
       database:
         condition: service_healthy
@@ -312,6 +318,8 @@ secrets:
     file: ${AISHOPPING_SECRETS_DIR:-./.secrets}/telegram_webhook_secret
   ops_controller_secret:
     file: ${AISHOPPING_SECRETS_DIR:-./.secrets}/ops_controller_secret
+  verification_code_pepper:
+    file: ${AISHOPPING_SECRETS_DIR:-./.secrets}/verification_code_pepper
   windows_ops_agent_secret:
     # TASK-109: mesmo valor gerado/lido pelo Windows Ops Agent em
     # C:\ProgramData\AIShoppingAgent\secrets\ops-agent-secret (gerado

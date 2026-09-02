@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react'
-import { Navigate, useLocation } from 'react-router-dom'
+import { Navigate, Link, useLocation } from 'react-router-dom'
 import { motion } from 'motion/react'
 import { Bot, LockKeyhole } from 'lucide-react'
 import { ApiError } from '../api/client'
@@ -89,6 +89,12 @@ export function LoginPage() {
         </Button>
         <p className="text-center text-xs leading-relaxed text-muted-foreground">
           Sua senha é a mesma criada pelo link enviado no Telegram.
+        </p>
+        <p className="text-center text-xs leading-relaxed text-muted-foreground">
+          Esqueceu a senha? <Link className="font-medium text-primary hover:underline" to="/recuperar">Recuperar acesso</Link>
+        </p>
+        <p className="text-center text-sm text-muted-foreground">
+          Ainda não tem conta? <Link className="font-medium text-primary hover:underline" to="/cadastro">Criar conta</Link>
         </p>
       </form></CardContent></Card></motion.div>
     </div>

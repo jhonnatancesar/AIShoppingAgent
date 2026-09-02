@@ -146,7 +146,14 @@ class User(Base):
         unique=True,
         nullable=True,
     )
-    email: Mapped[str | None] = mapped_column(String(254), nullable=True)
+    email: Mapped[str | None] = mapped_column(String(254), unique=True, nullable=True)
+    email_verified_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    """Subtask 9: só é preenchido por uma confirmação real de
+    `VerificationChallenge(purpose=email_verification, channel=email)` --
+    nunca no cadastro, nunca por coincidência com o e-mail do Telegram,
+    nunca por `password_reset`/`password_change` em qualquer canal."""
     favorite_stores: Mapped[list[str]] = mapped_column(
         ARRAY(String(32)),
         nullable=False,

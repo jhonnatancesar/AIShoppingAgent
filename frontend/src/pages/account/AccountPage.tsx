@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from 'react'
-import { Bell, Check, Clock3, Link2, RefreshCw, Save, ShieldCheck, Unlink, UserRound } from 'lucide-react'
+import { Bell, Check, Clock3, KeyRound, Link2, Mail, RefreshCw, Save, ShieldCheck, Unlink, UserRound } from 'lucide-react'
 import { accountApi } from '@/api/account'
+import { emailVerificationApi } from '@/api/auth'
 import { ApiError } from '@/api/client'
 import type { AccountOption, AccountProfile, AccountQuota } from '@/api/types'
 import { useAuth } from '@/auth/AuthContext'
@@ -72,6 +73,7 @@ export function AccountView({
         <div className="space-y-6">
           <ProfileForm account={account} onSaved={onProfileSaved} />
           <NotificationForm account={account} onSaved={onNotificationsSaved} />
+          <PasswordForm />
         </div>
         <div className="space-y-6">
           {quota ? <QuotaSummaryCard quota={quota} /> : null}
@@ -157,6 +159,52 @@ function NotificationForm({ account, onSaved }: { account: AccountProfile; onSav
   )
 }
 
+function PasswordForm() {
+  const [currentPassword, setCurrentPassword] = useState('')
+  const [newPassword, setNewPassword] = useState('')
+  const [newPasswordConfirmation, setNewPasswordConfirmation] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [message, setMessage] = useState<string | null>(null)
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setSaving(true)
+    setMessage(null)
+    if (newPassword !== newPasswordConfirmation) {
+      setMessage('As senhas informadas não conferem.')
+      setSaving(false)
+      return
+    }
+    try {
+      await accountApi.changePassword({ current_password: currentPassword, new_password: newPassword, new_password_confirmation: newPasswordConfirmation })
+      setCurrentPassword('')
+      setNewPassword('')
+      setNewPasswordConfirmation('')
+      setMessage('Senha alterada. As demais sessões foram encerradas.')
+    } catch (error) {
+      setMessage(error instanceof ApiError ? error.message : 'Não foi possível alterar a senha.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader><CardTitle className="flex items-center gap-2"><KeyRound className="size-5 text-primary" />Alterar senha</CardTitle><CardDescription>Sua senha é a mesma usada no site e no Telegram.</CardDescription></CardHeader>
+      <CardContent>
+        <form className="space-y-4" onSubmit={submit}>
+          <Field label="Senha atual"><Input type="password" autoComplete="current-password" value={currentPassword} maxLength={128} required onChange={(event) => setCurrentPassword(event.target.value)} /></Field>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field label="Nova senha"><Input type="password" autoComplete="new-password" value={newPassword} maxLength={128} required onChange={(event) => setNewPassword(event.target.value)} /></Field>
+            <Field label="Confirmar nova senha"><Input type="password" autoComplete="new-password" value={newPasswordConfirmation} maxLength={128} required onChange={(event) => setNewPasswordConfirmation(event.target.value)} /></Field>
+          </div>
+          <div className="flex items-center justify-between gap-3"><Feedback message={message} /><Button disabled={saving}><KeyRound />{saving ? 'Salvando…' : 'Alterar senha'}</Button></div>
+        </form>
+      </CardContent>
+    </Card>
+  )
+}
+
 function AccountSummary({ account, onChanged }: { account: AccountProfile; onChanged: (account: AccountProfile) => void }) {
   const [command, setCommand] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -188,7 +236,59 @@ function AccountSummary({ account, onChanged }: { account: AccountProfile; onCha
   }
 
   const statusLabel = account.telegram_link_status === 'linked' ? 'Vinculado' : account.telegram_link_status === 'pending' ? 'Vinculação pendente' : 'Não vinculado'
-  return <Card className="h-fit xl:sticky xl:top-24"><CardHeader><CardTitle>Conta</CardTitle><CardDescription>Identidade e integrações protegidas.</CardDescription></CardHeader><CardContent className="space-y-4"><Summary icon={UserRound} label="Usuário" value={account.username ? `@${account.username}` : 'Não definido'} /><Summary icon={ShieldCheck} label="Perfil de acesso" value={account.role} /><Summary icon={Link2} label="Telegram" value={statusLabel} badge={account.telegram_link_status === 'linked'} />{account.telegram_link_status === 'pending' ? <div className="rounded-lg border border-amber-500/30 bg-amber-500/8 p-3 text-xs text-muted-foreground"><p className="flex items-center gap-2 font-medium text-foreground"><Clock3 className="size-4" />Vinculação pendente</p><p className="mt-1">Envie o comando temporário no chat privado do bot. Ele expira em até 10 minutos e funciona uma única vez.</p></div> : null}{command ? <div className="space-y-2 rounded-lg border border-primary/25 bg-primary/7 p-3"><p className="text-xs text-muted-foreground">No chat privado do bot, envie exatamente:</p><code className="block break-all rounded bg-background p-2 text-xs text-foreground">{command}</code></div> : null}<div className="grid gap-2">{account.telegram_link_status === 'linked' ? <Button type="button" variant="outline" disabled={busy} onClick={unlinkTelegram}><Unlink />Desvincular Telegram</Button> : <Button type="button" variant="outline" disabled={busy} onClick={startLink}><Link2 />{account.telegram_link_status === 'pending' ? 'Gerar novo código' : 'Vincular Telegram'}</Button>}<Button type="button" variant="ghost" disabled={busy} onClick={refreshLink}><RefreshCw />Atualizar status</Button></div><Feedback message={message} /><div className="rounded-lg border border-border bg-muted/35 p-3 text-xs text-muted-foreground">Conta criada em {new Date(account.created_at).toLocaleDateString('pt-BR')}. O Telegram é opcional; desvincular não remove sua conta, missões ou acesso Web.</div></CardContent></Card>
+  return <Card className="h-fit xl:sticky xl:top-24"><CardHeader><CardTitle>Conta</CardTitle><CardDescription>Identidade e integrações protegidas.</CardDescription></CardHeader><CardContent className="space-y-4"><Summary icon={UserRound} label="Usuário" value={account.username ? `@${account.username}` : 'Não definido'} /><Summary icon={ShieldCheck} label="Perfil de acesso" value={account.role} />{account.email ? <EmailVerificationStatus account={account} onChanged={onChanged} /> : null}<Summary icon={Link2} label="Telegram" value={statusLabel} badge={account.telegram_link_status === 'linked'} />{account.telegram_link_status === 'pending' ? <div className="rounded-lg border border-amber-500/30 bg-amber-500/8 p-3 text-xs text-muted-foreground"><p className="flex items-center gap-2 font-medium text-foreground"><Clock3 className="size-4" />Vinculação pendente</p><p className="mt-1">Envie o comando temporário no chat privado do bot. Ele expira em até 10 minutos e funciona uma única vez.</p></div> : null}{command ? <div className="space-y-2 rounded-lg border border-primary/25 bg-primary/7 p-3"><p className="text-xs text-muted-foreground">No chat privado do bot, envie exatamente:</p><code className="block break-all rounded bg-background p-2 text-xs text-foreground">{command}</code></div> : null}<div className="grid gap-2">{account.telegram_link_status === 'linked' ? <Button type="button" variant="outline" disabled={busy} onClick={unlinkTelegram}><Unlink />Desvincular Telegram</Button> : <Button type="button" variant="outline" disabled={busy} onClick={startLink}><Link2 />{account.telegram_link_status === 'pending' ? 'Gerar novo código' : 'Vincular Telegram'}</Button>}<Button type="button" variant="ghost" disabled={busy} onClick={refreshLink}><RefreshCw />Atualizar status</Button></div><Feedback message={message} /><div className="rounded-lg border border-border bg-muted/35 p-3 text-xs text-muted-foreground">Conta criada em {new Date(account.created_at).toLocaleDateString('pt-BR')}. O Telegram é opcional; desvincular não remove sua conta, missões ou acesso Web.</div></CardContent></Card>
+}
+
+function EmailVerificationStatus({ account, onChanged }: { account: AccountProfile; onChanged: (account: AccountProfile) => void }) {
+  const [challengeId, setChallengeId] = useState<string | null>(null)
+  const [code, setCode] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [message, setMessage] = useState<string | null>(null)
+  const verified = Boolean(account.email_verified_at)
+
+  async function requestVerification() {
+    setBusy(true); setMessage(null)
+    try {
+      const issued = await emailVerificationApi.request()
+      if (issued) setChallengeId(issued.challenge_id)
+    } catch (error) {
+      setMessage(error instanceof ApiError ? error.message : 'Não foi possível enviar o código.')
+    } finally { setBusy(false) }
+  }
+
+  async function confirmVerification(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!challengeId) return
+    setBusy(true); setMessage(null)
+    try {
+      await emailVerificationApi.confirm(challengeId, code)
+      const updated = await accountApi.get()
+      if (updated) onChanged(updated)
+      setChallengeId(null)
+      setCode('')
+    } catch (error) {
+      setMessage(error instanceof ApiError ? error.message : 'Código inválido ou expirado.')
+    } finally { setBusy(false) }
+  }
+
+  return (
+    <div className="space-y-2">
+      <Summary icon={Mail} label="E-mail" value={account.email || ''} badge={verified} />
+      {!verified && account.email_verification_available && !challengeId ? (
+        <Button type="button" variant="outline" size="sm" disabled={busy} onClick={requestVerification}>Verificar e-mail</Button>
+      ) : null}
+      {!verified && !account.email_verification_available ? (
+        <p className="text-xs text-muted-foreground">Verificação por e-mail ainda não está disponível.</p>
+      ) : null}
+      {challengeId ? (
+        <form className="flex items-center gap-2" onSubmit={confirmVerification}>
+          <Input value={code} maxLength={16} placeholder="Código" onChange={(event) => setCode(event.target.value)} />
+          <Button type="submit" size="sm" disabled={busy}>Confirmar</Button>
+        </form>
+      ) : null}
+      <Feedback message={message} />
+    </div>
+  )
 }
 
 function Field({ label, children }: { label: string; children: ReactNode }) { return <label className="space-y-2 text-sm font-medium"><span>{label}</span>{children}</label> }
