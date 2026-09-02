@@ -16,6 +16,7 @@ import { NotFound } from './pages/NotFound'
 import { ProductSearchPage } from './pages/search/ProductSearchPage'
 import { AccountPage } from './pages/account/AccountPage'
 import { FeedbackPage } from './pages/FeedbackPage'
+import { CouponsPage } from './pages/CouponsPage'
 
 export default function App() {
   return (
@@ -35,6 +36,7 @@ export default function App() {
             <Route path="/app/missions/:missionId" element={<MissionDetailPage />} />
             <Route path="/app/offers" element={<OffersListPage />} />
             <Route path="/app/offers/:offerId" element={<OfferDetailPage />} />
+            <Route path="/app/coupons" element={<CouponsPage />} />
             <Route path="/app/account" element={<AccountPage />} />
             <Route path="/app/suporte" element={<FeedbackPage />} />
 

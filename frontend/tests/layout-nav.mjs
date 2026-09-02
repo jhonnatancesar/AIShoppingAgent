@@ -15,6 +15,7 @@ try {
   assert.ok(userPaths.includes('/app/missions'), 'USER deve enxergar Missões')
   assert.ok(userPaths.includes('/app/offers'), 'USER deve enxergar Ofertas')
   assert.ok(userPaths.includes('/app/suporte'), 'USER deve enxergar Suporte')
+  assert.ok(userPaths.includes('/app/coupons'), 'USER deve enxergar Cupons (Subtask 11)')
   assert.ok(!userPaths.includes('/admin'), 'USER NUNCA deve enxergar a navegação administrativa')
 
   const adminGroups = navGroupsFor(true)
@@ -26,6 +27,17 @@ try {
     assert.ok(adminPaths.includes(path), `ADMIN deve manter todo item USER (${path})`)
   }
   assert.ok(adminPaths.includes('/admin'), 'ADMIN deve enxergar a seção Administração')
+
+  const adminPrincipalPaths = adminGroups[0].items.map((item) => item.to)
+  const adminSectionPaths = adminGroups[1].items.map((item) => item.to)
+  assert.ok(
+    adminPrincipalPaths.includes('/app/coupons'),
+    'ADMIN deve enxergar Cupons dentro da seção Principal (Subtask 11)',
+  )
+  assert.ok(
+    !adminSectionPaths.includes('/app/coupons'),
+    'Cupons nunca deve ser tratado como item administrativo (Subtask 11)',
+  )
 
   console.log('layout nav groups: passed')
 } finally {
