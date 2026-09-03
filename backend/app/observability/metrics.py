@@ -22,7 +22,15 @@ WORKER_OUTCOMES = frozenset({"succeeded", "failed", "skipped", "dead_lettered"})
 WORKERS = frozenset({"telegram_notifier", "collection_orchestrator"})
 RESILIENCE_COMPONENTS = frozenset({"webhook", "telegram", "ai", "store", "worker"})
 RESILIENCE_EVENTS = frozenset(
-    {"rate_limited", "replay", "retry", "circuit_open", "dead_lettered", "failure"}
+    {
+        "rate_limited",
+        "replay",
+        "retry",
+        "circuit_open",
+        "dead_lettered",
+        "failure",
+        "cesar_core_disaster_fallback",
+    }
 )
 SUPPORTED_EVENT_TYPES = frozenset(
     {

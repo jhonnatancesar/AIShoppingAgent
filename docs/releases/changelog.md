@@ -1,5 +1,12 @@
 # Changelog
 
+## TASK-118F — DEV, aguardando revisão
+
+- Provider César Core com messages tipadas, `FREE_ONLY`, cap e credencial `*_FILE`.
+- Factories existentes sob feature flag false; disaster fallback opt-in por
+  falha de conexão, sem mascarar auth/policy/quota/erros HTTP.
+- Contrato Core retrocompatível e fluxo real validados; nenhum deploy ou push.
+
 *Nota: gap sem entrada entre 2026-08-22 e 2026-08-25 (TASK-105, TASK-107,
 TASK-108, TASK-109 concluídas nesse intervalo sem registro aqui) --
 ver `docs/internal/roadmap.md` para o histórico completo.*

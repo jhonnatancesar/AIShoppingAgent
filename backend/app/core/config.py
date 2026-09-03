@@ -47,6 +47,15 @@ class Settings(BaseSettings):
     database_password: SecretStr | None = None
     database_password_file: Path | None = None
     gemini_api_key_user: SecretStr | None = None
+    # TASK-118F: rollout DEV opt-in; segredo exclusivamente por arquivo.
+    cesar_core_ai_enabled: bool = False
+    cesar_core_disaster_fallback_enabled: bool = False
+    cesar_core_api_key_file: Path | None = None
+    cesar_core_base_url: str = "http://127.0.0.1:8100"
+    cesar_core_service: str = Field(default="backend", min_length=1)
+    cesar_core_service_class: Literal["economy", "standard", "quality"] = "economy"
+    cesar_core_max_tokens: int = Field(default=1024, ge=1, le=4096)
+    cesar_core_timeout_seconds: float = Field(default=90, gt=0, le=300)
     gemini_api_key_user_file: Path | None = None
     gemini_api_key_admin_dev: SecretStr | None = None
     gemini_api_key_admin_dev_file: Path | None = None

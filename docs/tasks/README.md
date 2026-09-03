@@ -1,5 +1,9 @@
 # Tarefas
 
+**TASK-118F em revisão DEV:** integração AI GG Oferta -> César Core -> OmniRoute
+implementada e validada localmente; flags desligadas. Ver `TASK-118F.md`.
+Nenhuma próxima TASK autorizada automaticamente; 118G não iniciada.
+
 **TASK-113 concluída no DEV (2026-08-27):** avaliação inteligente de
 preço, pesquisa de mercado (Firecrawl + AI Provider Manager) e
 qualidade dos alertas — **absorve e implementa o item 17 da V1.2**

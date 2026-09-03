@@ -1,5 +1,12 @@
 # Project Context
 
+**TASK-118F — DEV, aguardando revisão:** integração `CesarCoreAIProvider`
+atrás das factories do AIProviderManager, flags padrão false, messages tipadas,
+credencial DEV por arquivo e disaster opt-in restrito a falha de conexão.
+Fluxo real GG Oferta -> Core -> OmniRoute validado com `CAPPED`; Core mantém
+22/22 contracts (21 anteriores + roles). Sem commit/push/PROD/118G.
+Detalhes e limitação operacional de `.env`: `docs/tasks/TASK-118F.md`.
+
 **Estado da V1.2 (2026-08-30, sincronização de documentação) — release
 publicada e implantada em PROD, documentação estava atrasada:** esta
 entrada corrige as duas anteriores (mantidas abaixo por histórico), que

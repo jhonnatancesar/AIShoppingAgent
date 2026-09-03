@@ -1,13 +1,19 @@
 """Managers dos perfis USER e ADMIN/DEV sobre provedores internos."""
 
 import json
+from collections.abc import Callable
 
+from app.ai_provider.cesar_core import (
+    CesarCoreAIProvider,
+    CesarCoreConnectionUnavailable,
+)
 from app.ai_provider.contracts import (
     AIMessage,
     AIMessageRole,
     AIProvider,
     AIProviderCapabilityUnsupported,
     AIProviderError,
+    AIProviderManager,
     AIProviderQuotaExceeded,
     AIProviderUnavailable,
     AIRequest,
@@ -185,9 +191,11 @@ class AdminDevAIProviderManager:
 
 def build_user_ai_provider_manager(
     settings: Settings | None = None,
-) -> UserAIProviderManager:
+) -> AIProviderManager:
     """Monta o perfil USER somente quando a credencial segura está disponível."""
     current = settings or get_settings()
+    if current.cesar_core_ai_enabled:
+        return _build_cesar_core_manager(current, UserRole.USER)
     if current.gemini_api_key_user is None:
         raise AIRequestError(
             "AISHOPPING_GEMINI_API_KEY_USER is required for USER profile"
@@ -232,7 +240,7 @@ def build_user_ai_provider_manager(
 
 def build_admin_dev_ai_provider_manager(
     settings: Settings | None = None,
-) -> AdminDevAIProviderManager:
+) -> AIProviderManager:
     """Monta ADMIN/DEV com Gemini, Groq e OpenRouter Free como fallback.
 
     Usa uma chave Gemini dedicada (`AISHOPPING_GEMINI_API_KEY_ADMIN_DEV`),
@@ -242,6 +250,8 @@ def build_admin_dev_ai_provider_manager(
     DEC-050) — nenhum nível Gemini Pro/preview entra na cascata.
     """
     current = settings or get_settings()
+    if current.cesar_core_ai_enabled:
+        return _build_cesar_core_manager(current, None)
     if current.gemini_api_key_admin_dev is None:
         raise AIRequestError(
             "AISHOPPING_GEMINI_API_KEY_ADMIN_DEV is required for ADMIN/DEV profile"
@@ -293,6 +303,80 @@ def build_admin_dev_ai_provider_manager(
         max_attempts=current.safe_retry_max_attempts,
         circuit_failure_threshold=current.circuit_failure_threshold,
         circuit_open_seconds=current.circuit_open_seconds,
+    )
+
+
+class CesarCoreAIProviderManager:
+    """Rollout opt-in: manager continua sendo a única porta do domínio."""
+
+    def __init__(
+        self,
+        provider: AIProvider,
+        legacy: Callable[[], AIProviderManager],
+        *,
+        profile: UserRole | None,
+        disaster_fallback: bool,
+        circuit_failure_threshold: int,
+        circuit_open_seconds: float,
+    ) -> None:
+        self._provider = provider
+        self._legacy = legacy
+        self._profile = profile
+        self._disaster = disaster_fallback
+        self._threshold = circuit_failure_threshold
+        self._open_seconds = circuit_open_seconds
+
+    async def generate(self, request: AIRequest) -> AIResponse:
+        allowed = (
+            {UserRole.USER}
+            if self._profile is UserRole.USER
+            else {UserRole.ADMIN, UserRole.DEV}
+        )
+        if request.profile not in allowed:
+            raise AIRequestError("Request profile does not match manager")
+        if request.require_search_grounding:
+            # Grounding/Search não migra na 118F: mantém o caminho já existente.
+            return await self._legacy().generate(request)
+        try:
+            return await _attempt_provider(
+                request,
+                self._provider,
+                circuit_failure_threshold=self._threshold,
+                circuit_open_seconds=self._open_seconds,
+                fallback=False,
+            )
+        except CesarCoreConnectionUnavailable:
+            if not self._disaster:
+                raise
+            observe_resilience_event("ai", "cesar_core_disaster_fallback")
+            return await self._legacy().generate(request)
+
+
+def _build_cesar_core_manager(
+    settings: Settings, profile: UserRole | None
+) -> CesarCoreAIProviderManager:
+    if settings.cesar_core_api_key_file is None:
+        raise AIRequestError("Cesar Core requires AISHOPPING_CESAR_CORE_API_KEY_FILE")
+    legacy_settings = settings.model_copy(update={"cesar_core_ai_enabled": False})
+    factory = (
+        build_user_ai_provider_manager
+        if profile is UserRole.USER
+        else build_admin_dev_ai_provider_manager
+    )
+    return CesarCoreAIProviderManager(
+        CesarCoreAIProvider(
+            api_key_file=settings.cesar_core_api_key_file,
+            base_url=settings.cesar_core_base_url,
+            service=settings.cesar_core_service,
+            service_class=settings.cesar_core_service_class,
+            max_tokens=settings.cesar_core_max_tokens,
+            timeout_seconds=settings.cesar_core_timeout_seconds,
+        ),
+        lambda: factory(legacy_settings),
+        profile=profile,
+        disaster_fallback=settings.cesar_core_disaster_fallback_enabled,
+        circuit_failure_threshold=settings.circuit_failure_threshold,
+        circuit_open_seconds=settings.circuit_open_seconds,
     )
 
 

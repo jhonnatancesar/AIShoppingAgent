@@ -1,5 +1,9 @@
 # TASK-118 — Integrar o OmniRoute como camada central de roteamento de IA e Web Search
 
+**Atualização 118F:** 118A–118E validadas no repositório César Core; integração
+AI DEV implementada, em revisão, conforme `TASK-118F.md`. O texto abaixo é
+o histórico do pré-flight original. Search 118G e rollout PROD não iniciados.
+
 Status: **Pré-flight fechado — zero decisões arquiteturais bloqueadoras
 (2026-08-30).** Fonte oficial confirmada, contratos reais extraídos do
 código, arquitetura completa decidida: `GG Oferta →

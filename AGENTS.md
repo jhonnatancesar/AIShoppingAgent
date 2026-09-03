@@ -110,6 +110,11 @@ Nunca iniciar automaticamente a próxima TASK. Encerrar apresentando resumo da i
 
 ## Estado atual
 
+**TASK-118F — DEV, aguardando revisão:** provider César Core integrado às
+factories de IA com flags false, messages tipadas, credencial DEV `*_FILE` e
+disaster opt-in restrito a conexão. Fluxo real validado. Sem commit/push/PROD;
+118G não iniciada. Detalhes e limites em `docs/tasks/TASK-118F.md`.
+
 **Atualização DEV 2026-08-22:** a TASK-104A integra Magalu ao contrato comum.
 Aquisição usa `MagaluSearchTransport`; Edge normal/CDP supervisionado e somente
 loopback é o único transporte operacional, enquanto parser SSR, domínio e

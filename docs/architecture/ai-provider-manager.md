@@ -1,5 +1,13 @@
 # AI Provider Manager
 
+## Rollout DEV da TASK-118F
+
+`CesarCoreAIProvider` é selecionado pelas factories existentes com feature flag
+desligada por padrão. Envia messages tipadas ao Core, com `FREE_ONLY` e cap.
+Somente erro de conexão admite disaster fallback opt-in; HTTP de erro e timeout
+incerto não repetem cascata local. Grounding mantém seu caminho anterior.
+Configuração, prova real e rollback: `docs/tasks/TASK-118F.md`.
+
 Todo acesso a IA passa por `AIProviderManager.generate`. Módulos de domínio não
 podem importar SDKs nem chamar Gemini, OpenAI, Claude ou qualquer outro provedor
 diretamente. `AIProvider` é uma porta interna usada apenas pelo manager.

@@ -3656,3 +3656,13 @@ aliases com hífen continuam aceitos como texto digitado.
 - **Próxima ação:** implementar e validar somente o roteamento descrito, sem
   no máximo duas chamadas reais gratuitas e controladas, sem push, rebuild ou
   deploy. A TASK-086 do drift conhecido do `alembic check` permanece não iniciada.
+
+## Decisão TASK-118F — integração AI DEV
+
+Classificação: **Implementar agora**, por solicitação explícita após 118E.
+Preservar roles exige extensão retrocompatível `prompt` OU `messages` no Core,
+autorizada pelo usuário. Consumidor envia somente mensagens tipadas; flags
+default false. Disaster opt-in apenas por falha de conexão, nunca mascarando
+HTTP de auth/policy/quota ou repetindo inferência após timeout incerto.
+Grounding/Search não migram. Credenciais DEV separadas por arquivo, sem PROD,
+commit ou push. Estado e testes: `docs/tasks/TASK-118F.md`.

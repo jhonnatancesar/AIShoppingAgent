@@ -1,5 +1,9 @@
 # Roadmap
 
+**TASK-118F em revisão DEV:** integração AI tipada com flags default false e
+prova real GG Oferta -> Core -> OmniRoute; ver `docs/tasks/TASK-118F.md`.
+Sem commit/push/PROD. TASK-118G não iniciada.
+
 | Fase | Tarefas | Resultado |
 | --- | --- | --- |
 | Fundação | TASK-000 | Estrutura e memória do projeto |
