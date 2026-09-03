@@ -1,12 +1,13 @@
 import { useState, type FormEvent } from 'react'
 import { Navigate, Link, useLocation } from 'react-router-dom'
 import { motion } from 'motion/react'
-import { Bot, LockKeyhole } from 'lucide-react'
+import { LockKeyhole } from 'lucide-react'
 import { ApiError } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
+import { BrandLogo } from '@/components/BrandLogo'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent, CardDescription, CardHeader } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 
 interface LocationState {
@@ -55,8 +56,7 @@ export function LoginPage() {
       <motion.div initial={{ opacity: 0, y: 12, scale: .99 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={{ duration: .35, ease: 'easeOut' }} className="relative w-full max-w-sm">
       <Card className="border-border/80 bg-card/90 backdrop-blur-xl">
         <CardHeader className="items-center text-center">
-          <div className="mb-3 grid size-12 place-items-center rounded-2xl bg-primary text-primary-foreground shadow-glow"><Bot className="size-6" /></div>
-          <CardTitle className="text-xl">AIShoppingAgent</CardTitle>
+          <BrandLogo className="mb-3 h-10 w-auto" />
           <CardDescription>Acesse suas missões e ofertas monitoradas.</CardDescription>
         </CardHeader>
         <CardContent><form className="space-y-4" onSubmit={handleSubmit}>

@@ -1,8 +1,9 @@
 import { useState, type ComponentType } from 'react'
 import { motion } from 'motion/react'
-import { Bot, Home, LifeBuoy, LogOut, Menu, Search, ShieldCheck, ShoppingBag, Target, Ticket, UserRound, X } from 'lucide-react'
+import { Home, LifeBuoy, LogOut, Menu, Search, ShieldCheck, ShoppingBag, Target, Ticket, UserRound, X } from 'lucide-react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { useAuth } from '@/auth/AuthContext'
+import { BrandLogo } from '@/components/BrandLogo'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { ThemeToggle } from '@/components/ThemeToggle'
@@ -51,9 +52,9 @@ export function AppLayout() {
 
   const sidebar = (
     <div className="flex h-full flex-col">
-      <div className="flex h-16 items-center gap-3 border-b border-sidebar-border px-5">
-        <div className="grid size-9 place-items-center rounded-xl bg-primary text-primary-foreground shadow-glow"><Bot className="size-5" /></div>
-        <div className="min-w-0"><p className="truncate text-sm font-semibold tracking-tight">AIShoppingAgent</p><p className="truncate text-xs text-muted-foreground">Compras inteligentes</p></div>
+      <div className="flex h-16 flex-col justify-center gap-0.5 border-b border-sidebar-border px-5">
+        <BrandLogo className="h-7 w-auto" />
+        <p className="truncate text-xs text-muted-foreground">Compras inteligentes</p>
       </div>
       <nav className="flex-1 space-y-4 p-3" aria-label="Navegação principal">
         {navGroups.map((group) => (

@@ -14,6 +14,7 @@
     "test:quota": "node tests/quota-components.mjs",
     "test:layout": "node tests/layout-nav.mjs",
     "test:coupons": "node tests/coupons-page.mjs",
+    "test:landing": "node tests/landing-page.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

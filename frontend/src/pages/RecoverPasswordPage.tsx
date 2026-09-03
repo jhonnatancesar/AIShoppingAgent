@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { motion } from 'motion/react'
-import { Bot, KeyRound, Mail, Send } from 'lucide-react'
+import { KeyRound, Mail, Send } from 'lucide-react'
 import { ApiError } from '../api/client'
 import { recoveryApi, type VerificationChannel } from '../api/auth'
 import { ThemeToggle } from '@/components/ThemeToggle'
@@ -107,7 +107,7 @@ export function RecoverPasswordPage() {
       <motion.div initial={{ opacity: 0, y: 12, scale: .99 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={{ duration: .35, ease: 'easeOut' }} className="relative w-full max-w-sm">
       <Card className="border-border/80 bg-card/90 backdrop-blur-xl">
         <CardHeader className="items-center text-center">
-          <div className="mb-3 grid size-12 place-items-center rounded-2xl bg-primary text-primary-foreground shadow-glow"><Bot className="size-6" /></div>
+          <img src="/logo-icon.png" alt="GG Oferta" className="mb-3 size-12" width={48} height={48} />
           <CardTitle className="text-xl">Recuperar senha</CardTitle>
           <CardDescription>
             {step === 'identifier' && 'Informe seu usuário ou e-mail.'}

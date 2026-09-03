@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { Navigate, Link, useLocation } from 'react-router-dom'
 import { motion } from 'motion/react'
-import { Bot, UserPlus } from 'lucide-react'
+import { UserPlus } from 'lucide-react'
 import { ApiError } from '../api/client'
 import { registrationApi } from '../api/auth'
 import { useAuth } from '../auth/AuthContext'
@@ -56,9 +56,9 @@ export function RegisterPage() {
       <motion.div initial={{ opacity: 0, y: 12, scale: .99 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={{ duration: .35, ease: 'easeOut' }} className="relative w-full max-w-sm">
       <Card className="border-border/80 bg-card/90 backdrop-blur-xl">
         <CardHeader className="items-center text-center">
-          <div className="mb-3 grid size-12 place-items-center rounded-2xl bg-primary text-primary-foreground shadow-glow"><Bot className="size-6" /></div>
+          <img src="/logo-icon.png" alt="GG Oferta" className="mb-3 size-12" width={48} height={48} />
           <CardTitle className="text-xl">Criar conta</CardTitle>
-          <CardDescription>Pesquise produtos e acompanhe preços no AIShoppingAgent.</CardDescription>
+          <CardDescription>Pesquise produtos e acompanhe preços no GG Oferta.</CardDescription>
         </CardHeader>
         <CardContent><form className="space-y-4" onSubmit={handleSubmit}>
         <div className="space-y-1.5"><label className="text-sm font-medium" htmlFor="username">Usuário</label>
