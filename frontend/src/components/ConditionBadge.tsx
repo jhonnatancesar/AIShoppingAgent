@@ -1,4 +1,6 @@
 import type { OfferCondition } from '@/api/types'
+import { Badge } from '@/components/ui/badge'
+import { cn } from '@/lib/utils'
 
 export const CONDITION_LABELS: Record<OfferCondition, string> = {
   new: 'Novo',
@@ -20,11 +22,5 @@ export function ConditionBadge({ condition, className = '' }: { condition: Offer
   if (!NOTABLE_CONDITIONS.has(condition)) {
     return <span className={className}>{label}</span>
   }
-  return (
-    <span
-      className={`inline-flex items-center rounded-full border border-amber-500/30 bg-amber-500/15 px-2 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-400 ${className}`}
-    >
-      {label}
-    </span>
-  )
+  return <Badge variant="warning" className={cn(className)}>{label}</Badge>
 }

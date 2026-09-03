@@ -43,10 +43,10 @@ export function QuotaExceededNotice({
 }) {
   const actionable = details.actions.filter((action) => action !== 'wait_for_daily_reset')
   return (
-    <Card className="border-amber-500/40 bg-amber-500/8">
+    <Card className="border-warning/40 bg-warning/8">
       <CardContent className="space-y-3 pt-6">
         <div className="flex items-start gap-2 text-sm font-medium text-foreground">
-          <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-600" />
+          <AlertTriangle className="mt-0.5 size-4 shrink-0 text-warning" />
           <span>{message}</span>
         </div>
         {actionable.length > 0 ? (

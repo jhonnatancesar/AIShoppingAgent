@@ -30,7 +30,7 @@ function State({ icon, title, description, action }: StateProps & { icon: ReactN
     <Card className="border-dashed">
       <CardContent className="flex min-h-52 flex-col items-center justify-center p-8 text-center">
         <div className="mb-4 grid size-11 place-items-center rounded-xl bg-muted text-muted-foreground [&_svg]:size-5">{icon}</div>
-        <h2 className="font-semibold">{title}</h2>
+        <h2 className="text-lg font-semibold tracking-tight">{title}</h2>
         {description ? <p className="mt-2 max-w-md text-sm text-muted-foreground">{description}</p> : null}
         {action ? <div className="mt-5">{action}</div> : null}
       </CardContent>

@@ -15,12 +15,15 @@
     "test:layout": "node tests/layout-nav.mjs",
     "test:coupons": "node tests/coupons-page.mjs",
     "test:landing": "node tests/landing-page.mjs",
+    "test:design-system": "node tests/design-system.mjs",
     "preview": "vite preview"
   },
   "dependencies": {
+    "@radix-ui/react-alert-dialog": "^1.1.23",
     "@radix-ui/react-dialog": "^1.1.23",
     "@radix-ui/react-select": "^2.3.7",
     "@radix-ui/react-slot": "^1.3.3",
+    "@radix-ui/react-tooltip": "^1.2.16",
     "@tailwindcss/vite": "^4.3.3",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",

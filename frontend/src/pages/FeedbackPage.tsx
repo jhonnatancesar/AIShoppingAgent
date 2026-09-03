@@ -1,12 +1,15 @@
-import { useState, type ComponentProps, type FormEvent, type ReactNode } from 'react'
+import { useState, type FormEvent, type ReactNode } from 'react'
 import { LifeBuoy, Send, Store } from 'lucide-react'
 import { feedbackApi, type FeedbackKind } from '@/api/feedback'
 import { ApiError } from '@/api/client'
+import { FormMessage } from '@/components/FormMessage'
 import { PageHeader } from '@/components/PageHeader'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
-import { cn } from '@/lib/utils'
+import { Textarea } from '@/components/ui/textarea'
+import { ToggleGroup } from '@/components/ui/toggle-group'
+import { useToast } from '@/hooks/useToast'
 
 export function FeedbackPage() {
   return (
@@ -24,22 +27,28 @@ export function FeedbackPage() {
   )
 }
 
+const CATEGORY_OPTIONS: { value: FeedbackKind; label: string }[] = [
+  { value: 'bug', label: 'Erro/Bug' },
+  { value: 'support', label: 'Outro suporte' },
+]
+
 function SupportForm() {
+  const { toast } = useToast()
   const [category, setCategory] = useState<FeedbackKind>('bug')
   const [message, setMessage] = useState('')
   const [sending, setSending] = useState(false)
-  const [feedback, setFeedback] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setSending(true)
-    setFeedback(null)
+    setError(null)
     try {
       await feedbackApi.submit({ kind: category, message })
       setMessage('')
-      setFeedback('Recebemos sua mensagem. Obrigado por avisar!')
-    } catch (error) {
-      setFeedback(error instanceof ApiError ? error.message : 'Não foi possível enviar.')
+      toast({ title: 'Recebemos sua mensagem.', description: 'Obrigado por avisar!', variant: 'success' })
+    } catch (submitError) {
+      setError(submitError instanceof ApiError ? submitError.message : 'Não foi possível enviar.')
     } finally {
       setSending(false)
     }
@@ -54,16 +63,13 @@ function SupportForm() {
       <CardContent>
         <form className="space-y-4" onSubmit={submit}>
           <Field label="Categoria">
-            <div className="flex gap-2">
-              <CategoryOption label="Erro/Bug" active={category === 'bug'} onClick={() => setCategory('bug')} />
-              <CategoryOption label="Outro suporte" active={category === 'support'} onClick={() => setCategory('support')} />
-            </div>
+            <ToggleGroup type="single" aria-label="Categoria" options={CATEGORY_OPTIONS} value={category} onChange={setCategory} />
           </Field>
           <Field label="Descrição">
-            <Textarea value={message} required maxLength={4000} placeholder="Descreva o que aconteceu…" onChange={(event) => setMessage(event.target.value)} />
+            <Textarea value={message} required maxLength={4000} rows={4} placeholder="Descreva o que aconteceu…" onChange={(event) => setMessage(event.target.value)} />
           </Field>
           <div className="flex items-center justify-between gap-3">
-            <Feedback message={feedback} />
+            <FormMessage tone="error">{error}</FormMessage>
             <Button disabled={sending || !message.trim()}><Send />{sending ? 'Enviando…' : 'Enviar'}</Button>
           </div>
         </form>
@@ -73,16 +79,17 @@ function SupportForm() {
 }
 
 function StoreSuggestionForm() {
+  const { toast } = useToast()
   const [storeName, setStoreName] = useState('')
   const [storeUrl, setStoreUrl] = useState('')
   const [comment, setComment] = useState('')
   const [sending, setSending] = useState(false)
-  const [feedback, setFeedback] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setSending(true)
-    setFeedback(null)
+    setError(null)
     try {
       await feedbackApi.submit({
         kind: 'store_suggestion',
@@ -93,9 +100,9 @@ function StoreSuggestionForm() {
       setStoreName('')
       setStoreUrl('')
       setComment('')
-      setFeedback('Sugestão registrada. Obrigado!')
-    } catch (error) {
-      setFeedback(error instanceof ApiError ? error.message : 'Não foi possível enviar.')
+      toast({ title: 'Sugestão registrada.', description: 'Obrigado!', variant: 'success' })
+    } catch (submitError) {
+      setError(submitError instanceof ApiError ? submitError.message : 'Não foi possível enviar.')
     } finally {
       setSending(false)
     }
@@ -112,10 +119,10 @@ function StoreSuggestionForm() {
           <Field label="Nome da loja"><Input value={storeName} required maxLength={160} onChange={(event) => setStoreName(event.target.value)} /></Field>
           <Field label="Link (opcional)"><Input type="url" value={storeUrl} maxLength={2048} placeholder="https://…" onChange={(event) => setStoreUrl(event.target.value)} /></Field>
           <Field label="Comentário (opcional)">
-            <Textarea value={comment} maxLength={4000} placeholder="Algo mais que queira contar?" onChange={(event) => setComment(event.target.value)} />
+            <Textarea value={comment} maxLength={4000} rows={4} placeholder="Algo mais que queira contar?" onChange={(event) => setComment(event.target.value)} />
           </Field>
           <div className="flex items-center justify-between gap-3">
-            <Feedback message={feedback} />
+            <FormMessage tone="error">{error}</FormMessage>
             <Button disabled={sending || !storeName.trim()}><Send />{sending ? 'Enviando…' : 'Enviar'}</Button>
           </div>
         </form>
@@ -124,39 +131,6 @@ function StoreSuggestionForm() {
   )
 }
 
-function CategoryOption({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      aria-pressed={active}
-      onClick={onClick}
-      className={cn(
-        'rounded-full border border-border px-3 py-1.5 text-sm transition-colors',
-        active && 'border-primary bg-primary/10 text-primary',
-      )}
-    >
-      {label}
-    </button>
-  )
-}
-
-function Textarea({ className, ...props }: ComponentProps<'textarea'>) {
-  return (
-    <textarea
-      rows={4}
-      className={cn(
-        'flex w-full rounded-lg border border-input bg-background/70 px-3 py-2 text-sm shadow-xs outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30 disabled:cursor-not-allowed disabled:opacity-50',
-        className,
-      )}
-      {...props}
-    />
-  )
-}
-
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return <label className="space-y-2 text-sm font-medium"><span>{label}</span>{children}</label>
-}
-
-function Feedback({ message }: { message: string | null }) {
-  return <span className="text-sm text-muted-foreground" role="status">{message}</span>
 }

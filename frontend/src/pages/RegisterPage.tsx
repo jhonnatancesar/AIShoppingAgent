@@ -1,10 +1,11 @@
 import { useState, type FormEvent } from 'react'
 import { Navigate, Link, useLocation } from 'react-router-dom'
-import { motion } from 'motion/react'
+import { motion, useReducedMotion } from 'motion/react'
 import { UserPlus } from 'lucide-react'
 import { ApiError } from '../api/client'
 import { registrationApi } from '../api/auth'
 import { useAuth } from '../auth/AuthContext'
+import { FormMessage } from '@/components/FormMessage'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -17,6 +18,7 @@ import { Input } from '@/components/ui/input'
 export function RegisterPage() {
   const { user, refresh } = useAuth()
   const location = useLocation()
+  const prefersReducedMotion = useReducedMotion()
   const [username, setUsername] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -53,7 +55,7 @@ export function RegisterPage() {
     <div className="relative grid min-h-screen place-items-center overflow-hidden bg-background px-4 py-12 text-foreground">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,color-mix(in_oklab,var(--primary)_12%,transparent),transparent_42%)]" />
       <div className="absolute right-4 top-4"><ThemeToggle /></div>
-      <motion.div initial={{ opacity: 0, y: 12, scale: .99 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={{ duration: .35, ease: 'easeOut' }} className="relative w-full max-w-sm">
+      <motion.div initial={prefersReducedMotion ? false : { opacity: 0, y: 12, scale: .99 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={{ duration: .35, ease: 'easeOut' }} className="relative w-full max-w-sm">
       <Card className="border-border/80 bg-card/90 backdrop-blur-xl">
         <CardHeader className="items-center text-center">
           <img src="/logo-icon.png" alt="GG Oferta" className="mb-3 size-12" width={48} height={48} />
@@ -69,7 +71,7 @@ export function RegisterPage() {
         <Input id="password" name="password" type="password" autoComplete="new-password" maxLength={128} value={password} onChange={(event) => setPassword(event.target.value)} required /></div>
         <div className="space-y-1.5"><label className="text-sm font-medium" htmlFor="password-confirmation">Confirmar senha</label>
         <Input id="password-confirmation" name="password-confirmation" type="password" autoComplete="new-password" maxLength={128} value={passwordConfirmation} onChange={(event) => setPasswordConfirmation(event.target.value)} required /></div>
-        {error ? <p className="login-error" role="alert">{error}</p> : null}
+        <FormMessage tone="error">{error}</FormMessage>
         <Button className="w-full" size="lg" type="submit" disabled={pending}>
           <UserPlus />{pending ? 'Criando…' : 'Criar conta'}
         </Button>

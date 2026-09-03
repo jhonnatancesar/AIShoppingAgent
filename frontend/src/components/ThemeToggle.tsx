@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Moon, Sun } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 
 type Theme = 'light' | 'dark'
 
@@ -19,9 +20,16 @@ export function ThemeToggle() {
     localStorage.setItem('aishopping-theme', theme)
   }, [theme])
 
+  const label = theme === 'dark' ? 'Usar tema claro' : 'Usar tema escuro'
+
   return (
-    <Button variant="ghost" size="icon" type="button" onClick={() => setTheme((value) => value === 'dark' ? 'light' : 'dark')} aria-label={theme === 'dark' ? 'Usar tema claro' : 'Usar tema escuro'}>
-      {theme === 'dark' ? <Sun /> : <Moon />}
-    </Button>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button variant="ghost" size="icon" type="button" onClick={() => setTheme((value) => value === 'dark' ? 'light' : 'dark')} aria-label={label}>
+          {theme === 'dark' ? <Sun /> : <Moon />}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
   )
 }

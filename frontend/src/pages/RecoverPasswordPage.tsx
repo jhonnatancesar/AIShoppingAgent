@@ -1,9 +1,10 @@
 import { useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
-import { motion } from 'motion/react'
+import { motion, useReducedMotion } from 'motion/react'
 import { KeyRound, Mail, Send } from 'lucide-react'
 import { ApiError } from '../api/client'
 import { recoveryApi, type VerificationChannel } from '../api/auth'
+import { FormMessage } from '@/components/FormMessage'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -23,6 +24,7 @@ const CHANNEL_LABELS: Record<VerificationChannel, string> = {
  * disponíveis, confirmar código + nova senha juntos. Nunca pede a senha
  * em nenhum outro lugar além desta página. */
 export function RecoverPasswordPage() {
+  const prefersReducedMotion = useReducedMotion()
   const [step, setStep] = useState<Step>('identifier')
   const [identifier, setIdentifier] = useState('')
   const [channels, setChannels] = useState<VerificationChannel[]>([])
@@ -104,7 +106,7 @@ export function RecoverPasswordPage() {
     <div className="relative grid min-h-screen place-items-center overflow-hidden bg-background px-4 py-12 text-foreground">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,color-mix(in_oklab,var(--primary)_12%,transparent),transparent_42%)]" />
       <div className="absolute right-4 top-4"><ThemeToggle /></div>
-      <motion.div initial={{ opacity: 0, y: 12, scale: .99 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={{ duration: .35, ease: 'easeOut' }} className="relative w-full max-w-sm">
+      <motion.div initial={prefersReducedMotion ? false : { opacity: 0, y: 12, scale: .99 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={{ duration: .35, ease: 'easeOut' }} className="relative w-full max-w-sm">
       <Card className="border-border/80 bg-card/90 backdrop-blur-xl">
         <CardHeader className="items-center text-center">
           <img src="/logo-icon.png" alt="GG Oferta" className="mb-3 size-12" width={48} height={48} />
@@ -121,7 +123,7 @@ export function RecoverPasswordPage() {
             <form className="space-y-4" onSubmit={submitIdentifier}>
               <div className="space-y-1.5"><label className="text-sm font-medium" htmlFor="identifier">Usuário ou e-mail</label>
               <Input id="identifier" name="identifier" maxLength={254} value={identifier} onChange={(event) => setIdentifier(event.target.value)} required /></div>
-              {error ? <p className="login-error" role="alert">{error}</p> : null}
+              <FormMessage tone="error">{error}</FormMessage>
               <Button className="w-full" size="lg" type="submit" disabled={pending}><Send />{pending ? 'Buscando…' : 'Continuar'}</Button>
               <p className="text-center text-xs text-muted-foreground"><Link className="font-medium text-primary hover:underline" to="/login">Voltar para o login</Link></p>
             </form>
@@ -129,10 +131,10 @@ export function RecoverPasswordPage() {
 
           {noChannels ? (
             <div className="space-y-4">
-              <p className="text-sm text-muted-foreground" role="status">
+              <FormMessage tone="neutral">
                 Se essa conta existir e tiver um canal de recuperação disponível, você poderá solicitar um código.
                 No momento não há um canal disponível para essa conta.
-              </p>
+              </FormMessage>
               <p className="text-center text-xs text-muted-foreground"><Link className="font-medium text-primary hover:underline" to="/login">Voltar para o login</Link></p>
             </div>
           ) : null}
@@ -153,7 +155,7 @@ export function RecoverPasswordPage() {
                   </button>
                 ))}
               </div>
-              {error ? <p className="login-error" role="alert">{error}</p> : null}
+              <FormMessage tone="error">{error}</FormMessage>
             </div>
           ) : null}
 
@@ -165,14 +167,14 @@ export function RecoverPasswordPage() {
               <Input id="new-password" name="new-password" type="password" autoComplete="new-password" maxLength={128} value={newPassword} onChange={(event) => setNewPassword(event.target.value)} required /></div>
               <div className="space-y-1.5"><label className="text-sm font-medium" htmlFor="new-password-confirmation">Confirmar nova senha</label>
               <Input id="new-password-confirmation" name="new-password-confirmation" type="password" autoComplete="new-password" maxLength={128} value={newPasswordConfirmation} onChange={(event) => setNewPasswordConfirmation(event.target.value)} required /></div>
-              {error ? <p className="login-error" role="alert">{error}</p> : null}
+              <FormMessage tone="error">{error}</FormMessage>
               <Button className="w-full" size="lg" type="submit" disabled={pending}><KeyRound />{pending ? 'Confirmando…' : 'Redefinir senha'}</Button>
             </form>
           ) : null}
 
           {step === 'done' ? (
             <div className="space-y-4">
-              <p className="text-sm text-muted-foreground" role="status">Sua senha foi redefinida. As demais sessões foram encerradas.</p>
+              <FormMessage tone="neutral">Sua senha foi redefinida. As demais sessões foram encerradas.</FormMessage>
               <Button className="w-full" size="lg" asChild><Link to="/login">Ir para o login</Link></Button>
             </div>
           ) : null}

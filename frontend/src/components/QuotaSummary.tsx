@@ -13,18 +13,18 @@ export function QuotaUsageRow({ label, item }: { label: string; item: QuotaItem 
     <div className="space-y-1.5">
       <div className="flex items-center justify-between text-sm">
         <span className="font-medium">{label}</span>
-        <span className={item.near_limit ? 'font-semibold text-amber-600' : 'text-muted-foreground'}>
+        <span className={item.near_limit ? 'font-semibold text-warning' : 'text-muted-foreground'}>
           {item.current}/{item.limit}
         </span>
       </div>
       <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
         <div
-          className={`h-full rounded-full transition-all ${item.near_limit ? 'bg-amber-500' : 'bg-primary'}`}
+          className={`h-full rounded-full transition-all ${item.near_limit ? 'bg-warning' : 'bg-primary'}`}
           style={{ width: `${pct}%` }}
         />
       </div>
       {item.near_limit ? (
-        <p className="flex items-center gap-1 text-xs text-amber-600">
+        <p className="flex items-center gap-1 text-xs text-warning">
           <AlertTriangle className="size-3" />
           Perto do limite
         </p>

@@ -1,5 +1,5 @@
 import { useState, type ComponentType } from 'react'
-import { motion } from 'motion/react'
+import { motion, useReducedMotion } from 'motion/react'
 import { Home, LifeBuoy, LogOut, Menu, Search, ShieldCheck, ShoppingBag, Target, Ticket, UserRound, X } from 'lucide-react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { useAuth } from '@/auth/AuthContext'
@@ -46,47 +46,57 @@ export function navGroupsFor(isAdmin: boolean): NavGroupSpec[] {
 export function AppLayout() {
   const { user, isAdmin, logout } = useAuth()
   const location = useLocation()
+  const prefersReducedMotion = useReducedMotion()
   const [mobileOpen, setMobileOpen] = useState(false)
   const onAdminArea = location.pathname.startsWith('/admin')
   const navGroups = navGroupsFor(isAdmin)
 
-  const sidebar = (
-    <div className="flex h-full flex-col">
-      <div className="flex h-16 flex-col justify-center gap-0.5 border-b border-sidebar-border px-5">
-        <BrandLogo className="h-7 w-auto" />
-        <p className="truncate text-xs text-muted-foreground">Compras inteligentes</p>
-      </div>
-      <nav className="flex-1 space-y-4 p-3" aria-label="Navegação principal">
-        {navGroups.map((group) => (
-          <NavGroup key={group.label ?? 'root'} label={group.label} items={group.items} onNavigate={() => setMobileOpen(false)} />
-        ))}
-      </nav>
-      <div className="border-t border-sidebar-border p-3">
-        <div className="flex items-center gap-3 rounded-xl bg-sidebar-accent/60 p-3">
-          <div className="grid size-9 shrink-0 place-items-center rounded-full bg-primary/12 text-xs font-semibold text-primary">{user?.display_name?.slice(0, 2).toUpperCase() || 'US'}</div>
-          <div className="min-w-0 flex-1"><p className="truncate text-sm font-medium">{user?.display_name}</p><p className="truncate text-xs text-muted-foreground">{isAdmin ? 'Acesso administrativo' : 'Conta pessoal'}</p></div>
-          <Button variant="ghost" size="icon" onClick={logout} aria-label="Sair"><LogOut /></Button>
+  function renderSidebar(onClose?: () => void) {
+    return (
+      <div className="flex h-full flex-col">
+        <div className="flex h-16 items-center justify-between gap-2 border-b border-sidebar-border px-5">
+          <div className="min-w-0">
+            <BrandLogo className="h-7 w-auto" />
+            <p className="truncate text-xs text-muted-foreground">Compras inteligentes</p>
+          </div>
+          {onClose ? <Button variant="ghost" size="icon" className="shrink-0" onClick={onClose} aria-label="Fechar menu"><X /></Button> : null}
+        </div>
+        <nav className="flex-1 space-y-4 p-3" aria-label="Navegação principal">
+          {navGroups.map((group) => (
+            <NavGroup key={group.label ?? 'root'} label={group.label} items={group.items} onNavigate={() => setMobileOpen(false)} />
+          ))}
+        </nav>
+        <div className="border-t border-sidebar-border p-3">
+          <div className="flex items-center gap-3 rounded-xl bg-sidebar-accent/60 p-3">
+            <div className="grid size-9 shrink-0 place-items-center rounded-full bg-primary/12 text-xs font-semibold text-primary">{user?.display_name?.slice(0, 2).toUpperCase() || 'US'}</div>
+            <div className="min-w-0 flex-1"><p className="truncate text-sm font-medium">{user?.display_name}</p><p className="truncate text-xs text-muted-foreground">{isAdmin ? 'Acesso administrativo' : 'Conta pessoal'}</p></div>
+            <Button variant="ghost" size="icon" onClick={logout} aria-label="Sair"><LogOut /></Button>
+          </div>
         </div>
       </div>
-    </div>
-  )
+    )
+  }
 
   return (
     <div className="min-h-screen bg-background text-foreground">
-      <aside className="fixed inset-y-0 left-0 z-30 hidden w-64 border-r border-sidebar-border bg-sidebar lg:block">{sidebar}</aside>
+      <aside className="fixed inset-y-0 left-0 z-30 hidden w-64 border-r border-sidebar-border bg-sidebar lg:block">{renderSidebar()}</aside>
       {mobileOpen ? <button className="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm lg:hidden" onClick={() => setMobileOpen(false)} aria-label="Fechar menu" /> : null}
       <aside className={cn('fixed inset-y-0 left-0 z-50 w-72 border-r border-sidebar-border bg-sidebar transition-transform duration-200 lg:hidden', mobileOpen ? 'translate-x-0' : '-translate-x-full')}>
-        <Button variant="ghost" size="icon" className="absolute right-3 top-3 z-10" onClick={() => setMobileOpen(false)} aria-label="Fechar menu"><X /></Button>{sidebar}
+        {renderSidebar(() => setMobileOpen(false))}
       </aside>
       <div className="lg:pl-64">
         <header className="sticky top-0 z-20 flex h-16 items-center justify-between border-b border-border/70 bg-background/80 px-4 backdrop-blur-xl sm:px-6 lg:px-8">
           <Button variant="ghost" size="icon" className="lg:hidden" onClick={() => setMobileOpen(true)} aria-label="Abrir menu"><Menu /></Button>
-          <div className="hidden items-center gap-2 lg:flex">
-            {onAdminArea ? <><span className="text-sm text-muted-foreground">Área administrativa</span><Badge variant="destructive">{user?.role}</Badge></> : <span className="text-sm text-muted-foreground">Área do usuário</span>}
+          <div className="flex items-center gap-2">
+            {onAdminArea ? (
+              <><span className="hidden text-sm text-muted-foreground sm:inline">Área administrativa</span><Badge variant="destructive">{user?.role}</Badge></>
+            ) : (
+              <span className="hidden text-sm text-muted-foreground lg:inline">Área do usuário</span>
+            )}
           </div>
           <ThemeToggle />
         </header>
-        <motion.main initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.28, ease: 'easeOut' }} className="mx-auto w-full max-w-7xl px-4 py-7 sm:px-6 lg:px-8 lg:py-10">
+        <motion.main initial={prefersReducedMotion ? false : { opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.28, ease: 'easeOut' }} className="mx-auto w-full max-w-7xl px-4 py-7 sm:px-6 lg:px-8 lg:py-10">
           <Outlet />
         </motion.main>
       </div>

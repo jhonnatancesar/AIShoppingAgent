@@ -1,10 +1,11 @@
 import { useState, type FormEvent } from 'react'
 import { Navigate, Link, useLocation } from 'react-router-dom'
-import { motion } from 'motion/react'
+import { motion, useReducedMotion } from 'motion/react'
 import { LockKeyhole } from 'lucide-react'
 import { ApiError } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
 import { BrandLogo } from '@/components/BrandLogo'
+import { FormMessage } from '@/components/FormMessage'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader } from '@/components/ui/card'
@@ -21,6 +22,7 @@ interface LocationState {
 export function LoginPage() {
   const { user, login } = useAuth()
   const location = useLocation()
+  const prefersReducedMotion = useReducedMotion()
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -53,7 +55,7 @@ export function LoginPage() {
     <div className="relative grid min-h-screen place-items-center overflow-hidden bg-background px-4 py-12 text-foreground">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,color-mix(in_oklab,var(--primary)_12%,transparent),transparent_42%)]" />
       <div className="absolute right-4 top-4"><ThemeToggle /></div>
-      <motion.div initial={{ opacity: 0, y: 12, scale: .99 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={{ duration: .35, ease: 'easeOut' }} className="relative w-full max-w-sm">
+      <motion.div initial={prefersReducedMotion ? false : { opacity: 0, y: 12, scale: .99 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={{ duration: .35, ease: 'easeOut' }} className="relative w-full max-w-sm">
       <Card className="border-border/80 bg-card/90 backdrop-blur-xl">
         <CardHeader className="items-center text-center">
           <BrandLogo className="mb-3 h-10 w-auto" />
@@ -79,11 +81,7 @@ export function LoginPage() {
           onChange={(event) => setPassword(event.target.value)}
           required
         /></div>
-        {error ? (
-          <p className="login-error" role="alert">
-            {error}
-          </p>
-        ) : null}
+        <FormMessage tone="error">{error}</FormMessage>
         <Button className="w-full" size="lg" type="submit" disabled={pending}>
           <LockKeyhole />{pending ? 'Entrando…' : 'Entrar'}
         </Button>

@@ -22,6 +22,7 @@ try {
   const { LandingPage } = await server.ssrLoadModule('/src/pages/LandingPage.tsx')
   const { RegisterPage } = await server.ssrLoadModule('/src/pages/RegisterPage.tsx')
   const { AuthProvider } = await server.ssrLoadModule('/src/auth/AuthContext.tsx')
+  const { TooltipProvider } = await server.ssrLoadModule('/src/components/ui/tooltip.tsx')
 
   // `renderToStaticMarkup` nunca roda efeitos -- `AuthProvider` nunca chega a
   // buscar a sessão real, então `user` permanece `null` durante todo o
@@ -31,11 +32,17 @@ try {
   // bolhas (dependem de `useInView`/temporizadores reais de navegador) --
   // testada de verdade só na inspeção visual ao vivo; aqui provamos que o
   // rótulo de demonstração está sempre presente, independente de animação.
+  // `TooltipProvider` (Subtask 12) é exigido pelo `ThemeToggle` usado nesta
+  // página -- em produção ele vem de `App.tsx`, aqui precisa ser explícito.
   const html = renderToStaticMarkup(
     React.createElement(
       MemoryRouter,
       { initialEntries: ['/'] },
-      React.createElement(AuthProvider, null, React.createElement(LandingPage)),
+      React.createElement(
+        TooltipProvider,
+        null,
+        React.createElement(AuthProvider, null, React.createElement(LandingPage)),
+      ),
     ),
   )
 
@@ -98,7 +105,11 @@ try {
     React.createElement(
       MemoryRouter,
       { initialEntries: ['/cadastro'] },
-      React.createElement(AuthProvider, null, React.createElement(RegisterPage)),
+      React.createElement(
+        TooltipProvider,
+        null,
+        React.createElement(AuthProvider, null, React.createElement(RegisterPage)),
+      ),
     ),
   )
   assert.doesNotMatch(registerHtml, /AIShoppingAgent/)
