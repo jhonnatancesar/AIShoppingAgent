@@ -71,7 +71,7 @@ export function OffersListView({ result, onPage = () => undefined }: { result: O
         <span>{result.offset + 1}–{end} de {result.total}</span>
       </div>
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        {result.items.map((offer, index) => <OfferCard key={offer.id} offer={toCardData(offer)} action={{ label: 'Ver detalhes', to: `/app/offers/${offer.id}` }} index={index} />)}
+        {result.items.map((offer, index) => <OfferCard key={offer.id} offer={offerSummaryToCardData(offer)} action={{ label: 'Ver detalhes', to: `/app/offers/${offer.id}` }} index={index} />)}
       </div>
       <div className="mt-7 flex justify-center gap-2">
         <Button variant="outline" disabled={result.offset === 0} onClick={() => onPage(Math.max(0, result.offset - result.limit))}>Anterior</Button>
@@ -81,7 +81,9 @@ export function OffersListView({ result, onPage = () => undefined }: { result: O
   )
 }
 
-function toCardData(offer: OfferSummary) {
+/** Exportado para reuso pela Home (Subtask 15) -- evita uma segunda
+ * implementação independente do mesmo mapeamento OfferSummary→OfferCardData. */
+export function offerSummaryToCardData(offer: OfferSummary) {
   return {
     id: offer.id,
     title: offer.title,

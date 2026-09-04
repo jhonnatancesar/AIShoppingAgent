@@ -22,6 +22,7 @@
     "test:missions-create": "node tests/missions-create-page.mjs",
     "test:mission-detail": "node tests/mission-detail-page.mjs",
     "test:mission-form-fields": "node tests/mission-form-fields.mjs",
+    "test:app-home": "node tests/app-home.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

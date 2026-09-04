@@ -5,13 +5,26 @@ import { emailVerificationApi } from '@/api/auth'
 import { ApiError } from '@/api/client'
 import type { AccountOption, AccountProfile, AccountQuota } from '@/api/types'
 import { useAuth } from '@/auth/AuthContext'
+import { FormMessage } from '@/components/FormMessage'
 import { PageHeader } from '@/components/PageHeader'
 import { QuotaSummaryCard } from '@/components/QuotaSummary'
 import { ErrorState, LoadingState } from '@/components/StatePanel'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
+import { useToast } from '@/hooks/useToast'
 
 export function AccountPage() {
   const [account, setAccount] = useState<AccountProfile | null>(null)
@@ -85,17 +98,18 @@ export function AccountView({
 }
 
 function ProfileForm({ account, onSaved }: { account: AccountProfile; onSaved: (account: AccountProfile) => void | Promise<void> }) {
+  const { toast } = useToast()
   const [displayName, setDisplayName] = useState(account.display_name)
   const [email, setEmail] = useState(account.email || '')
   const [stores, setStores] = useState(account.favorite_stores)
   const [categories, setCategories] = useState(account.preferred_categories)
   const [saving, setSaving] = useState(false)
-  const [message, setMessage] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setSaving(true)
-    setMessage(null)
+    setError(null)
     try {
       const updated = await accountApi.updateProfile({
         display_name: displayName,
@@ -104,9 +118,9 @@ function ProfileForm({ account, onSaved }: { account: AccountProfile; onSaved: (
         preferred_categories: categories,
       })
       if (updated) await onSaved(updated)
-      setMessage('Perfil atualizado.')
-    } catch (error) {
-      setMessage(error instanceof ApiError ? error.message : 'Não foi possível salvar o perfil.')
+      toast({ title: 'Perfil atualizado.', variant: 'success' })
+    } catch (submitError) {
+      setError(submitError instanceof ApiError ? submitError.message : 'Não foi possível salvar o perfil.')
     } finally {
       setSaving(false)
     }
@@ -123,7 +137,8 @@ function ProfileForm({ account, onSaved }: { account: AccountProfile; onSaved: (
           </div>
           <OptionGroup title="Lojas preferidas" options={account.available_stores} selected={stores} onChange={setStores} />
           <OptionGroup title="Categorias preferidas" options={account.available_categories} selected={categories} onChange={setCategories} />
-          <div className="flex items-center justify-between gap-3"><Feedback message={message} /><Button disabled={saving}><Save />{saving ? 'Salvando…' : 'Salvar perfil'}</Button></div>
+          <FormMessage tone="error">{error}</FormMessage>
+          <div className="flex items-center justify-end gap-3"><Button disabled={saving}><Save />{saving ? 'Salvando…' : 'Salvar perfil'}</Button></div>
         </form>
       </CardContent>
     </Card>
@@ -131,21 +146,22 @@ function ProfileForm({ account, onSaved }: { account: AccountProfile; onSaved: (
 }
 
 function NotificationForm({ account, onSaved }: { account: AccountProfile; onSaved: (account: AccountProfile) => void }) {
+  const { toast } = useToast()
   const [priceDrops, setPriceDrops] = useState(account.notify_price_decreases)
   const [targetReached, setTargetReached] = useState(account.notify_target_reached)
   const [saving, setSaving] = useState(false)
-  const [message, setMessage] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setSaving(true)
-    setMessage(null)
+    setError(null)
     try {
       const updated = await accountApi.updateNotifications({ notify_price_decreases: priceDrops, notify_target_reached: targetReached })
       if (updated) onSaved(updated)
-      setMessage('Preferências atualizadas.')
-    } catch (error) {
-      setMessage(error instanceof ApiError ? error.message : 'Não foi possível salvar as preferências.')
+      toast({ title: 'Preferências atualizadas.', variant: 'success' })
+    } catch (submitError) {
+      setError(submitError instanceof ApiError ? submitError.message : 'Não foi possível salvar as preferências.')
     } finally {
       setSaving(false)
     }
@@ -154,24 +170,25 @@ function NotificationForm({ account, onSaved }: { account: AccountProfile; onSav
   return (
     <Card>
       <CardHeader><CardTitle className="flex items-center gap-2"><Bell className="size-5 text-primary" />Notificações</CardTitle><CardDescription>As escolhas valem para os alertas enviados pelo Telegram.</CardDescription></CardHeader>
-      <CardContent><form className="space-y-4" onSubmit={submit}><Toggle label="Quedas de preço" description="Avise quando uma oferta monitorada ficar mais barata." checked={priceDrops} onChange={setPriceDrops} /><Toggle label="Preço-alvo atingido" description="Avise quando o valor definido na missão for alcançado." checked={targetReached} onChange={setTargetReached} /><div className="flex items-center justify-between gap-3 pt-2"><Feedback message={message} /><Button disabled={saving}><Save />{saving ? 'Salvando…' : 'Salvar notificações'}</Button></div></form></CardContent>
+      <CardContent><form className="space-y-4" onSubmit={submit}><Toggle label="Quedas de preço" description="Avise quando uma oferta monitorada ficar mais barata." checked={priceDrops} onChange={setPriceDrops} /><Toggle label="Preço-alvo atingido" description="Avise quando o valor definido na missão for alcançado." checked={targetReached} onChange={setTargetReached} /><FormMessage tone="error">{error}</FormMessage><div className="flex items-center justify-end gap-3 pt-2"><Button disabled={saving}><Save />{saving ? 'Salvando…' : 'Salvar notificações'}</Button></div></form></CardContent>
     </Card>
   )
 }
 
 function PasswordForm() {
+  const { toast } = useToast()
   const [currentPassword, setCurrentPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [newPasswordConfirmation, setNewPasswordConfirmation] = useState('')
   const [saving, setSaving] = useState(false)
-  const [message, setMessage] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setSaving(true)
-    setMessage(null)
+    setError(null)
     if (newPassword !== newPasswordConfirmation) {
-      setMessage('As senhas informadas não conferem.')
+      setError('As senhas informadas não conferem.')
       setSaving(false)
       return
     }
@@ -180,9 +197,9 @@ function PasswordForm() {
       setCurrentPassword('')
       setNewPassword('')
       setNewPasswordConfirmation('')
-      setMessage('Senha alterada. As demais sessões foram encerradas.')
-    } catch (error) {
-      setMessage(error instanceof ApiError ? error.message : 'Não foi possível alterar a senha.')
+      toast({ title: 'Senha alterada.', description: 'As demais sessões foram encerradas.', variant: 'success' })
+    } catch (submitError) {
+      setError(submitError instanceof ApiError ? submitError.message : 'Não foi possível alterar a senha.')
     } finally {
       setSaving(false)
     }
@@ -198,7 +215,8 @@ function PasswordForm() {
             <Field label="Nova senha"><Input type="password" autoComplete="new-password" value={newPassword} maxLength={128} required onChange={(event) => setNewPassword(event.target.value)} /></Field>
             <Field label="Confirmar nova senha"><Input type="password" autoComplete="new-password" value={newPasswordConfirmation} maxLength={128} required onChange={(event) => setNewPasswordConfirmation(event.target.value)} /></Field>
           </div>
-          <div className="flex items-center justify-between gap-3"><Feedback message={message} /><Button disabled={saving}><KeyRound />{saving ? 'Salvando…' : 'Alterar senha'}</Button></div>
+          <FormMessage tone="error">{error}</FormMessage>
+          <div className="flex items-center justify-end gap-3"><Button disabled={saving}><KeyRound />{saving ? 'Salvando…' : 'Alterar senha'}</Button></div>
         </form>
       </CardContent>
     </Card>
@@ -206,68 +224,87 @@ function PasswordForm() {
 }
 
 function AccountSummary({ account, onChanged }: { account: AccountProfile; onChanged: (account: AccountProfile) => void }) {
+  const { toast } = useToast()
   const [command, setCommand] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
-  const [message, setMessage] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
 
   async function startLink() {
-    setBusy(true); setMessage(null)
+    setBusy(true); setError(null)
     try {
       const challenge = await accountApi.startTelegramLink()
-      if (challenge) { setCommand(challenge.command); onChanged(challenge.account) }
-    } catch (error) {
-      setMessage(error instanceof ApiError ? error.message : 'Não foi possível gerar o código.')
+      if (challenge) { setCommand(challenge.command); onChanged(challenge.account); toast({ title: 'Código gerado.', variant: 'success' }) }
+    } catch (startError) {
+      setError(startError instanceof ApiError ? startError.message : 'Não foi possível gerar o código.')
     } finally { setBusy(false) }
   }
 
   async function refreshLink() {
-    setBusy(true); setMessage(null)
+    setBusy(true); setError(null)
     try { const updated = await accountApi.get(); if (updated) onChanged(updated) }
-    catch (error) { setMessage(error instanceof ApiError ? error.message : 'Não foi possível atualizar o vínculo.') }
+    catch (refreshError) { setError(refreshError instanceof ApiError ? refreshError.message : 'Não foi possível atualizar o vínculo.') }
     finally { setBusy(false) }
   }
 
   async function unlinkTelegram() {
-    if (!window.confirm('Desvincular o Telegram desta conta? Suas missões e dados Web serão preservados.')) return
-    setBusy(true); setMessage(null)
-    try { const updated = await accountApi.unlinkTelegram(); if (updated) { setCommand(null); onChanged(updated) } }
-    catch (error) { setMessage(error instanceof ApiError ? error.message : 'Não foi possível desvincular.') }
-    finally { setBusy(false) }
+    setBusy(true); setError(null)
+    try {
+      const updated = await accountApi.unlinkTelegram()
+      if (updated) { setCommand(null); onChanged(updated); toast({ title: 'Telegram desvinculado.', variant: 'success' }) }
+    } catch (unlinkError) {
+      setError(unlinkError instanceof ApiError ? unlinkError.message : 'Não foi possível desvincular.')
+    } finally { setBusy(false) }
   }
 
   const statusLabel = account.telegram_link_status === 'linked' ? 'Vinculado' : account.telegram_link_status === 'pending' ? 'Vinculação pendente' : 'Não vinculado'
-  return <Card className="h-fit xl:sticky xl:top-24"><CardHeader><CardTitle>Conta</CardTitle><CardDescription>Identidade e integrações protegidas.</CardDescription></CardHeader><CardContent className="space-y-4"><Summary icon={UserRound} label="Usuário" value={account.username ? `@${account.username}` : 'Não definido'} /><Summary icon={ShieldCheck} label="Perfil de acesso" value={account.role} />{account.email ? <EmailVerificationStatus account={account} onChanged={onChanged} /> : null}<Summary icon={Link2} label="Telegram" value={statusLabel} badge={account.telegram_link_status === 'linked'} />{account.telegram_link_status === 'pending' ? <div className="rounded-lg border border-amber-500/30 bg-amber-500/8 p-3 text-xs text-muted-foreground"><p className="flex items-center gap-2 font-medium text-foreground"><Clock3 className="size-4" />Vinculação pendente</p><p className="mt-1">Envie o comando temporário no chat privado do bot. Ele expira em até 10 minutos e funciona uma única vez.</p></div> : null}{command ? <div className="space-y-2 rounded-lg border border-primary/25 bg-primary/7 p-3"><p className="text-xs text-muted-foreground">No chat privado do bot, envie exatamente:</p><code className="block break-all rounded bg-background p-2 text-xs text-foreground">{command}</code></div> : null}<div className="grid gap-2">{account.telegram_link_status === 'linked' ? <Button type="button" variant="outline" disabled={busy} onClick={unlinkTelegram}><Unlink />Desvincular Telegram</Button> : <Button type="button" variant="outline" disabled={busy} onClick={startLink}><Link2 />{account.telegram_link_status === 'pending' ? 'Gerar novo código' : 'Vincular Telegram'}</Button>}<Button type="button" variant="ghost" disabled={busy} onClick={refreshLink}><RefreshCw />Atualizar status</Button></div><Feedback message={message} /><div className="rounded-lg border border-border bg-muted/35 p-3 text-xs text-muted-foreground">Conta criada em {new Date(account.created_at).toLocaleDateString('pt-BR')}. O Telegram é opcional; desvincular não remove sua conta, missões ou acesso Web.</div></CardContent></Card>
+  return <Card className="h-fit xl:sticky xl:top-24"><CardHeader><CardTitle>Conta</CardTitle><CardDescription>Identidade e integrações protegidas.</CardDescription></CardHeader><CardContent className="space-y-4"><Summary icon={UserRound} label="Usuário" value={account.username ? `@${account.username}` : 'Não definido'} /><Summary icon={ShieldCheck} label="Perfil de acesso" value={account.role} />{account.email ? <EmailVerificationStatus account={account} onChanged={onChanged} /> : null}<Summary icon={Link2} label="Telegram" value={statusLabel} badge={account.telegram_link_status === 'linked'} />{account.telegram_link_status === 'pending' ? <div className="rounded-lg border border-warning/30 bg-warning/8 p-3 text-xs text-muted-foreground"><p className="flex items-center gap-2 font-medium text-warning"><Clock3 className="size-4" />Vinculação pendente</p><p className="mt-1">Envie o comando temporário no chat privado do bot. Ele expira em até 10 minutos e funciona uma única vez.</p></div> : null}{command ? <div className="space-y-2 rounded-lg border border-primary/25 bg-primary/7 p-3"><p className="text-xs text-muted-foreground">No chat privado do bot, envie exatamente:</p><code className="block break-all rounded bg-background p-2 text-xs text-foreground">{command}</code></div> : null}<div className="grid gap-2">{account.telegram_link_status === 'linked' ? (
+    <AlertDialog>
+      <AlertDialogTrigger asChild><Button type="button" variant="outline" disabled={busy}><Unlink />Desvincular Telegram</Button></AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Desvincular o Telegram?</AlertDialogTitle>
+          <AlertDialogDescription>Suas missões e dados Web serão preservados. Você pode vincular novamente quando quiser.</AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Voltar</AlertDialogCancel>
+          <AlertDialogAction variant="destructive" onClick={unlinkTelegram}>Desvincular</AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  ) : <Button type="button" variant="outline" disabled={busy} onClick={startLink}><Link2 />{account.telegram_link_status === 'pending' ? 'Gerar novo código' : 'Vincular Telegram'}</Button>}<Button type="button" variant="ghost" disabled={busy} onClick={refreshLink}><RefreshCw />Atualizar status</Button></div><FormMessage tone="error">{error}</FormMessage><div className="rounded-lg border border-border bg-muted/35 p-3 text-xs text-muted-foreground">Conta criada em {new Date(account.created_at).toLocaleDateString('pt-BR')}. O Telegram é opcional; desvincular não remove sua conta, missões ou acesso Web.</div></CardContent></Card>
 }
 
 function EmailVerificationStatus({ account, onChanged }: { account: AccountProfile; onChanged: (account: AccountProfile) => void }) {
+  const { toast } = useToast()
   const [challengeId, setChallengeId] = useState<string | null>(null)
   const [code, setCode] = useState('')
   const [busy, setBusy] = useState(false)
-  const [message, setMessage] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
   const verified = Boolean(account.email_verified_at)
 
   async function requestVerification() {
-    setBusy(true); setMessage(null)
+    setBusy(true); setError(null)
     try {
       const issued = await emailVerificationApi.request()
-      if (issued) setChallengeId(issued.challenge_id)
-    } catch (error) {
-      setMessage(error instanceof ApiError ? error.message : 'Não foi possível enviar o código.')
+      if (issued) { setChallengeId(issued.challenge_id); toast({ title: 'Código de verificação enviado.', variant: 'success' }) }
+    } catch (requestError) {
+      setError(requestError instanceof ApiError ? requestError.message : 'Não foi possível enviar o código.')
     } finally { setBusy(false) }
   }
 
   async function confirmVerification(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (!challengeId) return
-    setBusy(true); setMessage(null)
+    setBusy(true); setError(null)
     try {
       await emailVerificationApi.confirm(challengeId, code)
       const updated = await accountApi.get()
       if (updated) onChanged(updated)
       setChallengeId(null)
       setCode('')
-    } catch (error) {
-      setMessage(error instanceof ApiError ? error.message : 'Código inválido ou expirado.')
+      toast({ title: 'E-mail verificado.', variant: 'success' })
+    } catch (confirmError) {
+      setError(confirmError instanceof ApiError ? confirmError.message : 'Código inválido ou expirado.')
     } finally { setBusy(false) }
   }
 
@@ -286,13 +323,12 @@ function EmailVerificationStatus({ account, onChanged }: { account: AccountProfi
           <Button type="submit" size="sm" disabled={busy}>Confirmar</Button>
         </form>
       ) : null}
-      <Feedback message={message} />
+      <FormMessage tone="error">{error}</FormMessage>
     </div>
   )
 }
 
 function Field({ label, children }: { label: string; children: ReactNode }) { return <label className="space-y-2 text-sm font-medium"><span>{label}</span>{children}</label> }
-function Feedback({ message }: { message: string | null }) { return <span className="text-sm text-muted-foreground" role="status">{message}</span> }
 
 function OptionGroup({ title, options, selected, onChange }: { title: string; options: AccountOption[]; selected: string[]; onChange: (value: string[]) => void }) {
   function toggle(code: string) { onChange(selected.includes(code) ? selected.filter((item) => item !== code) : [...selected, code]) }
