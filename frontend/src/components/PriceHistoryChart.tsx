@@ -12,6 +12,7 @@ import { ApiError } from '@/api/client'
 import { offersApi } from '@/api/offers'
 import type { PriceHistoryPeriod, PriceHistoryResponse } from '@/api/types'
 import { Button } from '@/components/ui/button'
+import { Card, CardContent } from '@/components/ui/card'
 import { ChartContainer } from '@/components/ui/chart'
 import { EmptyState, ErrorState, LoadingState } from '@/components/StatePanel'
 
@@ -86,9 +87,11 @@ export function PriceHistoryChart({ offerId }: { offerId: string }) {
   }, [load])
 
   return (
-    <div className="mission-section">
-      <h2>Histórico de preço</h2>
-      <div className="mb-4 flex flex-wrap gap-2">
+    <div>
+      <h2 className="mb-3 text-lg font-semibold tracking-tight">Histórico de preço</h2>
+      <Card>
+      <CardContent className="space-y-4 pt-6">
+      <div className="flex flex-wrap gap-2">
         {PERIOD_OPTIONS.map((option) => (
           <Button
             key={option.value}
@@ -167,7 +170,7 @@ export function PriceHistoryChart({ offerId }: { offerId: string }) {
           </ChartContainer>
 
           {history.metrics ? (
-            <dl className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-5">
+            <dl className="grid grid-cols-2 gap-3 sm:grid-cols-5">
               <div>
                 <dt className="text-xs text-muted-foreground">Atual</dt>
                 <dd className="font-semibold">
@@ -204,6 +207,8 @@ export function PriceHistoryChart({ offerId }: { offerId: string }) {
           ) : null}
         </>
       )}
+      </CardContent>
+      </Card>
     </div>
   )
 }

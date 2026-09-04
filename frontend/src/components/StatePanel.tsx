@@ -21,8 +21,8 @@ export function EmptyState({ title, description, action }: StateProps) {
   return <State icon={<Inbox />} title={title} description={description} action={action} />
 }
 
-export function ErrorState({ title = 'Algo deu errado', description, onRetry }: StateProps & { onRetry?: () => void }) {
-  return <State icon={<AlertCircle />} title={title} description={description} action={onRetry ? <Button variant="outline" onClick={onRetry}>Tentar novamente</Button> : undefined} />
+export function ErrorState({ title = 'Algo deu errado', description, onRetry, action }: StateProps & { onRetry?: () => void }) {
+  return <State icon={<AlertCircle />} title={title} description={description} action={action ?? (onRetry ? <Button variant="outline" onClick={onRetry}>Tentar novamente</Button> : undefined)} />
 }
 
 function State({ icon, title, description, action }: StateProps & { icon: ReactNode }) {

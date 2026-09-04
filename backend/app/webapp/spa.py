@@ -49,7 +49,12 @@ _SECURITY_HEADERS = {
         "https://img.terabyteshop.com.br "
         "https://a-static.mlcdn.com.br "
         "https://http2.mlstatic.com; "
-        "style-src 'self'; "
+        # `'unsafe-inline'` (Subtask 13, achado real): Radix Popper posiciona
+        # Select/Popover/Tooltip via `style` inline calculado em runtime
+        # (depende da posição real do gatilho na tela) -- impossível de
+        # prever em build-time para nonce/hash. Só afasta `style-src`; script
+        # continua estritamente `'self'`, sem relaxar XSS.
+        "style-src 'self' 'unsafe-inline'; "
         "script-src 'self'"
     ),
 }

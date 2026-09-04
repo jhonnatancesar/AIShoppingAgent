@@ -84,11 +84,26 @@ try {
   assert.match(html, /4,8.*2\.256 avaliações/)
   assert.match(html, /R\$\s*4\.599,00/)
   assert.match(html, /12x de/)
-  assert.match(html, /Abrir oferta na loja/)
+  // Parcela marcada `is_highlighted` pelo backend ganha destaque visual real
+  // (Subtask 13) -- nunca um algoritmo novo decidindo "a melhor parcela".
+  assert.match(html, />Destaque</)
+  // CTA externo padronizado (Subtask 13): "Ver na loja" em todos os pontos
+  // que abrem a página real da loja (aqui e na comparação entre lojas),
+  // nunca "Ver anúncio"/"Loja"/"Abrir oferta na loja" (textos antigos).
+  assert.match(html, /Ver na loja/)
+  const externalCtaCount = (html.match(/Ver na loja/g) || []).length
+  assert.ok(externalCtaCount >= 2, 'CTA "Ver na loja" deve aparecer no preço principal e na comparação')
+  assert.doesNotMatch(html, /Ver anúncio/)
+  assert.doesNotMatch(html, /Abrir oferta na loja/)
   assert.match(html, /Comparar entre lojas/)
   assert.match(html, /Galaxy S24 Ultra 512 GB/)
   assert.match(html, /KaBuM!/)
   assert.match(html, /Variantes diferentes nunca entram/)
+  // Diferença de preço na comparação (Subtask 13): só quando os dois lados
+  // têm preço real (aqui KaBuM! R$4.499,00 vs. Amazon R$4.619,00 -- R$120
+  // mais barato), nunca uma porcentagem inventada.
+  assert.match(html, /R\$\s*120,00 mais barato/)
+  assert.doesNotMatch(html, /%\s*mais (barato|caro)/)
   console.log('offer detail render: passed')
 } finally {
   await server.close()
