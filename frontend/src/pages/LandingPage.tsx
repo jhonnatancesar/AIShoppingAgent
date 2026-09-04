@@ -57,7 +57,7 @@ function SiteHeader() {
     <header className="sticky top-0 z-20 border-b border-border/70 bg-background/80 backdrop-blur-xl">
       <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-4 sm:px-6 lg:px-8">
         <Link to="/">
-          <BrandLogo className="h-8 w-auto" />
+          <BrandLogo className="h-12 w-auto" />
         </Link>
         <div className="flex items-center gap-1 sm:gap-2">
           <ThemeToggle />
@@ -184,8 +184,8 @@ function TelegramDemo() {
         aria-hidden="true"
         className="overflow-hidden rounded-2xl border border-border/70 bg-card shadow-card"
       >
-        <div className="flex items-center gap-2 border-b border-border/70 bg-muted/40 px-3.5 py-2">
-          <BrandLogo className="h-4 w-auto" />
+        <div className="flex items-center gap-2 border-b border-border/70 bg-muted/40 px-3.5 py-2.5">
+          <img src="/logo-icon.png" alt="GG Oferta" className="size-6" />
           <span className="ml-auto text-[10px] text-muted-foreground">bot</span>
         </div>
         <div className="flex min-h-[300px] flex-col justify-end gap-2.5 p-4">
@@ -435,7 +435,7 @@ function SiteFooter() {
   return (
     <footer className="border-t border-border/70">
       <div className="mx-auto flex max-w-6xl flex-col items-center gap-4 px-4 py-10 text-sm text-muted-foreground sm:flex-row sm:justify-between sm:px-6 lg:px-8">
-        <BrandLogo className="h-6 w-auto" />
+        <BrandLogo className="h-8 w-auto" />
         <nav className="flex items-center gap-5">
           <Link to="/login" className="hover:text-foreground">Entrar</Link>
           <Link to="/cadastro" className="hover:text-foreground">Criar conta</Link>

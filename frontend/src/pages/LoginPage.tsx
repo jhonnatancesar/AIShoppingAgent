@@ -4,7 +4,6 @@ import { motion, useReducedMotion } from 'motion/react'
 import { LockKeyhole } from 'lucide-react'
 import { ApiError } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
-import { BrandLogo } from '@/components/BrandLogo'
 import { FormMessage } from '@/components/FormMessage'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { Button } from '@/components/ui/button'
@@ -58,7 +57,7 @@ export function LoginPage() {
       <motion.div initial={prefersReducedMotion ? false : { opacity: 0, y: 12, scale: .99 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={{ duration: .35, ease: 'easeOut' }} className="relative w-full max-w-sm">
       <Card className="border-border/80 bg-card/90 backdrop-blur-xl">
         <CardHeader className="items-center text-center">
-          <BrandLogo className="mb-3 h-10 w-auto" />
+          <img src="/logo-icon.png" alt="GG Oferta" className="mb-3 size-12" width={48} height={48} />
           <CardDescription>Acesse suas missões e ofertas monitoradas.</CardDescription>
         </CardHeader>
         <CardContent><form className="space-y-4" onSubmit={handleSubmit}>

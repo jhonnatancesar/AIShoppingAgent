@@ -56,7 +56,7 @@ export function AppLayout() {
       <div className="flex h-full flex-col">
         <div className="flex h-16 items-center justify-between gap-2 border-b border-sidebar-border px-5">
           <div className="min-w-0">
-            <BrandLogo className="h-7 w-auto" />
+            <BrandLogo className="h-9 w-auto" />
             <p className="truncate text-xs text-muted-foreground">Compras inteligentes</p>
           </div>
           {onClose ? <Button variant="ghost" size="icon" className="shrink-0" onClick={onClose} aria-label="Fechar menu"><X /></Button> : null}
