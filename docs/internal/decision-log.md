@@ -1,5 +1,12 @@
 # Decision Log
 
+## TASK-118G — Search versus enriquecimento
+
+Classificação: **Implementar agora**, autorizado pelo usuário. SearXNG
+certificado para market_research, limite obrigatório de saída, sem promessa
+de aquisição externa limitada. Firecrawl Search somente em indisponibilidade;
+scrape separado preserva o teto de 3 URLs. ADR-017 e TASK-118G detalham a decisão.
+
 ## DEC-108 — Auditoria GG Oferta (subtask 3): condição Novo/Usado consolidada nas 6 lojas, supersede `DEC-076` para Pichau/Terabyte/KaBuM!
 
 - **Data:** 2026-08-30.

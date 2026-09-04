@@ -1,5 +1,9 @@
 # Project Context
 
+**118G em validação DEV:** Search pelo Core/SearXNG; fallback separado de scrape.
+Flags false. Ver `docs/tasks/TASK-118G.md`, inclusive incidente do harness.
+Sem commit/push/PROD/118H.
+
 **TASK-118F — DEV, aguardando revisão:** integração `CesarCoreAIProvider`
 atrás das factories do AIProviderManager, flags padrão false, messages tipadas,
 credencial DEV por arquivo e disaster opt-in restrito a falha de conexão.

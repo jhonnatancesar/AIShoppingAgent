@@ -1,5 +1,8 @@
 # Roadmap
 
+**118G em validação DEV**, autorizada após commits locais da 118F. Search e
+enriquecimento separados; `docs/tasks/TASK-118G.md`. 118H não iniciada.
+
 **TASK-118F em revisão DEV:** integração AI tipada com flags default false e
 prova real GG Oferta -> Core -> OmniRoute; ver `docs/tasks/TASK-118F.md`.
 Sem commit/push/PROD. TASK-118G não iniciada.

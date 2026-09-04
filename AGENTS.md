@@ -110,6 +110,9 @@ Nunca iniciar automaticamente a próxima TASK. Encerrar apresentando resumo da i
 
 ## Estado atual
 
+**118G em validação DEV:** Search e enriquecimento separados; flags false.
+Ver `docs/tasks/TASK-118G.md`. Sem commit/push/PROD/118H.
+
 **TASK-118F — DEV, aguardando revisão:** provider César Core integrado às
 factories de IA com flags false, messages tipadas, credencial DEV `*_FILE` e
 disaster opt-in restrito a conexão. Fluxo real validado. Sem commit/push/PROD;

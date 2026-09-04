@@ -59,6 +59,7 @@ class FirecrawlScrapeResult:
     url: str
     title: str | None
     markdown: str | None
+    credits_used: int | float | None = None
 
 
 def _is_transient_error(error: Exception) -> bool:
@@ -302,4 +303,7 @@ def parse_firecrawl_scrape_response(body: object) -> FirecrawlScrapeResult | Non
         url=str(url) if isinstance(url, str) and url.strip() else "",
         title=title.strip() if isinstance(title, str) and title.strip() else None,
         markdown=markdown.strip() if isinstance(markdown, str) and markdown.strip() else None,
+        credits_used=(metadata.get("creditsUsed") if isinstance(metadata, dict)
+                      and type(metadata.get("creditsUsed")) in (int, float)
+                      and metadata["creditsUsed"] >= 0 else None),
     )

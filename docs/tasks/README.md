@@ -1,5 +1,8 @@
 # Tarefas
 
+**TASK-118G em validação DEV:** `TASK-118G.md`. 118F possui commits locais
+aprovados. Nenhuma autorização automática de 118H, deploy ou push.
+
 **TASK-118F em revisão DEV:** integração AI GG Oferta -> César Core -> OmniRoute
 implementada e validada localmente; flags desligadas. Ver `TASK-118F.md`.
 Nenhuma próxima TASK autorizada automaticamente; 118G não iniciada.

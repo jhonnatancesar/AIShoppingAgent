@@ -1,5 +1,10 @@
 # Changelog
 
+## TASK-118G — DEV em validação
+
+Search via manager/Core/SearXNG; fallback Firecrawl por indisponibilidade.
+Scrape separado, até 3 URLs, com observabilidade. Sem deploy/commit/push.
+
 ## TASK-118F — DEV, aguardando revisão
 
 - Provider César Core com messages tipadas, `FREE_ONLY`, cap e credencial `*_FILE`.

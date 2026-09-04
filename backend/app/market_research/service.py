@@ -6,7 +6,7 @@ ponto 3 -- nenhum lock/transação pode ficar aberto durante HTTP/LLM):
 1. `claim_assessment` -- transação CURTA própria, só o UPSERT atômico do
    single-flight (§33.3). Comita e fecha antes de qualquer chamada
    externa.
-2. `run_market_research` -- SEM transação: duas buscas Firecrawl (mercado
+2. `run_market_research` -- SEM transação: duas buscas WebSearchManager (mercado
    atual + histórico, §33.18), validação determinística de identidade
    (§33.31/correção ponto 5) e interpretação por IA (§33.16/correção
    ponto 6).
@@ -53,6 +53,8 @@ from app.market_research.models import (
 from app.products.identity import resolve_product_variant
 from app.products.models import Product
 from app.search.firecrawl import FirecrawlSearchError, FirecrawlSearchProvider
+from app.search.manager import WebSearchManager, build_web_search_manager
+from app.search.telemetry import observe_scrape
 from app.users.models import UserRole
 
 logger = logging.getLogger(__name__)
@@ -546,29 +548,22 @@ def _distinct_domain_urls(
     return tuple(urls)
 
 
-async def _search_with_scrape_fallback(
-    firecrawl: FirecrawlSearchProvider,
+async def _search_with_enrichment(
+    search_manager: WebSearchManager,
     *,
+    enrichment: FirecrawlSearchProvider | None,
     query: str,
     product: Product,
     min_items: int,
 ) -> tuple[EvidenceItem, ...]:
-    """§33.18: `/v2/search` primeiro; `/v2/scrape` básico (até 3 URLs de
-    domínios distintos, resultado bruto da própria busca) só quando o
-    mínimo não é atingido. Sem stealth/proxy/bypass em nenhum dos dois --
-    já garantido por `FirecrawlSearchProvider` (§33.18, regra absoluta).
+    """Busca pelo manager; enriquecimento separado em até 3 URLs distintas.
 
-    A busca inicial (`firecrawl.search`) NUNCA tem sua exceção engolida
-    aqui (achado real dos testes de integração, correção pós-plano ponto
-    8): falha dela é sinal do SERVIÇO Firecrawl indisponível, não "essa
-    fonte específica não respondeu" -- propaga para `run_market_research`
-    marcar o assessment `FAILED`/`retry_after` (§33.19/§33.20), nunca
-    vira silenciosamente `INSUFFICIENT_EVIDENCE` (que fingiria uma
-    pesquisa real que nunca aconteceu, e cachearia esse resultado falso
-    pelo TTL inteiro). Só as chamadas de `scrape_basic` POR URL (abaixo)
-    engolem `FirecrawlSearchError` -- aí sim é "esta origem específica
-    não deu evidência", nunca falha do serviço."""
-    response = await firecrawl.search(query, sources=("web",), limit=_MAX_SEARCH_RESULTS)
+    Snippet insuficiente não provoca outra busca: permite somente scrape das
+    URLs encontradas. Falha Search propaga para FAILED/retry_after; falha de
+    enriquecimento por URL conserva o tratamento anterior, sem interromper as
+    demais fontes. Zero resultados não inventa URLs nem executa Firecrawl.
+    """
+    response = await search_manager.search(query, limit=_MAX_SEARCH_RESULTS)
     compatible = [
         EvidenceItem(url=r.url, domain=_domain(r.url), title=r.title, description=r.description)
         for r in response.results
@@ -577,14 +572,22 @@ async def _search_with_scrape_fallback(
     if len({item.domain for item in compatible}) >= min_items and len(compatible) >= min_items:
         return tuple(compatible)
 
+    if enrichment is None:
+        return tuple(compatible)
     candidate_urls = _distinct_domain_urls(response.results, limit=_MAX_SCRAPE_URLS)
     for url in candidate_urls:
         try:
-            page = await firecrawl.scrape_basic(url)
+            page = await enrichment.scrape_basic(url)
         except FirecrawlSearchError:
+            observe_scrape(outcome="failed", correlation_id=response.correlation_id)
             # Falha do SERVIÇO Firecrawl para esta URL -- desiste dela,
             # segue para a próxima (nunca contorna, nunca propaga).
             continue
+        observe_scrape(
+            outcome="success" if page is not None else "empty",
+            credits=getattr(page, "credits_used", None),
+            correlation_id=response.correlation_id,
+        )
         if page is None:
             # Origem específica recusou/indisponível (`success: false`)
             # -- nunca um erro, só "sem evidência desta fonte".
@@ -800,7 +803,7 @@ def finalize_market_research(
 async def run_market_research(
     session_factory: async_sessionmaker[AsyncSession],
     ai_manager: AIProviderManager,
-    firecrawl: FirecrawlSearchProvider,
+    firecrawl: FirecrawlSearchProvider | None,
     *,
     product: Product,
     store_id: UUID | None,
@@ -831,14 +834,17 @@ async def run_market_research(
         return None
 
     try:
-        market_evidence = await _search_with_scrape_fallback(
-            firecrawl,
+        search_manager = build_web_search_manager(settings, firecrawl)
+        market_evidence = await _search_with_enrichment(
+            search_manager,
+            enrichment=firecrawl,
             query=build_market_query(product),
             product=product,
             min_items=settings.market_assessment_min_market_sources,
         )
-        history_evidence = await _search_with_scrape_fallback(
-            firecrawl,
+        history_evidence = await _search_with_enrichment(
+            search_manager,
+            enrichment=firecrawl,
             query=build_history_query(product),
             product=product,
             min_items=1,
@@ -904,7 +910,7 @@ async def run_market_research(
 async def evaluate_trigger_and_maybe_research(
     session_factory: async_sessionmaker[AsyncSession],
     ai_manager: AIProviderManager,
-    firecrawl: FirecrawlSearchProvider,
+    firecrawl: FirecrawlSearchProvider | None,
     *,
     mission_id: UUID,
     product_id: UUID,

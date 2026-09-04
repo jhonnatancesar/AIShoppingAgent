@@ -1,5 +1,8 @@
 # AI Provider Manager
 
+Search de Market Research usa WebSearchManager separado (118G / ADR-017).
+Grounding de IA mantém o fluxo existente; esta migração não o altera.
+
 ## Rollout DEV da TASK-118F
 
 `CesarCoreAIProvider` é selecionado pelas factories existentes com feature flag

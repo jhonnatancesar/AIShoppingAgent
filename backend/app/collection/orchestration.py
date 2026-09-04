@@ -2166,7 +2166,9 @@ async def _run_phase_b(
     recurso por completo, comportamento idêntico ao anterior a esta
     TASK (nenhum chamador de teste/script existente precisa mudar)."""
     market_research_enabled = (
-        session_factory is not None and firecrawl is not None and settings is not None
+        session_factory is not None
+        and settings is not None
+        and (firecrawl is not None or settings.cesar_core_search_enabled)
     )
 
     async def _classify(pending: _PendingOffer) -> _AIOutcome:
@@ -2211,7 +2213,6 @@ async def _run_phase_b(
             and pending.alert_comparison is not PriceObservationComparison.UNCHANGED_REUSED
         ):
             assert session_factory is not None
-            assert firecrawl is not None
             assert settings is not None
             market_snapshot = await evaluate_trigger_and_maybe_research(
                 session_factory,

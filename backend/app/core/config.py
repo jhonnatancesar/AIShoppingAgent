@@ -49,6 +49,9 @@ class Settings(BaseSettings):
     gemini_api_key_user: SecretStr | None = None
     # TASK-118F: rollout DEV opt-in; segredo exclusivamente por arquivo.
     cesar_core_ai_enabled: bool = False
+    cesar_core_search_enabled: bool = False
+    cesar_core_search_fallback_enabled: bool = False
+    cesar_core_search_timeout_seconds: float = Field(default=30, gt=0, le=120)
     cesar_core_disaster_fallback_enabled: bool = False
     cesar_core_api_key_file: Path | None = None
     cesar_core_base_url: str = "http://127.0.0.1:8100"
