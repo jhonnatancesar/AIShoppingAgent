@@ -4,8 +4,9 @@ Assíncrono desde a extensão da TASK-079 (webhook Telegram) -- chamadores
 são `app.telegram.router` e, desde a TASK-092, `app.webapp.missions_router`,
 então não há versão síncrona a manter."""
 
-from collections.abc import Collection
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass, field
+from decimal import Decimal
 from uuid import UUID
 
 from sqlalchemy import case, func, select
@@ -21,8 +22,11 @@ from app.missions.models import (
     MissionSource,
     MissionStatus,
     MissionTransition,
+    VariantSelectionMode,
 )
 from app.offers.models import Offer
+from app.offers.query import count_relevant_offers_by_mission
+from app.products.identity import ProductRequestKind
 from app.products.models import Product
 from app.stores.models import Store
 
@@ -206,6 +210,75 @@ async def count_missions_for_user_by_status(
     if statuses is not None:
         statement = statement.where(Mission.status.in_(statuses))
     return await session.scalar(statement) or 0
+
+
+@dataclass(frozen=True, slots=True)
+class MissionListExtras:
+    """Dados adicionais da Lista de Missões da web (Subtask 14) --
+    preço-alvo, lojas e ofertas relevantes, nenhum dos três exposto por
+    `MissionSummary`/`list_missions_for_user_by_status`. Só leitura,
+    derivada de relações já persistidas (`MissionCriteria`,
+    `MissionSource`, `MissionOfferRelevance`); nunca recalcula matching."""
+
+    target_amount: Decimal | None
+    target_currency: str | None
+    sources: tuple[tuple[MissionSource, Store], ...]
+    relevant_offer_count: int
+
+
+async def load_mission_list_extras(
+    session: AsyncSession, *, mission_ids: Sequence[UUID]
+) -> dict[UUID, MissionListExtras]:
+    """Carrega `MissionListExtras` para um lote de missões (uma página da
+    Lista) em três consultas agregadas -- nunca uma consulta por missão
+    (`mission_ids` limitado a `_MAX_LIST_LIMIT`, `app.webapp.missions_router`).
+
+    A contagem de ofertas relevantes é zerada para missões de família de
+    produto ainda aguardando seleção de variante (`variant_selection_mode
+    == PENDING`), mesma regra que `list_current_offer_links_for_mission`
+    já aplica no detalhe -- sem isso a lista mostraria uma contagem que o
+    detalhe não confirma."""
+    if not mission_ids:
+        return {}
+    criteria_by_mission: dict[UUID, MissionCriteria] = {
+        criteria.mission_id: criteria
+        for criteria in await session.scalars(
+            select(MissionCriteria).where(MissionCriteria.mission_id.in_(mission_ids))
+        )
+    }
+    source_rows = (
+        await session.execute(
+            select(MissionSource, Store)
+            .join(Store, Store.id == MissionSource.store_id)
+            .where(MissionSource.mission_id.in_(mission_ids))
+            .order_by(MissionSource.mission_id, Store.code)
+        )
+    ).all()
+    sources_by_mission: dict[UUID, list[tuple[MissionSource, Store]]] = {}
+    for source, store in source_rows:
+        sources_by_mission.setdefault(source.mission_id, []).append((source, store))
+
+    counts_by_mission = await count_relevant_offers_by_mission(
+        session, mission_ids=mission_ids
+    )
+
+    result: dict[UUID, MissionListExtras] = {}
+    for mission_id in mission_ids:
+        criteria = criteria_by_mission.get(mission_id)
+        variant_pending = (
+            criteria is not None
+            and criteria.request_kind == ProductRequestKind.PRODUCT_FAMILY.value
+            and criteria.variant_selection_mode is VariantSelectionMode.PENDING
+        )
+        result[mission_id] = MissionListExtras(
+            target_amount=criteria.target_amount if criteria else None,
+            target_currency=criteria.target_currency if criteria else None,
+            sources=tuple(sources_by_mission.get(mission_id, [])),
+            relevant_offer_count=(
+                0 if variant_pending else counts_by_mission.get(mission_id, 0)
+            ),
+        )
+    return result
 
 
 @dataclass(frozen=True)

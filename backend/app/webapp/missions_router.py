@@ -39,10 +39,12 @@ from app.missions.models import (
 )
 from app.missions.query import (
     MissionDetail,
+    MissionListExtras,
     count_missions_for_user_by_status,
     get_mission_detail_for_user,
     get_mission_for_user,
     list_missions_for_user_by_status,
+    load_mission_list_extras,
 )
 from app.missions.service import (
     InvalidMissionTransitionError,
@@ -96,8 +98,27 @@ class MissionSummary(BaseModel):
     expires_at: str | None
 
 
+class MissionSourceOut(BaseModel):
+    store_code: str
+    store_name: str
+
+
+class MissionListItem(MissionSummary):
+    """Item da Lista de Missões da web (Subtask 14) -- estende
+    `MissionSummary` com preço-alvo, lojas e ofertas relevantes,
+    carregados em lote por `load_mission_list_extras` (nunca N+1). Só o
+    endpoint de listagem usa este modelo; `create`/`edit`/`pause`/
+    `resume`/`cancel` continuam devolvendo `MissionSummary` puro, sem
+    mudança de contrato."""
+
+    target_amount: Decimal | None
+    target_currency: str | None
+    sources: list[MissionSourceOut]
+    relevant_offer_count: int
+
+
 class MissionListResponse(BaseModel):
-    items: list[MissionSummary]
+    items: list[MissionListItem]
     limit: int
     offset: int
     total: int
@@ -117,11 +138,6 @@ class ProductVariantOut(BaseModel):
     label: str
     attributes: dict[str, str]
     selected: bool
-
-
-class MissionSourceOut(BaseModel):
-    store_code: str
-    store_name: str
 
 
 class MissionScheduleOut(BaseModel):
@@ -338,6 +354,25 @@ def _as_summary(mission: Mission) -> MissionSummary:
         created_at=mission.created_at.isoformat(),
         updated_at=mission.updated_at.isoformat(),
         expires_at=mission.expires_at.isoformat() if mission.expires_at else None,
+    )
+
+
+def _as_list_item(mission: Mission, extras: MissionListExtras) -> MissionListItem:
+    return MissionListItem(
+        id=mission.id,
+        title=mission.title,
+        status=mission.status,
+        state_version=mission.state_version,
+        created_at=mission.created_at.isoformat(),
+        updated_at=mission.updated_at.isoformat(),
+        expires_at=mission.expires_at.isoformat() if mission.expires_at else None,
+        target_amount=extras.target_amount,
+        target_currency=extras.target_currency,
+        sources=[
+            MissionSourceOut(store_code=store.code, store_name=store.name)
+            for _source, store in extras.sources
+        ],
+        relevant_offer_count=extras.relevant_offer_count,
     )
 
 
@@ -608,8 +643,14 @@ async def list_missions(
     total = await count_missions_for_user_by_status(
         session, user_id=user.id, statuses=statuses
     )
+    extras_by_mission = await load_mission_list_extras(
+        session, mission_ids=[mission.id for mission in missions]
+    )
     return MissionListResponse(
-        items=[_as_summary(mission) for mission in missions],
+        items=[
+            _as_list_item(mission, extras_by_mission[mission.id])
+            for mission in missions
+        ],
         limit=limit,
         offset=offset,
         total=total,

@@ -43,8 +43,15 @@ export interface MissionSummary {
   expires_at: string | null
 }
 
+export interface MissionListItem extends MissionSummary {
+  target_amount: string | null
+  target_currency: string | null
+  sources: MissionSourceOut[]
+  relevant_offer_count: number
+}
+
 export interface MissionListResponse {
-  items: MissionSummary[]
+  items: MissionListItem[]
   limit: number
   offset: number
   total: number

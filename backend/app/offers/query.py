@@ -2,6 +2,7 @@
 
 import calendar
 from collections import defaultdict
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
@@ -32,7 +33,7 @@ from app.products.identity import ProductRequestKind
 from app.products.models import Product
 from app.stores.models import Seller, Store
 
-_ACCESSIBLE_RELEVANCE = (
+ACCESSIBLE_RELEVANCE = (
     OfferRelevance.MATCH,
     OfferRelevance.POSSIBLE_MATCH,
 )
@@ -85,7 +86,7 @@ class UserOfferComparison:
     offers: tuple[UserComparisonOffer, ...]
 
 
-def _relevance_matches_current_criteria(*, criteria, product):
+def relevance_matches_current_criteria(*, criteria, product):
     """Regra única de elegibilidade (subtask 2): uma classificação
     histórica MATCH/POSSIBLE_MATCH só continua contando se o produto
     ainda corresponde à família/variante/seleção ATUAIS da missão que a
@@ -96,9 +97,10 @@ def _relevance_matches_current_criteria(*, criteria, product):
     e `offer_for_user_statement` (tela geral de Ofertas e detalhe de
     oferta) nunca a reaplicavam, então uma oferta de variante/família
     diferente da selecionada podia continuar aparecendo fora do contexto
-    da missão para sempre. As três consultas agora chamam esta mesma
-    função -- nunca mais duas implementações independentes do mesmo
-    critério.
+    da missão para sempre. Pública (sem `_`) desde a Subtask 14 -- também
+    reaproveitada por `app.missions.query.count_relevant_offers_by_mission`
+    (lista de Missões da web), nunca mais duas implementações
+    independentes do mesmo critério.
 
     `criteria` pode vir de um outerjoin (missão sem `MissionCriteria`
     ainda, caso não deveria existir na prática mas não é assumido);
@@ -139,8 +141,8 @@ def _accessible_offer_exists(*, user_id: UUID):
         .where(
             MissionOfferRelevance.offer_id == Offer.id,
             Mission.user_id == user_id,
-            MissionOfferRelevance.classification.in_(_ACCESSIBLE_RELEVANCE),
-            _relevance_matches_current_criteria(
+            MissionOfferRelevance.classification.in_(ACCESSIBLE_RELEVANCE),
+            relevance_matches_current_criteria(
                 criteria=MissionCriteria, product=relevant_product
             ),
         )
@@ -240,7 +242,7 @@ async def list_user_offers(
 def offer_for_user_statement(*, offer_id: UUID, user_id: UUID):
     """Statement fail-closed: NO_MATCH, missões alheias e relevância
     desatualizada (produto que não corresponde mais à família/variante/
-    seleção atual da missão, ver `_relevance_matches_current_criteria`)
+    seleção atual da missão, ver `relevance_matches_current_criteria`)
     nunca autorizam."""
     return (
         select(Offer, Product, Store, Seller)
@@ -256,8 +258,8 @@ def offer_for_user_statement(*, offer_id: UUID, user_id: UUID):
         .where(
             Offer.id == offer_id,
             Mission.user_id == user_id,
-            MissionOfferRelevance.classification.in_(_ACCESSIBLE_RELEVANCE),
-            _relevance_matches_current_criteria(
+            MissionOfferRelevance.classification.in_(ACCESSIBLE_RELEVANCE),
+            relevance_matches_current_criteria(
                 criteria=MissionCriteria, product=Product
             ),
         )
@@ -441,8 +443,8 @@ async def list_current_offer_links_for_mission(
             .where(
                 Mission.id == mission_id,
                 Mission.user_id == user_id,
-                MissionOfferRelevance.classification.in_(_ACCESSIBLE_RELEVANCE),
-                _relevance_matches_current_criteria(
+                MissionOfferRelevance.classification.in_(ACCESSIBLE_RELEVANCE),
+                relevance_matches_current_criteria(
                     criteria=MissionCriteria, product=Product
                 ),
             )
@@ -457,6 +459,49 @@ async def list_current_offer_links_for_mission(
         for offer, product, store, condition in rows
         if offer.last_seen_at == latest_seen_by_store[store.id]
     )
+
+
+async def count_relevant_offers_by_mission(
+    session: AsyncSession, *, mission_ids: Sequence[UUID]
+) -> dict[UUID, int]:
+    """Quantidade de ofertas relevantes por missão, para a Lista de
+    Missões da web (Subtask 14, `MissionListItem.relevant_offer_count`).
+
+    Uma única consulta agregada (`GROUP BY`) para todas as missões da
+    página -- nunca uma consulta por missão. Reaproveita exatamente a
+    mesma classificação persistida (`MissionOfferRelevance`) e a mesma
+    regra de elegibilidade (`relevance_matches_current_criteria`) de
+    `list_current_offer_links_for_mission`; não recalcula/reexecuta
+    matching, só agrega o que já está gravado. Não replica a dedupe
+    "última por loja" daquela função (não faz sentido para uma
+    contagem), então o número aqui é a quantidade de ofertas distintas
+    elegíveis, podendo ser maior que a quantidade de cards que a tela de
+    detalhe mostraria (que agrupa por loja)."""
+    if not mission_ids:
+        return {}
+    rows = (
+        await session.execute(
+            select(
+                MissionOfferRelevance.mission_id,
+                func.count(func.distinct(MissionOfferRelevance.offer_id)),
+            )
+            .join(Offer, Offer.id == MissionOfferRelevance.offer_id)
+            .join(Product, Product.id == Offer.product_id)
+            .outerjoin(
+                MissionCriteria,
+                MissionCriteria.mission_id == MissionOfferRelevance.mission_id,
+            )
+            .where(
+                MissionOfferRelevance.mission_id.in_(mission_ids),
+                MissionOfferRelevance.classification.in_(ACCESSIBLE_RELEVANCE),
+                relevance_matches_current_criteria(
+                    criteria=MissionCriteria, product=Product
+                ),
+            )
+            .group_by(MissionOfferRelevance.mission_id)
+        )
+    ).all()
+    return {mission_id: count for mission_id, count in rows}
 
 
 # ---------------------------------------------------------------------------

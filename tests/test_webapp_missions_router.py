@@ -17,7 +17,7 @@ from app.collection.contracts import OfferCondition
 from app.core.errors import register_api_error_handler
 from app.database.dependency import get_web_async_session
 from app.missions.models import Mission, MissionStatus
-from app.missions.query import MissionDetail
+from app.missions.query import MissionDetail, MissionListExtras
 from app.missions.service import (
     MissionCreationError,
     MissionEditConditionError,
@@ -231,11 +231,33 @@ def test_list_missions_rejects_unknown_status_filter(
 
 
 def test_list_missions_returns_envelope(
-    client: TestClient, async_session: MagicMock, owner: User
+    client: TestClient,
+    async_session: MagicMock,
+    owner: User,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     mission = _mission(user_id=owner.id)
     async_session.scalars = AsyncMock(return_value=[mission])
     async_session.scalar = AsyncMock(return_value=1)
+    # Subtask 14: `list_missions` também chama `load_mission_list_extras`
+    # (consultas próprias de MissionCriteria/MissionSource/
+    # MissionOfferRelevance, cobertas de verdade só contra PostgreSQL real
+    # em `tests/integration/test_webapp_missions_list_extras.py`) -- aqui,
+    # teste de contrato HTTP, é mockada como camada, mesmo padrão já usado
+    # para `get_mission_detail_for_user` neste arquivo.
+    monkeypatch.setattr(
+        "app.webapp.missions_router.load_mission_list_extras",
+        AsyncMock(
+            return_value={
+                mission.id: MissionListExtras(
+                    target_amount=None,
+                    target_currency=None,
+                    sources=(),
+                    relevant_offer_count=0,
+                ),
+            }
+        ),
+    )
 
     response = client.get(
         "/api/v1/missions?status=active&limit=5&offset=0",
@@ -248,6 +270,9 @@ def test_list_missions_returns_envelope(
     assert body["limit"] == 5
     assert body["offset"] == 0
     assert body["items"][0]["id"] == str(mission.id)
+    assert body["items"][0]["target_amount"] is None
+    assert body["items"][0]["sources"] == []
+    assert body["items"][0]["relevant_offer_count"] == 0
 
 
 # --- Detalhe / posse -------------------------------------------------------

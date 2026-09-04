@@ -18,6 +18,10 @@
     "test:design-system": "node tests/design-system.mjs",
     "test:offer-card": "node tests/offer-card.mjs",
     "test:filter-bar": "node tests/filter-bar.mjs",
+    "test:missions-list": "node tests/missions-list-page.mjs",
+    "test:missions-create": "node tests/missions-create-page.mjs",
+    "test:mission-detail": "node tests/mission-detail-page.mjs",
+    "test:mission-form-fields": "node tests/mission-form-fields.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

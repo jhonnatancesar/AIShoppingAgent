@@ -9,6 +9,20 @@ export const STATUS_LABELS: Record<MissionStatus, string> = {
   expired: 'Expirada',
 }
 
+/** Variant do `Badge` (Subtask 12) por status real de missão -- única
+ * fonte da cor, reaproveitada por `MissionCard` e `MissionDetailPage`. */
+export const STATUS_BADGE_VARIANT: Record<
+  MissionStatus,
+  'default' | 'secondary' | 'outline' | 'destructive' | 'warning' | 'success'
+> = {
+  draft: 'outline',
+  active: 'success',
+  paused: 'warning',
+  completed: 'secondary',
+  cancelled: 'destructive',
+  expired: 'outline',
+}
+
 export const STATUS_FILTER_LABELS: Record<MissionStatusFilter, string> = {
   active: 'Ativas',
   paused: 'Pausadas',

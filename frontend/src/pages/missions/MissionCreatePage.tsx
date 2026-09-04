@@ -2,14 +2,14 @@ import { useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ApiError } from '../../api/client'
 import { missionsApi } from '../../api/missions'
-import { STORE_LABELS } from './statusLabels'
+import { StoreSelectionField, TargetPriceFields, toApiDecimal } from './MissionFormFields'
 import type { QuotaErrorDetails } from '@/api/types'
+import { FormMessage } from '@/components/FormMessage'
 import { PageHeader } from '@/components/PageHeader'
 import { QuotaExceededNotice, quotaDetailsFromError } from '@/components/QuotaExceededNotice'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
-
-const STORE_CODES = ['pichau', 'terabyte', 'amazon', 'kabum', 'magalu', 'mercadolivre']
+import { Input } from '@/components/ui/input'
 
 export function MissionCreatePage() {
   const navigate = useNavigate()
@@ -22,12 +22,6 @@ export function MissionCreatePage() {
   const [quotaError, setQuotaError] = useState<QuotaErrorDetails | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
-  function toggleSource(code: string) {
-    setSourceCodes((current) =>
-      current.includes(code) ? current.filter((item) => item !== code) : [...current, code],
-    )
-  }
-
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setError(null)
@@ -37,7 +31,7 @@ export function MissionCreatePage() {
       const mission = await missionsApi.create({
         search_query: searchQuery,
         model: model.trim() || null,
-        target_amount: targetAmount.trim() || null,
+        target_amount: targetAmount.trim() ? toApiDecimal(targetAmount) : null,
         target_currency: targetAmount.trim() ? targetCurrency : null,
         source_codes: sourceCodes,
       })
@@ -66,11 +60,11 @@ export function MissionCreatePage() {
 
   return (
     <section>
-      <PageHeader eyebrow="Monitoramento" title="Nova missão" description="Descreva o produto e escolha onde o agente deve procurar." />
-      <Card className="max-w-3xl"><CardContent className="pt-6"><form onSubmit={handleSubmit}>
-        <div className="field">
-          <label htmlFor="search_query">O que você está procurando?</label>
-          <input
+      <PageHeader eyebrow="Monitoramento" title="Nova missão" description="Diga o que você quer que o GG Oferta acompanhe -- o produto, quanto vale a pena pagar e onde procurar." />
+      <Card className="max-w-3xl"><CardContent className="space-y-5 pt-6"><form className="space-y-5" onSubmit={handleSubmit}>
+        <div className="space-y-1.5">
+          <label className="text-sm font-medium" htmlFor="search_query">O que você está procurando?</label>
+          <Input
             id="search_query"
             value={searchQuery}
             onChange={(event) => setSearchQuery(event.target.value)}
@@ -79,9 +73,9 @@ export function MissionCreatePage() {
           />
         </div>
 
-        <div className="field">
-          <label htmlFor="model">Modelo/variante (opcional)</label>
-          <input
+        <div className="space-y-1.5">
+          <label className="text-sm font-medium" htmlFor="model">Modelo/variante (opcional)</label>
+          <Input
             id="model"
             value={model}
             onChange={(event) => setModel(event.target.value)}
@@ -89,56 +83,28 @@ export function MissionCreatePage() {
           />
         </div>
 
-        <div className="field-row">
-          <div className="field">
-            <label htmlFor="target_amount">Preço-alvo (opcional)</label>
-            <input
-              id="target_amount"
-              inputMode="decimal"
-              value={targetAmount}
-              onChange={(event) => setTargetAmount(event.target.value)}
-              placeholder="ex.: 4500.00"
-            />
-          </div>
-          <div className="field">
-            <label htmlFor="target_currency">Moeda</label>
-            <input
-              id="target_currency"
-              value={targetCurrency}
-              onChange={(event) => setTargetCurrency(event.target.value.toUpperCase())}
-              maxLength={3}
-              disabled={!targetAmount.trim()}
-            />
-          </div>
-        </div>
+        <TargetPriceFields
+          targetAmount={targetAmount}
+          onTargetAmountChange={setTargetAmount}
+          targetCurrency={targetCurrency}
+          onTargetCurrencyChange={setTargetCurrency}
+        />
 
-        <div className="field">
-          <span>Lojas (vazio = todas as 4 da V1)</span>
-          <div className="checkbox-group">
-            {STORE_CODES.map((code) => (
-              <label key={code}>
-                <input
-                  type="checkbox"
-                  checked={sourceCodes.includes(code)}
-                  onChange={() => toggleSource(code)}
-                />
-                {STORE_LABELS[code]}
-              </label>
-            ))}
-          </div>
-        </div>
+        <StoreSelectionField
+          selected={sourceCodes}
+          onChange={setSourceCodes}
+          hint="Vazio = busca em todas as 6 lojas da V1."
+        />
 
         {quotaError ? (
           <QuotaExceededNotice message={error ?? ''} details={quotaError} />
-        ) : error ? (
-          <p className="form-error">{error}</p>
-        ) : null}
+        ) : (
+          <FormMessage tone="error">{error}</FormMessage>
+        )}
 
-        <div className="mission-actions">
-          <Button type="submit" disabled={submitting}>
-            {submitting ? 'Criando…' : 'Criar missão'}
-          </Button>
-        </div>
+        <Button type="submit" disabled={submitting}>
+          {submitting ? 'Criando…' : 'Criar missão'}
+        </Button>
       </form></CardContent></Card>
     </section>
   )
