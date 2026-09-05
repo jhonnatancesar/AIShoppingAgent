@@ -2,11 +2,13 @@ import { useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ApiError } from '../../api/client'
 import { missionsApi } from '../../api/missions'
-import { StoreSelectionField, TargetPriceFields, toApiDecimal } from './MissionFormFields'
+import { StoreSelectionField, TargetPriceFields } from './MissionFormFields'
+import { toApiDecimal } from './priceFormat'
 import type { QuotaErrorDetails } from '@/api/types'
 import { FormMessage } from '@/components/FormMessage'
 import { PageHeader } from '@/components/PageHeader'
-import { QuotaExceededNotice, quotaDetailsFromError } from '@/components/QuotaExceededNotice'
+import { QuotaExceededNotice } from '@/components/QuotaExceededNotice'
+import { quotaDetailsFromError } from '@/components/quotaDetails'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -60,7 +62,7 @@ export function MissionCreatePage() {
 
   return (
     <section>
-      <PageHeader eyebrow="Monitoramento" title="Nova missão" description="Diga o que você quer que o GG Oferta acompanhe -- o produto, quanto vale a pena pagar e onde procurar." />
+      <PageHeader eyebrow="Coloque no radar" title="Nova missão" description="Conte o que você procura, quanto gostaria de pagar e em quais lojas vale olhar." />
       <Card className="max-w-3xl"><CardContent className="space-y-5 pt-6"><form className="space-y-5" onSubmit={handleSubmit}>
         <div className="space-y-1.5">
           <label className="text-sm font-medium" htmlFor="search_query">O que você está procurando?</label>

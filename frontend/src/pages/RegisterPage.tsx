@@ -4,8 +4,9 @@ import { motion, useReducedMotion } from 'motion/react'
 import { UserPlus } from 'lucide-react'
 import { ApiError } from '../api/client'
 import { registrationApi } from '../api/auth'
-import { useAuth } from '../auth/AuthContext'
+import { useAuth } from '../auth/authContextValue'
 import { FormMessage } from '@/components/FormMessage'
+import { BrandLogo } from '@/components/BrandLogo'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -53,14 +54,14 @@ export function RegisterPage() {
 
   return (
     <div className="relative grid min-h-screen place-items-center overflow-hidden bg-background px-4 py-12 text-foreground">
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,color-mix(in_oklab,var(--primary)_12%,transparent),transparent_42%)]" />
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_72%_8%,color-mix(in_oklab,var(--primary)_14%,transparent),transparent_36%)]" />
       <div className="absolute right-4 top-4"><ThemeToggle /></div>
       <motion.div initial={prefersReducedMotion ? false : { opacity: 0, y: 12, scale: .99 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={{ duration: .35, ease: 'easeOut' }} className="relative w-full max-w-sm">
-      <Card className="border-border/80 bg-card/90 backdrop-blur-xl">
+      <Card className="border-border/80 bg-card/95 backdrop-blur-xl">
         <CardHeader className="items-center text-center">
-          <img src="/logo-icon.png" alt="GG Oferta" className="mb-3 size-12" width={48} height={48} />
+          <BrandLogo className="mb-3 h-10" />
           <CardTitle className="text-xl">Criar conta</CardTitle>
-          <CardDescription>Pesquise produtos e acompanhe preços no GG Oferta.</CardDescription>
+          <CardDescription>Crie sua conta e deixe os preços que importam no nosso radar.</CardDescription>
         </CardHeader>
         <CardContent><form className="space-y-4" onSubmit={handleSubmit}>
         <div className="space-y-1.5"><label className="text-sm font-medium" htmlFor="username">Usuário</label>

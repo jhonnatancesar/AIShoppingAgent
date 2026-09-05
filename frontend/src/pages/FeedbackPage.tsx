@@ -9,7 +9,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { ToggleGroup } from '@/components/ui/toggle-group'
-import { useToast } from '@/hooks/useToast'
+import { useToast } from '@/hooks/toastContext'
 
 export function FeedbackPage() {
   return (
@@ -17,7 +17,7 @@ export function FeedbackPage() {
       <PageHeader
         eyebrow="Ajuda"
         title="Suporte e sugestões"
-        description="Relate um problema ou sugira uma loja para pesquisarmos."
+        description="Conte o que não funcionou ou indique uma loja que você gostaria de ver por aqui."
       />
       <div className="grid gap-6 lg:grid-cols-2">
         <SupportForm />
@@ -58,7 +58,7 @@ function SupportForm() {
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2"><LifeBuoy className="size-5 text-primary" />Suporte</CardTitle>
-        <CardDescription>Relate um erro ou peça ajuda com algo que não está funcionando.</CardDescription>
+        <CardDescription>Explique o que aconteceu e, se puder, diga o que você esperava ver.</CardDescription>
       </CardHeader>
       <CardContent>
         <form className="space-y-4" onSubmit={submit}>
@@ -112,7 +112,7 @@ function StoreSuggestionForm() {
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2"><Store className="size-5 text-primary" />Sugerir loja</CardTitle>
-        <CardDescription>Ainda não pesquisamos nessa loja? Nos avise.</CardDescription>
+        <CardDescription>Sentiu falta de alguma loja? Mande o nome para a gente avaliar.</CardDescription>
       </CardHeader>
       <CardContent>
         <form className="space-y-4" onSubmit={submit}>

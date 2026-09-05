@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   CartesianGrid,
   Legend,
@@ -67,24 +67,35 @@ export function PriceHistoryChart({ offerId }: { offerId: string }) {
   const [period, setPeriod] = useState<PriceHistoryPeriod>('1m')
   const [history, setHistory] = useState<PriceHistoryResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
-
-  const load = useCallback(async () => {
-    setError(null)
-    setHistory(null)
-    try {
-      setHistory(await offersApi.priceHistory(offerId, period))
-    } catch (loadError) {
-      setError(
-        loadError instanceof ApiError
-          ? loadError.message
-          : 'Não foi possível carregar o histórico de preço.',
-      )
-    }
-  }, [offerId, period])
+  // Só para o botão "Tentar novamente" pedir os mesmos dados de novo, sem
+  // chamar a busca por referência de dentro do efeito.
+  const [retryToken, setRetryToken] = useState(0)
+  // Marca de qual combinação offerId+period são os dados acima -- enquanto
+  // ela não bater com a combinação atual, tratamos como "carregando" na
+  // renderização, em vez de zerar history/error de forma síncrona no efeito.
+  const [loadedKey, setLoadedKey] = useState<string | null>(null)
+  const currentKey = `${offerId}:${period}`
 
   useEffect(() => {
-    load()
-  }, [load])
+    let cancelled = false
+    offersApi.priceHistory(offerId, period).then(
+      (loaded) => {
+        if (cancelled) return
+        setHistory(loaded)
+        setError(null)
+        setLoadedKey(currentKey)
+      },
+      (loadError) => {
+        if (cancelled) return
+        setHistory(null)
+        setError(loadError instanceof ApiError ? loadError.message : 'Não foi possível carregar o histórico de preço.')
+        setLoadedKey(currentKey)
+      },
+    )
+    return () => { cancelled = true }
+  }, [offerId, period, retryToken, currentKey])
+
+  const isCurrent = loadedKey === currentKey
 
   return (
     <div>
@@ -104,13 +115,13 @@ export function PriceHistoryChart({ offerId }: { offerId: string }) {
         ))}
       </div>
 
-      {error ? (
+      {isCurrent && error ? (
         <ErrorState
           title="Não foi possível carregar o histórico"
           description={error}
-          onRetry={load}
+          onRetry={() => setRetryToken((token) => token + 1)}
         />
-      ) : !history ? (
+      ) : !isCurrent || !history ? (
         <LoadingState label="Carregando histórico de preço…" />
       ) : !history.comparable ? (
         <EmptyState

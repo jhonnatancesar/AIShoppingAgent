@@ -4,26 +4,14 @@
  * "sem sessão", não é tratado como erro de aplicação.
  */
 import {
-  createContext,
   useCallback,
-  useContext,
   useEffect,
   useState,
   type ReactNode,
 } from 'react'
 import { ApiError, api } from '../api/client'
 import type { WebSessionUser } from '../api/types'
-
-interface AuthContextValue {
-  user: WebSessionUser | null
-  loading: boolean
-  isAdmin: boolean
-  login: (username: string, password: string) => Promise<WebSessionUser | null>
-  logout: () => Promise<void>
-  refresh: () => Promise<void>
-}
-
-const AuthContext = createContext<AuthContextValue | null>(null)
+import { AuthContext } from './authContextValue'
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<WebSessionUser | null>(null)
@@ -43,9 +31,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
+  // Mesma consulta de `refresh` (duplicada de propósito, não chamada por
+  // referência): o efeito só roda uma vez ao montar, então o corpo fica
+  // inline aqui -- chamar `refresh()" de dentro de um `useEffect` dispara
+  // o lint `set-state-in-effect` (React Compiler rastreia que a função
+  // referenciada muda estado). `refresh` continua exportada intacta para
+  // quem precisa re-consultar a sessão fora de um efeito (`AccountPage`,
+  // `RegisterPage`).
   useEffect(() => {
-    refresh()
-  }, [refresh])
+    let cancelled = false
+    api.get<WebSessionUser>('/web-sessions/current').then(
+      (current) => {
+        if (cancelled) return
+        setUser(current)
+        setLoading(false)
+      },
+      (error) => {
+        if (cancelled) return
+        if (!(error instanceof ApiError) || error.status !== 401) throw error
+        setUser(null)
+        setLoading(false)
+      },
+    )
+    return () => { cancelled = true }
+  }, [])
 
   const login = useCallback(async (username: string, password: string) => {
     const current = await api.post<WebSessionUser>('/web-sessions', { username, password })
@@ -65,12 +74,4 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       {children}
     </AuthContext.Provider>
   )
-}
-
-export function useAuth(): AuthContextValue {
-  const context = useContext(AuthContext)
-  if (!context) {
-    throw new Error('useAuth precisa estar dentro de <AuthProvider>')
-  }
-  return context
 }

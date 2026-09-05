@@ -6,7 +6,7 @@ import { createServer } from 'vite'
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const server = await createServer({ root, appType: 'custom', server: { middlewareMode: true } })
 try {
-  const { navGroupsFor } = await server.ssrLoadModule('/src/components/Layout.tsx')
+  const { navGroupsFor } = await server.ssrLoadModule('/src/components/navGroups.ts')
 
   const userGroups = navGroupsFor(false)
   const userPaths = userGroups.flatMap((group) => group.items.map((item) => item.to))

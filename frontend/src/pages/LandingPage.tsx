@@ -1,13 +1,21 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link, Navigate } from 'react-router-dom'
 import { AnimatePresence, motion, useReducedMotion, useInView } from 'motion/react'
-import { useAuth } from '@/auth/AuthContext'
+import { useAuth } from '@/auth/authContextValue'
 import { BrandLogo } from '@/components/BrandLogo'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+import { StoreName } from '@/components/StoreMark'
 
-const STORES = ['Amazon', 'Mercado Livre', 'Magalu', 'KaBuM!', 'Pichau', 'Terabyte']
+const STORES = [
+  { code: 'amazon', name: 'Amazon' },
+  { code: 'mercadolivre', name: 'Mercado Livre' },
+  { code: 'magalu', name: 'Magalu' },
+  { code: 'kabum', name: 'KaBuM!' },
+  { code: 'pichau', name: 'Pichau' },
+  { code: 'terabyte', name: 'Terabyte' },
+]
 
 const FEATURE_GROUPS = [
   {
@@ -55,9 +63,10 @@ export function LandingPage() {
 function SiteHeader() {
   return (
     <header className="sticky top-0 z-20 border-b border-border/70 bg-background/80 backdrop-blur-xl">
-      <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-4 sm:px-6 lg:px-8">
+      <div className="mx-auto flex h-[4.5rem] max-w-6xl items-center justify-between px-4 sm:px-6 lg:px-8">
         <Link to="/">
-          <BrandLogo className="h-12 w-auto" />
+          <BrandLogo className="hidden h-8 sm:inline-flex" />
+          <BrandLogo className="h-8 sm:hidden" compact />
         </Link>
         <div className="flex items-center gap-1 sm:gap-2">
           <ThemeToggle />
@@ -75,20 +84,21 @@ function SiteHeader() {
 
 function Hero() {
   return (
-    <section className="border-b border-border/70">
-      <div className="mx-auto grid max-w-6xl gap-12 px-4 py-16 sm:px-6 lg:grid-cols-[1.05fr_1fr] lg:items-center lg:py-24 lg:px-8">
+    <section className="relative overflow-hidden border-b border-border/70">
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_82%_14%,color-mix(in_oklab,var(--primary)_10%,transparent),transparent_30%)]" />
+      <div className="relative mx-auto grid max-w-6xl gap-12 px-4 py-16 sm:px-6 lg:grid-cols-[1.1fr_.9fr] lg:items-center lg:px-8 lg:py-24">
         <motion.div
           initial={{ opacity: 0, y: 14 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.4, ease: 'easeOut' }}
         >
-          <h1 className="text-4xl font-semibold tracking-tight text-balance sm:text-5xl">
-            <span className="block font-normal text-muted-foreground">Você diz o que quer comprar.</span>
-            <span className="block">A gente cuida de ficar de olho no preço.</span>
+          <h1 className="max-w-2xl text-4xl font-bold leading-[1.06] tracking-[-0.055em] text-balance sm:text-6xl">
+            <span className="block text-foreground">Você diz o que quer comprar.</span>
+            <span className="mt-2 block text-primary">A gente acompanha o preço.</span>
           </h1>
-          <p className="mt-5 max-w-xl text-base leading-relaxed text-muted-foreground sm:text-lg">
-            Sem abrir seis lojas todo dia pra ver se caiu. Quando aparecer uma oferta que faça
-            sentido, a gente te mostra — pelo site ou no Telegram.
+          <p className="mt-6 max-w-xl text-base leading-7 text-muted-foreground sm:text-lg sm:leading-8">
+            Sem abrir loja por loja todo dia para ver se o preço caiu. Quando surgir uma oferta
+            que vale a pena, a gente mostra por aqui ou no Telegram.
           </p>
           <div className="mt-8 flex flex-col gap-3 sm:flex-row">
             <Button asChild size="lg">
@@ -132,48 +142,50 @@ function TelegramDemo() {
   const prefersReducedMotion = useReducedMotion()
   const containerRef = useRef<HTMLDivElement>(null)
   const isInView = useInView(containerRef, { once: true, amount: 0.4 })
-  const [visible, setVisible] = useState<DemoId[]>([])
+  const [visible, setVisible] = useState<DemoId[]>(['user'])
   const [typing, setTyping] = useState(false)
   const [cycle, setCycle] = useState(0)
 
   useEffect(() => {
-    // `useReducedMotion` resolve de forma assíncrona (via efeito interno do
-    // motion/react, nunca no primeiro render/SSR) -- por isso este efeito
-    // reage a ele em vez de só ler seu valor uma vez no `useState` inicial.
-    // Sem isso, se o valor mudasse de `null`/`false` para `true` depois da
-    // montagem, o widget ficaria vazio para sempre em vez de mostrar o
-    // estado final estático exigido para `prefers-reduced-motion`.
-    if (prefersReducedMotion) {
-      setVisible(ALL_DEMO_IDS)
-      setTyping(false)
-      return
-    }
+    // Com `prefers-reduced-motion`, o estado final é derivado direto na
+    // renderização (`effectiveVisible`/`effectiveTyping` abaixo) -- nunca
+    // precisa de setState aqui, então este efeito não tem nada a fazer
+    // nesse caso (`useReducedMotion` resolve de forma assíncrona, por
+    // isso o efeito ainda precisa reagir à mudança de `null`/`false` para
+    // `true`, só que sem tocar estado).
+    if (prefersReducedMotion) return
     if (!isInView) return
-    setVisible([])
-    setTyping(false)
     const timers: ReturnType<typeof setTimeout>[] = []
     const at = (ms: number, run: () => void) => timers.push(setTimeout(run, ms))
     const show = (id: DemoId) => setVisible((current) => [...current, id])
 
-    at(400, () => show('user'))
-    at(1300, () => setTyping(true))
-    at(2500, () => {
+    // Mesmo mecanismo de temporizador do resto da sequência (nunca
+    // setState direto no corpo síncrono do efeito) -- `0ms` ainda roda
+    // antes do primeiro quadro visível, sem atraso perceptível.
+    at(0, () => { setVisible(['user']); setTyping(false) })
+    at(600, () => setTyping(true))
+    at(1600, () => {
       setTyping(false)
       show('bot1')
     })
-    at(3400, () => show('divider'))
-    at(4300, () => setTyping(true))
-    at(5500, () => {
+    at(2300, () => show('divider'))
+    at(3000, () => setTyping(true))
+    at(4000, () => {
       setTyping(false)
       show('bot2')
     })
-    at(6300, () => show('card'))
-    at(11500, () => setCycle((value) => value + 1))
+    at(4700, () => show('card'))
+    at(9000, () => setCycle((value) => value + 1))
 
     return () => timers.forEach(clearTimeout)
   }, [cycle, isInView, prefersReducedMotion])
 
-  const has = (id: DemoId) => visible.includes(id)
+  // `prefers-reduced-motion` nunca passa pelo efeito de animação acima
+  // (retorna cedo) -- o estado final é derivado aqui, na renderização,
+  // em vez de sincronizado por setState dentro do efeito.
+  const effectiveVisible = prefersReducedMotion ? ALL_DEMO_IDS : visible
+  const effectiveTyping = prefersReducedMotion ? false : typing
+  const has = (id: DemoId) => effectiveVisible.includes(id)
 
   return (
     <div ref={containerRef} className="mx-auto w-full max-w-sm">
@@ -185,7 +197,7 @@ function TelegramDemo() {
         className="overflow-hidden rounded-2xl border border-border/70 bg-card shadow-card"
       >
         <div className="flex items-center gap-2 border-b border-border/70 bg-muted/40 px-3.5 py-2.5">
-          <img src="/logo-icon.png" alt="GG Oferta" className="size-6" />
+          <BrandLogo className="h-6" compact />
           <span className="ml-auto text-[10px] text-muted-foreground">bot</span>
         </div>
         <div className="flex min-h-[300px] flex-col justify-end gap-2.5 p-4">
@@ -195,14 +207,14 @@ function TelegramDemo() {
                 Quero um fone bluetooth até R$ 200
               </Bubble>
             )}
-            {typing && !has('bot1') && <TypingBubble key="typing1" />}
+            {effectiveTyping && !has('bot1') && <TypingBubble key="typing1" />}
             {has('bot1') && (
               <Bubble key="bot1" from="bot">
                 Entendi! Vou acompanhar esse produto pra você.
               </Bubble>
             )}
             {has('divider') && <Divider key="divider">2 dias depois</Divider>}
-            {typing && has('bot1') && !has('bot2') && <TypingBubble key="typing2" />}
+            {effectiveTyping && has('bot1') && !has('bot2') && <TypingBubble key="typing2" />}
             {has('bot2') && (
               <Bubble key="bot2" from="bot">
                 Encontrei uma oferta que pode te interessar 👇
@@ -289,7 +301,7 @@ function DemoOfferCard() {
       <p className="mt-1 text-sm font-medium">{DEMO_PRODUCT}</p>
       <p className="text-xs text-muted-foreground">{DEMO_STORE}</p>
       <div className="mt-1.5 flex items-baseline gap-2">
-        <span className="text-lg font-semibold text-[#1a8ecf] dark:text-[#5cc4ff]">{DEMO_PRICE}</span>
+        <span className="text-lg font-bold text-opportunity">{DEMO_PRICE}</span>
         <span className="text-xs text-muted-foreground">{DEMO_INSTALLMENT}</span>
       </div>
       <span className="mt-2 inline-block text-xs font-medium text-primary">Ver oferta →</span>
@@ -302,18 +314,18 @@ function DemoOfferCard() {
 function Story() {
   return (
     <section className="py-20 sm:py-24">
-      <div className="mx-auto max-w-5xl space-y-16 px-4 sm:px-6 lg:px-8 lg:space-y-20">
+      <div className="mx-auto max-w-5xl space-y-16 px-4 sm:px-6 lg:space-y-24 lg:px-8">
         <StoryRow
           eyebrow="01"
           title="Você conta o que está procurando"
-          description="Um produto, um preço que faz sentido pra você e as lojas que preferir. Só isso."
+          description="Conte qual produto você quer, quanto pretende pagar e onde gostaria de comprar. Pronto."
           visual={<MissionPreview />}
         />
         <StoryRow
           reverse
           eyebrow="02"
           title="A gente fica de olho, sem te incomodar"
-          description="O GG Oferta acompanha o preço nas lojas certas. Nada de você voltar todo dia só pra conferir."
+          description="O GG Oferta acompanha as lojas por você. Quando o preço mudar de verdade, você fica sabendo."
           visual={<PriceDropPreview />}
         />
       </div>
@@ -335,11 +347,11 @@ function StoryRow({
   reverse?: boolean
 }) {
   return (
-    <div className="grid items-center gap-8 lg:grid-cols-2 lg:gap-16">
+    <div className="grid items-center gap-8 lg:grid-cols-2 lg:gap-20">
       <div className={cn(reverse && 'lg:order-2')}>
-        <span className="text-sm font-semibold text-primary/70">{eyebrow}</span>
-        <h2 className="mt-2 text-2xl font-semibold tracking-tight sm:text-3xl">{title}</h2>
-        <p className="mt-3 max-w-md text-base leading-relaxed text-muted-foreground">{description}</p>
+        <span className="text-xs font-bold tracking-[0.2em] text-primary/70">{eyebrow}</span>
+        <h2 className="mt-3 text-2xl font-bold tracking-[-0.035em] sm:text-3xl">{title}</h2>
+        <p className="mt-3 max-w-md text-base leading-7 text-muted-foreground">{description}</p>
       </div>
       <div className={cn('flex justify-center', reverse && 'lg:order-1')}>{visual}</div>
     </div>
@@ -364,7 +376,7 @@ function PriceDropPreview() {
       <p className="mt-2 text-sm font-medium">Fone de ouvido bluetooth</p>
       <div className="mt-2 flex items-baseline gap-2">
         <span className="text-sm text-muted-foreground line-through">R$ 219,90</span>
-        <span className="text-xl font-semibold text-[#1a8ecf] dark:text-[#5cc4ff]">R$ 179,90</span>
+        <span className="text-xl font-bold text-opportunity">R$ 179,90</span>
       </div>
       <p className="mt-1 text-xs text-muted-foreground">↘️ Preço caiu — dentro do que você definiu</p>
     </div>
@@ -375,13 +387,13 @@ function PriceDropPreview() {
 
 function Features() {
   return (
-    <section className="border-t border-border/70 bg-muted/20 py-20">
+    <section className="border-y border-border/70 bg-muted/35 py-20">
       <div className="mx-auto max-w-5xl px-4 sm:px-6 lg:px-8">
         <div className="grid gap-x-12 gap-y-10 sm:grid-cols-2">
           {FEATURE_GROUPS.map(({ title, description }) => (
-            <div key={title} className="border-l-2 border-primary/30 pl-5">
-              <h2 className="text-lg font-semibold tracking-tight">{title}</h2>
-              <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{description}</p>
+            <div key={title} className="border-l-2 border-primary/35 pl-5">
+              <h2 className="text-lg font-bold tracking-[-0.02em]">{title}</h2>
+              <p className="mt-2 text-sm leading-6 text-muted-foreground">{description}</p>
             </div>
           ))}
         </div>
@@ -398,10 +410,10 @@ function Stores() {
         <div className="mt-5 flex flex-wrap items-center justify-center gap-2.5">
           {STORES.map((store) => (
             <span
-              key={store}
-              className="rounded-full border border-border bg-card px-3.5 py-1.5 text-sm text-foreground/80"
+              key={store.code}
+              className="rounded-xl border border-border bg-card px-4 py-2 text-sm font-medium text-foreground/80 shadow-xs"
             >
-              {store}
+              <StoreName store={store.code}>{store.name}</StoreName>
             </span>
           ))}
         </div>
@@ -412,17 +424,17 @@ function Stores() {
 
 function FinalCta() {
   return (
-    <section className="border-t border-border/70 bg-muted/20 py-20">
+    <section className="border-t border-primary/20 bg-primary py-20 text-primary-foreground">
       <div className="mx-auto max-w-xl px-4 text-center sm:px-6 lg:px-8">
-        <h2 className="text-2xl font-semibold tracking-tight sm:text-3xl">Já sabe o que quer comprar?</h2>
-        <p className="mt-3 text-base leading-relaxed text-muted-foreground">
+        <h2 className="text-2xl font-bold tracking-[-0.035em] sm:text-3xl">Já sabe o que quer comprar?</h2>
+        <p className="mt-3 text-base leading-relaxed text-primary-foreground/75">
           Deixa o GG Oferta acompanhar o preço por você.
         </p>
         <div className="mt-7 flex flex-col items-center justify-center gap-3 sm:flex-row">
-          <Button asChild size="lg">
+          <Button asChild size="lg" variant="secondary">
             <Link to="/cadastro">Criar conta</Link>
           </Button>
-          <Button asChild size="lg" variant="outline">
+          <Button asChild size="lg" variant="outline" className="border-primary-foreground/30 bg-transparent text-primary-foreground hover:bg-primary-foreground/10 hover:text-primary-foreground">
             <Link to="/login">Entrar</Link>
           </Button>
         </div>
@@ -435,7 +447,7 @@ function SiteFooter() {
   return (
     <footer className="border-t border-border/70">
       <div className="mx-auto flex max-w-6xl flex-col items-center gap-4 px-4 py-10 text-sm text-muted-foreground sm:flex-row sm:justify-between sm:px-6 lg:px-8">
-        <BrandLogo className="h-8 w-auto" />
+        <BrandLogo className="h-7" />
         <nav className="flex items-center gap-5">
           <Link to="/login" className="hover:text-foreground">Entrar</Link>
           <Link to="/cadastro" className="hover:text-foreground">Criar conta</Link>

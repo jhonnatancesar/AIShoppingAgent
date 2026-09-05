@@ -9,11 +9,11 @@ export function CouponsPage() {
     <section>
       <PageHeader
         title="Cupons"
-        description="Em breve, cupons de desconto para completar as ofertas que você acompanha."
+        description="Se um código puder deixar uma boa oferta ainda melhor, você vai encontrar aqui."
       />
       <EmptyState
-        title="Nenhum cupom disponível no momento"
-        description="Quando houver cupons disponíveis no GG Oferta, eles aparecerão aqui."
+        title="Ainda não encontramos um cupom para você"
+        description="Quando uma das lojas liberar um código que vale a pena, ele aparece aqui pronto para copiar."
       />
     </section>
   )

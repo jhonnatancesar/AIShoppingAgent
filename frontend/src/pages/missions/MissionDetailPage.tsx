@@ -5,10 +5,12 @@ import { ApiError } from '../../api/client'
 import { missionsApi } from '../../api/missions'
 import type { MissionDetail, MissionOfferLink, QuotaErrorDetails } from '../../api/types'
 import { STATUS_BADGE_VARIANT, STATUS_LABELS, STORE_LABELS } from './statusLabels'
-import { StoreSelectionField, TargetPriceFields, formatPriceDisplay, toApiDecimal } from './MissionFormFields'
+import { StoreSelectionField, TargetPriceFields } from './MissionFormFields'
+import { formatPriceDisplay, toApiDecimal } from './priceFormat'
 import { OfferCard, type OfferCardData } from '@/components/OfferCard'
 import { PageHeader } from '@/components/PageHeader'
-import { QuotaExceededNotice, quotaDetailsFromError } from '@/components/QuotaExceededNotice'
+import { QuotaExceededNotice } from '@/components/QuotaExceededNotice'
+import { quotaDetailsFromError } from '@/components/quotaDetails'
 import { EmptyState, ErrorState, LoadingState } from '@/components/StatePanel'
 import { FormMessage } from '@/components/FormMessage'
 import {
@@ -26,7 +28,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { ToggleGroup } from '@/components/ui/toggle-group'
-import { useToast } from '@/hooks/useToast'
+import { useToast } from '@/hooks/toastContext'
 
 function money(value: string, currency: string) {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency }).format(Number(value))
@@ -58,9 +60,28 @@ export function MissionDetailPage() {
     }
   }, [missionId])
 
+  // Mesma consulta de `load` (duplicada de propósito, não chamada por
+  // referência): o efeito só precisa rodar quando o missionId da rota
+  // mudar, mas chamar `load()` de dentro de um `useEffect` dispara o lint
+  // `set-state-in-effect`. `load` continua definida para os usos por
+  // evento (recarregar após pausar/retomar/cancelar/editar/selecionar
+  // variantes).
   useEffect(() => {
-    load()
-  }, [load])
+    if (!missionId) return
+    let cancelled = false
+    missionsApi.get(missionId).then(
+      (loadedMission) => {
+        if (cancelled) return
+        setMission(loadedMission)
+        setLoadError(null)
+      },
+      (error) => {
+        if (cancelled) return
+        setLoadError(error instanceof ApiError ? error.message : 'Não foi possível carregar a missão.')
+      },
+    )
+    return () => { cancelled = true }
+  }, [missionId])
 
   if (loadError && !mission) {
     return (
@@ -204,7 +225,7 @@ export function MissionDetailView({ mission, onReload }: { mission: MissionDetai
             ) : null}
           </dl>
           {mission.criteria?.request_kind === 'generic_category' ? (
-            <p className="mt-4 text-xs text-muted-foreground">Esta é uma missão de categoria -- ela continua ativa sem escolher um produto específico.</p>
+            <p className="mt-4 text-xs text-muted-foreground">Esta missão acompanha uma categoria inteira, então você não precisa escolher um produto específico.</p>
           ) : null}
         </CardContent>
       </Card>
@@ -297,7 +318,7 @@ function VariantSelection({
       <CardHeader><CardTitle className="text-base">Variantes encontradas</CardTitle></CardHeader>
       <CardContent className="space-y-4">
         {mission.available_variants.length === 0 ? (
-          <p className="text-sm text-muted-foreground">Aguardando variantes identificadas com segurança.</p>
+          <p className="text-sm text-muted-foreground">Ainda estamos separando os modelos encontrados para você escolher com tranquilidade.</p>
         ) : (
           <>
             <label className="flex items-center gap-2 text-sm">

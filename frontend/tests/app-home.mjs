@@ -55,7 +55,7 @@ try {
     data: { activeCount: 0, pausedCount: 0, totalMissions: 0, offers: [], account: baseAccount, quota: okQuota },
   })
   assert.match(brandNewHtml, /Olá, Cliente Teste/)
-  assert.match(brandNewHtml, /Você ainda não tem nenhuma missão/)
+  assert.match(brandNewHtml, /O que você quer colocar no radar/)
   assert.match(brandNewHtml, /Criar minha primeira missão/)
   assert.doesNotMatch(brandNewHtml, /Missões ativas/)
   assert.doesNotMatch(brandNewHtml, /Últimas ofertas relevantes/)
@@ -67,7 +67,7 @@ try {
   const onlyOtherStatesHtml = render({
     data: { activeCount: 0, pausedCount: 0, totalMissions: 1, offers: [], account: baseAccount, quota: okQuota },
   })
-  assert.doesNotMatch(onlyOtherStatesHtml, /Você ainda não tem nenhuma missão/)
+  assert.doesNotMatch(onlyOtherStatesHtml, /O que você quer colocar no radar/)
   assert.match(onlyOtherStatesHtml, /Missões ativas/)
   assert.match(onlyOtherStatesHtml, /Missões pausadas/)
 
@@ -111,7 +111,7 @@ try {
   const noOffersHtml = render({
     data: { activeCount: 1, pausedCount: 0, totalMissions: 1, offers: [], account: baseAccount, quota: okQuota },
   })
-  assert.match(noOffersHtml, /Nenhuma oferta relevante ainda/)
+  assert.match(noOffersHtml, /Nada novo por enquanto/)
   assert.doesNotMatch(noOffersHtml, /Ver todas/)
 
   // ADMIN com acesso real -- link discreto para /admin.

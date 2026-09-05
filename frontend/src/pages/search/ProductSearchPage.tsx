@@ -9,7 +9,8 @@ import type { AccountQuota, ProductSearchOffer, ProductSearchResponse, QuotaErro
 import { FormMessage } from '@/components/FormMessage'
 import { OfferCard, type OfferCardData } from '@/components/OfferCard'
 import { PageHeader } from '@/components/PageHeader'
-import { QuotaExceededNotice, quotaDetailsFromError } from '@/components/QuotaExceededNotice'
+import { QuotaExceededNotice } from '@/components/QuotaExceededNotice'
+import { quotaDetailsFromError } from '@/components/quotaDetails'
 import { QuotaUsageRow } from '@/components/QuotaSummary'
 import { EmptyState, ErrorState, LoadingState } from '@/components/StatePanel'
 import { Badge } from '@/components/ui/badge'
@@ -17,6 +18,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { ToggleGroup } from '@/components/ui/toggle-group'
+import { StoreName } from '@/components/StoreMark'
 
 const STORES = [
   { code: 'amazon', label: 'Amazon' },
@@ -52,7 +54,16 @@ export function ProductSearchPage() {
     }
   }
 
-  useEffect(() => { void loadQuota() }, [])
+  useEffect(() => {
+    let cancelled = false
+    accountApi.getQuota().then((loaded) => {
+      if (!cancelled && loaded) setQuota(loaded)
+    }, () => {
+      // TASK-107: uso diário é só informativo aqui -- falha ao carregar
+      // não deve impedir a pesquisa em si.
+    })
+    return () => { cancelled = true }
+  }, [])
 
   async function runSearch(value: string, stores: string[]) {
     if (!value.trim() || stores.length === 0) return
@@ -119,7 +130,7 @@ export function ProductSearchPage() {
 
   return (
     <section>
-      <PageHeader eyebrow="Pesquisa multiloja" title="O que você procura?" description="Pesquise e explore resultados livremente. Uma missão só será criada quando você escolher Monitorar." />
+      <PageHeader eyebrow="Busca em várias lojas" title="O que você está procurando?" description="Compare o que já encontramos. Nada entra no seu radar até você escolher Monitorar." />
       {quota ? (
         <div className="mb-5 max-w-xs">
           <QuotaUsageRow label="Pesquisas hoje" item={quota.daily_searches} />
@@ -130,14 +141,14 @@ export function ProductSearchPage() {
         <div className="mt-4"><QuotaExceededNotice message={error ?? ''} details={quotaError} /></div>
       ) : null}
       <div className="mt-7">
-        {searching ? <LoadingState label="Consultando ofertas já encontradas…" /> : error && !result && !quotaError ? <ErrorState title="Pesquisa indisponível" description={error} /> : result ? (
-          result.offers.length === 0 ? <EmptyState title="Nenhum resultado conhecido" description="Ainda não há ofertas persistidas que correspondam com segurança a esta pesquisa. Pesquisar não criou nenhuma missão." /> : <>
+        {searching ? <LoadingState label="Procurando nas ofertas disponíveis…" /> : error && !result && !quotaError ? <ErrorState title="Não foi possível fazer a busca" description={error} /> : result ? (
+          result.offers.length === 0 ? <EmptyState title="Ainda não encontramos esse produto" description="Tente um nome mais curto, outro modelo ou selecione mais lojas. Fique tranquilo: nenhuma missão foi criada." /> : <>
             <ResultHeading result={result} />
             {result.request_kind === 'product_family' ? <VariantSelection result={result} selected={selectedVariants} setSelected={setSelectedVariants} selectAll={selectAllVariants} setSelectAll={setSelectAllVariants} /> : null}
             {result.request_kind === 'generic_category' ? <GenericChoice result={result} selectedOffer={selectedGenericOffer} setSelectedOffer={setSelectedGenericOffer} /> : null}
             <OfferGrid offers={result.offers} selectable={result.request_kind === 'generic_category'} selectedOffer={selectedGenericOffer} setSelectedOffer={setSelectedGenericOffer} />
             <div className="mt-4"><FormMessage tone="error">{error}</FormMessage></div>
-            <div className="sticky bottom-4 z-10 mt-6 flex flex-col items-start justify-between gap-3 rounded-xl border border-border bg-card/95 p-4 shadow-xl backdrop-blur sm:flex-row sm:items-center"><div><p className="text-sm font-medium">Quer acompanhar esta escolha?</p><p className="text-xs text-muted-foreground">Só esta ação criará uma missão ativa.</p></div><Button size="lg" disabled={!canMonitor || monitoring} onClick={monitor}><Target />{monitoring ? 'Criando missão…' : 'Monitorar'}</Button></div>
+            <div className="sticky bottom-4 z-10 mt-6 flex flex-col items-start justify-between gap-3 rounded-xl border border-border bg-card/95 p-4 shadow-xl backdrop-blur sm:flex-row sm:items-center"><div><p className="text-sm font-medium">Quer colocar esta busca no radar?</p><p className="text-xs text-muted-foreground">Ao monitorar, a gente avisa quando aparecer uma boa oportunidade.</p></div><Button size="lg" disabled={!canMonitor || monitoring} onClick={monitor}><Target />{monitoring ? 'Criando missão…' : 'Monitorar'}</Button></div>
           </>
         ) : null}
       </div>
@@ -154,7 +165,7 @@ function SearchForm({ query, setQuery, selectedStores, toggleStore, searching, o
             <Search className="absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
             <Input id="product-search" aria-label="Produto, modelo ou categoria" className="h-12 pl-10 text-base" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Ex.: Samsung Galaxy S24 Ultra 512 GB" required />
           </div>
-          <ToggleGroup type="multiple" aria-label="Lojas" value={selectedStores} onChange={toggleStore} options={STORES.map((store) => ({ value: store.code, label: store.label }))} />
+          <ToggleGroup className="grid grid-cols-2 sm:grid-cols-3" type="multiple" aria-label="Lojas" value={selectedStores} onChange={toggleStore} options={STORES.map((store) => ({ value: store.code, label: <StoreName store={store.code}>{store.label}</StoreName> }))} />
           <Button disabled={searching || !query.trim() || selectedStores.length === 0}><Search />{searching ? 'Pesquisando…' : 'Pesquisar'}</Button>
         </form>
       </CardContent>
@@ -163,12 +174,13 @@ function SearchForm({ query, setQuery, selectedStores, toggleStore, searching, o
 }
 
 function ResultHeading({ result }: { result: ProductSearchResponse }) {
-  const labels = { specific_product: 'Produto específico', product_family: 'Família de produtos', generic_category: 'Categoria genérica' }
-  return <div className="mb-4 flex flex-wrap items-center justify-between gap-2"><div><h2 className="text-lg font-semibold tracking-tight">Resultados para "{result.query}"</h2><p className="text-sm text-muted-foreground">{result.offers.length} oferta(s) conhecida(s), sem criar missão.</p></div><Badge>{labels[result.request_kind]}</Badge></div>
+  const labels = { specific_product: 'Produto específico', product_family: 'Linha de produtos', generic_category: 'Busca mais ampla' }
+  const countLabel = result.offers.length === 1 ? '1 oferta encontrada' : `${result.offers.length} ofertas encontradas`
+  return <div className="mb-4 flex flex-wrap items-center justify-between gap-2"><div><h2 className="text-lg font-semibold tracking-tight">Resultados para “{result.query}”</h2><p className="text-sm text-muted-foreground">{countLabel}. Nenhuma missão foi criada.</p></div><Badge>{labels[result.request_kind]}</Badge></div>
 }
 
 function VariantSelection({ result, selected, setSelected, selectAll, setSelectAll }: { result: ProductSearchResponse; selected: string[]; setSelected: (value: string[]) => void; selectAll: boolean; setSelectAll: (value: boolean) => void }) {
-  return <Card className="mb-4"><CardHeader><CardTitle className="text-base">Escolha as variantes</CardTitle><CardDescription>Variantes permanecem separadas pela identidade determinística da TASK-097.</CardDescription></CardHeader><CardContent className="grid gap-2 sm:grid-cols-2"><label className="flex cursor-pointer gap-3 rounded-lg border p-3 text-sm"><input type="checkbox" checked={selectAll} onChange={(event) => { setSelectAll(event.target.checked); if (event.target.checked) setSelected([]) }} />Todas as variantes encontradas</label>{result.variants.map((variant) => <label key={variant.product_id} className="flex cursor-pointer gap-3 rounded-lg border p-3 text-sm"><input type="checkbox" disabled={selectAll} checked={selected.includes(variant.product_id)} onChange={() => setSelected(selected.includes(variant.product_id) ? selected.filter((id) => id !== variant.product_id) : [...selected, variant.product_id])} /><span><strong className="block">{variant.label}</strong>{Object.keys(variant.attributes).length ? <small className="text-muted-foreground">{Object.values(variant.attributes).join(' · ')}</small> : null}</span></label>)}</CardContent></Card>
+  return <Card className="mb-4"><CardHeader><CardTitle className="text-base">Qual versão você quer acompanhar?</CardTitle><CardDescription>Escolha um modelo específico ou deixe todas as versões no radar.</CardDescription></CardHeader><CardContent className="grid gap-2 sm:grid-cols-2"><label className="flex cursor-pointer gap-3 rounded-lg border p-3 text-sm"><input type="checkbox" checked={selectAll} onChange={(event) => { setSelectAll(event.target.checked); if (event.target.checked) setSelected([]) }} />Todas as versões encontradas</label>{result.variants.map((variant) => <label key={variant.product_id} className="flex cursor-pointer gap-3 rounded-lg border p-3 text-sm"><input type="checkbox" disabled={selectAll} checked={selected.includes(variant.product_id)} onChange={() => setSelected(selected.includes(variant.product_id) ? selected.filter((id) => id !== variant.product_id) : [...selected, variant.product_id])} /><span><strong className="block">{variant.label}</strong>{Object.keys(variant.attributes).length ? <small className="text-muted-foreground">{Object.values(variant.attributes).join(' · ')}</small> : null}</span></label>)}</CardContent></Card>
 }
 
 function GenericChoice({ result, selectedOffer, setSelectedOffer }: { result: ProductSearchResponse; selectedOffer: string | null; setSelectedOffer: (value: string | null) => void }) {

@@ -6,7 +6,7 @@ import { createServer } from 'vite'
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const server = await createServer({ root, appType: 'custom', server: { middlewareMode: true } })
 try {
-  const { toApiDecimal, formatPriceDisplay } = await server.ssrLoadModule('/src/pages/missions/MissionFormFields.tsx')
+  const { toApiDecimal, formatPriceDisplay } = await server.ssrLoadModule('/src/pages/missions/priceFormat.ts')
 
   // formatPriceDisplay: padrão oficial da interface -- pt-BR completo
   // (milhar `.`, decimal `,`, sempre 2 casas), usado no prefill do

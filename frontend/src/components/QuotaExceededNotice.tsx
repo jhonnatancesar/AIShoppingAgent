@@ -6,7 +6,6 @@
  */
 import { AlertTriangle } from 'lucide-react'
 import { Link } from 'react-router-dom'
-import type { ApiError } from '@/api/client'
 import type { QuotaAction, QuotaErrorDetails } from '@/api/types'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -17,21 +16,6 @@ const ACTION_LABELS: Record<QuotaAction, string> = {
   manage_missions: 'Gerenciar missões',
   reduce_mission_stores: 'Reduzir lojas de uma missão',
   wait_for_daily_reset: 'Aguardar a renovação diária',
-}
-
-function isQuotaErrorDetails(details: unknown): details is QuotaErrorDetails {
-  return (
-    !!details &&
-    typeof details === 'object' &&
-    'kind' in details &&
-    'actions' in details &&
-    Array.isArray((details as QuotaErrorDetails).actions)
-  )
-}
-
-/** Extrai o detalhe estruturado de cota de um `ApiError`, se houver. */
-export function quotaDetailsFromError(error: ApiError): QuotaErrorDetails | null {
-  return isQuotaErrorDetails(error.details) ? error.details : null
 }
 
 export function QuotaExceededNotice({

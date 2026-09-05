@@ -4,11 +4,12 @@ import { accountApi } from '@/api/account'
 import { emailVerificationApi } from '@/api/auth'
 import { ApiError } from '@/api/client'
 import type { AccountOption, AccountProfile, AccountQuota } from '@/api/types'
-import { useAuth } from '@/auth/AuthContext'
+import { useAuth } from '@/auth/authContextValue'
 import { FormMessage } from '@/components/FormMessage'
 import { PageHeader } from '@/components/PageHeader'
 import { QuotaSummaryCard } from '@/components/QuotaSummary'
 import { ErrorState, LoadingState } from '@/components/StatePanel'
+import { StoreMark } from '@/components/StoreMark'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -24,7 +25,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
-import { useToast } from '@/hooks/useToast'
+import { useToast } from '@/hooks/toastContext'
 
 export function AccountPage() {
   const [account, setAccount] = useState<AccountProfile | null>(null)
@@ -46,7 +47,30 @@ export function AccountPage() {
     }
   }, [])
 
-  useEffect(() => { load() }, [load])
+  // Mesma consulta de `load` (duplicada de propósito, não chamada por
+  // referência): o efeito só roda uma vez ao montar, então o corpo fica
+  // inline aqui -- chamar `load()` de dentro de um `useEffect` dispara o
+  // lint `set-state-in-effect`. `load` continua definida para o uso por
+  // evento (retry do ErrorState).
+  useEffect(() => {
+    let cancelled = false
+    Promise.all([
+      accountApi.get(),
+      accountApi.getQuota(),
+    ]).then(
+      ([loadedAccount, loadedQuota]) => {
+        if (cancelled) return
+        setAccount(loadedAccount)
+        setQuota(loadedQuota)
+        setError(null)
+      },
+      (loadError) => {
+        if (cancelled) return
+        setError(loadError instanceof ApiError ? loadError.message : 'Não foi possível carregar sua conta.')
+      },
+    )
+    return () => { cancelled = true }
+  }, [])
 
   if (error && !account) return <ErrorState title="Conta indisponível" description={error} onRetry={load} />
   if (!account) return <LoadingState label="Carregando sua conta…" />
@@ -80,7 +104,7 @@ export function AccountView({
       <PageHeader
         eyebrow="Sua área"
         title="Minha conta"
-        description="Gerencie seus dados e preferências usando a mesma conta do Telegram."
+        description="Deixe seus dados, alertas e integrações do jeito que funciona melhor para você."
       />
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1.4fr)_minmax(19rem,.6fr)]">
         <div className="space-y-6">
@@ -128,14 +152,14 @@ function ProfileForm({ account, onSaved }: { account: AccountProfile; onSaved: (
 
   return (
     <Card>
-      <CardHeader><CardTitle className="flex items-center gap-2"><UserRound className="size-5 text-primary" />Perfil</CardTitle><CardDescription>Informações visíveis na sua experiência pessoal.</CardDescription></CardHeader>
+      <CardHeader><CardTitle className="flex items-center gap-2"><UserRound className="size-5 text-primary" />Perfil</CardTitle><CardDescription>Como você aparece e quais produtos prefere encontrar primeiro.</CardDescription></CardHeader>
       <CardContent>
         <form className="space-y-6" onSubmit={submit}>
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="Nome"><Input value={displayName} maxLength={160} required onChange={(event) => setDisplayName(event.target.value)} /></Field>
             <Field label="E-mail"><Input type="email" value={email} maxLength={254} placeholder="Opcional" onChange={(event) => setEmail(event.target.value)} /></Field>
           </div>
-          <OptionGroup title="Lojas preferidas" options={account.available_stores} selected={stores} onChange={setStores} />
+          <OptionGroup title="Lojas preferidas" options={account.available_stores} selected={stores} onChange={setStores} showStoreMarks />
           <OptionGroup title="Categorias preferidas" options={account.available_categories} selected={categories} onChange={setCategories} />
           <FormMessage tone="error">{error}</FormMessage>
           <div className="flex items-center justify-end gap-3"><Button disabled={saving}><Save />{saving ? 'Salvando…' : 'Salvar perfil'}</Button></div>
@@ -169,7 +193,7 @@ function NotificationForm({ account, onSaved }: { account: AccountProfile; onSav
 
   return (
     <Card>
-      <CardHeader><CardTitle className="flex items-center gap-2"><Bell className="size-5 text-primary" />Notificações</CardTitle><CardDescription>As escolhas valem para os alertas enviados pelo Telegram.</CardDescription></CardHeader>
+      <CardHeader><CardTitle className="flex items-center gap-2"><Bell className="size-5 text-primary" />Notificações</CardTitle><CardDescription>Escolha quais novidades você quer receber pelo Telegram.</CardDescription></CardHeader>
       <CardContent><form className="space-y-4" onSubmit={submit}><Toggle label="Quedas de preço" description="Avise quando uma oferta monitorada ficar mais barata." checked={priceDrops} onChange={setPriceDrops} /><Toggle label="Preço-alvo atingido" description="Avise quando o valor definido na missão for alcançado." checked={targetReached} onChange={setTargetReached} /><FormMessage tone="error">{error}</FormMessage><div className="flex items-center justify-end gap-3 pt-2"><Button disabled={saving}><Save />{saving ? 'Salvando…' : 'Salvar notificações'}</Button></div></form></CardContent>
     </Card>
   )
@@ -207,7 +231,7 @@ function PasswordForm() {
 
   return (
     <Card>
-      <CardHeader><CardTitle className="flex items-center gap-2"><KeyRound className="size-5 text-primary" />Alterar senha</CardTitle><CardDescription>Sua senha é a mesma usada no site e no Telegram.</CardDescription></CardHeader>
+      <CardHeader><CardTitle className="flex items-center gap-2"><KeyRound className="size-5 text-primary" />Alterar senha</CardTitle><CardDescription>Use uma senha forte e diferente das que você usa em outros serviços.</CardDescription></CardHeader>
       <CardContent>
         <form className="space-y-4" onSubmit={submit}>
           <Field label="Senha atual"><Input type="password" autoComplete="current-password" value={currentPassword} maxLength={128} required onChange={(event) => setCurrentPassword(event.target.value)} /></Field>
@@ -330,9 +354,9 @@ function EmailVerificationStatus({ account, onChanged }: { account: AccountProfi
 
 function Field({ label, children }: { label: string; children: ReactNode }) { return <label className="space-y-2 text-sm font-medium"><span>{label}</span>{children}</label> }
 
-function OptionGroup({ title, options, selected, onChange }: { title: string; options: AccountOption[]; selected: string[]; onChange: (value: string[]) => void }) {
+function OptionGroup({ title, options, selected, onChange, showStoreMarks = false }: { title: string; options: AccountOption[]; selected: string[]; onChange: (value: string[]) => void; showStoreMarks?: boolean }) {
   function toggle(code: string) { onChange(selected.includes(code) ? selected.filter((item) => item !== code) : [...selected, code]) }
-  return <fieldset><legend className="mb-2 text-sm font-medium">{title}</legend><div className="flex flex-wrap gap-2">{options.map((option) => <button type="button" key={option.code} aria-pressed={selected.includes(option.code)} onClick={() => toggle(option.code)} className="inline-flex items-center gap-1.5 rounded-full border border-border px-3 py-1.5 text-sm transition-colors aria-pressed:border-primary aria-pressed:bg-primary/10 aria-pressed:text-primary">{selected.includes(option.code) ? <Check className="size-3.5" /> : null}{option.label}</button>)}</div></fieldset>
+  return <fieldset><legend className="mb-2 text-sm font-medium">{title}</legend><div className="flex flex-wrap gap-2">{options.map((option) => <button type="button" key={option.code} aria-pressed={selected.includes(option.code)} onClick={() => toggle(option.code)} className="inline-flex items-center gap-1.5 rounded-full border border-border px-3 py-1.5 text-sm transition-colors aria-pressed:border-primary aria-pressed:bg-primary/10 aria-pressed:text-primary">{showStoreMarks ? <StoreMark store={option.code} className="size-5 rounded-md text-[8px]" /> : selected.includes(option.code) ? <Check className="size-3.5" /> : null}{option.label}</button>)}</div></fieldset>
 }
 
 function Toggle({ label, description, checked, onChange }: { label: string; description: string; checked: boolean; onChange: (value: boolean) => void }) {

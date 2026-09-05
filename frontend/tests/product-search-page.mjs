@@ -20,13 +20,13 @@ try {
       React.createElement(ProductSearchPage),
     ),
   )
-  assert.match(html, /O que você procura/)
+  assert.match(html, /O que você está procurando/)
   assert.match(html, /Samsung Galaxy S24 Ultra 512 GB/)
   assert.match(html, /Amazon/)
   assert.match(html, /KaBuM!/)
   assert.match(html, /Pichau/)
   assert.match(html, /Terabyte/)
-  assert.match(html, /só será criada quando você escolher Monitorar/)
+  assert.match(html, /Nada entra no seu radar até você escolher Monitorar/)
   assert.match(html, />Pesquisar</)
   const source = await readFile(path.join(root, 'src/pages/search/ProductSearchPage.tsx'), 'utf8')
   const submitBody = source.slice(source.indexOf('function submit'), source.indexOf('function toggleStore'))

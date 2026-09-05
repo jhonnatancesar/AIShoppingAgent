@@ -33,8 +33,9 @@ try {
   assert.match(html, /RTX 5070 Ti/)
   assert.match(html, /Ativa/)
   assert.match(html, /R\$\s*4\.500,00/)
-  assert.match(html, /KaBuM!, Amazon/)
-  assert.match(html, /3 oferta\(s\) relevante\(s\)/)
+  assert.match(html, /KaBuM!/)
+  assert.match(html, /Amazon/)
+  assert.match(html, /3 ofertas relevantes/)
   assert.match(html, /\/app\/missions\/mission-1/)
   assert.match(html, /Ver detalhes/)
 
@@ -47,7 +48,7 @@ try {
   const emptyHtml = renderToStaticMarkup(
     React.createElement(MemoryRouter, null, React.createElement(MissionsListView, { result: { items: [], limit: 20, offset: 0, total: 0 } })),
   )
-  assert.match(emptyHtml, /Nenhuma missão encontrada/)
+  assert.match(emptyHtml, /Nada neste filtro/)
   assert.match(emptyHtml, /\/app\/missions\/new/)
 
   console.log('missions list render: passed')

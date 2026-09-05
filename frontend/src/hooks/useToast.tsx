@@ -1,14 +1,7 @@
-import { createContext, useCallback, useContext, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useRef, useState, type ReactNode } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { Toast, type ToastItem } from '@/components/ui/toast'
-
-type ToastInput = Omit<ToastItem, 'id'>
-
-interface ToastContextValue {
-  toast: (input: ToastInput) => void
-}
-
-const ToastContext = createContext<ToastContextValue | null>(null)
+import { ToastContext, type ToastInput } from '@/hooks/toastContext'
 
 const AUTO_DISMISS_MS = 5000
 
@@ -63,10 +56,4 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       </div>
     </ToastContext.Provider>
   )
-}
-
-export function useToast(): ToastContextValue {
-  const context = useContext(ToastContext)
-  if (!context) throw new Error('useToast precisa estar dentro de <ToastProvider>.')
-  return context
 }

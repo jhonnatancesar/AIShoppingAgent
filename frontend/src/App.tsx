@@ -4,7 +4,10 @@ import { AppLayout } from './components/Layout'
 import { RequireAdmin, RequireAuth } from './components/ProtectedRoute'
 import { TooltipProvider } from './components/ui/tooltip'
 import { ToastProvider } from './hooks/useToast'
-import { AdminHome } from './pages/AdminHome'
+import { AdminShell } from './pages/admin/AdminShell'
+import { AdminDashboardPage } from './pages/admin/AdminDashboardPage'
+import { AdminUsersPage } from './pages/admin/AdminUsersPage'
+import { AdminFeedbackPage } from './pages/admin/AdminFeedbackPage'
 import { AppHome } from './pages/AppHome'
 import { LandingPage } from './pages/LandingPage'
 import { LoginPage } from './pages/LoginPage'
@@ -46,7 +49,11 @@ export default function App() {
                 <Route path="/app/suporte" element={<FeedbackPage />} />
 
                 <Route element={<RequireAdmin />}>
-                  <Route path="/admin" element={<AdminHome />} />
+                  <Route element={<AdminShell />}>
+                    <Route path="/admin" element={<AdminDashboardPage />} />
+                    <Route path="/admin/users" element={<AdminUsersPage />} />
+                    <Route path="/admin/feedback" element={<AdminFeedbackPage />} />
+                  </Route>
                 </Route>
               </Route>
             </Route>

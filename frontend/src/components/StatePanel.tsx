@@ -28,10 +28,10 @@ export function ErrorState({ title = 'Algo deu errado', description, onRetry, ac
 function State({ icon, title, description, action }: StateProps & { icon: ReactNode }) {
   return (
     <Card className="border-dashed">
-      <CardContent className="flex min-h-52 flex-col items-center justify-center p-8 text-center">
-        <div className="mb-4 grid size-11 place-items-center rounded-xl bg-muted text-muted-foreground [&_svg]:size-5">{icon}</div>
-        <h2 className="text-lg font-semibold tracking-tight">{title}</h2>
-        {description ? <p className="mt-2 max-w-md text-sm text-muted-foreground">{description}</p> : null}
+      <CardContent className="flex min-h-56 flex-col items-center justify-center p-8 text-center sm:p-10">
+        <div className="mb-5 grid size-12 place-items-center rounded-2xl bg-primary/9 text-primary ring-1 ring-primary/10 [&_svg]:size-5">{icon}</div>
+        <h2 className="text-lg font-bold tracking-[-0.02em]">{title}</h2>
+        {description ? <p className="mt-2 max-w-md text-sm leading-6 text-muted-foreground">{description}</p> : null}
         {action ? <div className="mt-5">{action}</div> : null}
       </CardContent>
     </Card>

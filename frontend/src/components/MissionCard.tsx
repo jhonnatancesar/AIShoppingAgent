@@ -5,6 +5,7 @@ import { STATUS_BADGE_VARIANT, STATUS_LABELS, STORE_LABELS } from '@/pages/missi
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
+import { StoreName } from '@/components/StoreMark'
 
 function money(value: string, currency: string) {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency }).format(Number(value))
@@ -27,16 +28,16 @@ export function MissionCard({ mission }: { mission: MissionListItem }) {
             ? `Alvo: ${money(mission.target_amount, mission.target_currency ?? 'BRL')}`
             : 'Sem preço-alvo definido'}
         </CardDescription>
-        <p className="text-xs text-muted-foreground">
-          {mission.sources.length === 0
-            ? 'Nenhuma loja selecionada'
-            : mission.sources.map((source) => STORE_LABELS[source.store_code] ?? source.store_name).join(', ')}
-        </p>
+        {mission.sources.length === 0 ? <p className="text-xs text-muted-foreground">Nenhuma loja selecionada</p> : (
+          <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+            {mission.sources.map((source) => <StoreName key={source.store_code} store={source.store_code}>{STORE_LABELS[source.store_code] ?? source.store_name}</StoreName>)}
+          </div>
+        )}
         <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
           <ShoppingBag className="size-3.5" />
           {mission.relevant_offer_count === 0
             ? 'Nenhuma oferta relevante ainda'
-            : `${mission.relevant_offer_count} oferta(s) relevante(s)`}
+            : mission.relevant_offer_count === 1 ? '1 oferta relevante' : `${mission.relevant_offer_count} ofertas relevantes`}
         </p>
       </CardHeader>
       <CardFooter>

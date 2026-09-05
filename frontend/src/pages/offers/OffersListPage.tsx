@@ -1,14 +1,15 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { Search } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { ApiError } from '@/api/client'
 import { offersApi, type OfferListFilters } from '@/api/offers'
-import type { OfferListResponse, OfferSummary } from '@/api/types'
+import type { OfferListResponse } from '@/api/types'
 import { FilterBar } from '@/components/FilterBar'
 import { OfferCard } from '@/components/OfferCard'
 import { PageHeader } from '@/components/PageHeader'
 import { EmptyState, ErrorState, LoadingState } from '@/components/StatePanel'
 import { Button } from '@/components/ui/button'
+import { offerSummaryToCardData } from './offerCardMapping'
 
 const PAGE_SIZE = 24
 
@@ -17,17 +18,25 @@ export function OffersListPage() {
   const [filters, setFilters] = useState<OfferListFilters>({ sort: 'recent', limit: PAGE_SIZE, offset: 0 })
   const [result, setResult] = useState<OfferListResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
+  // Só para o botão "Tentar novamente" pedir a mesma busca de novo, sem
+  // chamar a busca por referência de dentro do efeito.
+  const [retryToken, setRetryToken] = useState(0)
 
-  const load = useCallback(async () => {
-    setError(null)
-    try {
-      setResult(await offersApi.list(filters))
-    } catch (loadError) {
-      setError(loadError instanceof ApiError ? loadError.message : 'Não foi possível carregar as ofertas.')
-    }
-  }, [filters])
-
-  useEffect(() => { load() }, [load])
+  useEffect(() => {
+    let cancelled = false
+    offersApi.list(filters).then(
+      (response) => {
+        if (cancelled) return
+        setResult(response)
+        setError(null)
+      },
+      (loadError) => {
+        if (cancelled) return
+        setError(loadError instanceof ApiError ? loadError.message : 'Não foi possível carregar as ofertas.')
+      },
+    )
+    return () => { cancelled = true }
+  }, [filters, retryToken])
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -44,7 +53,7 @@ export function OffersListPage() {
 
   return (
     <section>
-      <PageHeader eyebrow="Sua área" title="Ofertas" description="Todas as ofertas relevantes ligadas às suas missões, sem duplicar anúncios entre missões." actions={<Button asChild><Link to="/app/search"><Search />Pesquisar</Link></Button>} />
+      <PageHeader eyebrow="Boas oportunidades" title="Ofertas" description="Os preços que mais combinam com o que você colocou no radar, organizados para comparar sem confusão." actions={<Button asChild><Link to="/app/search"><Search />Buscar produto</Link></Button>} />
       <FilterBar
         draftQuery={draftQuery}
         onDraftQueryChange={setDraftQuery}
@@ -56,13 +65,13 @@ export function OffersListPage() {
         onChange={updateFilter}
         onClearAdvanced={clearAdvancedFilters}
       />
-      {error && !result ? <ErrorState title="Ofertas indisponíveis" description={error} onRetry={load} /> : !result ? <LoadingState label="Carregando suas ofertas…" /> : <OffersListView result={result} onPage={(offset) => setFilters((current) => ({ ...current, offset }))} />}
+      {error && !result ? <ErrorState title="Ofertas indisponíveis" description={error} onRetry={() => setRetryToken((token) => token + 1)} /> : !result ? <LoadingState label="Carregando suas ofertas…" /> : <OffersListView result={result} onPage={(offset) => setFilters((current) => ({ ...current, offset }))} />}
     </section>
   )
 }
 
 export function OffersListView({ result, onPage = () => undefined }: { result: OfferListResponse; onPage?: (offset: number) => void }) {
-  if (result.items.length === 0) return <EmptyState title="Nenhuma oferta encontrada" description="Crie ou ajuste uma missão para começar a receber ofertas relevantes, ou tente outros filtros." action={<Button asChild><Link to="/app/search">Pesquisar produtos</Link></Button>} />
+  if (result.items.length === 0) return <EmptyState title="Nenhuma oferta por aqui ainda" description="Tente outros filtros ou busque um produto para colocar uma nova missão no radar." action={<Button asChild><Link to="/app/search">Buscar produtos</Link></Button>} />
   const end = Math.min(result.offset + result.items.length, result.total)
   return (
     <>
@@ -79,22 +88,4 @@ export function OffersListView({ result, onPage = () => undefined }: { result: O
       </div>
     </>
   )
-}
-
-/** Exportado para reuso pela Home (Subtask 15) -- evita uma segunda
- * implementação independente do mesmo mapeamento OfferSummary→OfferCardData. */
-export function offerSummaryToCardData(offer: OfferSummary) {
-  return {
-    id: offer.id,
-    title: offer.title,
-    imageUrl: offer.image_url,
-    imageFallbackUrl: offer.image_fallback_url,
-    store: offer.store,
-    price: offer.latest_observation
-      ? { amount: offer.latest_observation.amount, totalAmount: offer.latest_observation.total_amount, currency: offer.latest_observation.currency }
-      : null,
-    condition: offer.latest_observation?.condition ?? null,
-    seller: offer.seller,
-    rating: offer.rating ? { average: offer.rating.average, reviewCount: offer.rating.review_count } : null,
-  }
 }

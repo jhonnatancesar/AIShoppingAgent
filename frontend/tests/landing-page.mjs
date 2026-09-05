@@ -49,7 +49,7 @@ try {
   // 1) `/` público renderiza a Landing para visitante anônimo.
   assert.match(html, /GG Oferta/)
   assert.match(html, /Você diz o que quer comprar/)
-  assert.match(html, /A gente cuida de ficar de olho no preço/)
+  assert.match(html, /A gente acompanha o preço/)
 
   // Acessibilidade: exatamente um H1, nenhum nível pulado (nunca H1 -> H3
   // direto) -- achado real corrigido nesta revisão.

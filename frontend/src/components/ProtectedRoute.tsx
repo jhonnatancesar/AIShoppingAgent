@@ -4,7 +4,7 @@
  * estas guardas só evitam mostrar uma tela que o backend recusaria.
  */
 import { Navigate, Outlet, useLocation } from 'react-router-dom'
-import { useAuth } from '../auth/AuthContext'
+import { useAuth } from '../auth/authContextValue'
 import { LoadingState } from '@/components/StatePanel'
 
 export function RequireAuth() {

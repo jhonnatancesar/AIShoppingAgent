@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Plus } from 'lucide-react'
 import { ApiError } from '../../api/client'
@@ -20,24 +20,28 @@ export function MissionsListPage() {
   const [offset, setOffset] = useState(0)
   const [result, setResult] = useState<MissionListResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
-
-  const load = useCallback(async (currentFilter: MissionStatusFilter | null, currentOffset: number) => {
-    setError(null)
-    try {
-      setResult(await missionsApi.list(currentFilter, PAGE_SIZE, currentOffset))
-    } catch (loadError) {
-      setResult(null)
-      setError(
-        loadError instanceof ApiError
-          ? loadError.message
-          : 'Não foi possível carregar as missões.',
-      )
-    }
-  }, [])
+  // Contador que só existe para o botão "Tentar novamente" pedir uma nova
+  // tentativa com o MESMO filtro/offset atuais -- nunca chama a busca por
+  // referência de dentro do efeito (dispararia `set-state-in-effect`), só
+  // muda uma dependência para o efeito rodar de novo.
+  const [retryToken, setRetryToken] = useState(0)
 
   useEffect(() => {
-    load(filter, offset)
-  }, [filter, offset, load])
+    let cancelled = false
+    missionsApi.list(filter, PAGE_SIZE, offset).then(
+      (response) => {
+        if (cancelled) return
+        setResult(response)
+        setError(null)
+      },
+      (loadError) => {
+        if (cancelled) return
+        setResult(null)
+        setError(loadError instanceof ApiError ? loadError.message : 'Não foi possível carregar as missões.')
+      },
+    )
+    return () => { cancelled = true }
+  }, [filter, offset, retryToken])
 
   function changeFilter(value: string) {
     setFilter(value === DEFAULT_FILTER_VALUE ? null : (value as MissionStatusFilter))
@@ -46,7 +50,7 @@ export function MissionsListPage() {
 
   return (
     <section>
-      <PageHeader eyebrow="Monitoramento" title="Missões" description="O que você pediu para o GG Oferta acompanhar -- produto, preço-alvo, lojas e o que já foi encontrado." actions={<Button asChild><Link to="/app/missions/new"><Plus />Nova missão</Link></Button>} />
+      <PageHeader eyebrow="Seu radar de preços" title="Missões" description="Tudo o que você pediu para acompanhar: produto, preço desejado, lojas e novidades encontradas." actions={<Button asChild><Link to="/app/missions/new"><Plus />Nova missão</Link></Button>} />
 
       <div className="mb-5 max-w-xs space-y-1.5">
         <label className="text-sm font-medium" htmlFor="status-filter">Status</label>
@@ -62,7 +66,7 @@ export function MissionsListPage() {
       </div>
 
       {error ? (
-        <ErrorState title="Não foi possível carregar as missões" description={error} onRetry={() => load(filter, offset)} />
+        <ErrorState title="Não foi possível carregar as missões" description={error} onRetry={() => setRetryToken((token) => token + 1)} />
       ) : !result ? (
         <LoadingState label="Carregando missões…" />
       ) : (
@@ -73,7 +77,7 @@ export function MissionsListPage() {
 }
 
 export function MissionsListView({ result, onPage = () => undefined }: { result: MissionListResponse; onPage?: (offset: number) => void }) {
-  if (result.items.length === 0) return <EmptyState title="Nenhuma missão encontrada" description="Experimente outro filtro ou crie sua primeira missão." action={<Button asChild><Link to="/app/missions/new">Criar missão</Link></Button>} />
+  if (result.items.length === 0) return <EmptyState title="Nada neste filtro" description="Escolha outro status ou crie uma missão para começar a acompanhar um preço." action={<Button asChild><Link to="/app/missions/new">Criar missão</Link></Button>} />
   const end = Math.min(result.offset + result.items.length, result.total)
   return (
     <>

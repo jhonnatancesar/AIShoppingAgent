@@ -7,6 +7,8 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { useImageFallbackChain } from '@/hooks/useImageFallbackChain'
+import { cn } from '@/lib/utils'
+import { StoreName } from '@/components/StoreMark'
 
 function money(value: string, currency: string) {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency }).format(Number(value))
@@ -59,13 +61,13 @@ export function OfferCard({
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: Math.min(index * 0.025, 0.2) }}
     >
-      <Card className={`flex h-full flex-col overflow-hidden transition-transform hover:-translate-y-0.5 ${selected ? 'ring-2 ring-primary' : ''}`}>
+      <Card className={cn('group flex h-full flex-col overflow-hidden transition-[border-color,box-shadow,transform] hover:-translate-y-0.5 hover:border-primary/25 hover:shadow-lg', selected && 'ring-2 ring-primary ring-offset-2 ring-offset-background')}>
         {onSelect ? (
-          <button type="button" onClick={onSelect} className="grid h-44 w-full place-items-center bg-muted/40 p-4 text-left">
+          <button type="button" onClick={onSelect} className="grid h-44 w-full place-items-center bg-muted/35 p-4 text-left transition-colors group-hover:bg-accent/35">
             {imageSrc ? <img className="h-full w-full min-h-0 object-contain" src={imageSrc} alt="" onError={onImageError} /> : <ShoppingBag className="size-10 text-muted-foreground/35" />}
           </button>
         ) : (
-          <div className="grid h-44 place-items-center bg-muted/40 p-4">
+          <div className="grid h-44 place-items-center bg-muted/35 p-4 transition-colors group-hover:bg-accent/35">
             {imageSrc ? (
               <img className="h-full w-full min-h-0 object-contain" src={imageSrc} alt="" onError={onImageError} />
             ) : (
@@ -75,13 +77,13 @@ export function OfferCard({
         )}
         <CardHeader className="flex-1">
           <div className="flex items-center justify-between gap-2">
-            <Badge variant="secondary">{offer.store.name}</Badge>
+            <Badge variant="secondary"><StoreName store={offer.store.name}>{offer.store.name}</StoreName></Badge>
             {offer.rating ? <span className="text-xs text-muted-foreground">★ {Number(offer.rating.average).toLocaleString('pt-BR')}</span> : null}
           </div>
           <CardTitle className="line-clamp-2 text-base leading-snug">{offer.title}</CardTitle>
           {offer.price ? (
             <>
-              <p className="text-xl font-semibold tracking-tight">{money(offer.price.amount, offer.price.currency)}</p>
+              <p className="text-2xl font-bold tracking-[-0.035em] text-opportunity">{money(offer.price.amount, offer.price.currency)}</p>
               <CardDescription className="flex items-center gap-1.5">
                 Total {money(offer.price.totalAmount, offer.price.currency)}
                 {offer.condition ? <>{' · '}<ConditionBadge condition={offer.condition} /></> : null}

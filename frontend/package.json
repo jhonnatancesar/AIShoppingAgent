@@ -23,6 +23,9 @@
     "test:mission-detail": "node tests/mission-detail-page.mjs",
     "test:mission-form-fields": "node tests/mission-form-fields.mjs",
     "test:app-home": "node tests/app-home.mjs",
+    "test:admin-dashboard": "node tests/admin-dashboard.mjs",
+    "test:admin-users": "node tests/admin-users.mjs",
+    "test:admin-feedback": "node tests/admin-feedback.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

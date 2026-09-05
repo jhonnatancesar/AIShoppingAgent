@@ -1,8 +1,9 @@
+import type { ReactNode } from 'react'
 import { cn } from '@/lib/utils'
 
 export interface ToggleGroupOption<T extends string> {
   value: T
-  label: string
+  label: ReactNode
 }
 
 interface ToggleGroupBaseProps<T extends string> {
@@ -15,7 +16,7 @@ type ToggleGroupProps<T extends string> =
   | (ToggleGroupBaseProps<T> & { type: 'single'; value: T; onChange: (value: T) => void })
   | (ToggleGroupBaseProps<T> & { type: 'multiple'; value: T[]; onChange: (value: T[]) => void })
 
-/** Grupo de opções em formato de pílula (Subtask 12) -- substitui as
+/** Grupo de opções compacto (Subtask 12) -- substitui as
  * reimplementações independentes que existiam em várias telas (seleção
  * única de categoria, seleção múltipla de lojas) por um único componente
  * com dois modos, mesmo visual em ambos. */
@@ -41,8 +42,8 @@ export function ToggleGroup<T extends string>(props: ToggleGroupProps<T>) {
             aria-pressed={active}
             onClick={() => toggle(option.value)}
             className={cn(
-              'rounded-full border border-border px-3 py-1.5 text-sm font-medium text-foreground/80 transition-colors hover:border-primary/50',
-              active && 'border-primary bg-primary/10 text-primary hover:border-primary',
+              'min-h-10 rounded-xl border border-border bg-card px-3.5 py-2 text-sm font-medium text-foreground/80 transition-[border-color,background-color,color,box-shadow] hover:border-primary/40 hover:bg-accent/55 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/35',
+              active && 'border-primary/45 bg-primary/10 text-primary shadow-sm hover:border-primary',
             )}
           >
             {option.label}

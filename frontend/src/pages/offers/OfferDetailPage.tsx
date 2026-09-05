@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { ArrowLeft, ExternalLink, ShoppingBag } from 'lucide-react'
 import { Link, useParams } from 'react-router-dom'
 import { ApiError } from '../../api/client'
@@ -14,6 +14,7 @@ import { ConditionBadge } from '../../components/ConditionBadge'
 import { PageHeader } from '../../components/PageHeader'
 import { PriceHistoryChart } from '../../components/PriceHistoryChart'
 import { EmptyState, ErrorState, LoadingState } from '../../components/StatePanel'
+import { StoreName } from '@/components/StoreMark'
 import { Badge } from '../../components/ui/badge'
 import { Button } from '../../components/ui/button'
 import { Card, CardContent } from '../../components/ui/card'
@@ -138,7 +139,7 @@ export function OfferDetailView({ offer, comparison }: { offer: OfferDetail; com
 }
 
 function OfferFacts({ offer, observation }: { offer: OfferDetail; observation: OfferDetail['latest_observation'] }) {
-  const facts: [string, ReactNode][] = [['Loja', offer.store.name]]
+  const facts: [string, ReactNode][] = [['Loja', <StoreName key="store" store={offer.store.code}>{offer.store.name}</StoreName>]]
   if (offer.seller?.name) facts.push(['Vendedor', offer.seller.name])
   if (observation?.seller_kind) facts.push(['Tipo de vendedor', PARTY_LABELS[observation.seller_kind]])
   const delivery = observation?.fulfillment ?? (observation?.fulfillment_kind ? PARTY_LABELS[observation.fulfillment_kind] : null)
@@ -163,10 +164,10 @@ function ComparisonSection({ comparison, currentOfferId }: { comparison?: OfferC
   const heading = <h2 className="mb-3 text-lg font-semibold tracking-tight">Comparar entre lojas</h2>
 
   if (comparison === null) {
-    return <div className="mt-6">{heading}<EmptyState title="Comparação indisponível no momento" /></div>
+    return <div className="mt-6">{heading}<EmptyState title="Não foi possível comparar agora" description="Tente novamente em alguns instantes." /></div>
   }
   if (!comparison.comparable) {
-    return <div className="mt-6">{heading}<EmptyState title="Comparação ainda não disponível" description="Esta oferta ainda não possui identidade específica de produto/variante resolvida." /></div>
+    return <div className="mt-6">{heading}<EmptyState title="Ainda não dá para comparar esta oferta" description="Precisamos confirmar o modelo exato antes de colocá-lo lado a lado com outras lojas." /></div>
   }
 
   const currentTotal = comparison.offers.find((item) => item.id === currentOfferId)?.latest_observation?.total_amount
@@ -179,7 +180,7 @@ function ComparisonSection({ comparison, currentOfferId }: { comparison?: OfferC
         Somente {comparison.title}{comparison.variant ? ` — ${comparison.variant}` : ''}. Variantes diferentes nunca entram nesta comparação.
       </p>
       {comparison.offers.length === 0 ? (
-        <EmptyState title="Nenhuma outra oferta autorizada encontrada" />
+        <EmptyState title="Nenhuma outra loja com este produto por enquanto" description="Quando encontrarmos o mesmo modelo em outra loja, a comparação aparece aqui." />
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {stores.map((storeCode) => {
@@ -187,7 +188,7 @@ function ComparisonSection({ comparison, currentOfferId }: { comparison?: OfferC
             return (
               <Card key={storeCode}>
                 <CardContent className="space-y-3 pt-6">
-                  <p className="text-sm font-semibold">{items[0].store.name}</p>
+                  <p className="text-sm font-semibold"><StoreName store={storeCode}>{items[0].store.name}</StoreName></p>
                   {items.map((item) => (
                     <ComparisonOffer key={item.id} item={item} isCurrent={item.id === currentOfferId} currentTotal={currentTotal} />
                   ))}
@@ -259,44 +260,52 @@ export function OfferDetailPage() {
   const [offer, setOffer] = useState<OfferDetail | null>(null)
   const [comparison, setComparison] = useState<OfferComparison | null | undefined>(undefined)
   const [error, setError] = useState<string | null>(null)
-
-  const load = useCallback(async () => {
-    if (!offerId) {
-      setError('Oferta não encontrada.')
-      return
-    }
-    setError(null)
-    setOffer(null)
-    setComparison(undefined)
-    try {
-      setOffer(await offersApi.get(offerId))
-      try { setComparison(await offersApi.compare(offerId)) } catch { setComparison(null) }
-    } catch (loadError) {
-      if (loadError instanceof ApiError && loadError.status === 403) {
-        setError('Você não tem acesso a esta oferta ou ela não foi encontrada.')
-      } else if (loadError instanceof ApiError && loadError.status === 404) {
-        setError('Oferta não encontrada.')
-      } else {
-        setError(
-          loadError instanceof ApiError
-            ? loadError.message
-            : 'Não foi possível carregar a oferta.',
-        )
-      }
-    }
-  }, [offerId])
+  // Marca de qual offerId são os dados acima -- enquanto ela não bater com o
+  // offerId atual da rota, tratamos como "ainda carregando" na renderização,
+  // em vez de zerar offer/comparison/error de forma síncrona no efeito.
+  const [loadedOfferId, setLoadedOfferId] = useState<string | null>(null)
 
   useEffect(() => {
-    load()
-  }, [load])
+    if (!offerId) return
+    let cancelled = false
+    offersApi.get(offerId).then(
+      (loadedOffer) => {
+        if (cancelled) return
+        setOffer(loadedOffer)
+        setComparison(undefined)
+        setError(null)
+        setLoadedOfferId(offerId)
+        offersApi.compare(offerId).then(
+          (loadedComparison) => { if (!cancelled) setComparison(loadedComparison) },
+          () => { if (!cancelled) setComparison(null) },
+        )
+      },
+      (loadError) => {
+        if (cancelled) return
+        setOffer(null)
+        setComparison(undefined)
+        setLoadedOfferId(offerId)
+        if (loadError instanceof ApiError && loadError.status === 403) {
+          setError('Você não tem acesso a esta oferta ou ela não foi encontrada.')
+        } else if (loadError instanceof ApiError && loadError.status === 404) {
+          setError('Oferta não encontrada.')
+        } else {
+          setError(loadError instanceof ApiError ? loadError.message : 'Não foi possível carregar a oferta.')
+        }
+      },
+    )
+    return () => { cancelled = true }
+  }, [offerId])
 
-  if (error) {
+  const isCurrent = loadedOfferId === offerId
+
+  if (!offerId || (isCurrent && error)) {
     return (
       <section>
-        <ErrorState title="Não foi possível abrir esta oferta" description={error} action={<Button variant="outline" asChild><Link to="/app/missions"><ArrowLeft />Voltar para missões</Link></Button>} />
+        <ErrorState title="Não foi possível abrir esta oferta" description={error ?? 'Oferta não encontrada.'} action={<Button variant="outline" asChild><Link to="/app/missions"><ArrowLeft />Voltar para missões</Link></Button>} />
       </section>
     )
   }
-  if (!offer) return <LoadingState label="Carregando oferta…" />
+  if (!isCurrent || !offer) return <LoadingState label="Carregando oferta…" />
   return <OfferDetailView offer={offer} comparison={comparison} />
 }
