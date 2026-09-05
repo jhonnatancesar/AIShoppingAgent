@@ -77,6 +77,12 @@ class CesarCoreSearchProvider:
                 "authentication_required",
                 "invalid_credentials",
                 "search_upstream_error",
+                # ADR 0018 (César Core): falha da própria proteção de quota
+                # (Redis indisponível/config incompatível) nunca pode ser
+                # contornada silenciosamente pelo fallback Firecrawl -- isso
+                # mascararia um problema operacional real do gate de quota.
+                "quota_store_unavailable",
+                "quota_store_misconfigured",
             }:
                 retryable = False
             raise WebSearchError(

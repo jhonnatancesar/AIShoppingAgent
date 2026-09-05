@@ -105,6 +105,26 @@ def test_fallback_for_unavailability(tmp_path, status):
     assert fallback.calls == 1 and result.fallback_reason
 
 
+@pytest.mark.parametrize("code", ["quota_store_unavailable", "quota_store_misconfigured"])
+def test_no_fallback_for_quota_store_failure(tmp_path, code):
+    # ADR 0018 (César Core): 503 do próprio gate de quota (Redis fora ou
+    # configuração incompatível) nunca deve virar fallback Firecrawl --
+    # mascararia uma falha real da proteção de quota, não indisponibilidade
+    # legítima do provider upstream.
+    fallback = Stub()
+    manager = WebSearchManager(
+        core(
+            tmp_path,
+            lambda r: httpx.Response(503, json={"error": {"code": code}}),
+        ),
+        fallback,
+    )
+    with pytest.raises(WebSearchError) as error:
+        asyncio.run(manager.search("query"))
+    assert not error.value.retryable and error.value.code == "core_search_rejected"
+    assert fallback.calls == 0
+
+
 def test_zero_is_success_without_fallback():
     fallback = Stub()
     assert asyncio.run(WebSearchManager(Stub(), fallback).search("query")).results == ()
