@@ -10,6 +10,7 @@ import { useToast } from '@/hooks/toastContext'
 import { AdminStatusBadge, ConfirmActionButton } from './adminComponents'
 import { adminStatusLabel } from './adminLabels'
 import { StoreName } from '@/components/StoreMark'
+import { formatDateTime } from '@/lib/formatDateTime'
 
 interface DashboardData {
   dashboard: Dashboard
@@ -171,7 +172,7 @@ export function AdminDashboardView({ data, onReload }: { data: DashboardData; on
             <div><dt className="text-xs text-muted-foreground">Lotes simultâneos por usuário</dt><dd>{queue.config.max_concurrent_user_batches}{queue.config.max_concurrent_user_batches_override != null ? ' (ajustado)' : ' (padrão)'}</dd></div>
             <div><dt className="text-xs text-muted-foreground">Espera mín./máx. por usuário</dt><dd>{queue.config.user_cooldown_min_seconds}s / {queue.config.user_cooldown_max_seconds}s</dd></div>
             <div><dt className="text-xs text-muted-foreground">Intervalo mínimo por loja</dt><dd>{queue.config.store_min_interval_seconds}s</dd></div>
-            <div><dt className="text-xs text-muted-foreground">Gerado em</dt><dd>{new Date(queue.generated_at).toLocaleString('pt-BR')}</dd></div>
+            <div><dt className="text-xs text-muted-foreground">Gerado em</dt><dd>{formatDateTime(queue.generated_at)}</dd></div>
           </dl>
 
           <div>

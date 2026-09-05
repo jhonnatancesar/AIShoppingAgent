@@ -26,6 +26,7 @@
     "test:admin-dashboard": "node tests/admin-dashboard.mjs",
     "test:admin-users": "node tests/admin-users.mjs",
     "test:admin-feedback": "node tests/admin-feedback.mjs",
+    "test:format-date-time": "node tests/format-date-time.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

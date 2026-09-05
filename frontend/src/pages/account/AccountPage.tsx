@@ -26,6 +26,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { useToast } from '@/hooks/toastContext'
+import { formatDate } from '@/lib/formatDateTime'
 
 export function AccountPage() {
   const [account, setAccount] = useState<AccountProfile | null>(null)
@@ -295,7 +296,7 @@ function AccountSummary({ account, onChanged }: { account: AccountProfile; onCha
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
-  ) : <Button type="button" variant="outline" disabled={busy} onClick={startLink}><Link2 />{account.telegram_link_status === 'pending' ? 'Gerar novo código' : 'Vincular Telegram'}</Button>}<Button type="button" variant="ghost" disabled={busy} onClick={refreshLink}><RefreshCw />Atualizar status</Button></div><FormMessage tone="error">{error}</FormMessage><div className="rounded-lg border border-border bg-muted/35 p-3 text-xs text-muted-foreground">Conta criada em {new Date(account.created_at).toLocaleDateString('pt-BR')}. O Telegram é opcional; desvincular não remove sua conta, missões ou acesso Web.</div></CardContent></Card>
+  ) : <Button type="button" variant="outline" disabled={busy} onClick={startLink}><Link2 />{account.telegram_link_status === 'pending' ? 'Gerar novo código' : 'Vincular Telegram'}</Button>}<Button type="button" variant="ghost" disabled={busy} onClick={refreshLink}><RefreshCw />Atualizar status</Button></div><FormMessage tone="error">{error}</FormMessage><div className="rounded-lg border border-border bg-muted/35 p-3 text-xs text-muted-foreground">Conta criada em {formatDate(account.created_at)}. O Telegram é opcional; desvincular não remove sua conta, missões ou acesso Web.</div></CardContent></Card>
 }
 
 function EmailVerificationStatus({ account, onChanged }: { account: AccountProfile; onChanged: (account: AccountProfile) => void }) {

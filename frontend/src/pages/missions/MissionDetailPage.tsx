@@ -30,6 +30,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { ToggleGroup } from '@/components/ui/toggle-group'
 import { useToast } from '@/hooks/toastContext'
+import { formatDateTime } from '@/lib/formatDateTime'
 
 function money(value: string, currency: string) {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency }).format(Number(value))
@@ -254,7 +255,7 @@ export function MissionDetailView({ mission, onReload }: { mission: MissionDetai
           ) : (
             <ul className="space-y-1.5 text-sm text-muted-foreground">
               {mission.transitions.map((transition, index) => (
-                <li key={index}>{STATUS_LABELS[transition.from_status]} → {STATUS_LABELS[transition.to_status]} ({transition.transitioned_at})</li>
+                <li key={index}>{STATUS_LABELS[transition.from_status]} → {STATUS_LABELS[transition.to_status]} ({formatDateTime(transition.transitioned_at)})</li>
               ))}
             </ul>
           )}

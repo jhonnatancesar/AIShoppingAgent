@@ -19,6 +19,7 @@ import { Badge } from '../../components/ui/badge'
 import { Button } from '../../components/ui/button'
 import { Card, CardContent } from '../../components/ui/card'
 import { useImageFallbackChain } from '../../hooks/useImageFallbackChain'
+import { formatDateTime } from '@/lib/formatDateTime'
 
 const AVAILABILITY_LABELS: Record<OfferAvailability, string> = {
   available: 'Disponível',
@@ -34,10 +35,6 @@ const PARTY_LABELS: Record<MarketplacePartyKind, string> = {
 
 function money(value: string, currency: string) {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency }).format(Number(value))
-}
-
-function dateTime(value: string) {
-  return new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(value))
 }
 
 function ratingAverage(value: string) {
@@ -110,7 +107,7 @@ export function OfferDetailView({ offer, comparison }: { offer: OfferDetail; com
                   <span>Total {money(observation.total_amount, observation.currency)}</span>
                 </div>
                 <Button asChild size="lg"><a href={offer.original_url} target="_blank" rel="noreferrer">Ver na loja <ExternalLink /></a></Button>
-                <p className="text-xs text-muted-foreground">Atualizado em {dateTime(observation.observed_at)}</p>
+                <p className="text-xs text-muted-foreground">Atualizado em {formatDateTime(observation.observed_at)}</p>
               </div>
             ) : (
               <div className="space-y-3">
@@ -131,7 +128,7 @@ export function OfferDetailView({ offer, comparison }: { offer: OfferDetail; com
       </div>
 
       <div className="mt-6 flex flex-col items-start justify-between gap-3 border-t border-border pt-4 sm:flex-row sm:items-center">
-        <p className="text-sm text-muted-foreground">Oferta vista pela última vez em {dateTime(offer.last_seen_at)}.</p>
+        <p className="text-sm text-muted-foreground">Oferta vista pela última vez em {formatDateTime(offer.last_seen_at)}.</p>
         <Button variant="outline" asChild><Link to="/app/missions"><ArrowLeft />Voltar para missões</Link></Button>
       </div>
     </section>

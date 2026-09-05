@@ -48,6 +48,12 @@ try {
   assert.match(activeHtml, /R\$\s*4\.500,00/)
   assert.match(activeHtml, /KaBuM!/)
   assert.match(activeHtml, /A cada 60 minutos/)
+  // TASK-120: Histórico mostra a data/hora da transição formatada em
+  // pt-BR/Brasília (2026-09-01T12:00:00Z -> 09:00 em America/Sao_Paulo),
+  // nunca o timestamp ISO/UTC cru.
+  assert.match(activeHtml, /01\/09\/2026 09:00/)
+  assert.doesNotMatch(activeHtml, /2026-09-01T12:00:00Z/)
+  assert.doesNotMatch(activeHtml, /2026-09-01T12:00:00\.000Z/)
   assert.match(activeHtml, /Placa de vídeo RTX 5070 Ti/)
   assert.match(activeHtml, /\/app\/offers\/offer-1/)
   assert.match(activeHtml, /Ver detalhes/)

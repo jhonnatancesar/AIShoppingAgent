@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { useToast } from '@/hooks/toastContext'
+import { formatDateTime } from '@/lib/formatDateTime'
 
 const PAGE_SIZE = 20
 const ALL = 'all'
@@ -165,7 +166,7 @@ function FeedbackRow({ item, onChanged }: { item: FeedbackItem; onChanged: () =>
           <Badge variant={STATUS_VARIANT[item.status]}>{STATUS_LABELS[item.status]}</Badge>
           <Badge variant="secondary">{KIND_LABELS[item.kind]}</Badge>
           <span className="text-sm font-medium">{item.user_display_name || 'Usuário anônimo'}</span>
-          <span className="text-xs text-muted-foreground">· {CHANNEL_LABELS[item.channel]} · {new Date(item.created_at).toLocaleString('pt-BR')}</span>
+          <span className="text-xs text-muted-foreground">· {CHANNEL_LABELS[item.channel]} · {formatDateTime(item.created_at)}</span>
         </button>
 
         {open ? (
