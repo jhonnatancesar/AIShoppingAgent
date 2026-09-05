@@ -1,10 +1,11 @@
-import type { FormEvent } from 'react'
+import type { FormEvent, ReactNode } from 'react'
 import { Filter, Search, X } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { StoreName } from '@/components/StoreMark'
 
 export type OfferFilterKey = 'store' | 'condition' | 'availability' | 'sort'
 
@@ -20,9 +21,13 @@ interface FilterBarProps {
   onClearAdvanced: () => void
 }
 
-const STORE_OPTIONS: [string, string][] = [
-  ['amazon', 'Amazon'], ['kabum', 'KaBuM!'], ['magalu', 'Magalu'],
-  ['mercadolivre', 'Mercado Livre'], ['pichau', 'Pichau'], ['terabyte', 'Terabyte'],
+const STORE_OPTIONS: [string, ReactNode][] = [
+  ['amazon', <StoreName key="amazon" store="amazon">Amazon</StoreName>],
+  ['kabum', <StoreName key="kabum" store="kabum">KaBuM!</StoreName>],
+  ['magalu', <StoreName key="magalu" store="magalu">Magalu</StoreName>],
+  ['mercadolivre', <StoreName key="mercadolivre" store="mercadolivre">Mercado Livre</StoreName>],
+  ['pichau', <StoreName key="pichau" store="pichau">Pichau</StoreName>],
+  ['terabyte', <StoreName key="terabyte" store="terabyte">Terabyte</StoreName>],
 ]
 const CONDITION_OPTIONS: [string, string][] = [
   ['new', 'Novo'], ['refurbished', 'Recondicionado'], ['used', 'Usado'], ['unknown', 'Não identificada'],
@@ -87,7 +92,7 @@ export function FilterBar({ draftQuery, onDraftQueryChange, onSearchSubmit, stor
   )
 }
 
-function FilterSelect({ label, value, onChange, options, includeAll = true }: { label: string; value: string; onChange: (value: string) => void; options: [string, string][]; includeAll?: boolean }) {
+function FilterSelect({ label, value, onChange, options, includeAll = true }: { label: string; value: string; onChange: (value: string) => void; options: [string, ReactNode][]; includeAll?: boolean }) {
   return (
     <Select value={value || 'all'} onValueChange={(next) => onChange(next === 'all' ? '' : next)}>
       <SelectTrigger aria-label={label} className="w-full"><SelectValue placeholder={label} /></SelectTrigger>

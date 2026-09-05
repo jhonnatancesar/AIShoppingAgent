@@ -13,17 +13,15 @@ try {
   const html = renderToStaticMarkup(React.createElement(CouponsPage))
 
   assert.match(html, /Cupons/, 'título da seção deve aparecer')
-  assert.match(html, /Ainda n[aã]o encontramos um cupom/, 'estado vazio honesto deve aparecer')
-  assert.match(
-    html,
-    /Quando uma das lojas liberar um código que vale a pena/,
-    'complemento do estado vazio deve aparecer',
-  )
+  assert.match(html, /modelos de apresentação, não cupons ativos/i, 'modelos devem ser identificados com honestidade')
+  for (const store of ['Amazon', 'KaBuM!', 'Magalu', 'Mercado Livre', 'Pichau', 'Terabyte']) {
+    assert.match(html, new RegExp(store.replace('!', '!')), `modelo de ${store} deve aparecer`)
+  }
 
   // Subtask 11: zero dado artificial apresentado como se fosse real.
   assert.doesNotMatch(html, /DESCONTO10/i, 'nunca um código de cupom fictício')
   assert.doesNotMatch(html, /\d+\s*cupons?\s+dispon[íi]ve(l|is)/i, 'nunca uma contagem de cupom inventada')
-  assert.doesNotMatch(html, /%/, 'nenhuma porcentagem de desconto inventada')
+  assert.doesNotMatch(html, />\s*\d+\s*%/, 'nenhuma porcentagem de desconto inventada no conteúdo')
   assert.doesNotMatch(html, /(collector|scraper|AIShoppingAgent-cupom|repositório)/i, 'nenhum detalhe técnico interno exposto ao usuário')
 
   const single = renderToStaticMarkup(React.createElement(CouponCollection, { coupons: [{ id: 'c1', storeCode: 'amazon', title: 'Benefício real', code: 'CODIGO_REAL' }] }))

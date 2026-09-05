@@ -5,6 +5,7 @@ import { ApiError } from '../../api/client'
 import { missionsApi } from '../../api/missions'
 import type { MissionDetail, MissionOfferLink, QuotaErrorDetails } from '../../api/types'
 import { STATUS_BADGE_VARIANT, STATUS_LABELS, STORE_LABELS } from './statusLabels'
+import { StoreName } from '@/components/StoreMark'
 import { StoreSelectionField, TargetPriceFields } from './MissionFormFields'
 import { formatPriceDisplay, toApiDecimal } from './priceFormat'
 import { OfferCard, type OfferCardData } from '@/components/OfferCard'
@@ -216,8 +217,10 @@ export function MissionDetailView({ mission, onReload }: { mission: MissionDetai
             </div>
             <div>
               <dt className="text-xs text-muted-foreground">Lojas</dt>
-              <dd className="text-sm">
-                {mission.sources.length === 0 ? 'Nenhuma loja selecionada' : mission.sources.map((source) => STORE_LABELS[source.store_code] ?? source.store_code).join(', ')}
+              <dd className="mt-1 flex flex-wrap gap-2 text-sm">
+                {mission.sources.length === 0
+                  ? 'Nenhuma loja selecionada'
+                  : mission.sources.map((source) => <StoreName key={source.store_code} store={source.store_code}>{STORE_LABELS[source.store_code] ?? source.store_code}</StoreName>)}
               </dd>
             </div>
             {mission.schedule ? (

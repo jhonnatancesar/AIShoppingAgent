@@ -148,7 +148,7 @@ export function ProductSearchPage() {
             {result.request_kind === 'generic_category' ? <GenericChoice result={result} selectedOffer={selectedGenericOffer} setSelectedOffer={setSelectedGenericOffer} /> : null}
             <OfferGrid offers={result.offers} selectable={result.request_kind === 'generic_category'} selectedOffer={selectedGenericOffer} setSelectedOffer={setSelectedGenericOffer} />
             <div className="mt-4"><FormMessage tone="error">{error}</FormMessage></div>
-            <div className="sticky bottom-4 z-10 mt-6 flex flex-col items-start justify-between gap-3 rounded-xl border border-border bg-card/95 p-4 shadow-xl backdrop-blur sm:flex-row sm:items-center"><div><p className="text-sm font-medium">Quer colocar esta busca no radar?</p><p className="text-xs text-muted-foreground">Ao monitorar, a gente avisa quando aparecer uma boa oportunidade.</p></div><Button size="lg" disabled={!canMonitor || monitoring} onClick={monitor}><Target />{monitoring ? 'Criando missão…' : 'Monitorar'}</Button></div>
+            <div className="sticky bottom-4 z-10 mt-6 flex flex-col items-start justify-between gap-3 rounded-xl border border-border bg-card/95 p-4 shadow-xl backdrop-blur sm:flex-row sm:items-center"><div><p className="text-sm font-medium">Quer acompanhar esta busca?</p><p className="text-xs text-muted-foreground">Crie um alerta para receber as próximas oportunidades encontradas.</p></div><Button size="lg" disabled={!canMonitor || monitoring} onClick={monitor}><Target />{monitoring ? 'Criando missão…' : 'Criar alerta'}</Button></div>
           </>
         ) : null}
       </div>

@@ -61,7 +61,7 @@ export function AdminUsersView({
 
   return (
     <section>
-      <PageHeader eyebrow="DEV / ADMIN" title="Usuários" description="Gerencie acessos, limites e missões de cada conta." actions={<CreateUserDialog onCreated={onReload} />} />
+      <PageHeader eyebrow="Administração" title="Usuários" description="Gerencie acessos, limites e missões de cada conta." actions={<CreateUserDialog onCreated={onReload} />} />
 
       <form className="mb-2 flex flex-col gap-2 sm:flex-row" onSubmit={submitSearch}>
         <Input value={query} onChange={(event) => onQueryChange(event.target.value)} placeholder="Pesquisar nome, usuário ou e-mail" />

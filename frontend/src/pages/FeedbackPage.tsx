@@ -112,7 +112,7 @@ function StoreSuggestionForm() {
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2"><Store className="size-5 text-primary" />Sugerir loja</CardTitle>
-        <CardDescription>Sentiu falta de alguma loja? Mande o nome para a gente avaliar.</CardDescription>
+        <CardDescription>Sentiu falta de alguma loja? Envie o nome para avaliarmos a inclusão.</CardDescription>
       </CardHeader>
       <CardContent>
         <form className="space-y-4" onSubmit={submit}>

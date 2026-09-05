@@ -129,7 +129,7 @@ export function AppHomeView({
           <CardContent className="flex flex-col items-center gap-3.5 p-8 text-center sm:p-10">
             <div className="grid size-12 place-items-center rounded-2xl bg-primary/12 text-primary ring-1 ring-primary/15"><Target className="size-5" /></div>
             <CardTitle className="text-xl font-bold tracking-[-0.025em]">O que você quer colocar no radar?</CardTitle>
-            <CardDescription className="max-w-lg text-sm leading-6">Conte o produto, o preço que seria bom para você e em quais lojas vale procurar. O resto fica com a gente.</CardDescription>
+            <CardDescription className="max-w-lg text-sm leading-6">Informe o produto, o preço desejado e as lojas que você quer comparar. O GG Oferta organiza as oportunidades para você.</CardDescription>
             <Button asChild size="lg"><Link to="/app/missions/new">Criar minha primeira missão <ArrowRight /></Link></Button>
           </CardContent>
         </Card>

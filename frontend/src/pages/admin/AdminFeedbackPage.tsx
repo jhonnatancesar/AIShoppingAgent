@@ -74,7 +74,7 @@ export function AdminFeedbackPage() {
 
   return (
     <section>
-      <PageHeader eyebrow="DEV / ADMIN" title="Feedback" description="Acompanhe pedidos de ajuda, problemas relatados e novas lojas sugeridas." />
+      <PageHeader eyebrow="Administração" title="Feedback" description="Acompanhe pedidos de ajuda, problemas relatados e novas lojas sugeridas." />
 
       <div className="mb-6 grid gap-4 sm:grid-cols-2 sm:max-w-md">
         <div className="space-y-1.5">

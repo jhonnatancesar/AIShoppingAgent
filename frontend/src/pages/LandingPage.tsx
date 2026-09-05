@@ -19,20 +19,20 @@ const STORES = [
 
 const FEATURE_GROUPS = [
   {
-    title: 'Do seu jeito',
-    description: 'Diga qual produto você quer e, se fizer sentido, até quanto vale a pena pagar.',
+    title: 'Um alerta do seu jeito',
+    description: 'Escolha o produto, o preço desejado e as lojas que você considera confiáveis.',
   },
   {
-    title: 'Sem ficar conferindo loja por loja',
-    description: 'O GG Oferta acompanha os preços continuamente nas lojas que você escolher, sem você precisar voltar toda hora só para ver se mudou.',
+    title: 'Comparação em um só lugar',
+    description: 'Consulte as ofertas encontradas sem abrir várias abas nem refazer a mesma busca.',
   },
   {
-    title: 'Onde for melhor pra você',
-    description: 'Acompanhe pela Web ou receba um aviso no Telegram — as duas mostram a mesma coisa, do jeito que preferir.',
+    title: 'Avisos quando importam',
+    description: 'Acompanhe pelo site ou receba no Telegram quando surgir uma oportunidade compatível.',
   },
   {
-    title: 'Antes de decidir',
-    description: 'Veja o histórico de preço e, quando a loja informar, as condições de parcelamento.',
+    title: 'Mais contexto para decidir',
+    description: 'Veja o histórico do preço e as condições de pagamento informadas pela loja.',
   },
 ]
 
@@ -93,19 +93,19 @@ function Hero() {
           transition={{ duration: 0.4, ease: 'easeOut' }}
         >
           <h1 className="max-w-2xl text-4xl font-bold leading-[1.06] tracking-[-0.055em] text-balance sm:text-6xl">
-            <span className="block text-foreground">Você diz o que quer comprar.</span>
-            <span className="mt-2 block text-primary">A gente acompanha o preço.</span>
+            <span className="block text-foreground">Encontre o momento certo</span>
+            <span className="mt-2 block text-primary">para comprar.</span>
           </h1>
           <p className="mt-6 max-w-xl text-base leading-7 text-muted-foreground sm:text-lg sm:leading-8">
-            Sem abrir loja por loja todo dia para ver se o preço caiu. Quando surgir uma oferta
-            que vale a pena, a gente mostra por aqui ou no Telegram.
+            Escolha o produto, o valor que faz sentido e as lojas de confiança. O GG Oferta
+            compara os preços e avisa quando aparecer uma oportunidade.
           </p>
           <div className="mt-8 flex flex-col gap-3 sm:flex-row">
             <Button asChild size="lg">
-              <Link to="/cadastro">Criar conta</Link>
+              <Link to="/cadastro">Criar meu alerta</Link>
             </Button>
             <Button asChild size="lg" variant="outline">
-              <Link to="/login">Entrar</Link>
+              <Link to="/login">Já tenho conta</Link>
             </Button>
           </div>
         </motion.div>
@@ -299,7 +299,7 @@ function DemoOfferCard() {
         Exemplo de oferta
       </p>
       <p className="mt-1 text-sm font-medium">{DEMO_PRODUCT}</p>
-      <p className="text-xs text-muted-foreground">{DEMO_STORE}</p>
+      <p className="mt-1 text-xs text-muted-foreground"><StoreName store="amazon">{DEMO_STORE}</StoreName></p>
       <div className="mt-1.5 flex items-baseline gap-2">
         <span className="text-lg font-bold text-opportunity">{DEMO_PRICE}</span>
         <span className="text-xs text-muted-foreground">{DEMO_INSTALLMENT}</span>
@@ -317,15 +317,15 @@ function Story() {
       <div className="mx-auto max-w-5xl space-y-16 px-4 sm:px-6 lg:space-y-24 lg:px-8">
         <StoryRow
           eyebrow="01"
-          title="Você conta o que está procurando"
-          description="Conte qual produto você quer, quanto pretende pagar e onde gostaria de comprar. Pronto."
+          title="Conte o que você procura"
+          description="Informe o produto e, se quiser, o preço que pretende pagar. Depois, escolha as lojas que deseja comparar."
           visual={<MissionPreview />}
         />
         <StoryRow
           reverse
           eyebrow="02"
-          title="A gente fica de olho, sem te incomodar"
-          description="O GG Oferta acompanha as lojas por você. Quando o preço mudar de verdade, você fica sabendo."
+          title="Receba o aviso na hora certa"
+          description="Quando o preço chegar ao seu objetivo, a oportunidade aparece no site e também pode chegar pelo Telegram."
           visual={<PriceDropPreview />}
         />
       </div>
@@ -364,7 +364,11 @@ function MissionPreview() {
       <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Exemplo</p>
       <p className="mt-2 text-sm font-medium">🔎 Fone de ouvido bluetooth</p>
       <p className="mt-1 text-sm text-muted-foreground">🎯 até R$ 200</p>
-      <p className="mt-1 text-sm text-muted-foreground">🏪 Amazon, Magalu, KaBuM!</p>
+      <div className="mt-3 flex flex-wrap gap-2 text-xs text-muted-foreground">
+        <StoreName store="amazon">Amazon</StoreName>
+        <StoreName store="magalu">Magalu</StoreName>
+        <StoreName store="kabum">KaBuM!</StoreName>
+      </div>
     </div>
   )
 }
@@ -406,7 +410,8 @@ function Stores() {
   return (
     <section className="py-14">
       <div className="mx-auto max-w-5xl px-4 text-center sm:px-6 lg:px-8">
-        <p className="text-sm text-muted-foreground">Lojas que o GG Oferta acompanha</p>
+        <h2 className="text-2xl font-bold tracking-[-0.035em]">Compare nas lojas que você já conhece</h2>
+        <p className="mt-2 text-sm text-muted-foreground">As ofertas ficam organizadas para você avaliar preço, loja e condição de pagamento.</p>
         <div className="mt-5 flex flex-wrap items-center justify-center gap-2.5">
           {STORES.map((store) => (
             <span
@@ -426,16 +431,16 @@ function FinalCta() {
   return (
     <section className="border-t border-primary/20 bg-primary py-20 text-primary-foreground">
       <div className="mx-auto max-w-xl px-4 text-center sm:px-6 lg:px-8">
-        <h2 className="text-2xl font-bold tracking-[-0.035em] sm:text-3xl">Já sabe o que quer comprar?</h2>
+        <h2 className="text-2xl font-bold tracking-[-0.035em] sm:text-3xl">Pronto para acompanhar seu próximo preço?</h2>
         <p className="mt-3 text-base leading-relaxed text-primary-foreground/75">
-          Deixa o GG Oferta acompanhar o preço por você.
+          Crie seu primeiro alerta em poucos passos e compare as oportunidades com calma.
         </p>
         <div className="mt-7 flex flex-col items-center justify-center gap-3 sm:flex-row">
           <Button asChild size="lg" variant="secondary">
-            <Link to="/cadastro">Criar conta</Link>
+            <Link to="/cadastro">Criar meu alerta</Link>
           </Button>
           <Button asChild size="lg" variant="outline" className="border-primary-foreground/30 bg-transparent text-primary-foreground hover:bg-primary-foreground/10 hover:text-primary-foreground">
-            <Link to="/login">Entrar</Link>
+            <Link to="/login">Já tenho conta</Link>
           </Button>
         </div>
       </div>

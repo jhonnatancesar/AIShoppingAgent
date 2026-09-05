@@ -11,8 +11,12 @@ const STORE_VISUALS: Record<StoreCode, { name: string; logo: string; background:
 
 export function storeCodeFrom(value: string): StoreCode | null {
   const normalized = value.toLocaleLowerCase('pt-BR').replaceAll(/[^a-z]/g, '')
-  if (normalized === 'mercadolivre') return 'mercadolivre'
-  if (normalized === 'amazon' || normalized === 'kabum' || normalized === 'magalu' || normalized === 'pichau' || normalized === 'terabyte') return normalized
+  if (normalized.includes('mercadolivre') || normalized.includes('mercadolibre')) return 'mercadolivre'
+  if (normalized.includes('amazon')) return 'amazon'
+  if (normalized.includes('kabum')) return 'kabum'
+  if (normalized.includes('magalu') || normalized.includes('magazineluiza')) return 'magalu'
+  if (normalized.includes('pichau')) return 'pichau'
+  if (normalized.includes('terabyte')) return 'terabyte'
   return null
 }
 

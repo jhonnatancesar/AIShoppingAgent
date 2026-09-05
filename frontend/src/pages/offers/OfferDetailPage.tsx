@@ -74,7 +74,7 @@ export function OfferDetailView({ offer, comparison }: { offer: OfferDetail; com
 
   return (
     <section>
-      <PageHeader eyebrow={offer.store.name} title={offer.title} />
+      <PageHeader eyebrow={<StoreName store={offer.store.code}>{offer.store.name}</StoreName>} title={offer.title} />
 
       <div className="grid gap-5 lg:grid-cols-[minmax(14rem,1fr)_minmax(20rem,1.4fr)]">
         <OfferImage offer={offer} key={offer.id} />

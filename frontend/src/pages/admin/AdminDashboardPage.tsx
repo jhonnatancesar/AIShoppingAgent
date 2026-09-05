@@ -99,7 +99,7 @@ export function AdminDashboardView({ data, onReload }: { data: DashboardData; on
   return (
     <section>
       <PageHeader
-        eyebrow="DEV / ADMIN"
+        eyebrow="Administração"
         title="Operação do sistema"
         description="Acompanhe a saúde dos serviços, o volume de uso e as rotinas de operação."
         actions={<Button variant="outline" onClick={onReload}><RefreshCw />Atualizar</Button>}
@@ -169,7 +169,7 @@ export function AdminDashboardView({ data, onReload }: { data: DashboardData; on
         <CardContent className="space-y-5">
           <dl className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 text-sm">
             <div><dt className="text-xs text-muted-foreground">Lotes simultâneos por usuário</dt><dd>{queue.config.max_concurrent_user_batches}{queue.config.max_concurrent_user_batches_override != null ? ' (ajustado)' : ' (padrão)'}</dd></div>
-            <div><dt className="text-xs text-muted-foreground">Cooldown mín./máx.</dt><dd>{queue.config.user_cooldown_min_seconds}s / {queue.config.user_cooldown_max_seconds}s</dd></div>
+            <div><dt className="text-xs text-muted-foreground">Espera mín./máx. por usuário</dt><dd>{queue.config.user_cooldown_min_seconds}s / {queue.config.user_cooldown_max_seconds}s</dd></div>
             <div><dt className="text-xs text-muted-foreground">Intervalo mínimo por loja</dt><dd>{queue.config.store_min_interval_seconds}s</dd></div>
             <div><dt className="text-xs text-muted-foreground">Gerado em</dt><dd>{new Date(queue.generated_at).toLocaleString('pt-BR')}</dd></div>
           </dl>
