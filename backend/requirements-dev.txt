@@ -3,3 +3,4 @@
 ruff>=0.16,<0.17
 pytest>=9.1,<10.0
 pytest-cov>=7.1,<8.0
+redis>=6.4,<7.0  # harness TASK-118H: inspeciona contador/TTL de quota direto no Redis
