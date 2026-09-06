@@ -19,8 +19,6 @@ from app.users.models import UserRole
 def test_real_gg_oferta_manager_core_omniroute(caplog):
     settings = Settings(_env_file=None)
     assert settings.environment != "production"
-    assert settings.cesar_core_ai_enabled
-    assert not settings.cesar_core_disaster_fallback_enabled
     assert settings.cesar_core_api_key_file is not None
     request = AIRequest(
         uuid4(),
@@ -40,5 +38,40 @@ def test_real_gg_oferta_manager_core_omniroute(caplog):
     assert result.request_id == request.request_id
     assert result.provider == "cesar_core"
     assert result.model and result.content.strip() == "CAPPED"
+    assert settings.cesar_core_api_key_file.read_text().strip() not in caplog.text
+    assert all(message.content not in caplog.text for message in request.messages)
+
+
+@pytest.mark.skipif(
+    os.environ.get("AISHOPPING_RUN_CESAR_CORE_CONTRACTS") != "1",
+    reason="Requires explicitly enabled live Core DEV contract environment",
+)
+def test_real_grounding_uses_core_omniroute_web_search(caplog):
+    settings = Settings(_env_file=None)
+    request = AIRequest(
+        uuid4(),
+        UserRole.DEV,
+        "grounding_validation",
+        (
+            AIMessage(
+                AIMessageRole.SYSTEM,
+                "Use Web search and answer briefly using the retrieved evidence.",
+            ),
+            AIMessage(
+                AIMessageRole.USER,
+                "What is the official Python documentation website?",
+            ),
+        ),
+        datetime.now(UTC),
+        require_search_grounding=True,
+    )
+    result = asyncio.run(
+        build_admin_dev_ai_provider_manager(settings).generate(request)
+    )
+    assert result.provider == "cesar_core"
+    assert result.content.strip()
+    assert result.grounding_requested and result.grounding_performed
+    assert "https://docs.python.org/" in result.grounding_sources
+    assert settings.cesar_core_api_key_file is not None
     assert settings.cesar_core_api_key_file.read_text().strip() not in caplog.text
     assert all(message.content not in caplog.text for message in request.messages)

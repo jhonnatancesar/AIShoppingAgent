@@ -16,6 +16,7 @@ from app.collection.models import (
     PriceObservation,
 )
 from app.events.models import Event, EventConsumptionAttempt, EventDeliveryCheckpoint
+from app.historical_bootstrap.models import ExternalPriceReference, HistoricalBootstrap
 from app.market_research.models import MarketPriceAssessment
 from app.missions.models import (
     Mission,
@@ -37,6 +38,8 @@ REGISTERED_MODELS = (
     PriceObservation,
     MissionOfferRelevance,
     MarketPriceAssessment,
+    HistoricalBootstrap,
+    ExternalPriceReference,
     MissionProductAlertState,
     User,
     Product,

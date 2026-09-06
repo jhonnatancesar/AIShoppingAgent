@@ -1,17 +1,8 @@
 """Políticas determinísticas de retry e circuit breaker da TASK-049."""
 
 from datetime import UTC, datetime, timedelta
-from uuid import uuid4
 
 import pytest
-from app.ai_provider import (
-    AdminDevAIProviderManager,
-    AIMessage,
-    AIMessageRole,
-    AIProviderUnavailable,
-    AIRequest,
-    AIResponse,
-)
 from app.collection.providers.base import PlaywrightStoreProvider
 from app.core.resilience import (
     CircuitBreaker,
@@ -22,7 +13,6 @@ from app.core.resilience import (
     parse_retry_after,
     retry_operation,
 )
-from app.users.models import UserRole
 
 
 @pytest.mark.anyio
@@ -116,50 +106,6 @@ def test_permanent_failure_does_not_open_circuit() -> None:
     circuit.before_call()
     circuit.record_failure(transient=False)
     assert circuit.state is CircuitState.CLOSED
-
-
-class _AIProvider:
-    def __init__(self, provider_id: str, model: str, *, fails: bool = False) -> None:
-        self.provider_id = provider_id
-        self.model = model
-        self.fails = fails
-        self.calls = 0
-
-    async def generate(self, request: AIRequest) -> AIResponse:
-        self.calls += 1
-        if self.fails:
-            raise AIProviderUnavailable()
-        return AIResponse(
-            request.request_id,
-            self.provider_id,
-            self.model,
-            "ok",
-            datetime.now(UTC),
-        )
-
-
-@pytest.mark.anyio
-async def test_ai_provider_circuits_are_independent() -> None:
-    suffix = uuid4().hex
-    gemini = _AIProvider("gemini", f"flash-{suffix}", fails=True)
-    groq = _AIProvider("groq", f"groq-{suffix}")
-    manager = AdminDevAIProviderManager(
-        gemini,
-        groq=groq,
-        circuit_failure_threshold=1,
-    )
-    request = AIRequest(
-        uuid4(),
-        UserRole.ADMIN,
-        "resilience_test",
-        (AIMessage(AIMessageRole.USER, "teste"),),
-        datetime.now(UTC),
-    )
-
-    assert (await manager.generate(request)).provider == "groq"
-    assert (await manager.generate(request)).provider == "groq"
-    assert gemini.calls == 1
-    assert groq.calls == 2
 
 
 class _StoreA(PlaywrightStoreProvider):

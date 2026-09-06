@@ -8,11 +8,7 @@ from app.core.config import Settings
 from app.market_research.service import _search_with_enrichment
 from app.search.cesar_core import CesarCoreSearchProvider
 from app.search.contracts import WebSearchError, WebSearchResponse, WebSearchResult
-from app.search.manager import (
-    FirecrawlSearchAdapter,
-    WebSearchManager,
-    build_web_search_manager,
-)
+from app.search.manager import WebSearchManager, build_web_search_manager
 
 
 class Stub:
@@ -86,26 +82,27 @@ def test_payload_normalization_and_final_limit(tmp_path):
 @pytest.mark.parametrize("status", [400, 401, 403, 404, 422, 429, 502])
 def test_no_fallback_for_rejections(tmp_path, status):
     fallback = Stub()
-    manager = WebSearchManager(
-        core(tmp_path, lambda r: httpx.Response(status)), fallback
-    )
+    manager = WebSearchManager(core(tmp_path, lambda r: httpx.Response(status)))
     with pytest.raises(WebSearchError):
         asyncio.run(manager.search("query"))
     assert fallback.calls == 0
 
 
 @pytest.mark.parametrize("status", [500, 503, 504])
-def test_fallback_for_unavailability(tmp_path, status):
+def test_unavailability_is_fail_closed_without_firecrawl(tmp_path, status):
     fallback = Stub()
-    result = asyncio.run(
-        WebSearchManager(
-            core(tmp_path, lambda r: httpx.Response(status)), fallback
-        ).search("query")
-    )
-    assert fallback.calls == 1 and result.fallback_reason
+    with pytest.raises(WebSearchError):
+        asyncio.run(
+            WebSearchManager(core(tmp_path, lambda r: httpx.Response(status))).search(
+                "query"
+            )
+        )
+    assert fallback.calls == 0
 
 
-@pytest.mark.parametrize("code", ["quota_store_unavailable", "quota_store_misconfigured"])
+@pytest.mark.parametrize(
+    "code", ["quota_store_unavailable", "quota_store_misconfigured"]
+)
 def test_no_fallback_for_quota_store_failure(tmp_path, code):
     # ADR 0018 (César Core): 503 do próprio gate de quota (Redis fora ou
     # configuração incompatível) nunca deve virar fallback Firecrawl --
@@ -116,8 +113,7 @@ def test_no_fallback_for_quota_store_failure(tmp_path, code):
         core(
             tmp_path,
             lambda r: httpx.Response(503, json={"error": {"code": code}}),
-        ),
-        fallback,
+        )
     )
     with pytest.raises(WebSearchError) as error:
         asyncio.run(manager.search("query"))
@@ -127,24 +123,16 @@ def test_no_fallback_for_quota_store_failure(tmp_path, code):
 
 def test_zero_is_success_without_fallback():
     fallback = Stub()
-    assert asyncio.run(WebSearchManager(Stub(), fallback).search("query")).results == ()
+    assert asyncio.run(WebSearchManager(Stub()).search("query")).results == ()
     assert fallback.calls == 0
 
 
-def test_configuration_is_opt_in(tmp_path):
+def test_core_configuration_is_mandatory(tmp_path):
     settings = Settings(_env_file=None)
-    assert (
-        not settings.cesar_core_search_enabled
-        and not settings.cesar_core_search_fallback_enabled
-    )
+    with pytest.raises(WebSearchError, match="core_search_credential_unavailable"):
+        build_web_search_manager(settings)
     manager = build_web_search_manager(
-        settings.model_copy(
-            update={
-                "cesar_core_search_enabled": True,
-                "cesar_core_api_key_file": tmp_path / "key",
-            }
-        ),
-        None,
+        settings.model_copy(update={"cesar_core_api_key_file": tmp_path / "key"})
     )
     assert isinstance(manager._primary, CesarCoreSearchProvider)
 
@@ -177,7 +165,7 @@ def test_search_and_enrichment_are_separate(monkeypatch, sufficient, empty):
     scraper = Scraper()
     asyncio.run(
         _search_with_enrichment(
-            WebSearchManager(primary, fallback),
+            WebSearchManager(primary),
             enrichment=scraper,
             query="Ryzen",
             product=object(),
@@ -186,15 +174,3 @@ def test_search_and_enrichment_are_separate(monkeypatch, sufficient, empty):
     )
     assert fallback.calls == 0
     assert scraper.calls == (0 if sufficient or empty else 3)
-
-
-def test_firecrawl_adapter_search_only():
-    class Client:
-        async def search(self, query, *, sources, limit):
-            assert sources == ("web",) and limit == 3
-            return SimpleNamespace(results=(), request_id="fc-id", credits_used=2)
-
-    adapter = FirecrawlSearchAdapter(Client())
-    result = asyncio.run(adapter.search("query", limit=3, correlation_id="corr"))
-    assert result.provider == "firecrawl" and result.credits_used == 2
-    assert not hasattr(adapter, "scrape_basic")

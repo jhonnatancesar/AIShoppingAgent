@@ -1,5 +1,6 @@
 import asyncio
 import json
+from dataclasses import replace
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -14,20 +15,21 @@ from app.ai_provider.contracts import (
     AIMessageRole,
     AIProviderError,
     AIRequest,
-    AIResponse,
+    AIRequestError,
 )
 from app.ai_provider.manager import (
     CesarCoreAIProviderManager,
+    build_admin_dev_ai_provider_manager,
     build_user_ai_provider_manager,
 )
 from app.core.config import Settings
 from app.users.models import UserRole
 
 
-def request():
+def request(profile: UserRole = UserRole.USER):
     return AIRequest(
         uuid4(),
-        UserRole.USER,
+        profile,
         "typed_roles_validation",
         (
             AIMessage(AIMessageRole.SYSTEM, "internal-instruction"),
@@ -128,43 +130,146 @@ def test_timeout_is_not_disaster_connection_failure(tmp_path):
         asyncio.run(provider(tmp_path, handler).generate(request()))
 
 
-@pytest.mark.parametrize("enabled", [False, True])
-def test_disaster_is_opt_in_and_only_for_connection_failure(tmp_path, enabled):
+def test_core_connection_failure_never_calls_legacy(tmp_path):
     def handler(req):
         raise httpx.ConnectError("refused")
 
-    calls = []
-
-    class Legacy:
-        async def generate(self, req):
-            calls.append(req)
-            return AIResponse(req.request_id, "legacy", "free", "ok", datetime.now(UTC))
-
     manager = CesarCoreAIProviderManager(
         provider(tmp_path, handler),
-        lambda: Legacy(),
         profile=UserRole.USER,
-        disaster_fallback=enabled,
         circuit_failure_threshold=100,
         circuit_open_seconds=1,
     )
-    if enabled:
-        assert asyncio.run(manager.generate(request())).provider == "legacy"
-    else:
-        with pytest.raises(CesarCoreConnectionUnavailable):
-            asyncio.run(manager.generate(request()))
-    assert len(calls) == int(enabled)
+    with pytest.raises(CesarCoreConnectionUnavailable):
+        asyncio.run(manager.generate(request()))
 
 
-def test_flag_defaults_off_and_enabled_does_not_require_provider_keys(tmp_path):
-    config = Settings(_env_file=None)
-    assert config.cesar_core_ai_enabled is False
-    assert config.cesar_core_disaster_fallback_enabled is False
-    manager = build_user_ai_provider_manager(
-        Settings(
-            _env_file=None,
-            cesar_core_ai_enabled=True,
-            cesar_core_api_key_file=tmp_path / "key",
+@pytest.mark.parametrize(
+    ("role", "manager_profile"),
+    [
+        (UserRole.USER, UserRole.USER),
+        (UserRole.ADMIN, None),
+        (UserRole.DEV, None),
+    ],
+)
+def test_all_normal_profiles_use_core_only(tmp_path, role, manager_profile):
+    original = request(role)
+
+    def handler(req):
+        return httpx.Response(
+            200,
+            json={
+                "request_id": "core-id",
+                "correlation_id": str(original.request_id),
+                "provider_gateway": "omniroute",
+                "model": "resolved",
+                "content": "answer",
+                "usage": {"completion_tokens": 1},
+            },
         )
+
+    manager = CesarCoreAIProviderManager(
+        provider(tmp_path, handler),
+        profile=manager_profile,
+        circuit_failure_threshold=100,
+        circuit_open_seconds=1,
     )
-    assert isinstance(manager, CesarCoreAIProviderManager)
+    assert asyncio.run(manager.generate(original)).provider == "cesar_core"
+
+
+def test_core_is_mandatory_for_user_and_admin_dev(tmp_path):
+    config = Settings(_env_file=None)
+    with pytest.raises(AIRequestError, match="CESAR_CORE_API_KEY_FILE"):
+        build_user_ai_provider_manager(config)
+    with pytest.raises(AIRequestError, match="CESAR_CORE_API_KEY_FILE"):
+        build_admin_dev_ai_provider_manager(config)
+
+    core_config = Settings(
+        _env_file=None,
+        cesar_core_api_key_file=tmp_path / "key",
+    )
+    assert isinstance(
+        build_user_ai_provider_manager(core_config), CesarCoreAIProviderManager
+    )
+    assert isinstance(
+        build_admin_dev_ai_provider_manager(core_config), CesarCoreAIProviderManager
+    )
+
+
+def test_public_ai_package_exposes_no_direct_provider_factory() -> None:
+    import app.ai_provider as package
+
+    for name in (
+        "GeminiProvider",
+        "GroqProvider",
+        "OpenRouterProvider",
+        "UserAIProviderManager",
+        "AdminDevAIProviderManager",
+    ):
+        assert not hasattr(package, name)
+
+
+@pytest.mark.parametrize("status", [401, 403, 429, 503])
+def test_grounding_core_rejection_never_calls_legacy(tmp_path, status):
+    manager = CesarCoreAIProviderManager(
+        provider(tmp_path, lambda req: httpx.Response(status)),
+        profile=UserRole.USER,
+        circuit_failure_threshold=100,
+        circuit_open_seconds=1,
+    )
+    with pytest.raises(AIProviderError):
+        asyncio.run(manager.generate(replace(request(), require_search_grounding=True)))
+
+
+def test_grounding_uses_core_and_preserves_typed_messages(tmp_path):
+    original = replace(request(), require_search_grounding=True)
+    wire = []
+
+    def handler(req):
+        wire.append(json.loads(req.content))
+        return httpx.Response(
+            200,
+            json={
+                "request_id": "core-id",
+                "correlation_id": str(original.request_id),
+                "provider_gateway": "omniroute",
+                "model": "resolved",
+                "content": "grounded answer",
+                "usage": {"completion_tokens": 12},
+                "grounding_requested": True,
+                "grounding_performed": True,
+                "grounding_sources": ["https://example.test/source"],
+            },
+        )
+
+    manager = CesarCoreAIProviderManager(
+        provider(tmp_path, handler),
+        profile=UserRole.USER,
+        circuit_failure_threshold=100,
+        circuit_open_seconds=1,
+    )
+    response = asyncio.run(manager.generate(original))
+    assert response.provider == "cesar_core"
+    assert response.grounding_performed
+    assert response.grounding_sources == ("https://example.test/source",)
+    assert wire[0]["require_search_grounding"] is True
+    assert wire[0]["messages"] == [
+        {"role": message.role.value, "content": message.content}
+        for message in original.messages
+    ]
+
+
+def test_grounding_core_failure_is_fail_closed(tmp_path):
+    grounded = replace(request(), require_search_grounding=True)
+
+    def unavailable(_request):
+        raise httpx.ConnectError("down")
+
+    manager = CesarCoreAIProviderManager(
+        provider(tmp_path, unavailable),
+        profile=UserRole.USER,
+        circuit_failure_threshold=100,
+        circuit_open_seconds=1,
+    )
+    with pytest.raises(CesarCoreConnectionUnavailable):
+        asyncio.run(manager.generate(grounded))

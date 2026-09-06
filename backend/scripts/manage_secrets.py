@@ -14,18 +14,6 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_DIRECTORY = PROJECT_ROOT / ".secrets"
 SECRET_SOURCES = {
     "postgres_password": (PROJECT_ROOT / ".env", "POSTGRES_PASSWORD"),
-    "gemini_api_key_user": (
-        PROJECT_ROOT / "backend" / ".env",
-        "AISHOPPING_GEMINI_API_KEY_USER",
-    ),
-    "gemini_api_key_admin_dev": (
-        PROJECT_ROOT / "backend" / ".env",
-        "AISHOPPING_GEMINI_API_KEY_ADMIN_DEV",
-    ),
-    "groq_api_key": (
-        PROJECT_ROOT / "backend" / ".env",
-        "AISHOPPING_GROQ_API_KEY",
-    ),
     "telegram_bot_token": (
         PROJECT_ROOT / "backend" / ".env",
         "AISHOPPING_TELEGRAM_BOT_TOKEN",

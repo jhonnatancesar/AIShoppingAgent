@@ -23,17 +23,14 @@ from app.ai_provider.contracts import (
     AIMessageRole,
     AIProviderError,
     AIRequest,
+    AIRequestError,
 )
 from app.ai_provider.manager import build_admin_dev_ai_provider_manager
 from app.core.config import Settings
-from app.core.resilience import RetryPolicy
-from app.search import firecrawl as firecrawl_module
 from app.search.contracts import WebSearchError
-from app.search.firecrawl import FirecrawlSearchProvider
 from app.search.manager import build_web_search_manager
 from app.users.models import UserRole
 from argon2 import PasswordHasher
-from pydantic import SecretStr
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("AISHOPPING_RUN_118H_RECOVERY") != "1",
@@ -45,13 +42,24 @@ SYSTEM = "Responda somente com a palavra OK."
 
 
 def assert_private(output):
-    files = [GG / ".secrets" / name for name in (
-        "cesar-core-client-dev", "firecrawl_api_key", "gemini_api_key_admin_dev",
-        "groq_api_key", "openrouter_api_key",
-    )]
-    files.append(Path(os.environ["CESAR_CORE_118H_SCRIPT"]).parents[1] / ".secrets/omniroute_api_key")
+    files = [
+        GG / ".secrets" / name
+        for name in (
+            "cesar-core-client-dev",
+            "firecrawl_api_key",
+            "gemini_api_key_admin_dev",
+            "groq_api_key",
+            "openrouter_api_key",
+        )
+    ]
+    files.append(
+        Path(os.environ["CESAR_CORE_118H_SCRIPT"]).parents[1]
+        / ".secrets/omniroute_api_key"
+    )
     for path in files:
-        assert path.read_text().strip() not in output, "Segredo detectado; valor omitido"
+        assert path.read_text().strip() not in output, (
+            "Segredo detectado; valor omitido"
+        )
     assert SYSTEM not in output and QUERY not in output
 
 
@@ -63,10 +71,16 @@ def private_records(caplog):
 
 
 def request():
-    return AIRequest(uuid4(), UserRole.DEV, "recovery_validation", (
-        AIMessage(AIMessageRole.SYSTEM, SYSTEM),
-        AIMessage(AIMessageRole.USER, "Confirme a disponibilidade."),
-    ), datetime.now(UTC))
+    return AIRequest(
+        uuid4(),
+        UserRole.DEV,
+        "recovery_validation",
+        (
+            AIMessage(AIMessageRole.SYSTEM, SYSTEM),
+            AIMessage(AIMessageRole.USER, "Confirme a disponibilidade."),
+        ),
+        datetime.now(UTC),
+    )
 
 
 class CoreProcess:
@@ -100,24 +114,40 @@ class CoreProcess:
                 PasswordHasher().hash(self.admin_password), encoding="utf-8"
             )
             self.admin_pepper_file = self.directory / "admin-credential-pepper"
-            self.admin_pepper_file.write_text(secrets.token_urlsafe(48), encoding="utf-8")
+            self.admin_pepper_file.write_text(
+                secrets.token_urlsafe(48), encoding="utf-8"
+            )
             self.admin_allowed_origin = self.url
 
     def start(self):
         assert self.process is None
         self.log = (self.directory / f"core-{len(self.logs)}.log").open("wb")
         self.logs.append(Path(self.log.name))
-        args = [sys.executable, os.environ["CESAR_CORE_118H_SCRIPT"], "serve",
-                "--gg-repo", str(GG), "--port", str(self.port), "--quota", str(self.quota),
-                "--quota-namespace", self.quota_namespace]
+        args = [
+            sys.executable,
+            os.environ["CESAR_CORE_118H_SCRIPT"],
+            "serve",
+            "--gg-repo",
+            str(GG),
+            "--port",
+            str(self.port),
+            "--quota",
+            str(self.quota),
+            "--quota-namespace",
+            self.quota_namespace,
+        ]
         if self.deny_search:
             args.append("--deny-search")
         if self.admin_enabled:
             args += [
-                "--admin-database", str(self.admin_database),
-                "--admin-password-hash-file", str(self.admin_password_hash_file),
-                "--admin-pepper-file", str(self.admin_pepper_file),
-                "--admin-allowed-origin", self.admin_allowed_origin,
+                "--admin-database",
+                str(self.admin_database),
+                "--admin-password-hash-file",
+                str(self.admin_password_hash_file),
+                "--admin-pepper-file",
+                str(self.admin_pepper_file),
+                "--admin-allowed-origin",
+                self.admin_allowed_origin,
             ]
         self.process = subprocess.Popen(args, stdout=self.log, stderr=subprocess.STDOUT)
         deadline = time.monotonic() + 90
@@ -126,7 +156,7 @@ class CoreProcess:
                 try:
                     if client.get(self.url + "/ready").json().get("status") == "ok":
                         return self.process.pid
-                except (httpx.HTTPError, ValueError):
+                except httpx.HTTPError, ValueError:
                     pass
                 time.sleep(0.2)
         pytest.fail("Core não iniciou; logs não exibidos por segurança")
@@ -146,7 +176,11 @@ class CoreProcess:
         return httpx.get(self.url + "/metrics", trust_env=False).text
 
     def wire(self):
-        return [row for row in self.metrics().splitlines() if row.startswith("cesar_core_118h_wire_total")]
+        return [
+            row
+            for row in self.metrics().splitlines()
+            if row.startswith("cesar_core_118h_wire_total")
+        ]
 
     def configure_quota(self, capability, limit):
         """Seção 2 (TASK-118H): configura a política pela API administrativa
@@ -154,9 +188,15 @@ class CoreProcess:
         nunca escrever diretamente em quota_policies. Confirma via GET que a
         política efetiva ficou como o esperado antes de devolver."""
         assert self.admin_enabled
-        with httpx.Client(base_url=self.url, timeout=10, trust_env=False,
-                           headers={"Origin": self.admin_allowed_origin}) as client:
-            login = client.post("/admin/api/login", json={"password": self.admin_password})
+        with httpx.Client(
+            base_url=self.url,
+            timeout=10,
+            trust_env=False,
+            headers={"Origin": self.admin_allowed_origin},
+        ) as client:
+            login = client.post(
+                "/admin/api/login", json={"password": self.admin_password}
+            )
             login.raise_for_status()
             csrf = login.json()["csrf_token"]
             applications = client.get("/admin/api/applications").json()
@@ -205,7 +245,11 @@ def core_factory(tmp_path, caplog):
             # Seção 5 (TASK-118H): não deixar persistida a credencial
             # administrativa de teste nem o SQLite descartável do Control
             # Plane -- limpeza explícita, sem depender só do tmp_path do pytest.
-            for path in (core.admin_database, core.admin_password_hash_file, core.admin_pepper_file):
+            for path in (
+                core.admin_database,
+                core.admin_password_hash_file,
+                core.admin_pepper_file,
+            ):
                 path.unlink(missing_ok=True)
             for suffix in ("-wal", "-shm"):
                 Path(str(core.admin_database) + suffix).unlink(missing_ok=True)
@@ -214,9 +258,9 @@ def core_factory(tmp_path, caplog):
 
 def managers(core, **changes):
     settings = core.settings.model_copy(update=changes)
-    firecrawl = FirecrawlSearchProvider(settings.firecrawl_api_key,
-        retry_policy=RetryPolicy(max_attempts=1))
-    return build_admin_dev_ai_provider_manager(settings), build_web_search_manager(settings, firecrawl)
+    return build_admin_dev_ai_provider_manager(settings), build_web_search_manager(
+        settings
+    )
 
 
 def test_real_core_process_restart_without_restarting_gg(core_factory, monkeypatch):
@@ -230,8 +274,8 @@ def test_real_core_process_restart_without_restarting_gg(core_factory, monkeypat
     with pytest.raises(AIProviderError) as failure:
         asyncio.run(ai.generate(request()))
     assert failure.value.code == "cesar_core_connection_unavailable"
-    fallback = asyncio.run(search.search(QUERY, limit=3))
-    assert fallback.provider == "firecrawl" and fallback.fallback_reason
+    with pytest.raises(WebSearchError):
+        asyncio.run(search.search(QUERY, limit=3))
     assert core.start() != first_pid
     # Os mesmos objetos, sem reset do circuito nem restart do GG Oferta.
     assert asyncio.run(ai.generate(request())).provider == "cesar_core"
@@ -289,7 +333,9 @@ def test_real_quota_persists_across_core_restart(core_factory):
     assert core.wire() == wire_after_restart
 
 
-def test_real_invalid_credential_and_capability_have_no_upstream(core_factory, tmp_path):
+def test_real_invalid_credential_and_capability_have_no_upstream(
+    core_factory, tmp_path
+):
     core = core_factory(deny_search=True)
     key = tmp_path / "invalid-key"
     key.write_text("synthetic-invalid-118h")
@@ -307,26 +353,20 @@ def test_real_invalid_credential_and_capability_have_no_upstream(core_factory, t
     assert 'status="401"' in core.metrics() and 'status="403"' in core.metrics()
 
 
-def test_real_configuration_rollback_and_reenable(core_factory):
+def test_missing_core_credential_is_fail_closed(core_factory):
     core = core_factory()
     ai, search = managers(core)
     assert asyncio.run(ai.generate(request())).provider == "cesar_core"
     assert asyncio.run(search.search(QUERY, limit=3)).provider == "cesar_core"
     # Reload de Settings/factories: equivalente à configuração aplicada no restart
     # do processo consumidor. Não altera .env, banco ou serviços compartilhados.
-    legacy = Settings(_env_file=None, cesar_core_ai_enabled=False,
-        cesar_core_search_enabled=False,
-        gemini_api_key_admin_dev_file=GG / ".secrets/gemini_api_key_admin_dev",
-        groq_api_key_file=GG / ".secrets/groq_api_key",
-        openrouter_api_key_file=GG / ".secrets/openrouter_api_key")
-    firecrawl = FirecrawlSearchProvider(legacy.firecrawl_api_key,
-        retry_policy=RetryPolicy(max_attempts=1))
+    legacy = Settings(_env_file=None, cesar_core_api_key_file=None)
     before = core.wire()
-    old_ai = asyncio.run(build_admin_dev_ai_provider_manager(legacy).generate(request()))
-    old_search = asyncio.run(build_web_search_manager(legacy, firecrawl).search(QUERY, limit=3))
-    assert old_ai.provider in {"gemini", "groq", "openrouter"} and old_ai.content.strip()
-    assert old_search.provider == "firecrawl" and old_search.fallback_reason is None
-    assert old_search.results and core.wire() == before
+    with pytest.raises(AIRequestError, match="CESAR_CORE_API_KEY_FILE"):
+        build_admin_dev_ai_provider_manager(legacy)
+    with pytest.raises(WebSearchError, match="core_search_credential_unavailable"):
+        build_web_search_manager(legacy)
+    assert core.wire() == before
     ai_again, search_again = managers(core)
     assert asyncio.run(ai_again.generate(request())).provider == "cesar_core"
     assert asyncio.run(search_again.search(QUERY, limit=3)).source == "searxng-search"
@@ -343,7 +383,11 @@ def fault_server(status, *, malformed=False):
         def do_POST(self):
             self.rfile.read(int(self.headers.get("Content-Length", "0")))
             calls.append(self.path)
-            body = b"not-json" if malformed else json.dumps({"error": {"code": "controlled_fault"}}).encode()
+            body = (
+                b"not-json"
+                if malformed
+                else json.dumps({"error": {"code": "controlled_fault"}}).encode()
+            )
             self.send_response(status)
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
@@ -361,25 +405,28 @@ def fault_server(status, *, malformed=False):
 
 
 @pytest.mark.parametrize("status,malformed", [(400, False), (200, True)])
-def test_controlled_http_rejection_has_no_search_fallback(status, malformed, monkeypatch):
+def test_controlled_http_rejection_has_no_search_fallback(status, malformed):
     with fault_server(status, malformed=malformed) as (url, calls):
-        monkeypatch.setattr(firecrawl_module, "_SEARCH_ENDPOINT", url + "/v2/search")
-        settings = Settings(_env_file=None, cesar_core_base_url=url)
-        fallback = FirecrawlSearchProvider(SecretStr("synthetic-118h-key"))
-        manager = build_web_search_manager(settings, fallback)
+        settings = Settings(
+            _env_file=None,
+            cesar_core_base_url=url,
+            cesar_core_api_key_file=GG / ".secrets/cesar-core-client-dev",
+        )
+        manager = build_web_search_manager(settings)
         with pytest.raises(WebSearchError) as failure:
             asyncio.run(manager.search(QUERY, limit=3))
         assert not failure.value.retryable and calls == ["/v1/search"]
 
 
-def test_controlled_firecrawl_outage_is_bounded(monkeypatch):
+def test_controlled_core_outage_never_calls_firecrawl_search():
     with fault_server(503) as (url, calls):
-        monkeypatch.setattr(firecrawl_module, "_SEARCH_ENDPOINT", url + "/v2/search")
-        settings = Settings(_env_file=None, cesar_core_base_url=url)
-        firecrawl = FirecrawlSearchProvider(SecretStr("synthetic-118h-key"),
-            retry_policy=RetryPolicy(max_attempts=3, base_delay_seconds=0.01, max_delay_seconds=0.01))
-        manager = build_web_search_manager(settings, firecrawl)
+        settings = Settings(
+            _env_file=None,
+            cesar_core_base_url=url,
+            cesar_core_api_key_file=GG / ".secrets/cesar-core-client-dev",
+        )
+        manager = build_web_search_manager(settings)
         with pytest.raises(WebSearchError) as failure:
             asyncio.run(manager.search(QUERY, limit=3))
-        assert failure.value.code == "firecrawl_search_failed"
-        assert calls == ["/v1/search", "/v2/search", "/v2/search", "/v2/search"]
+        assert failure.value.code == "core_search_unavailable"
+        assert calls == ["/v1/search"]

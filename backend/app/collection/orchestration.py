@@ -111,6 +111,7 @@ from app.events import (
     ProductVariantOptionPayload,
 )
 from app.events.service import publish_event_async
+from app.historical_bootstrap.service import run_historical_bootstrap
 from app.market_research.service import (
     AssessmentSnapshot,
     evaluate_trigger_and_maybe_research,
@@ -139,7 +140,8 @@ from app.products.identity import (
     resolve_product_variant,
 )
 from app.products.models import Product
-from app.search.firecrawl import FirecrawlSearchProvider
+from app.search.cesar_core_fetch import CesarCoreFetchProvider
+from app.search.manager import build_web_search_manager
 from app.stores.models import Seller, Store
 from app.users.models import UserRole
 
@@ -440,7 +442,9 @@ async def _refresh_legacy_schedule_aggregate(
     if not rows:
         return
     next_candidates = [next_run_at or now for next_run_at, _ in rows]
-    last_candidates = [last_run_at for _, last_run_at in rows if last_run_at is not None]
+    last_candidates = [
+        last_run_at for _, last_run_at in rows if last_run_at is not None
+    ]
     schedule.next_run_at = min(next_candidates)
     if last_candidates:
         schedule.last_run_at = max(last_candidates)
@@ -564,7 +568,9 @@ async def claim_due_collections(
     }
 
     def sort_key(user_id: UUID) -> tuple[int, object]:
-        last_processed_at = states[user_id].last_processed_at if user_id in states else None
+        last_processed_at = (
+            states[user_id].last_processed_at if user_id in states else None
+        )
         if last_processed_at is None:
             return (0, str(user_id))
         return (1, last_processed_at, str(user_id))
@@ -608,7 +614,9 @@ async def claim_due_collections(
                 continue
             if mission_id not in criteria_cache:
                 criteria_cache[mission_id] = await session.scalar(
-                    select(MissionCriteria).where(MissionCriteria.mission_id == mission_id)
+                    select(MissionCriteria).where(
+                        MissionCriteria.mission_id == mission_id
+                    )
                 )
             criteria = criteria_cache[mission_id]
             if criteria is None or not criteria.search_query.strip():
@@ -892,7 +900,11 @@ class _ClaimedBatch:
 
 
 async def _build_claim_attempts(
-    session: AsyncSession, selected: _SelectedWork, reserved_owners: set[UUID], *, due_at: datetime
+    session: AsyncSession,
+    selected: _SelectedWork,
+    reserved_owners: set[UUID],
+    *,
+    due_at: datetime,
 ) -> list[_ClaimAttempt]:
     """Monta a lista de tentativas só para donos reservados -- uma
     tentativa por `MissionSource` já devida (Fase 1 já decidiu isso, por
@@ -908,7 +920,9 @@ async def _build_claim_attempts(
             mission_id = source.mission_id
             if mission_id not in criteria_cache:
                 criteria_cache[mission_id] = await session.scalar(
-                    select(MissionCriteria).where(MissionCriteria.mission_id == mission_id)
+                    select(MissionCriteria).where(
+                        MissionCriteria.mission_id == mission_id
+                    )
                 )
             criteria = criteria_cache[mission_id]
             if criteria is None or not criteria.search_query.strip():
@@ -967,7 +981,11 @@ async def _claim_legacy_source_attempt(
     if source.next_eligible_at is not None and source.next_eligible_at > effective_now:
         return None
     throttle = await session.get(StoreThrottleState, attempt.store_id)
-    if throttle is not None and throttle.next_allowed_at is not None and throttle.next_allowed_at > effective_now:
+    if (
+        throttle is not None
+        and throttle.next_allowed_at is not None
+        and throttle.next_allowed_at > effective_now
+    ):
         return None
     try:
         async with session.begin_nested():
@@ -1117,7 +1135,7 @@ class CollectionOrchestrator:
         *,
         ai_manager: AIProviderManager,
         ai_profile: UserRole = UserRole.ADMIN,
-        firecrawl: FirecrawlSearchProvider | None = None,
+        firecrawl: CesarCoreFetchProvider | None = None,
         settings: Settings | None = None,
         normalizer: PriceNormalizer | None = None,
         identity_resolver: ProductIdentityResolver | None = None,
@@ -1299,7 +1317,9 @@ class CollectionOrchestrator:
         old_claims = await self._resolve_identities(batch.old_path)
         old_outcomes, shared_outcomes = await asyncio.gather(
             asyncio.gather(*(self._process(claim) for claim in old_claims)),
-            asyncio.gather(*(self._process_shared(claim, effective_now) for claim in batch.shared)),
+            asyncio.gather(
+                *(self._process_shared(claim, effective_now) for claim in batch.shared)
+            ),
         )
         legacy_succeeded = sum(old_outcomes)
         legacy_failed = len(old_claims) - legacy_succeeded
@@ -1323,15 +1343,23 @@ class CollectionOrchestrator:
             ),
             fan_out_done_mission_count=(
                 fan_out_summary.fanned_out_mission_count
-                + sum(len(outcome.fanned_out_mission_ids) for outcome in shared_outcomes)
+                + sum(
+                    len(outcome.fanned_out_mission_ids) for outcome in shared_outcomes
+                )
             ),
             fan_out_attention_required_mission_count=(
                 fan_out_summary.attention_required_mission_count
-                + sum(len(outcome.fan_out_attention_required_mission_ids) for outcome in shared_outcomes)
+                + sum(
+                    len(outcome.fan_out_attention_required_mission_ids)
+                    for outcome in shared_outcomes
+                )
             ),
             fan_out_terminally_failed_mission_count=(
                 fan_out_summary.terminally_failed_mission_count
-                + sum(len(outcome.fan_out_failed_mission_ids) for outcome in shared_outcomes)
+                + sum(
+                    len(outcome.fan_out_failed_mission_ids)
+                    for outcome in shared_outcomes
+                )
             ),
         )
 
@@ -1359,7 +1387,9 @@ class CollectionOrchestrator:
             )
             from app.collection.shared_collection import SharedCollectionResult
 
-            return SharedCollectionResult(claimed=True, provider_called=False, succeeded=False)
+            return SharedCollectionResult(
+                claimed=True, provider_called=False, succeeded=False
+            )
 
     async def _process_shared_claim(
         self, claim: "_SharedClaim", effective_now: datetime
@@ -1693,6 +1723,8 @@ def _limit_intermediate_candidates(offers: tuple, *, limit: int) -> tuple:
         ),
     )
     return tuple(ordered[:limit])
+
+
 class PriceObservationComparison(enum.Enum):
     """Resultado explícito do dedupe da TASK-093, na fonte (Fase A), para o
     contrato de avaliação de alerta de preço da Fase C -- descreve a relação
@@ -1941,27 +1973,19 @@ async def _persist_phase_a(
         # `_resolve_offer`. Ver docstring de `_creation_lock_keys`.
         await _acquire_creation_locks(session, frozenset(creation_lock_keys))
 
-        offer_ids = sorted(
-            {o.id for o, _ in preview.values() if o is not None}
-        )
+        offer_ids = sorted({o.id for o, _ in preview.values() if o is not None})
         for offer_id in offer_ids:
             await session.scalar(
                 select(Offer.id).where(Offer.id == offer_id).with_for_update()
             )
-        product_ids = sorted(
-            {p.id for _, p in preview.values() if p is not None}
-        )
+        product_ids = sorted({p.id for _, p in preview.values() if p is not None})
         for product_id in product_ids:
             await session.scalar(
-                select(Product.id)
-                .where(Product.id == product_id)
-                .with_for_update()
+                select(Product.id).where(Product.id == product_id).with_for_update()
             )
 
         resolved_offers: dict[tuple[str | None, str | None, str], Offer] = {}
-        resolved_items: list[
-            tuple[tuple[str | None, str | None, str], Any]
-        ] = []
+        resolved_items: list[tuple[tuple[str | None, str | None, str], Any]] = []
         for identity_key, item in items_by_key.items():
             offer = await _resolve_offer(session, claim.store_id, item)
             resolved_offers[identity_key] = offer
@@ -2149,7 +2173,7 @@ async def _run_phase_b(
     ai_profile: UserRole,
     *,
     session_factory: async_sessionmaker[AsyncSession] | None = None,
-    firecrawl: FirecrawlSearchProvider | None = None,
+    firecrawl: CesarCoreFetchProvider | None = None,
     settings: Settings | None = None,
 ) -> tuple[_AIOutcome, ...]:
     """Fase B (TASK-079): nenhuma transação aberta -- só chamadas de IA
@@ -2165,11 +2189,7 @@ async def _run_phase_b(
     `CollectionOrchestrator`) -- `None` em qualquer um deles desliga o
     recurso por completo, comportamento idêntico ao anterior a esta
     TASK (nenhum chamador de teste/script existente precisa mudar)."""
-    market_research_enabled = (
-        session_factory is not None
-        and settings is not None
-        and (firecrawl is not None or settings.cesar_core_search_enabled)
-    )
+    market_research_enabled = session_factory is not None and settings is not None
 
     async def _classify(pending: _PendingOffer) -> _AIOutcome:
         relevance = pending.forced_relevance
@@ -2207,10 +2227,23 @@ async def _run_phase_b(
                 )
             effective_relevance = cached.classification if cached is not None else None
         market_snapshot = None
+        if market_research_enabled and effective_relevance is OfferRelevance.MATCH:
+            assert session_factory is not None
+            assert settings is not None
+            await run_historical_bootstrap(
+                session_factory,
+                product_id=pending.product_id,
+                search=build_web_search_manager(settings),
+                fetch=firecrawl,
+                ai=ai_manager,
+                profile=ai_profile,
+                now=outcome.completed_at,
+            )
         if (
             market_research_enabled
             and effective_relevance is OfferRelevance.MATCH
-            and pending.alert_comparison is not PriceObservationComparison.UNCHANGED_REUSED
+            and pending.alert_comparison
+            is not PriceObservationComparison.UNCHANGED_REUSED
         ):
             assert session_factory is not None
             assert settings is not None
@@ -2492,7 +2525,9 @@ async def _persist_phase_c(
                         best_amount = (
                             current.amount
                             if checkpoint_row is None
-                            else min(checkpoint_row.best_notified_amount, current.amount)
+                            else min(
+                                checkpoint_row.best_notified_amount, current.amount
+                            )
                         )
                         await session.execute(
                             postgresql_insert(MissionProductAlertState)
@@ -2673,9 +2708,7 @@ async def _resolve_offer(session: AsyncSession, store_id: UUID, item: Any) -> Of
         item.raw_offer.url,
     )
     if offer is not None:
-        resolved_product = await _resolve_global_product(
-            session, item.raw_offer.title
-        )
+        resolved_product = await _resolve_global_product(session, item.raw_offer.title)
         target_product = None
         if resolved_product is not None:
             current_product = await session.get(Product, offer.product_id)
@@ -3154,7 +3187,9 @@ async def _current_prelist_candidates(
                     )
                 )
             )
-            current = [item for item in current if item.offer.product_id in selected_ids]
+            current = [
+                item for item in current if item.offer.product_id in selected_ids
+            ]
     return rank_prelist_candidates(current)
 
 
@@ -3316,7 +3351,8 @@ async def _maybe_publish_prelist_errata(
     if not improved:
         return
     selected_group = min(
-        improved, key=lambda group: (group[0].store.code, _prelist_commercial_key(group[0]))
+        improved,
+        key=lambda group: (group[0].store.code, _prelist_commercial_key(group[0])),
     )
     mission.prelist_errata_sent = True
     await publish_event_async(
@@ -3352,7 +3388,7 @@ async def _previous_prelist_best_by_store(
                     references.append(
                         (UUID(str(item["offer_id"])), UUID(str(item["observation_id"])))
                     )
-                except (KeyError, ValueError):
+                except KeyError, ValueError:
                     continue
     else:
         for prefix in ("first", "second"):
@@ -3365,19 +3401,23 @@ async def _previous_prelist_best_by_store(
                         UUID(str(payload[f"{prefix}_observation_id"])),
                     )
                 )
-            except (KeyError, ValueError):
+            except KeyError, ValueError:
                 continue
     result: dict[UUID, tuple[Any, ...]] = {}
     for offer_id, observation_id in references:
         offer = await session.get(Offer, offer_id)
         observation = await session.get(PriceObservation, observation_id)
-        relevance = await session.get(MissionOfferRelevance, (event.mission_id, offer_id))
+        relevance = await session.get(
+            MissionOfferRelevance, (event.mission_id, offer_id)
+        )
         if offer is None or observation is None or relevance is None:
             continue
         store = await session.get(Store, offer.store_id)
         if store is None:
             continue
-        candidate = _PrelistCandidate(relevance.classification, observation, offer, store)
+        candidate = _PrelistCandidate(
+            relevance.classification, observation, offer, store
+        )
         key = _prelist_commercial_key(candidate)
         current = result.get(store.id)
         if current is None or key < current:

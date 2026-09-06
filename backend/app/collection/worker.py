@@ -55,7 +55,7 @@ from app.observability.metrics import (
     start_worker_metrics_server,
 )
 from app.observability.tracing import configure_tracing
-from app.search.firecrawl import FirecrawlSearchProvider
+from app.search.cesar_core_fetch import CesarCoreFetchProvider
 
 logger = logging.getLogger("app.collection.worker")
 
@@ -240,24 +240,22 @@ async def run_worker(
         settings, async_driver=async_driver
     )
     session_factory = create_async_session_factory(engine)
-    # TASK-113: pesquisa de mercado -- `None` quando a chave não está
-    # configurada (fail-soft, mesmo padrão de `search_provider` em
-    # `build_admin_dev_ai_provider_manager`); `_run_phase_b` já trata
-    # `firecrawl is None` como "recurso desligado", nunca erro.
+    # TASK-113: pesquisa de mercado -- `None` quando a credencial do César
+    # Core não está configurada (fail-soft, mesmo padrão de
+    # `search_provider` em `build_admin_dev_ai_provider_manager`);
+    # `_run_phase_b` já trata `firecrawl is None` como "recurso desligado",
+    # nunca erro. Reusa a MESMA credencial de aplicação de AI/Search: o
+    # worker não conhece Firecrawl (endpoint, provider ou chave própria) --
+    # o enriquecimento é uma capability do César Core (`/v1/fetch`).
     market_research_firecrawl = (
-        FirecrawlSearchProvider(
-            settings.firecrawl_api_key,
-            timeout_seconds=settings.external_http_timeout_seconds,
-            retry_policy=RetryPolicy(
-                max_attempts=settings.safe_retry_max_attempts,
-                base_delay_seconds=settings.retry_base_delay_seconds,
-                max_delay_seconds=settings.retry_max_delay_seconds,
-                retry_after_cap_seconds=settings.retry_after_cap_seconds,
-            ),
-            circuit_failure_threshold=settings.circuit_failure_threshold,
-            circuit_open_seconds=settings.circuit_open_seconds,
+        CesarCoreFetchProvider(
+            api_key_file=settings.cesar_core_api_key_file,
+            base_url=settings.cesar_core_base_url,
+            service=settings.cesar_core_service,
+            service_class=settings.cesar_core_service_class,
+            timeout_seconds=settings.cesar_core_fetch_timeout_seconds,
         )
-        if settings.firecrawl_api_key is not None
+        if settings.cesar_core_api_key_file is not None
         else None
     )
     orchestrator = CollectionOrchestrator(

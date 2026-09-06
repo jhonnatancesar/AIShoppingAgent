@@ -66,9 +66,6 @@ try {
     New-Item -ItemType Directory -Path $temporarySecretsDirectory | Out-Null
     foreach ($name in @(
         "postgres_password",
-        "gemini_api_key_user",
-        "gemini_api_key_admin_dev",
-        "groq_api_key",
         "telegram_bot_token",
         "telegram_webhook_secret"
         "ops_controller_secret"

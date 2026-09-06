@@ -1,11 +1,10 @@
 # Tarefas
 
-**TASK-118G em validação DEV:** `TASK-118G.md`. 118F possui commits locais
-aprovados. Nenhuma autorização automática de 118H, deploy ou push.
+**TASK-118F/118G concluídas, aprovadas e publicadas:** AI e Search integrados;
+flags desligadas por padrão, sem deploy PROD. Ver `TASK-118F.md` e `TASK-118G.md`.
 
-**TASK-118F em revisão DEV:** integração AI GG Oferta -> César Core -> OmniRoute
-implementada e validada localmente; flags desligadas. Ver `TASK-118F.md`.
-Nenhuma próxima TASK autorizada automaticamente; 118G não iniciada.
+**TASK-118H pronta para revisão DEV:** restart/recuperação, matriz,
+rollback AI/Search e runbook. Ver `TASK-118H.md`; sem commit/push/PROD.
 
 **TASK-113 concluída no DEV (2026-08-27):** avaliação inteligente de
 preço, pesquisa de mercado (Firecrawl + AI Provider Manager) e

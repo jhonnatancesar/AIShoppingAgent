@@ -28,19 +28,22 @@ from app.market_research.models import (
     MarketPriceAssessment,
 )
 from app.market_research.service import (
+    _MAX_AI_EVIDENCE_DESCRIPTION_CHARS,
+    _MAX_AI_EVIDENCE_TITLE_CHARS,
     ClaimStatus,
     claim_assessment,
+    mark_assessment_failed,
     run_market_research,
 )
 from app.missions.models import MissionMonitoringItem
 from app.missions.service import create_mission_from_criteria_async
 from app.products.identity import IDENTITY_VERSION, resolve_product_variant
 from app.products.models import Product
-from app.search.firecrawl import (
-    FirecrawlScrapeResult,
-    FirecrawlSearchError,
-    FirecrawlSearchResult,
+from app.search.cesar_core_fetch import (
+    CesarCoreFetchResult,
 )
+from app.search.contracts import WebSearchError, WebSearchResponse, WebSearchResult
+from app.search.manager import WebSearchManager
 from app.stores.models import Store
 from app.users.models import User, UserRole
 from sqlalchemy import select
@@ -77,39 +80,51 @@ def _gpu_product(sessions, *, title: str = "NVIDIA GeForce RTX 5070 Ti") -> Prod
 
 
 class _FakeFirecrawl:
-    """Conta chamadas de `search`/`scrape_basic` -- nunca toca rede real."""
+    """Conta somente enriquecimentos `scrape_basic`; nunca toca rede real."""
 
     def __init__(
         self,
         *,
-        search_results: tuple[FirecrawlSearchResult, ...] = (),
-        scrape_result: FirecrawlScrapeResult | None = None,
-        raise_on_search: bool = False,
+        scrape_result: CesarCoreFetchResult | None = None,
     ) -> None:
-        self.search_calls: list[str] = []
         self.scrape_calls: list[str] = []
-        self._search_results = search_results
         self._scrape_result = scrape_result
-        self._raise_on_search = raise_on_search
-
-    async def search(self, query, *, sources=("web",), limit=2):
-        self.search_calls.append(query)
-        if self._raise_on_search:
-            raise FirecrawlSearchError("firecrawl_unavailable")
-        from app.search.firecrawl import FirecrawlSearchResponse
-
-        return FirecrawlSearchResponse(
-            success=True, results=self._search_results, status_code=200
-        )
 
     async def scrape_basic(self, url):
         self.scrape_calls.append(url)
         return self._scrape_result
 
 
-def _evidence(domain: str, title: str = "NVIDIA GeForce RTX 5070 Ti à venda") -> FirecrawlSearchResult:
-    return FirecrawlSearchResult(
-        title=title, description="Confira o preço", url=f"https://{domain}/produto"
+class _FakeSearchProvider:
+    def __init__(self, results=(), *, fail=False) -> None:
+        self.results = results
+        self.fail = fail
+        self.calls: list[str] = []
+
+    async def search(self, query, *, limit, correlation_id):
+        self.calls.append(query)
+        if self.fail:
+            raise WebSearchError("core_search_unavailable", retryable=True)
+        return WebSearchResponse(
+            self.results[:limit], "cesar_core", "searxng-search", correlation_id
+        )
+
+
+def _use_search(monkeypatch, provider: _FakeSearchProvider) -> None:
+    monkeypatch.setattr(
+        "app.market_research.service.build_web_search_manager",
+        lambda _settings: WebSearchManager(provider),
+    )
+
+
+def _evidence(
+    domain: str, title: str = "NVIDIA GeForce RTX 5070 Ti à venda"
+) -> WebSearchResult:
+    return WebSearchResult(
+        title=title,
+        snippet="Confira o preço",
+        url=f"https://{domain}/produto",
+        position=1,
     )
 
 
@@ -118,6 +133,7 @@ class _StubAIManager:
 
     def __init__(self, *, content: str | None = None) -> None:
         self.calls: list[str] = []
+        self.requests: list[AIRequest] = []
         self._content = content or json.dumps(
             {
                 "classification": "good_deal",
@@ -132,6 +148,7 @@ class _StubAIManager:
 
     async def generate(self, request: AIRequest) -> AIResponse:
         self.calls.append(request.purpose)
+        self.requests.append(request)
         return AIResponse(
             request_id=request.request_id,
             provider="stub",
@@ -273,7 +290,9 @@ def test_ready_past_expiry_allows_reclaim(integration_database) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_ready_within_ttl_and_small_variation_is_cache_hit(integration_database) -> None:
+def test_ready_within_ttl_and_small_variation_is_cache_hit(
+    integration_database,
+) -> None:
     product = _gpu_product(integration_database.sessions)
     with integration_database.sessions.begin() as session:
         session.add(
@@ -308,7 +327,9 @@ def test_ready_within_ttl_and_small_variation_is_cache_hit(integration_database)
 # ---------------------------------------------------------------------------
 
 
-def test_ready_within_ttl_but_large_variation_allows_refresh(integration_database) -> None:
+def test_ready_within_ttl_but_large_variation_allows_refresh(
+    integration_database,
+) -> None:
     product = _gpu_product(integration_database.sessions)
     with integration_database.sessions.begin() as session:
         session.add(
@@ -402,9 +423,12 @@ def test_failed_after_retry_after_allows_reclaim(integration_database) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_firecrawl_failure_marks_assessment_failed_never_raises(integration_database) -> None:
+def test_core_search_failure_marks_assessment_failed_never_raises(
+    integration_database, monkeypatch
+) -> None:
     product = _gpu_product(integration_database.sessions)
-    firecrawl = _FakeFirecrawl(raise_on_search=True)
+    firecrawl = _FakeFirecrawl()
+    _use_search(monkeypatch, _FakeSearchProvider(fail=True))
     ai_manager = _StubAIManager()
 
     snapshot = asyncio.run(
@@ -437,11 +461,15 @@ def test_firecrawl_failure_marks_assessment_failed_never_raises(integration_data
 # ---------------------------------------------------------------------------
 
 
-def test_scrape_fallback_only_when_search_below_quorum(integration_database) -> None:
+def test_scrape_enrichment_only_when_search_below_quorum(
+    integration_database, monkeypatch
+) -> None:
     product = _gpu_product(integration_database.sessions)
     # Busca já traz 2 domínios válidos -- scrape NUNCA deveria ser chamado.
-    firecrawl_sufficient = _FakeFirecrawl(
-        search_results=(_evidence("lojaa.com.br"), _evidence("lojab.com.br"))
+    firecrawl_sufficient = _FakeFirecrawl()
+    _use_search(
+        monkeypatch,
+        _FakeSearchProvider((_evidence("lojaa.com.br"), _evidence("lojab.com.br"))),
     )
     asyncio.run(
         run_market_research(
@@ -462,13 +490,20 @@ def test_scrape_fallback_only_when_search_below_quorum(integration_database) -> 
     # Busca traz só 1 domínio (abaixo do mínimo=2) -- scrape deve rodar.
     # Produto DIFERENTE (RTX 5080, não 5070 Ti) -- só para não colidir no
     # `identity_key` único do primeiro Product deste teste.
-    product2 = _gpu_product(integration_database.sessions, title="NVIDIA GeForce RTX 5080")
+    product2 = _gpu_product(
+        integration_database.sessions, title="NVIDIA GeForce RTX 5080"
+    )
     firecrawl_insufficient = _FakeFirecrawl(
-        search_results=(_evidence("lojaunica.com.br", title="NVIDIA GeForce RTX 5080 à venda"),),
-        scrape_result=FirecrawlScrapeResult(
+        scrape_result=CesarCoreFetchResult(
             url="https://lojaunica.com.br/produto",
             title="NVIDIA GeForce RTX 5080",
             markdown="Preço bom",
+        ),
+    )
+    _use_search(
+        monkeypatch,
+        _FakeSearchProvider(
+            (_evidence("lojaunica.com.br", title="NVIDIA GeForce RTX 5080 à venda"),)
         ),
     )
     asyncio.run(
@@ -486,6 +521,163 @@ def test_scrape_fallback_only_when_search_below_quorum(integration_database) -> 
         )
     )
     assert len(firecrawl_insufficient.scrape_calls) >= 1
+
+
+def test_evidence_persists_only_safe_urls_and_minimizes_ai_content(
+    integration_database, monkeypatch
+) -> None:
+    product = _gpu_product(
+        integration_database.sessions, title="NVIDIA GeForce RTX 5090"
+    )
+    sensitive_value = "FAKE_INTEGRATION_SECRET_MUST_NOT_PERSIST"
+    unsafe_url = (
+        "https://lojaa.example/produto?sku=5090&access_token="
+        + sensitive_value
+        + "#reviews"
+    )
+    long_markdown = (
+        "NVIDIA GeForce RTX 5090 nova, loja A, promoção. "
+        + "x" * 5_000
+        + " Preço final R$ 9.999,00, em estoque."
+    )
+    provider = _FakeSearchProvider(
+        (
+            WebSearchResult(
+                title="NVIDIA GeForce RTX 5090 promoção",
+                snippet="Confira preço da placa nova",
+                url=unsafe_url,
+                position=1,
+            ),
+        )
+    )
+    _use_search(monkeypatch, provider)
+    enrichment = _FakeFirecrawl(
+        scrape_result=CesarCoreFetchResult(
+            url="https://lojaa.example/produto?sku=5090",
+            title="NVIDIA GeForce RTX 5090" + " t" * 400,
+            markdown=long_markdown,
+        )
+    )
+    ai_manager = _StubAIManager()
+
+    asyncio.run(
+        run_market_research(
+            _session_factory(integration_database),
+            ai_manager,
+            enrichment,
+            product=product,
+            store_id=None,
+            reference_price=Decimal("9999.00"),
+            reference_currency="BRL",
+            profile=UserRole.ADMIN,
+            now=NOW,
+            settings=_SETTINGS,
+        )
+    )
+
+    assert enrichment.scrape_calls == []  # URL sensível nunca chega ao upstream.
+    assert len(ai_manager.requests) == 1
+    prompt = json.loads(ai_manager.requests[0].messages[-1].content)
+    prompt_text = ai_manager.requests[0].messages[-1].content
+    assert sensitive_value not in prompt_text
+    assert "access_token" not in prompt_text
+    assert "#reviews" not in prompt_text
+    assert prompt["market_evidence"][0]["url"].endswith("?sku=5090")
+
+    with integration_database.sessions() as session:
+        row = session.get(MarketPriceAssessment, product.id)
+        assert row is not None
+        persisted = json.dumps(row.evidence)
+        assert sensitive_value not in persisted
+        assert "access_token" not in persisted
+        assert "#reviews" not in persisted
+
+    # Uma URL segura permite enrichment; o texto livre enviado à IA é limitado,
+    # mas começo/fim úteis permanecem presentes.
+    product2 = _gpu_product(
+        integration_database.sessions, title="NVIDIA GeForce RTX 5080 Ti"
+    )
+    _use_search(
+        monkeypatch,
+        _FakeSearchProvider(
+            (
+                _evidence(
+                    "lojab.example",
+                    title="NVIDIA GeForce RTX 5080 Ti promoção",
+                ),
+            )
+        ),
+    )
+    ai_manager2 = _StubAIManager()
+    enrichment2 = _FakeFirecrawl(
+        scrape_result=CesarCoreFetchResult(
+            url="https://lojab.example/produto",
+            title="NVIDIA GeForce RTX 5080 Ti" + " t" * 400,
+            markdown=long_markdown.replace("5090", "5080 Ti"),
+        )
+    )
+    asyncio.run(
+        run_market_research(
+            _session_factory(integration_database),
+            ai_manager2,
+            enrichment2,
+            product=product2,
+            store_id=None,
+            reference_price=Decimal("8999.00"),
+            reference_currency="BRL",
+            profile=UserRole.ADMIN,
+            now=NOW,
+            settings=_SETTINGS,
+        )
+    )
+    prompt2 = json.loads(ai_manager2.requests[0].messages[-1].content)
+    enriched = [
+        item
+        for item in prompt2["market_evidence"]
+        if "conteúdo intermediário omitido" in (item["description"] or "")
+    ]
+    assert enriched
+    assert len(enriched[0]["description"]) <= _MAX_AI_EVIDENCE_DESCRIPTION_CHARS
+    assert len(enriched[0]["title"]) <= _MAX_AI_EVIDENCE_TITLE_CHARS
+    assert "NVIDIA GeForce RTX 5080 Ti nova" in enriched[0]["description"]
+    assert "Preço final R$ 9.999,00" in enriched[0]["description"]
+
+
+def test_last_error_redacts_sensitive_url_before_persistence(
+    integration_database,
+) -> None:
+    product = _gpu_product(
+        integration_database.sessions, title="NVIDIA GeForce RTX 5070 Super"
+    )
+    result = asyncio.run(
+        claim_assessment(
+            _session_factory(integration_database),
+            product_id=product.id,
+            store_id=None,
+            reference_price=Decimal("3999.00"),
+            reference_currency="BRL",
+            now=NOW,
+            settings=_SETTINGS,
+        )
+    )
+    assert result.status is ClaimStatus.WON
+    secret = "FAKE_LAST_ERROR_SECRET"
+    asyncio.run(
+        mark_assessment_failed(
+            _session_factory(integration_database),
+            product_id=product.id,
+            error=(
+                "timeout https://shop.example/produto?id=1&session_id=" + secret
+            ),
+            now=NOW,
+            settings=_SETTINGS,
+        )
+    )
+    with integration_database.sessions() as session:
+        row = session.get(MarketPriceAssessment, product.id)
+        assert row is not None
+        assert secret not in row.last_error
+        assert "session_id=[REDACTED]" in row.last_error
 
 
 # ---------------------------------------------------------------------------
@@ -585,6 +777,7 @@ def _make_gpu_mission(integration_database, user_id: UUID, *, target_amount: Dec
 
 def test_shared_fan_out_reuses_single_assessment_across_ten_missions(
     integration_database,
+    monkeypatch,
 ) -> None:
     from app.collection.shared_collection import collect_monitoring_item_store
 
@@ -603,15 +796,16 @@ def test_shared_fan_out_reuses_single_assessment_across_ten_missions(
         item_id = session.get(MissionMonitoringItem, missions[0].id).monitoring_item_id
         for mission in missions[1:]:
             assert (
-                session.get(MissionMonitoringItem, mission.id).monitoring_item_id == item_id
+                session.get(MissionMonitoringItem, mission.id).monitoring_item_id
+                == item_id
             )
         amazon_id = session.scalar(select(Store.id).where(Store.code == "amazon"))
 
     provider = _StableGpuProvider()
     ai_manager = _MarketAwareAIManager()
-    firecrawl = _FakeFirecrawl(
-        search_results=(_evidence("lojaa.com.br"), _evidence("lojab.com.br"))
-    )
+    firecrawl = _FakeFirecrawl()
+    search = _FakeSearchProvider((_evidence("lojaa.com.br"), _evidence("lojab.com.br")))
+    _use_search(monkeypatch, search)
 
     result = asyncio.run(
         collect_monitoring_item_store(
@@ -631,7 +825,7 @@ def test_shared_fan_out_reuses_single_assessment_across_ten_missions(
     # 1 pesquisa completa (mercado atual + histórico, §33.18 -- sempre as
     # duas juntas, nunca uma por Mission) + 1 chamada de IA, independente
     # de serem 10 Missions perguntando pelo mesmo Product.
-    assert len(firecrawl.search_calls) == 2
+    assert len(search.calls) == 2
     assert ai_manager.market_research_calls == 1
 
     with integration_database.sessions() as session:

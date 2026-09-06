@@ -13,11 +13,6 @@ BACKEND_DIRECTORY = Path(__file__).resolve().parents[2]
 
 _SECRET_FILE_FIELDS = {
     "database_password": "database_password_file",
-    "gemini_api_key_user": "gemini_api_key_user_file",
-    "gemini_api_key_admin_dev": "gemini_api_key_admin_dev_file",
-    "groq_api_key": "groq_api_key_file",
-    "openrouter_api_key": "openrouter_api_key_file",
-    "firecrawl_api_key": "firecrawl_api_key_file",
     "telegram_bot_token": "telegram_bot_token_file",
     "ops_controller_secret": "ops_controller_secret_file",
     "telegram_webhook_secret": "telegram_webhook_secret_file",
@@ -46,37 +41,20 @@ class Settings(BaseSettings):
     database_user: str = Field(default="aishoppingagent", min_length=1)
     database_password: SecretStr | None = None
     database_password_file: Path | None = None
-    gemini_api_key_user: SecretStr | None = None
-    # TASK-118F: rollout DEV opt-in; segredo exclusivamente por arquivo.
-    cesar_core_ai_enabled: bool = False
-    cesar_core_search_enabled: bool = False
-    cesar_core_search_fallback_enabled: bool = False
     cesar_core_search_timeout_seconds: float = Field(default=30, gt=0, le=120)
-    cesar_core_disaster_fallback_enabled: bool = False
+    cesar_core_fetch_timeout_seconds: float = Field(default=180, gt=0, le=240)
+    """FASE F1: precisa exceder tanto `CESAR_CORE_OMNIROUTE_TIMEOUT_SECONDS`
+    (Core -> OmniRoute, `compose.yaml` do César Core) quanto
+    `FIRECRAWL_TIMEOUT_MS` (OmniRoute -> Firecrawl, mesmo compose) -- os
+    três formam uma cadeia; se este for o mais curto, o GG desiste antes
+    do OmniRoute sequer terminar de tentar, e um timeout maior lá embaixo
+    vira letra morta aqui."""
     cesar_core_api_key_file: Path | None = None
     cesar_core_base_url: str = "http://127.0.0.1:8100"
     cesar_core_service: str = Field(default="backend", min_length=1)
     cesar_core_service_class: Literal["economy", "standard", "quality"] = "economy"
     cesar_core_max_tokens: int = Field(default=1024, ge=1, le=4096)
     cesar_core_timeout_seconds: float = Field(default=90, gt=0, le=300)
-    gemini_api_key_user_file: Path | None = None
-    gemini_api_key_admin_dev: SecretStr | None = None
-    gemini_api_key_admin_dev_file: Path | None = None
-    gemini_model: str = Field(default="gemini-3.6-flash", min_length=1)
-    # TASK-083: modelo dedicado só para requisições que exigem
-    # `require_search_grounding=True` -- nunca usado nas chamadas comuns,
-    # que continuam com `gemini_model`. Separado porque grounding via
-    # Google Search é uma capability específica, não simplesmente "a
-    # versão mais nova do Gemini".
-    gemini_grounding_model: str = Field(default="gemini-2.5-flash", min_length=1)
-    groq_api_key: SecretStr | None = None
-    groq_api_key_file: Path | None = None
-    groq_model: Literal["openai/gpt-oss-120b"] = "openai/gpt-oss-120b"
-    openrouter_api_key: SecretStr | None = None
-    openrouter_api_key_file: Path | None = None
-    openrouter_free_model: Literal["openrouter/free"] = "openrouter/free"
-    firecrawl_api_key: SecretStr | None = None
-    firecrawl_api_key_file: Path | None = None
     telegram_bot_token: SecretStr | None = None
     telegram_bot_token_file: Path | None = None
     telegram_webhook_secret: SecretStr | None = None
@@ -131,17 +109,13 @@ class Settings(BaseSettings):
     # resposta). Calculado a partir do pior caso real, não arbitrário:
     #   Fase A + Fase C (banco, 2 seções curtas):
     #       2 x telegram_statement_timeout_seconds (10s)      = 20s
-    #   Fase B (IA, cascata Gemini -> Groq, sem espera entre
-    #       tiers -- AdminDevAIProviderManager não faz backoff
-    #       entre provedores, só tenta o próximo):
-    #       2 x external_http_timeout_seconds (10s)           = 20s
+    #   Fase B (uma chamada ao César Core, cujo timeout próprio é
+    #       configurado separadamente):                       = até 90s
     #   Fase D (envio Telegram, tentativa única via
     #       asyncio.to_thread, sem retry interno):
     #       1 x external_http_timeout_seconds (10s)           = 10s
-    #   Núcleo: 20s + 20s + 10s = 50s
-    #   Margem operacional (~80%, contenção de pool/scheduling
-    #       sob carga): ~40s
-    #   Total: 90s
+    # O deadline de 90s continua sendo o teto histórico do processamento
+    # do Telegram; o Core deve usar timeout compatível com esse orçamento.
     telegram_message_deadline_seconds: float = Field(default=90.0, gt=0, le=300)
     max_request_body_bytes: int = Field(default=65_536, ge=1024, le=1_048_576)
     telegram_rate_limit_per_minute: int = Field(default=20, ge=1, le=1000)
@@ -380,7 +354,10 @@ class Settings(BaseSettings):
         """Resolve uma única fonte por segredo e proíbe ENV direto em produção."""
         if self.retry_max_delay_seconds < self.retry_base_delay_seconds:
             raise ValueError("retry max delay must not be smaller than base delay")
-        if self.detail_request_max_delay_seconds < self.detail_request_min_delay_seconds:
+        if (
+            self.detail_request_max_delay_seconds
+            < self.detail_request_min_delay_seconds
+        ):
             raise ValueError(
                 "detail request max delay must not be smaller than min delay"
             )
@@ -392,12 +369,18 @@ class Settings(BaseSettings):
             raise ValueError(
                 "user cooldown max must not be smaller than user cooldown min"
             )
-        if self.collection_cadence_normal_max_minutes < self.collection_cadence_normal_min_minutes:
+        if (
+            self.collection_cadence_normal_max_minutes
+            < self.collection_cadence_normal_min_minutes
+        ):
             raise ValueError(
                 "collection_cadence_normal_max_minutes must not be smaller than "
                 "collection_cadence_normal_min_minutes"
             )
-        if self.collection_cadence_promo_max_minutes < self.collection_cadence_promo_min_minutes:
+        if (
+            self.collection_cadence_promo_max_minutes
+            < self.collection_cadence_promo_min_minutes
+        ):
             raise ValueError(
                 "collection_cadence_promo_max_minutes must not be smaller than "
                 "collection_cadence_promo_min_minutes"
@@ -411,7 +394,10 @@ class Settings(BaseSettings):
             raise ValueError(
                 "realert_promo_hours must not be greater than realert_normal_hours"
             )
-        if self.market_assessment_ttl_promo_hours > self.market_assessment_ttl_normal_hours:
+        if (
+            self.market_assessment_ttl_promo_hours
+            > self.market_assessment_ttl_normal_hours
+        ):
             raise ValueError(
                 "market_assessment_ttl_promo_hours must not be greater than "
                 "market_assessment_ttl_normal_hours"

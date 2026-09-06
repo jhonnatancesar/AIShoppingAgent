@@ -211,7 +211,7 @@ from app.missions.models import (
 )
 from app.offers.models import Offer
 from app.products.models import Product
-from app.search.firecrawl import FirecrawlSearchProvider
+from app.search.cesar_core_fetch import CesarCoreFetchProvider
 from app.stores.models import Store
 from app.users.models import UserRole
 
@@ -421,27 +421,19 @@ async def _persist_shared_offers_and_finish(
         # todo Seller/Product/Offer que este lote possa vir a criar.
         await _acquire_creation_locks(session, frozenset(creation_lock_keys))
 
-        offer_ids = sorted(
-            {o.id for o, _ in preview.values() if o is not None}
-        )
+        offer_ids = sorted({o.id for o, _ in preview.values() if o is not None})
         for offer_id in offer_ids:
             await session.scalar(
                 select(Offer.id).where(Offer.id == offer_id).with_for_update()
             )
-        product_ids = sorted(
-            {p.id for _, p in preview.values() if p is not None}
-        )
+        product_ids = sorted({p.id for _, p in preview.values() if p is not None})
         for product_id in product_ids:
             await session.scalar(
-                select(Product.id)
-                .where(Product.id == product_id)
-                .with_for_update()
+                select(Product.id).where(Product.id == product_id).with_for_update()
             )
 
         resolved_offers: dict[tuple[str | None, str | None, str], Offer] = {}
-        resolved_items: list[
-            tuple[tuple[str | None, str | None, str], Any]
-        ] = []
+        resolved_items: list[tuple[tuple[str | None, str | None, str], Any]] = []
         for identity_key, item in items_by_key.items():
             offer = await _resolve_offer(session, store_id, item)
             resolved_offers[identity_key] = offer
@@ -731,9 +723,13 @@ async def _build_mission_phase_a_outcome(
                     observation_created=shared.observation_created,
                     alert_comparison=alert_comparison,
                     forced_relevance=forced_relevance,
-                    previous_observation_id=previous.id if previous is not None else None,
+                    previous_observation_id=previous.id
+                    if previous is not None
+                    else None,
                     previous_amount=previous.amount if previous is not None else None,
-                    previous_currency=previous.currency if previous is not None else None,
+                    previous_currency=previous.currency
+                    if previous is not None
+                    else None,
                     previous_availability=(
                         previous.availability if previous is not None else None
                     ),
@@ -1044,7 +1040,7 @@ async def _process_pending_fan_out(
     shared_results: tuple[_SharedOfferResult, ...],
     finished_at: datetime,
     limit: int | None = None,
-    firecrawl: FirecrawlSearchProvider | None = None,
+    firecrawl: CesarCoreFetchProvider | None = None,
     settings: Settings | None = None,
 ) -> _FanOutBatchOutcome:
     """Processa `SharedFanOutTask` elegíveis (`pending`, devidas) de UMA
@@ -1082,7 +1078,9 @@ async def _process_pending_fan_out(
                 ),
             )
             .order_by(
-                func.coalesce(SharedFanOutTask.next_retry_at, SharedFanOutTask.created_at),
+                func.coalesce(
+                    SharedFanOutTask.next_retry_at, SharedFanOutTask.created_at
+                ),
                 SharedFanOutTask.mission_id,
             )
         )
@@ -1144,7 +1142,13 @@ async def _process_pending_fan_out(
         # também não os lê; a identidade real da Mission vem de
         # `_build_mission_phase_a_outcome` (busca `MissionCriteria` fresca).
         mission_claim = ClaimedCollection(
-            mission_run_id, mission_id, store_id, adapter_store_code, "", finished_at, None
+            mission_run_id,
+            mission_id,
+            store_id,
+            adapter_store_code,
+            "",
+            finished_at,
+            None,
         )
         try:
             phase_a = await _build_mission_phase_a_outcome(
@@ -1178,7 +1182,10 @@ async def _process_pending_fan_out(
             )
             if ok:
                 await _complete_fan_out_task(
-                    session_factory, run_id=run_id, mission_id=mission_id, now=finished_at
+                    session_factory,
+                    run_id=run_id,
+                    mission_id=mission_id,
+                    now=finished_at,
                 )
                 done.append(mission_id)
             else:
@@ -1197,11 +1204,17 @@ async def _process_pending_fan_out(
             # tentativas de retry (item 1, correção de consistência).
             logger.warning(
                 "shared_collection_fan_out_mission_terminal_error",
-                extra={"mission_id": str(mission_id), "source_code": _safe_source(adapter_store_code)},
+                extra={
+                    "mission_id": str(mission_id),
+                    "source_code": _safe_source(adapter_store_code),
+                },
                 exc_info=True,
             )
             await _record_fan_out_failure(
-                session_factory, mission_claim, "shared_fan_out_terminal_error", finished_at
+                session_factory,
+                mission_claim,
+                "shared_fan_out_terminal_error",
+                finished_at,
             )
             await _fail_fan_out_task_terminal(
                 session_factory,
@@ -1221,7 +1234,10 @@ async def _process_pending_fan_out(
             # last_error, nunca perda silenciosa, nunca "descartado").
             logger.warning(
                 "shared_collection_fan_out_mission_failed",
-                extra={"mission_id": str(mission_id), "source_code": _safe_source(adapter_store_code)},
+                extra={
+                    "mission_id": str(mission_id),
+                    "source_code": _safe_source(adapter_store_code),
+                },
                 exc_info=True,
             )
             await _record_fan_out_failure(
@@ -1256,7 +1272,7 @@ async def resume_shared_collection_fan_out(
     ai_profile: UserRole = UserRole.ADMIN,
     task_limit: int | None = None,
     recover_stale: bool = True,
-    firecrawl: FirecrawlSearchProvider | None = None,
+    firecrawl: CesarCoreFetchProvider | None = None,
     settings: Settings | None = None,
 ) -> SharedCollectionResult:
     """Retoma fan-out pendente de coletas compartilhadas já `SUCCEEDED`
@@ -1321,7 +1337,9 @@ async def resume_shared_collection_fan_out(
     for run_id, store_code in runs:
         if remaining is not None and remaining <= 0:
             break
-        shared_results = await _reconstruct_shared_results(session_factory, run_id=run_id)
+        shared_results = await _reconstruct_shared_results(
+            session_factory, run_id=run_id
+        )
         outcome = await _process_pending_fan_out(
             session_factory,
             store_code,
@@ -1379,7 +1397,9 @@ async def _due_shared_fan_out_targets(
                 CollectionRun.store_id,
                 func.count(SharedFanOutTask.mission_id).label("pending_count"),
                 func.min(
-                    func.coalesce(SharedFanOutTask.next_retry_at, SharedFanOutTask.created_at)
+                    func.coalesce(
+                        SharedFanOutTask.next_retry_at, SharedFanOutTask.created_at
+                    )
                 ).label("earliest_due_at"),
             )
             .select_from(SharedFanOutTask)
@@ -1416,7 +1436,9 @@ def _allocate_fan_out_budget(
     nunca espera um alvo maior esvaziar; rodadas seguintes distribuem o
     que sobrar do orçamento entre quem ainda tem trabalho pendente, até
     esgotar `task_budget` ou os pendentes de todos os alvos."""
-    remaining_by_target = {(item_id, store_id): count for item_id, store_id, count in targets}
+    remaining_by_target = {
+        (item_id, store_id): count for item_id, store_id, count in targets
+    }
     allocation: dict[tuple[UUID, UUID], int] = dict.fromkeys(remaining_by_target, 0)
     budget = task_budget
     progressed = True
@@ -1434,7 +1456,11 @@ def _allocate_fan_out_budget(
             allocation[key] += take
             budget -= take
             progressed = True
-    return tuple((item_id, store_id, count) for (item_id, store_id), count in allocation.items() if count > 0)
+    return tuple(
+        (item_id, store_id, count)
+        for (item_id, store_id), count in allocation.items()
+        if count > 0
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1447,12 +1473,18 @@ class FanOutSweepSummary:
     terminally_failed_mission_count: int = 0
 
     @classmethod
-    def aggregate(cls, outcomes: Sequence[SharedCollectionResult]) -> "FanOutSweepSummary":
+    def aggregate(
+        cls, outcomes: Sequence[SharedCollectionResult]
+    ) -> "FanOutSweepSummary":
         return cls(
             targets_processed=len(outcomes),
             attempted_task_count=sum(o.attempted_task_count for o in outcomes),
-            fanned_out_mission_count=sum(len(o.fanned_out_mission_ids) for o in outcomes),
-            skipped_mission_count=sum(len(o.fan_out_skipped_mission_ids) for o in outcomes),
+            fanned_out_mission_count=sum(
+                len(o.fanned_out_mission_ids) for o in outcomes
+            ),
+            skipped_mission_count=sum(
+                len(o.fan_out_skipped_mission_ids) for o in outcomes
+            ),
             attention_required_mission_count=sum(
                 len(o.fan_out_attention_required_mission_ids) for o in outcomes
             ),
@@ -1472,7 +1504,7 @@ async def sweep_shared_collection_fan_out(
     task_budget: int = 100,
     per_target_task_cap: int = 25,
     concurrency: int = 4,
-    firecrawl: FirecrawlSearchProvider | None = None,
+    firecrawl: CesarCoreFetchProvider | None = None,
     settings: Settings | None = None,
 ) -> FanOutSweepSummary:
     """TASK-112 fase 3B: sweep limitado de fan-out pendente/retry/stale --
@@ -1501,7 +1533,9 @@ async def sweep_shared_collection_fan_out(
 
     semaphore = asyncio.Semaphore(concurrency)
 
-    async def _run_one(item_id: UUID, store_id: UUID, limit: int) -> SharedCollectionResult:
+    async def _run_one(
+        item_id: UUID, store_id: UUID, limit: int
+    ) -> SharedCollectionResult:
         async with semaphore:
             return await resume_shared_collection_fan_out(
                 session_factory,
@@ -1517,7 +1551,10 @@ async def sweep_shared_collection_fan_out(
             )
 
     outcomes = await asyncio.gather(
-        *(_run_one(item_id, store_id, limit) for item_id, store_id, limit in allocations)
+        *(
+            _run_one(item_id, store_id, limit)
+            for item_id, store_id, limit in allocations
+        )
     )
     return FanOutSweepSummary.aggregate(outcomes)
 
@@ -1532,7 +1569,7 @@ async def _execute_claimed_shared_collection(
     normalizer: PriceNormalizer | None,
     effective_now: datetime,
     base_backoff_minutes: int,
-    firecrawl: FirecrawlSearchProvider | None = None,
+    firecrawl: CesarCoreFetchProvider | None = None,
     settings: Settings | None = None,
 ) -> SharedCollectionResult:
     """TASK-112 fase 3B: "rabo" de `collect_monitoring_item_store`
@@ -1579,7 +1616,9 @@ async def _execute_claimed_shared_collection(
                 "failure_code": _failure_code(error),
             },
         )
-        return SharedCollectionResult(claimed=True, provider_called=True, succeeded=False)
+        return SharedCollectionResult(
+            claimed=True, provider_called=True, succeeded=False
+        )
 
     normalized = effective_normalizer.normalize_result(result)
     selected = _select_final_candidates(
@@ -1590,7 +1629,9 @@ async def _execute_claimed_shared_collection(
     )
     selected_raw = tuple(item.raw_offer for item in selected)
     try:
-        enriched_raw = await adapter.enrich_offer_details(claim.store_code, selected_raw)
+        enriched_raw = await adapter.enrich_offer_details(
+            claim.store_code, selected_raw
+        )
     except Exception:
         logger.warning(
             "shared_collection_offer_detail_enrichment_failed",
@@ -1672,7 +1713,7 @@ async def collect_monitoring_item_store(
     store_min_interval_seconds: float = 2.0,
     fairness_owner_user_id: UUID | None = None,
     normalizer: PriceNormalizer | None = None,
-    firecrawl: FirecrawlSearchProvider | None = None,
+    firecrawl: CesarCoreFetchProvider | None = None,
     settings: Settings | None = None,
 ) -> SharedCollectionResult:
     """Operação central da fase 3A, com claim standalone (fase 3B):

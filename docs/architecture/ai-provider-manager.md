@@ -1,19 +1,14 @@
 # AI Provider Manager
 
-Search de Market Research usa WebSearchManager separado (118G / ADR-017).
-Grounding de IA mantém o fluxo existente; esta migração não o altera.
-
-## Rollout DEV da TASK-118F
-
-`CesarCoreAIProvider` é selecionado pelas factories existentes com feature flag
-desligada por padrão. Envia messages tipadas ao Core, com `FREE_ONLY` e cap.
-Somente erro de conexão admite disaster fallback opt-in; HTTP de erro e timeout
-incerto não repetem cascata local. Grounding mantém seu caminho anterior.
-Configuração, prova real e rollback: `docs/tasks/TASK-118F.md`.
+Search de Market Research usa `WebSearchManager` separado. AI normal e
+grounding usam exclusivamente `CesarCoreAIProviderManager → César Core →
+OmniRoute`. Os providers diretos Gemini/Groq/OpenRouter e o disaster fallback
+foram removidos na Fase E. Configuração ausente ou falha do Core fecha o fluxo.
+Descrição canônica: [Integração com César Core](cesar-core-integration.md).
 
 Todo acesso a IA passa por `AIProviderManager.generate`. Módulos de domínio não
-podem importar SDKs nem chamar Gemini, OpenAI, Claude ou qualquer outro provedor
-diretamente. `AIProvider` é uma porta interna usada apenas pelo manager.
+importam SDKs nem conhecem providers concretos. `AIProvider` é a porta neutra
+usada pelo manager para falar com o adapter do César Core.
 
 ## Contrato
 
@@ -27,43 +22,22 @@ diretamente. `AIProvider` é uma porta interna usada apenas pelo manager.
   e, para quota, o horário UTC de reset quando o provedor o informar. Respostas
   brutas, prompts, tokens e credenciais não pertencem ao erro.
 
-Perfis previstos:
-
-- `USER`: cadeia exclusivamente gratuita: `gemini-3.6-flash`, Groq
-  `openai/gpt-oss-120b` e OpenRouter `openrouter/free`. Nenhuma rota paga é
-  elegível para esse manager.
-- `ADMIN`: papel histórico do domínio que compartilha a mesma política
-  gratuita do DEV — `gemini-3.6-flash` (o mesmo
-  modelo Gemini Flash do perfil `USER`, via `Settings.gemini_model`, sobre a
-  chave dedicada `AISHOPPING_GEMINI_API_KEY_ADMIN_DEV`) e, se configurado, o
-  Groq (`GroqProvider`, TASK-059, opcional) e OpenRouter `openrouter/free`
-  como fallbacks de disponibilidade. **Nenhum nível
-  Gemini Pro/preview participa da cascata (TASK-064/DEC-050)** — a
-  perfil recebe provider pago.
-- `DEV`: em chamadas normais usa a mesma cadeia exclusivamente gratuita do
-  USER. Quando `require_search_grounding=True`, a aplicação pesquisa primeiro
-  pela Firecrawl Search API v2 direta, exige ao menos uma fonte web válida e
-  então envia o contexto não confiável à mesma cascata gratuita. Falha ou
-  resultado vazio da pesquisa fecha o fluxo antes de qualquer LLM.
-- `PLUS`: futuro; não existe no contrato nem na V1.
-
-O perfil USER traduz mensagens para o contrato de cada provider e
-após cada chamada e converte quota, indisponibilidade, autenticação e rejeição em
-erros sanitizados. Ao atingir o limite, `AIProviderQuotaExceeded` permite ao canal
-informar que o usuário tente novamente mais tarde. USER e DEV nunca recebem
-fallback pago.
-
-`GroqProvider` (TASK-059) chama a API compatível com OpenAI do Groq via
-`httpx`, traduzindo os papéis `system`/`user`/`assistant` diretamente (sem a
-fusão de mensagens de sistema exigida pelo Gemini) e convertendo erros para
-os mesmos tipos sanitizados do `GeminiProvider`, incluindo `quota_reset_at`
-a partir do cabeçalho `retry-after` quando informado.
+`USER`, `ADMIN` e `DEV` selecionam managers por autorização de domínio, mas os
+três usam o mesmo gateway central. Modelo, provider, custo e fallback upstream
+são decisões do Core/OmniRoute, não do GG Oferta. `PLUS` continua futuro e não
+existe no contrato da V1.
 
 Cada tentativa gera `ai_provider_attempt` com UUID de correlação, perfil,
 finalidade, provedor, modelo, resultado, indicador de fallback e reset de quota
 quando conhecido. O evento não contém mensagens nem conteúdo da resposta. O
 objeto `AIQuotaNotice` permite aos futuros canais informar o horário de retomada
 ou declarar explicitamente que ele é desconhecido, sem inventar um prazo.
+
+## Histórico anterior à centralização
+
+Os registros abaixo descrevem providers diretos que existiram antes das Fases
+B/C/E. Eles permanecem somente como histórico de decisões e validações; não
+descrevem o runtime atual.
 
 Em 2026-08-02, a implementação foi validada com o SDK 2.16.0 e uma chamada
 autenticada real pelo `AIProviderManager`, usando `gemini-3.6-flash`, com resposta

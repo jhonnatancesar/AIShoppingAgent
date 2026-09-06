@@ -52,9 +52,15 @@ from app.market_research.models import (
 )
 from app.products.identity import resolve_product_variant
 from app.products.models import Product
-from app.search.firecrawl import FirecrawlSearchError, FirecrawlSearchProvider
+from app.search.cesar_core_fetch import CesarCoreFetchError, CesarCoreFetchProvider
 from app.search.manager import WebSearchManager, build_web_search_manager
 from app.search.telemetry import observe_scrape
+from app.search.url_safety import (
+    is_safe_to_fetch,
+    redact_sensitive_query_values,
+    safe_url_for_evidence,
+    url_for_fetch_request,
+)
 from app.users.models import UserRole
 
 logger = logging.getLogger(__name__)
@@ -62,6 +68,9 @@ logger = logging.getLogger(__name__)
 _MARKET_RESEARCH_PURPOSE = "market_price_assessment"
 _MAX_SEARCH_RESULTS = 6
 _MAX_SCRAPE_URLS = 3
+_MAX_AI_EVIDENCE_TITLE_CHARS = 500
+_MAX_AI_EVIDENCE_DESCRIPTION_CHARS = 2_000
+_OMITTED_EVIDENCE_MARKER = "\n[conteúdo intermediário omitido]\n"
 
 _CONFIDENCE_RANK = {
     AssessmentConfidence.LOW: 0,
@@ -81,7 +90,7 @@ _SYSTEM_PROMPT = (
     '"historical_low_external": número ou null, '
     '"historical_low_source": string (URL, obrigatório se '
     "historical_low_external não for null, deve ser exatamente uma das "
-    'URLs fornecidas em history_evidence) ou null, '
+    "URLs fornecidas em history_evidence) ou null, "
     '"historical_low_observed_at": string YYYY-MM-DD ou null}. '
     "Use market_evidence só para market_low/market_high/classification/"
     "confidence. Use history_evidence só para historical_low_external/"
@@ -131,13 +140,10 @@ def should_trigger_market_research(
     ):
         return True
 
-    if (
-        signals.internal_historical_best is not None
-        and _is_material_improvement(
-            reference_amount=signals.internal_historical_best,
-            current_amount=signals.current_amount,
-            settings=settings,
-        )
+    if signals.internal_historical_best is not None and _is_material_improvement(
+        reference_amount=signals.internal_historical_best,
+        current_amount=signals.current_amount,
+        settings=settings,
     ):
         return True
 
@@ -290,7 +296,11 @@ async def get_current_assessment_snapshot(
 
 
 def needs_refresh(
-    snapshot: AssessmentSnapshot | None, *, current_amount: Decimal, now: datetime, settings: Settings
+    snapshot: AssessmentSnapshot | None,
+    *,
+    current_amount: Decimal,
+    now: datetime,
+    settings: Settings,
 ) -> bool:
     """§33.14: assessment `READY` válido é reaproveitado, salvo refresh
     antecipado por variação grande do preço de referência."""
@@ -300,7 +310,9 @@ def needs_refresh(
         return True
     if snapshot.reference_price <= 0:
         return False
-    variation = abs(current_amount - snapshot.reference_price) / snapshot.reference_price
+    variation = (
+        abs(current_amount - snapshot.reference_price) / snapshot.reference_price
+    )
     return variation >= Decimal(str(settings.market_assessment_price_refresh_percent))
 
 
@@ -463,9 +475,7 @@ async def mark_assessment_failed(
     pós-plano, ponto 1): `retry_after` cresce por falha CONSECUTIVA
     (`failure_count`), capado."""
     async with session_factory() as session, session.begin():
-        row = await session.get(
-            MarketPriceAssessment, product_id, with_for_update=True
-        )
+        row = await session.get(MarketPriceAssessment, product_id, with_for_update=True)
         failure_count = (row.failure_count if row is not None else 0) + 1
         backoff_minutes = min(
             settings.market_assessment_failure_backoff_minutes
@@ -473,6 +483,10 @@ async def mark_assessment_failed(
             settings.market_assessment_failure_backoff_max_minutes,
         )
         retry_after = now + timedelta(minutes=backoff_minutes)
+        # FASE E.3: nenhuma exceção do caminho de enrichment embute a URL
+        # hoje, mas isso nunca é garantido por contrato -- redige antes de
+        # persistir, não confia que vai continuar assim para sempre.
+        safe_error = redact_sensitive_query_values(error).text
         await session.execute(
             update(MarketPriceAssessment)
             .where(MarketPriceAssessment.product_id == product_id)
@@ -481,7 +495,7 @@ async def mark_assessment_failed(
                 lease_until=None,
                 retry_after=retry_after,
                 failure_count=failure_count,
-                last_error=error[:2000],
+                last_error=safe_error[:2000],
             )
         )
 
@@ -509,7 +523,9 @@ def _domain(url: str) -> str:
     return netloc.removeprefix("www.")
 
 
-def _evidence_matches_identity(product: Product, *, title: str, description: str | None) -> bool:
+def _evidence_matches_identity(
+    product: Product, *, title: str, description: str | None
+) -> bool:
     """Fail-closed: só entra evidência cujo texto, reparseado pelo MESMO
     motor determinístico que gerou `Product.identity_key` (TASK-097),
     resolve para a identidade EXATA esperada. IA nunca decide isto."""
@@ -532,9 +548,7 @@ def build_history_query(product: Product) -> str:
     return f"{product_query_label(product)} menor preço histórico price history"
 
 
-def _distinct_domain_urls(
-    results: tuple[Any, ...], *, limit: int
-) -> tuple[str, ...]:
+def _distinct_domain_urls(results: tuple[Any, ...], *, limit: int) -> tuple[str, ...]:
     seen: set[str] = set()
     urls: list[str] = []
     for result in results:
@@ -551,7 +565,7 @@ def _distinct_domain_urls(
 async def _search_with_enrichment(
     search_manager: WebSearchManager,
     *,
-    enrichment: FirecrawlSearchProvider | None,
+    enrichment: CesarCoreFetchProvider | None,
     query: str,
     product: Product,
     min_items: int,
@@ -565,20 +579,36 @@ async def _search_with_enrichment(
     """
     response = await search_manager.search(query, limit=_MAX_SEARCH_RESULTS)
     compatible = [
-        EvidenceItem(url=r.url, domain=_domain(r.url), title=r.title, description=r.description)
+        EvidenceItem(
+            url=safe_url_for_evidence(r.url),
+            domain=_domain(r.url),
+            title=r.title,
+            description=r.description,
+        )
         for r in response.results
         if _evidence_matches_identity(product, title=r.title, description=r.description)
     ]
-    if len({item.domain for item in compatible}) >= min_items and len(compatible) >= min_items:
+    if (
+        len({item.domain for item in compatible}) >= min_items
+        and len(compatible) >= min_items
+    ):
         return tuple(compatible)
 
     if enrichment is None:
         return tuple(compatible)
     candidate_urls = _distinct_domain_urls(response.results, limit=_MAX_SCRAPE_URLS)
     for url in candidate_urls:
+        if not is_safe_to_fetch(url):
+            # URL carrega token/credencial/assinatura na query -- nunca
+            # buscada (FASE E.3): mascarar o valor e seguir em frente
+            # produziria uma URL inválida e esconderia o problema; a
+            # origem só perde esta evidência específica, mesmo tratamento
+            # de "sem evidência desta fonte" já existente.
+            observe_scrape(outcome="blocked", correlation_id=response.correlation_id)
+            continue
         try:
-            page = await enrichment.scrape_basic(url)
-        except FirecrawlSearchError:
+            page = await enrichment.scrape_basic(url_for_fetch_request(url))
+        except CesarCoreFetchError:
             observe_scrape(outcome="failed", correlation_id=response.correlation_id)
             # Falha do SERVIÇO Firecrawl para esta URL -- desiste dela,
             # segue para a próxima (nunca contorna, nunca propaga).
@@ -592,10 +622,16 @@ async def _search_with_enrichment(
             # Origem específica recusou/indisponível (`success: false`)
             # -- nunca um erro, só "sem evidência desta fonte".
             continue
-        title = page.title or url
+        safe_url = safe_url_for_evidence(url)
+        title = page.title or safe_url
         if _evidence_matches_identity(product, title=title, description=page.markdown):
             compatible.append(
-                EvidenceItem(url=url, domain=_domain(url), title=title, description=page.markdown)
+                EvidenceItem(
+                    url=safe_url,
+                    domain=_domain(url),
+                    title=title,
+                    description=page.markdown,
+                )
             )
     return tuple(compatible)
 
@@ -625,7 +661,7 @@ def _parse_optional_decimal(value: object) -> Decimal | None:
         return None
     try:
         return Decimal(str(value))
-    except (InvalidOperation, ValueError):
+    except InvalidOperation, ValueError:
         return None
 
 
@@ -656,6 +692,40 @@ def _parse_confidence(value: object) -> AssessmentConfidence | None:
         return None
 
 
+def _bounded_ai_evidence_text(value: str | None, *, limit: int) -> str | None:
+    """Limita texto livre enviado à IA sem alterar a evidência persistida.
+
+    Preserva começo e fim porque páginas comerciais normalmente apresentam
+    identidade/metadados no topo e preço, condição ou disponibilidade em um
+    dos extremos. O marcador torna a redução explícita para o modelo.
+    """
+    if value is None:
+        return None
+    text = value.strip()
+    if len(text) <= limit:
+        return text
+    available = limit - len(_OMITTED_EVIDENCE_MARKER)
+    head = available // 2
+    tail = available - head
+    return (
+        text[:head].rstrip()
+        + _OMITTED_EVIDENCE_MARKER
+        + text[-tail:].lstrip()
+    )
+
+
+def _ai_evidence_item(evidence: EvidenceItem) -> dict[str, str | None]:
+    return {
+        "url": evidence.url,
+        "title": _bounded_ai_evidence_text(
+            evidence.title, limit=_MAX_AI_EVIDENCE_TITLE_CHARS
+        ),
+        "description": _bounded_ai_evidence_text(
+            evidence.description, limit=_MAX_AI_EVIDENCE_DESCRIPTION_CHARS
+        ),
+    }
+
+
 async def _interpret_evidence(
     ai_manager: AIProviderManager,
     *,
@@ -672,14 +742,8 @@ async def _interpret_evidence(
             "product": product_query_label(product),
             "reference_price": str(reference_price),
             "currency": reference_currency,
-            "market_evidence": [
-                {"url": e.url, "title": e.title, "description": e.description}
-                for e in market_evidence
-            ],
-            "history_evidence": [
-                {"url": e.url, "title": e.title, "description": e.description}
-                for e in history_evidence
-            ],
+            "market_evidence": [_ai_evidence_item(e) for e in market_evidence],
+            "history_evidence": [_ai_evidence_item(e) for e in history_evidence],
         }
     )
     request = AIRequest(
@@ -709,13 +773,11 @@ def _finalize_confidence(
     """Correção pós-plano, ponto 6: quórum validado pelo CÓDIGO -- 2
     domínios nunca sai de MEDIUM, mesmo se a IA disser HIGH; HIGH exige
     3+ domínios E a IA também ter dito HIGH (nunca promovido sozinho)."""
-    cap = AssessmentConfidence.HIGH if domain_count >= 3 else AssessmentConfidence.MEDIUM
-    claimed = ai_confidence or AssessmentConfidence.MEDIUM
-    return (
-        claimed
-        if _CONFIDENCE_RANK[claimed] <= _CONFIDENCE_RANK[cap]
-        else cap
+    cap = (
+        AssessmentConfidence.HIGH if domain_count >= 3 else AssessmentConfidence.MEDIUM
     )
+    claimed = ai_confidence or AssessmentConfidence.MEDIUM
+    return claimed if _CONFIDENCE_RANK[claimed] <= _CONFIDENCE_RANK[cap] else cap
 
 
 def finalize_market_research(
@@ -733,10 +795,12 @@ def finalize_market_research(
     history_urls = {item.url for item in history_evidence}
     evidence_record: dict[str, Any] = {
         "market_evidence": [
-            {"url": e.url, "domain": e.domain, "title": e.title} for e in market_evidence
+            {"url": e.url, "domain": e.domain, "title": e.title}
+            for e in market_evidence
         ],
         "history_evidence": [
-            {"url": e.url, "domain": e.domain, "title": e.title} for e in history_evidence
+            {"url": e.url, "domain": e.domain, "title": e.title}
+            for e in history_evidence
         ],
         "ai_payload": payload,
     }
@@ -755,7 +819,9 @@ def finalize_market_research(
         if low is not None and high is not None and low <= high:
             market_low, market_high = low, high
             parsed_classification = _parse_classification(payload.get("classification"))
-            classification = parsed_classification or MarketPriceClassification.INSUFFICIENT_EVIDENCE
+            classification = (
+                parsed_classification or MarketPriceClassification.INSUFFICIENT_EVIDENCE
+            )
             confidence = _finalize_confidence(
                 ai_confidence=_parse_confidence(payload.get("confidence")),
                 domain_count=len(market_domains),
@@ -803,7 +869,7 @@ def finalize_market_research(
 async def run_market_research(
     session_factory: async_sessionmaker[AsyncSession],
     ai_manager: AIProviderManager,
-    firecrawl: FirecrawlSearchProvider | None,
+    firecrawl: CesarCoreFetchProvider | None,
     *,
     product: Product,
     store_id: UUID | None,
@@ -834,7 +900,7 @@ async def run_market_research(
         return None
 
     try:
-        search_manager = build_web_search_manager(settings, firecrawl)
+        search_manager = build_web_search_manager(settings)
         market_evidence = await _search_with_enrichment(
             search_manager,
             enrichment=firecrawl,
@@ -910,7 +976,7 @@ async def run_market_research(
 async def evaluate_trigger_and_maybe_research(
     session_factory: async_sessionmaker[AsyncSession],
     ai_manager: AIProviderManager,
-    firecrawl: FirecrawlSearchProvider | None,
+    firecrawl: CesarCoreFetchProvider | None,
     *,
     mission_id: UUID,
     product_id: UUID,

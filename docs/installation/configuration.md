@@ -99,10 +99,29 @@ Lidas de verdade por `api` e `collection_worker`; não aparecem em
     [Runbook de operação](../operations/runbook.md) antes de alterar esses
     dois valores em produção.
 
+## César Core (IA e Web Search)
+
+Integração obrigatória com o gateway privado César Core (repositório próprio,
+`cesar-core`) — passo a passo completo em
+[Instalação → César Core](cesar-core.md); funcionalidade em
+[Arquitetura → Integração com César Core](../architecture/cesar-core-integration.md).
+
+| Variável | Finalidade | Padrão |
+| --- | --- | --- |
+| `AISHOPPING_CESAR_CORE_BASE_URL` | Endpoint HTTP loopback do Core | `http://127.0.0.1:8100` |
+| `AISHOPPING_CESAR_CORE_SERVICE` | Identifica o chamador (`backend`/`collection_worker`) perante o Core | `backend` |
+| `AISHOPPING_CESAR_CORE_SERVICE_CLASS` | Classe de serviço solicitada (`economy`/`standard`/`quality`) | `economy` |
+| `AISHOPPING_CESAR_CORE_MAX_TOKENS` | Teto de tokens da geração de IA | `1024` |
+| `AISHOPPING_CESAR_CORE_TIMEOUT_SECONDS` | Timeout da chamada de IA | `90` |
+| `AISHOPPING_CESAR_CORE_SEARCH_TIMEOUT_SECONDS` | Timeout da chamada de Search | `30` |
+
+A credencial (`AISHOPPING_CESAR_CORE_API_KEY_FILE`) é secret, não vai nesta
+página — ver [Secrets](secrets.md). Quota efetiva (limite) não é configurada
+aqui: mora no Control Plane administrativo do próprio César Core (ADR 0018
+do repositório `cesar-core`).
+
 ## Chaves não usadas pelo código
 
-Uma auditoria já encontrou, em ambientes locais antigos, chaves configuradas
-para OpenAI, Anthropic e Grok. Nenhuma delas existe em `Settings`
-(`backend/app/core/config.py`) e nenhum código as lê — não fazem parte da
-cascata do `AIProviderManager`, que usa Gemini, Groq e OpenRouter. Não
-configure essas três chaves em produção.
+O GG Oferta não lê chaves de providers AI concretos. Essas conexões pertencem
+ao OmniRoute abaixo do César Core. Chaves antigas de Gemini, Groq, OpenRouter,
+OpenAI, Anthropic, Grok ou equivalentes não devem ser configuradas no GG.

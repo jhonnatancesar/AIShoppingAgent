@@ -7,7 +7,6 @@ from pathlib import Path
 import httpx
 
 from app.ai_provider.contracts import (
-    AIProviderCapabilityUnsupported,
     AIProviderError,
     AIProviderUnavailable,
     AIRequest,
@@ -55,8 +54,6 @@ class CesarCoreAIProvider:
         self._client_factory = client_factory
 
     async def generate(self, request: AIRequest) -> AIResponse:
-        if request.require_search_grounding:
-            raise AIProviderCapabilityUnsupported("search_grounding")
         try:
             token = self._key_file.read_text(encoding="utf-8").strip()
         except OSError, UnicodeError:
@@ -76,6 +73,8 @@ class CesarCoreAIProvider:
             },
             "max_tokens": self._max_tokens,
         }
+        if request.require_search_grounding:
+            payload["require_search_grounding"] = True
         try:
             async with self._client_factory(
                 timeout=self._timeout, follow_redirects=False, trust_env=False
@@ -107,6 +106,9 @@ class CesarCoreAIProvider:
         try:
             body = response.json()
             completion = body["usage"]["completion_tokens"]
+            grounding_requested = body.get("grounding_requested", False)
+            grounding_performed = body.get("grounding_performed", False)
+            grounding_sources = body.get("grounding_sources", [])
             if (
                 body["correlation_id"] != str(request.request_id)
                 or body["provider_gateway"] != "omniroute"
@@ -118,6 +120,16 @@ class CesarCoreAIProvider:
                 or not body["content"].strip()
                 or type(completion) is not int
                 or not 0 <= completion <= self._max_tokens
+                or not isinstance(grounding_requested, bool)
+                or not isinstance(grounding_performed, bool)
+                or not isinstance(grounding_sources, list)
+                or any(
+                    not isinstance(source, str) or not source.strip()
+                    for source in grounding_sources
+                )
+                or grounding_requested != request.require_search_grounding
+                or (request.require_search_grounding and not grounding_performed)
+                or (grounding_sources and not grounding_performed)
             ):
                 raise ValueError("Invalid normalized response")
             return AIResponse(
@@ -126,6 +138,9 @@ class CesarCoreAIProvider:
                 model=body["model"],
                 content=body["content"],
                 finished_at=datetime.now(UTC),
+                grounding_requested=grounding_requested,
+                grounding_performed=grounding_performed,
+                grounding_sources=tuple(grounding_sources),
             )
         except KeyError, TypeError, ValueError:
             raise AIProviderError(

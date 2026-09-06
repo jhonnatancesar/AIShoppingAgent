@@ -20,7 +20,7 @@ comprovado ao vivo nesta PROD (2026-08-28) que a Scheduled Task
 precisar de logoff/reboot/restart de serviço: configuramos as variáveis
 e, na mesma sessão já logada, um `Start-ScheduledTask` imediato (via
 Windows Ops Agent) já iniciou o worker com a configuração nova
-carregada, conectou no Postgres e no Gemini ADMIN/DEV, e coletou de
+carregada, conectou no Postgres e no César Core, e coletou de
 verdade. Por isso este script NÃO cria nenhum launcher/wrapper
 intermediário -- provou-se desnecessário.
 
@@ -32,25 +32,17 @@ tags, só compose.yaml mudou):
 
   OBRIGATÓRIOS (sem default, worker crasha no startup sem eles):
     - database_password       (secreto)  -> AISHOPPING_DATABASE_PASSWORD_FILE
-    - gemini_api_key_admin_dev(secreto)  -> AISHOPPING_GEMINI_API_KEY_ADMIN_DEV_FILE
+    - cesar-core-client-dev (secreto) -> AISHOPPING_CESAR_CORE_API_KEY_FILE
+        FASE E.1: também usada para o enriquecimento de mercado (antigo
+        TASK-113/Firecrawl direto) -- o worker não guarda mais credencial
+        própria de Firecrawl; enriquecimento é capability do César Core
+        (`/v1/fetch`), mesma credencial de aplicação de AI/Search.
 
   OPCIONAIS, com efeito real se ausentes (fail-soft, nunca crasha):
-    - groq_api_key       (secreto)  -> AISHOPPING_GROQ_API_KEY_FILE
-        ausente: cascata ADMIN/DEV perde o 2o nível de fallback.
-    - openrouter_api_key (secreto)  -> AISHOPPING_OPENROUTER_API_KEY_FILE
-        ausente: cascata ADMIN/DEV perde o 3o nível (último) de fallback.
-    - firecrawl_api_key  (secreto)  -> AISHOPPING_FIRECRAWL_API_KEY_FILE
-        ausente: TASK-113 (avaliação de mercado) fica desligada, resto
-        do worker funciona normalmente.
     - edge_cdp_url    (não secreto) -> AISHOPPING_EDGE_CDP_URL
         ausente: Magalu/MercadoLivre/Terabyte falham isolados (não têm
         fallback Playwright, TASK-105/109); Amazon/Kabum/Pichau caem
         para Playwright puro.
-
-  NÃO USADO pelo worker (confirmado por grep no código -- só usado pelo
-  caminho de requisição do usuário final em app/ai_provider/manager.py,
-  função diferente de build_admin_dev_ai_provider_manager):
-    - gemini_api_key_user -- este script NUNCA configura essa variável.
 
   NÃO USADOS pelo worker (usados só por outros serviços -- ops_controller,
   telegram_notifier, api -- este script nunca configura):
@@ -126,10 +118,7 @@ function Assert-Administrator {
 # variável de fora (comportamento fail-soft já suportado pelo código).
 $script:SecretFileMap = [ordered]@{
     "AISHOPPING_DATABASE_PASSWORD_FILE"        = @{ File = "postgres_password"; Required = $true }
-    "AISHOPPING_GEMINI_API_KEY_ADMIN_DEV_FILE" = @{ File = "gemini_api_key_admin_dev"; Required = $true }
-    "AISHOPPING_GROQ_API_KEY_FILE"              = @{ File = "groq_api_key"; Required = $false }
-    "AISHOPPING_OPENROUTER_API_KEY_FILE"        = @{ File = "openrouter_api_key"; Required = $false }
-    "AISHOPPING_FIRECRAWL_API_KEY_FILE"         = @{ File = "firecrawl_api_key"; Required = $false }
+    "AISHOPPING_CESAR_CORE_API_KEY_FILE"        = @{ File = "cesar-core-client-dev"; Required = $true }
 }
 
 # Identidades esperadas na ACL de $SecretsDir (DEC-104) -- qualquer outra

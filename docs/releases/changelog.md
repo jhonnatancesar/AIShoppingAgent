@@ -1,16 +1,41 @@
 # Changelog
 
-## TASK-118G — DEV em validação
+## FASE E.3 — hardening de Fetch concluído localmente
+
+Auditorias integrais read-only de DEV/PROD não encontraram segredo persistido.
+URLs sensíveis são bloqueadas, evidence/erros são sanitizados e o conteúdo
+livre enviado pela avaliação de mercado à IA passou a ter limites
+determinísticos (título 500, descrição 2.000, começo/fim preservados).
+Integração focada em PostgreSQL 18.4: 13/13. Findings e riscos residuais em
+`C:\cesar-core\docs\security\fetch-data-leakage-hardening.md`. Sem commit,
+push ou alteração de PROD.
+
+## TASK-118H — validação DEV concluída, aguardando revisão
+
+Continuação: restart real de processo Core, mesma instância de managers GG,
+quota volátil pré-upstream, rollback AI/Search com providers reais, falhas HTTP
+controladas finitas e runbook operacional. 7 cenários complementares, 22 Core,
+2 GG e 38 focados/harness passaram. Sem alteração funcional de domínio ou PROD;
+aguarda revisão, sem commit/push.
+
+Status de 118F/118G sincronizados com aprovação e publicação. Stack isolado:
+22/22 Core, 2/2 GG AI/Search e 2/2 paradas/recuperações OmniRoute/SearXNG passaram.
+Harness sem dotenv compartilhado, isolamento testado; matriz restante de
+resiliência/rollback e runbook ainda pendentes. Nenhum deploy.
+
+## TASK-118G — concluída e publicada
 
 Search via manager/Core/SearXNG; fallback Firecrawl por indisponibilidade.
-Scrape separado, até 3 URLs, com observabilidade. Sem deploy/commit/push.
+Scrape separado, até 3 URLs, com observabilidade. GG `80dc135`, Core `3578f2b`.
+Commit e push concluídos, sem deploy PROD.
 
-## TASK-118F — DEV, aguardando revisão
+## TASK-118F — concluída e publicada
 
 - Provider César Core com messages tipadas, `FREE_ONLY`, cap e credencial `*_FILE`.
 - Factories existentes sob feature flag false; disaster fallback opt-in por
   falha de conexão, sem mascarar auth/policy/quota/erros HTTP.
-- Contrato Core retrocompatível e fluxo real validados; nenhum deploy ou push.
+- Contrato Core retrocompatível e fluxo real validados; GG `c383fdc`, Core
+  `95b6996`, publicados em main; nenhum deploy PROD.
 
 *Nota: gap sem entrada entre 2026-08-22 e 2026-08-25 (TASK-105, TASK-107,
 TASK-108, TASK-109 concluídas nesse intervalo sem registro aqui) --

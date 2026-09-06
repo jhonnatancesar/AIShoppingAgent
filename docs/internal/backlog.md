@@ -121,4 +121,30 @@ existente, papel único) — nenhum dos itens abaixo faz parte dela (`DEC-073`).
 
 ## Regra de uso
 
+### Operação e custos do GG Oferta após a sequência 118 — Backlog
+
+Registrado em 2026-09-04 por decisão explícita: somente pendência futura,
+sem implementação nesta continuação Core-only da TASK-118H.
+
+1. Definir política de custo Firecrawl (orçamento, limites e responsáveis).
+2. Consolidar métricas de créditos reportados/consumidos, distinguindo Search
+   de enriquecimento e sem estimar créditos como se fossem reportados.
+3. Validar critérios operacionais de fallback: indisponibilidade real versus
+   auth/policy/quota/vazio válido; não mudar o comportamento nesta rodada.
+4. Avaliar custo/uso de `/v2/scrape` como enriquecimento separado de Search,
+   preservando a regra de evidência e o limite atual de URLs até nova decisão.
+5. Planejar validação de volume/latência em PROD, mediante autorização própria.
+6. Planejar rollout real com secrets, Cloudflare, rede e rollback; a validação
+   DEV não equivale a deployment nem autoriza alteração de produção.
+7. Acompanhar disponibilidade de providers externos com critérios e alertas
+   operacionais a definir na task futura.
+
+Dependência a considerar: Core ADR 0018 troca quota volátil por Redis durável.
+O teste histórico GG que esperava reset da quota após restart ficou obsoleto
+e deverá ser atualizado quando os contracts GG forem retomados. Core agora
+distingue `429 quota_exceeded` de `503 quota_store_unavailable`, ambos sem
+upstream. Avaliar explicitamente a classificação deste último no consumidor:
+o tratamento genérico atual de 503 pode acionar fallback. Nenhuma alteração
+de fallback, Firecrawl, Market Research, código ou teste GG foi feita aqui.
+
 Tudo que não constar em `docs/internal/mvp.md` é considerado fora do escopo da V1. Quando uma ideia for explicitamente descartada para a V1, ela deve ser registrada também em `docs/internal/out-of-scope.md`.

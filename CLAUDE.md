@@ -1,5 +1,16 @@
 # Contexto permanente do projeto
 
+## Integração GG Oferta ↔ César Core
+
+Antes de alterar AI, Search, providers, fallback, grounding, César Core,
+OmniRoute, Firecrawl ou Docker/configuração GG ↔ Core, leia integralmente
+`C:\cesar-core\docs\architecture\gg-oferta-core.md`. O fluxo oficial é
+`GG Oferta → César Core → OmniRoute → providers`; Search e Firecrawl
+Scrape são capacidades diferentes. GG Oferta e seu worker nativo nunca devem
+depender diretamente de um provider externo (Gemini, Groq, OpenRouter,
+Firecrawl, SearXNG ou futuros) para capacidades cobertas por essa arquitetura
+— a dependência é sempre o César Core; providers concretos ficam abaixo dele.
+
 ## Missão
 
 Construir, de forma incremental, um agente de compras que pesquisa produtos, registra preços, executa missões e apoia decisões de compra.
@@ -28,6 +39,7 @@ A V1 permite pesquisar Pichau, Terabyte, Amazon, Kabum, Magalu e Mercado Livre, 
   Firecrawl API v2 direta antes da mesma cascata; Firecrawl é pesquisa, não
   LLM. ADMIN compartilha a política gratuita vigente. PLUS é futuro.
 - Cada coleta de preço deverá ser persistida quando o mecanismo for implementado.
+- `context-compress` (MCP): funcional nesta máquina Windows, com uma ressalva importante. O runtime `shell` do `execute`/`batch_execute` corrompe caminhos Windows (perde as barras de `C:\Users\...`) e sempre falha — não usar o runtime `shell`. Usar `execute` com `language=javascript`, rodando o comando via `child_process.execSync('<comando>', { cwd: '<caminho absoluto do projeto>', encoding: 'utf8' })`, sempre definindo o `cwd` correto (confirmado funcionando em 2026-08-31, ex.: `git status --short`). `batch_execute` ainda não foi validado com esse padrão JS — não usar até validar separadamente. Usar `context-compress execute` (JS) automaticamente, sem esperar o usuário pedir, para comandos que possam gerar saída grande — `pytest`, `ruff`, `git diff`/`git log`, `docker logs`, builds, consultas SQL extensas. Comandos pequenos podem seguir por execução normal (Bash/PowerShell). Só cair para Bash direto se o `execute`/JS realmente falhar para aquele comando específico.
 
 ## Fonte de verdade
 

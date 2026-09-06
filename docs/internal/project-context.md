@@ -1,15 +1,185 @@
 # Project Context
 
-**118G em validação DEV:** Search pelo Core/SearXNG; fallback separado de scrape.
-Flags false. Ver `docs/tasks/TASK-118G.md`, inclusive incidente do harness.
-Sem commit/push/PROD/118H.
+**FASE E.3 — concluída localmente em 2026-09-05, sem commit/push
+(`DEC-112`):** achado de auditoria de segurança anterior a esta fase
+(read-only) confirmou empiricamente que o OmniRoute loga a URL completa
+(query+fragment) de todo `/v1/web/fetch` em INFO, sempre — sem hardening,
+um segredo na URL de busca (token, sessão, assinatura de nuvem) vazaria
+para logs, `MarketPriceAssessment.evidence` e o prompt de
+`_interpret_evidence`. Corrigido com política centralizada, reimplementada
+como duas camadas independentes: `app/search/url_safety.py` (GG Oferta,
+novo `url_for_fetch_request` além do já existente `is_safe_to_fetch`/
+`safe_url_for_evidence`/`redact_sensitive_query_values`) e
+`src/cesar_core/fetch/contracts.py` (César Core,
+`reject_sensitive_query_target`/`strip_url_fragment` no validador de
+`FetchRequestPayload.url`, que também ganhou `extra="forbid"`). URL com
+parâmetro de alta confiança é sempre REJEITADA (nunca mascarada);
+`compose.yaml` do Core recebeu `APP_LOG_LEVEL: warn` no serviço
+`omniroute` (mecanismo oficial, sem fork). Corrigido de quebra um bug
+pré-existente: o fallback de título em `_search_with_enrichment` usava a
+URL insegura original em vez da sanitizada. Testes novos: 35 casos em
+`tests/test_url_safety.py` (GG) + 30 casos em
+`tests/test_fetch_data_leakage_guard.py` + 2 testes de rota (Core) — todos
+verdes; `contracts/openapi.json` do Core regenerado (estava desatualizado
+desde antes desta fase, sem relação). Auditoria integral `SELECT` em DEV
+(0 assessments) e PROD (5/5, 50 URLs recursivas em `evidence`, além de
+`historical_low_source`/`last_error`) encontrou zero indicador ou possível
+segredo real. `_interpret_evidence` agora preserva todas as fontes/URLs, mas
+limita título a 500 e descrição a 2.000 caracteres, mantendo começo/fim com
+marcador explícito; identidade usa o conteúdo original. PostgreSQL 18.4
+descartável aprovou 13/13 testes focados de Market Research/persistência.
+Findings finais e riscos residuais estão classificados no **documento canônico
+de segurança:** `C:\cesar-core\docs\security\fetch-data-leakage-hardening.md`.
 
-**TASK-118F — DEV, aguardando revisão:** integração `CesarCoreAIProvider`
-atrás das factories do AIProviderManager, flags padrão false, messages tipadas,
-credencial DEV por arquivo e disaster opt-in restrito a falha de conexão.
-Fluxo real GG Oferta -> Core -> OmniRoute validado com `CAPPED`; Core mantém
-22/22 contracts (21 anteriores + roles). Sem commit/push/PROD/118G.
-Detalhes e limitação operacional de `.env`: `docs/tasks/TASK-118F.md`.
+**FASE E.1 — AI, Search e enrichment concluídos localmente em 2026-09-05
+(retomada por troca de IA, Codex→Claude, em duas rodadas):** AI normal e
+grounding usam somente `AIProviderManager → César Core → OmniRoute`;
+adapters/factories diretos Gemini, Groq e OpenRouter, as flags
+`cesar_core_*_enabled`/disaster fallback, secrets exclusivos e o SDK
+`google-genai` foram removidos (`Settings` não tem mais opt-in: credencial
+ausente fecha o fluxo direto). Search usa somente `WebSearchManager → César
+Core → OmniRoute`; Firecrawl `/v2/search`, adapter, parser e fallback foram
+removidos.
+
+**Correção de rumo (1ª rodada) e fechamento (2ª rodada):** a 1ª rodada desta
+retomada identificou que manter Firecrawl `/v2/scrape` como dependência
+direta do GG (Market Research e worker nativo, credencial Firecrawl própria)
+— descrito por uma rodada anterior da FASE E como estado aceitável/definitivo
+— era interpretação incorreta, e apontou o achado do `DEC-107` (OmniRoute já
+expõe `POST /v1/web/fetch` reconhecendo Firecrawl como provider) como caminho
+plausível sem inventar integração nova. A 2ª rodada implementou essa extensão:
+o César Core ganhou o Central Web Fetch/Enrichment Gateway
+(`POST /v1/fetch`, `src/cesar_core/fetch/`, mesmo padrão de
+Identity/Policy/Capability/Quota/Usage/Tracing de AI/Search, adapter real
+para `POST /v1/web/fetch` do OmniRoute, migration `0002_add_fetch_capability`
+para a capability `fetch` no Control Plane). O GG Oferta trocou
+`FirecrawlScrapeProvider` por `CesarCoreFetchProvider`
+(`backend/app/search/cesar_core_fetch.py`, reusa a mesma credencial de
+aplicação de AI/Search) em `worker.py`/`market_research/service.py`, e — só
+depois de confirmar zero consumidor restante — removeu `firecrawl.py`,
+`firecrawl_api_key(_file)` do `Settings`/`compose.yaml`/`.env.example` e o
+secret correspondente de `scripts/manage_collection_worker_config.ps1`.
+`scripts/check.ps1` também parou de provisionar os secrets órfãos de
+Gemini/Groq (achado já confirmado na 1ª rodada, sem consumidor desde então).
+
+Com isso, GG Oferta e worker nativo não dependem mais diretamente de nenhum
+provider externo (Gemini, Groq, OpenRouter, Firecrawl) para AI, grounding,
+Search ou enrichment — a dependência é sempre o César Core. Testes: Core, 77
+novos/ajustados (contrato, policy, manager, adapter OmniRoute, fronteira de
+domínio, capabilities/health, OpenAPI); GG, suíte completa não-integração
+com 1766 passed, mesmas 6 falhas pré-existentes sem relação com esta fase
+(`test_authentication_service.py`,
+`test_database.py`/`test_products.py`/`test_users.py` — drift de contrato de
+schema anterior a esta sessão).
+
+**FASE E.1 concluída integralmente com E2E real (3ª rodada, autorização
+explícita do usuário):** stack DEV do César Core rebuildado
+(`cesar-core:local`) e recriado; Redis/OmniRoute/SearXNG preservados sem
+reset de volume/config. `CesarCoreFetchProvider` (GG) → Core `POST /v1/fetch`
+→ OmniRoute `POST /v1/web/fetch` → Firecrawl retornou conteúdo real (página
+pública de teste, ~20 KB de markdown). Teste focado real de
+`_search_with_enrichment` (Search real via SearXNG + enrichment real)
+confirmou: enrichment só roda quando a busca sozinha não basta, teto de 3
+URLs, nenhuma URL inventada — nenhuma regra de negócio do Market Research foi
+alterada. Onboarding administrativo do OmniRoute DEV (nunca concluído antes)
+foi finalizado nesta rodada com senha gerada localmente
+(`C:\cesar-core\.secrets\omniroute-admin-password`, nunca exibida); credencial
+OmniRoute dedicada `ggoferta-fetch` criada com escopo único `web-fetch`
+(achado: credenciais OmniRoute são autorizadas por categoria de endpoint por
+chave — `ggoferta-ai`/`ggoferta-search` não foram tocadas nem ampliadas).
+Ver `C:\cesar-core\docs\architecture\gg-oferta-core.md` (fonte canônica) para
+o estado completo.
+
+**FASE E.2 — isolamento de testes do César Core concluído em 2026-09-05
+(pendência `pydantic-settings`/`.env` identificada nas fases anteriores:
+RESOLVIDA):** causa raiz confirmada por reprodução sintética determinística —
+toda classe `BaseSettings` do Core (`AIConfig`/`SearchConfig`/`FetchConfig`/
+`OmniRouteConfig`/`SecurityConfig`/`AdminConfig`) usa `env_file=".env"`
+resolvido pelo cwd do processo; `pydantic-settings` carrega TODAS as chaves
+do `.env` encontrado, mesmo as de outro `env_prefix` (ao contrário de uma env
+var real do processo, já filtrada por prefixo) — com `extra="forbid"`
+(default), isso vira `ValidationError` sempre que o `.env` real de DEV do
+`cesar-core` está no cwd de quem chamou o `pytest`. Corrigido com uma única
+fixture `autouse` nova em `tests/conftest.py`
+(`_isolated_settings_env_file`), que muda o cwd do processo pra um diretório
+vazio por teste — sem tocar as ~6 classes uma a uma. Variáveis de ambiente
+reais continuam funcionando normalmente. Regression test dedicado
+(`tests/test_settings_env_isolation.py`, só valores sintéticos) prova:
+config não fornecida pelo teste nunca vaza do `.env` operacional; override
+explícito sempre vence; resultado é idêntico rodando da raiz do repositório
+(onde mora o `.env` real) ou de um cwd completamente alheio. Suíte completa
+do Core reexecutada da raiz do repositório com o `.env` real presente: 290
+passed, 0 falhas inesperadas (as 15 falhas + 5 erros restantes são os
+contracts "reais" que já dependiam de harness/infra dedicados do TASK-118H,
+pré-existentes e sem relação). Achado colateral corrigido nesta rodada (não
+é o bug desta fase, mas apareceu ao rodar a suíte completa pela primeira vez
+sem a poluição mascarando tudo): a rodada de E2E da FASE E.1 tinha publicado
+a porta do OmniRoute no host (`127.0.0.1:20128`) para viabilizar os testes
+diretos daquela rodada, violando o contrato estático
+`test_release_configuration.py` (só o César Core deve ser publicado) —
+revertido; `omniroute-fetch` como quarta credencial OmniRoute (FASE E.1) fez
+esse mesmo teste também precisar do número atualizado de secrets (4→5),
+corrigido. `/ready` do César Core confirmado saudável antes e depois, sem
+nenhuma mudança de runtime. Próxima fase: FASE F, fechamento
+operacional/documental do escopo completo (AI, grounding, Search,
+enrichment) — sem E2E nem pendência de isolamento de testes.
+
+**FASE D da recuperação concluída localmente em 2026-09-05:** Search normal
+agora usa exclusivamente `WebSearchManager → CesarCoreSearchProvider → César
+Core → OmniRoute → searxng-search`. Flag Core desligada, credencial ausente,
+fallback antigo habilitado ou indisponibilidade fecham o fluxo; nenhum caso
+chama Firecrawl `/v2/search`. Zero resultados continua sendo sucesso e
+`max_results` permanece preservado. Firecrawl `/v2/scrape` continua separado e
+inalterado como enriquecimento de até três URLs selecionadas. AI normal e
+grounding já estão via Core. O E2E real de Search passou; próxima fase: FASE E,
+remoção dos legados isolados.
+
+**FASE C da recuperação concluída localmente em 2026-09-05:**
+`require_search_grounding=True` não desvia mais ao manager legado. AI normal e
+grounding usam `AIProviderManager → CesarCoreAIProviderManager → César Core →
+OmniRoute`. O contrato neutro transporta a intenção; o Core exige Web Search e
+evidência estruturada do OmniRoute, agrega usage e devolve fontes normalizadas.
+Nenhum caminho efetivo de AI chama Gemini/Groq/OpenRouter diretamente; os
+adapters permanecem apenas como código físico pendente de remoção segura. O E2E
+real com `searxng-search` passou. Próxima fase: FASE D, Search exclusivamente
+via Core.
+
+**FASE B da recuperação concluída localmente em 2026-09-05:** AI normal de
+`USER`, `ADMIN` e `DEV` agora é obrigatoriamente
+`AIProviderManager → CesarCoreAIProviderManager → César Core → OmniRoute`.
+Desabilitar a flag de AI fecha a factory; não recupera Gemini/Groq/OpenRouter.
+O disaster fallback antigo também é rejeitado, e erros de conexão, timeout ou
+HTTP do Core não disparam provider direto. Os adapters legados permanecem
+alcançáveis somente por `require_search_grounding=True`, exceção transitória da
+FASE C. Search, Firecrawl Search/fallback e Scrape não foram alterados.
+
+**FASE 0/A de recuperação da integração validada em DEV em 2026-09-05:** a
+fonte canônica passou a ser
+`C:\cesar-core\docs\architecture\gg-oferta-core.md`. A decisão estrutural
+continua sendo DEC-118 item 8 (mesmo Windows Server, deployments independentes,
+rede externa conceitual `cesar-platform`, Core acessível pelo host local). A
+prova desta fase usou a topologia DEV já aprovada: processo GG nativo → Core em
+`127.0.0.1:8100`. AI real passou por Core/OmniRoute 3.8.50 com target solicitado
+`oc/mimo-v2.5-free` e modelo normalizado `mimo-v2.5-free`. Search real passou
+por Core/OmniRoute/SearXNG, retornou 3 resultados, respeitou `max_results=3` e
+cache `false→true`. `/ready` retornou `ok`. Credenciais GG→Core e Core→OmniRoute
+permanecem separadas e somente em arquivos locais ignorados. O Compose GG ainda
+não implementa `cesar-platform`; caminhos legados continuam intactos nesta
+fase. Sem commit, push, PROD ou remoção de fallback.
+
+**118F/118G concluídas, aprovadas e publicadas:** GG Oferta `c383fdc`/`80dc135`;
+Core `95b6996`/`3578f2b`. AI tipada e Search SearXNG validados; flags padrão
+false, sem deploy PROD. Scrape é enriquecimento, não fallback Search.
+Core teve 22/22 contracts reais aprovados na 118G. Evidências e incidente
+local aceito no fechamento: `docs/tasks/TASK-118F.md` e `TASK-118G.md`.
+
+**118H pronta para revisão DEV:** restart real do Core com mesmos clientes
+GG, rollback AI/Search, quota pré-upstream e matriz complementar passaram (7/7).
+Rodada final: 22/22 Core, 2/2 GG AI/Search, 2/2 dependências, 34 focados GG e 4
+testes do harness. Recursos temporários limpos; banco original preservado.
+Runbook em `docs/operations/cesar-core-runbook.md`; sem commit/push/PROD.
+Detalhes e limites: `docs/tasks/TASK-118H.md`.
+Trabalho paralelo do Claude e alterações de frontend devem ser preservados.
 
 **Estado da V1.2 (2026-08-30, sincronização de documentação) — release
 publicada e implantada em PROD, documentação estava atrasada:** esta
@@ -1770,3 +1940,394 @@ sempre vencia, ignorando qual botão foi clicado -- corrigido removendo o
 de documentação (2026-08-30) a partir do histórico Git e do
 `decision-log.md` -- sem SSH/RDP direto ao Windows Server nesta rodada,
 sem alteração de código/migration/dado.
+# FASE F1 — checkpoint de implementação e validação (2026-09-05)
+
+A FASE F1 introduz histórico externo separado de `PriceObservation`, critério
+de suficiência do histórico próprio (mesmo Product, BRL/new, cobertura de 30
+dias e duas lojas) e bootstrap one-shot por produto/condição/moeda. A aquisição
+usa exclusivamente `WebSearchManager → César Core → OmniRoute → SearXNG` e
+`CesarCoreFetchProvider → César Core → OmniRoute → Firecrawl`; não existe
+worker, crawler ou HTTP direto para Hardware Barato. Identidade é validada pelo
+Product Identity Engine; IA só auxilia evidência factual ambígua e não cria
+fatos.
+
+Na primeira validação da migration contra PostgreSQL 18 descartável, o enum
+`historical_bootstrap_status` era criado explicitamente e novamente pelo
+`op.create_table`, causando `DuplicateObject`. Nenhuma alteração persistiu. A
+correção mínima autorizada mantém a criação explícita e usa `create_type=False`
+no enum da coluna. Validação final, documentação e fechamento da F1 ainda estão
+em andamento; sem commit, push, PROD ou F2.
+
+Validação subsequente: a correção autorizada permitiu aplicar a migration e os
+dois testes PostgreSQL focados passaram (referência válida separada; bootstrap
+vazio terminal; segunda execução sem novo Search/Fetch/IA). No DEV real,
+`/ready` ficou `ok` e Search completou via `searxng-search`, retornando seis
+resultados e localizando a página correta do Hardware Barato. Após rebuild da
+imagem DEV para incluir o `/v1/fetch` já existente, o Fetch autenticou e chegou
+ao gateway, mas terminou em `503 fetch_upstream_unavailable`; nenhum conteúdo
+foi obtido. Por regra expressa da F1, a validação parou aqui, sem browser,
+provider paralelo, acesso direto, workaround ou persistência DEV. É necessário
+restabelecer/confirmar o provider Fetch do OmniRoute antes de concluir a F1.
+
+**Diagnóstico do `503 fetch_upstream_unavailable` (2026-09-06, continuação a
+partir do checkpoint acima — só diagnóstico, sem correção de código, sem
+browser/provider/acesso paralelo):** com o stack DEV do César Core já de pé
+(saudável, sem reset de volume), reproduzido pelo caminho oficial
+`POST /v1/fetch` (GG → Core → OmniRoute → Firecrawl) duas chamadas com a
+mesma credencial e configuração: (A) uma URL de controle conhecida (página
+pública estável) — `fetched=true`, HTTP 200, `provider="firecrawl"`,
+conteúdo real retornado; (B) a URL real do Hardware Barato encontrada pelo
+Search (`https://www.hardwarebarato.com/produtos/placas-de-video/rtx-5070-ti`,
+confirmada ao vivo via `POST /v1/search`, idêntica à fixture já usada em
+`tests/integration/test_historical_bootstrap.py`) — reproduzido três vezes,
+sempre `503 fetch_upstream_unavailable`, sempre após ~30s de latência (não os
+90s do timeout Core→OmniRoute — `CESAR_CORE_OMNIROUTE_TIMEOUT_SECONDS`).
+Conclusão: (A) funcionou e (B) falhou — problema específico da
+origem/página/Firecrawl, não de credencial/config/wiring do GG/Core/OmniRoute
+(que ficaram comprovadamente corretos pela chamada de controle).
+
+Para tentar isolar a causa exata, `APP_LOG_LEVEL` do serviço `omniroute` foi
+elevado temporariamente para `debug` (mecanismo oficial, revertido para
+`warn` — estado do hardening FASE E.3 — ao final, sem alteração líquida em
+`compose.yaml`) e os logs correlacionados foram inspecionados: o OmniRoute
+registra o início da chamada (`WEB_FETCH firecrawl | <url> | format=markdown`)
+mas **não registra nenhum resultado, erro ou status HTTP da chamada ao
+Firecrawl**, nem em sucesso nem em falha — mesmo em `debug`. Consulta somente
+leitura ao próprio banco SQLite oficial do OmniRoute (`/app/data/storage.sqlite`,
+tabelas `call_logs`/`request_detail_logs`/`relay_logs`/`middleware_logs`, sem
+alterar nada) confirmou que **nenhuma chamada `/v1/web/fetch` é persistida
+nessas tabelas**, nem a de controle (sucesso) nem a do Hardware Barato
+(falha) — gap de observabilidade do próprio OmniRoute para esta capability
+específica, não introduzido por esta sessão nem pela FASE E.3.
+
+Não há, portanto, nenhuma superfície oficial adicional (stdout em nenhum
+nível de log, nem o banco de auditoria do próprio OmniRoute) que exponha a
+causa exata do lado do Firecrawl. Consultar a API/dashboard do Firecrawl
+diretamente exigiria a credencial que só existe dentro do OmniRoute (fora do
+alcance do Core/GG) e constituiria acesso paralelo fora do caminho oficial —
+não feito, por regra expressa desta fase. Hipótese mais provável, não
+confirmável com as ferramentas oficiais disponíveis: falha/timeout
+específico do Firecrawl ao processar aquela página do Hardware Barato
+(anti-bot, renderização lenta ou bloqueio pontual da origem) — não uma
+regressão de config/credencial/contrato em GG, César Core ou OmniRoute.
+Fluxo parado aqui, por regra expressa da F1 (ver seção "4" do pedido de
+continuação): nenhuma correção de código foi aplicada porque não foi
+encontrado nenhum bug corrigível dentro da arquitetura existente. Downgrade
+de migration e validação do fluxo de negócio completo (seções 5 e 6 do
+pedido) não foram executados nesta rodada — dependem de decisão do usuário
+sobre como tratar a indisponibilidade específica do Hardware Barato via
+Firecrawl.
+
+FASE F1 concluída: NÃO.
+
+**Correção de direção — Search é sempre o primeiro passo, para TODAS as
+fontes (2026-09-06, mesma continuação, sem redesenhar o já implementado):**
+`_collect_candidates` (`backend/app/historical_bootstrap/service.py`)
+disparava Search → Fetch incondicionalmente para toda URL candidata, antes
+de sequer avaliar se o próprio título/snippet do Search já bastava. Regra
+canônica agora implementada e válida para QUALQUER fonte, não só Hardware
+Barato:
+
+```
+Search (Core → OmniRoute → SearXNG)
+  → avaliar SOMENTE título/snippet (zero Fetch, zero IA)
+  → suficiente (preço + identidade batem)? persistir, próxima URL.
+  → insuficiente? Fetch seletivo (orçamento próprio, nunca todas as URLs)
+    → avaliar de novo com o conteúdo enriquecido
+    → suficiente? persistir.
+    → ainda ambíguo (preço+contexto existem, identidade não bate
+      deterministicamente)? IA como ÚLTIMA camada.
+    → sem preço nem no snippet nem no Fetch? nunca inventa, nunca chama IA.
+```
+
+Dois achados corrigidos junto, ambos comprovados com conteúdo real capturado
+nesta sessão (não fabricado):
+
+1. `HistoricalCandidate.historical_date` exigia data obrigatória (regex
+   `_DATE`); um snippet de busca raríssimamente carrega data explícita, o
+   que tornava "Search sozinho basta" praticamente inatingível mesmo
+   quando o preço já estava correto no snippet. Campo tornado
+   `date | None` (coluna `external_price_references.historical_date` já
+   era `nullable=True` desde a migration original) -- data nunca é
+   inventada, só omitida quando ausente.
+2. **Bug real no regex `_PRICE`** (`r"R\$\s*([0-9]{1,3}(?:\.[0-9]{3})*(?:,[0-9]{2})|[0-9]+(?:,[0-9]{2})?)"`):
+   para um valor sem centavos com separador de milhar (ex.: `"R$ 4.500"`,
+   achado ao vivo num snippet real do Adrenaline.com.br sobre a mesma RTX
+   5070 Ti), o grupo de centavos era opcional demais e o regex casava só
+   `"4"` -- um preço histórico silenciosamente errado seria persistido
+   como fato. Corrigido para exigir `,XX` obrigatório em ambos os ramos
+   (`r"R\$\s*([0-9]{1,3}(?:\.[0-9]{3})*,[0-9]{2}|[0-9]+,[0-9]{2})"`),
+   verificado nos três casos (sem centavos agora rejeita corretamente;
+   `"R$ 19.979,97"` e o caso original do teste continuam batendo).
+
+Também corrigido: a query dedicada `site:hardwarebarato.com/produtos` só
+disparava para `{"gpu", "cpu", "motherboard", "psu"}` -- faltava `"ram"`
+(memória RAM, categoria válida em `products/identity.py`), adicionada.
+
+**Validação real desta rodada (mesmo produto, NVIDIA GeForce RTX 5070 Ti,
+mesmo `identity_key` usado desde o checkpoint anterior):** as duas queries
+reais que `_collect_candidates` monta foram executadas ao vivo pelo
+caminho oficial `POST /v1/search` (GG → Core → OmniRoute → SearXNG),
+contra o stack DEV já de pé:
+
+- `site:hardwarebarato.com/produtos "NVIDIA GeForce RTX 5070 Ti" histórico
+  preço` → 1 resultado real, a mesma página do Hardware Barato do
+  checkpoint anterior; snippet SEM preço formatado (`"Veja onde comprar
+  RTX 5070 Ti com o menor preço ; Palit NVIDIA GeForce RTX 5070 Ti
+  GamingPro-S, 16GB, ..."`) -- Search sozinho NÃO basta para esta URL
+  específica (falta o próprio dado, não é limitação do código).
+- `"NVIDIA GeForce RTX 5070 Ti" histórico de preço menor preço` → 6
+  resultados reais e multi-fonte (Buscapé, KaBuM!, Zoom, Mercado Livre,
+  Amazon.com.br, Adrenaline.com.br) -- confirma que a busca geral já
+  encontra fontes além do Hardware Barato, como pedido. Nenhum dos 6
+  bateu identidade determinística com o Product canônico genérico usado
+  no teste (o texto real de loja sempre nomeia uma placa AIB específica,
+  ex. "Palit ... GamingPro-S" -- `identity_key` de SKU específico
+  diferente do `identity_key` genérico do Product de teste); esse
+  descasamento é justamente o caso "modelo semelhante" que a seção 5 já
+  descreve como responsabilidade da IA, não um bug do matching
+  determinístico. Logo, para ESTE Product canônico específico, nenhum dos
+  7 resultados reais captados satisfez "Search sozinho basta" (nem por
+  falta de preço bem formado, nem por identidade) -- resultado honesto,
+  não fabricado, e consistente com o gate ter ficado corretamente estrito.
+
+**Sobre o `503` do Hardware Barato:** não reinvestigado nesta rodada (regra
+explícita da seção 8: só retomar se a nova validação provar que o Fetch é
+realmente necessário para ESSA evidência). Como o snippet do Hardware
+Barato não carrega preço, Fetch seria de fato acionado para essa URL
+específica na operação real e continuaria batendo no mesmo `503`
+(comportamento inalterado) -- mas o desenho multi-fonte (seção 2) já
+absorve essa falha: outras fontes reais (Buscapé, Mercado Livre etc.)
+aparecem na busca geral e seguem o mesmo fluxo Fetch→IA independentemente
+do Hardware Barato falhar ou não.
+
+**Migration downgrade/upgrade (item 9): já validado automaticamente, sem
+comando manual necessário.** `scripts/run_integration_tests.py` roda
+incondicionalmente, antes de qualquer teste pytest, o estágio
+`alembic_upgrade_and_check`: upgrade até `head`, confere head único no
+banco, `downgrade -1`, `upgrade` de volta ao `head`, e `alembic check` --
+falha alto e aborta a suíte inteira se qualquer um desses passos falhar.
+Esse estágio rodou com sucesso em todas as execuções desta sessão
+(confirmado pela mensagem final "Suíte de integração PostgreSQL
+aprovada." em cada uma) -- reversibilidade da migration `20260905_0001`
+está, portanto, comprovada, sem necessidade de subir um Postgres
+descartável à parte manualmente.
+
+**Testes novos (`tests/integration/test_historical_bootstrap.py`, 6/6
+passando via `python scripts/run_integration_tests.py`, sem repetir a
+suíte completa):**
+
+- (A) `test_sufficient_internal_history_skips_bootstrap_entirely` --
+  histórico próprio suficiente (2 lojas reais seedadas, 31 dias de
+  cobertura) -- ZERO Search/Fetch/IA, nenhum `HistoricalBootstrap` chega
+  a ser criado.
+- (C) `test_search_snippet_alone_is_sufficient_zero_fetch_zero_ai` --
+  snippet com preço bem formado + identidade batendo -- persiste com
+  ZERO Fetch e ZERO IA.
+- (F) `test_ambiguous_identity_after_fetch_uses_ai_as_last_layer` -- Fetch
+  traz preço+data reais mas identidade de SKU específico não bate
+  deterministicamente -- IA só então é chamada, como última camada.
+- (G) `test_fetch_unavailable_never_invents_a_fact` -- Search insuficiente
+  e Fetch falha (`CesarCoreFetchError`, mesmo formato do `503` real) --
+  nunca inventa fato, nunca chama IA sem evidência bruta, bootstrap
+  conclui `COMPLETED_WITHOUT_REFERENCES` em vez de propagar exceção.
+
+Os dois testes já existentes (referência válida + idempotência; bootstrap
+vazio terminal) continuam passando sem alteração de asserção. `ruff
+check`/`ruff format` limpos nos dois arquivos tocados; `git diff --check`
+sem problemas.
+
+Nenhum finding novo do Security Guidance nesta rodada. Nenhuma
+infraestrutura paralela, worker, crawler, acesso direto ou browser criado.
+Sem commit/push/tag/release. FASE F2 não iniciada.
+
+FASE F1 concluída: NÃO -- falta decisão do usuário sobre tratar a
+indisponibilidade específica do Hardware Barato via Firecrawl (pendência
+já registrada acima) antes do fechamento formal; o restante do fluxo
+(Search-first multi-fonte, Fetch seletivo, IA como última camada,
+persistência/idempotência, migration) está implementado e validado.
+
+**Causa raiz real do `503 fetch_upstream_unavailable` — resolvida
+(2026-09-06, mesma continuação):** diagnóstico isolado, chamando o
+Firecrawl diretamente (`https://api.firecrawl.dev/v2/scrape`, mesma
+credencial já configurada só para este diagnóstico pontual, nunca
+integrada ao runtime do GG) com a MESMA URL do Hardware Barato --
+sucesso, HTTP 200, ~15,8s numa busca fria (sem cache). Isso provou que a
+falha não é do Firecrawl nem de bloqueio/anti-bot da página, e sim de uma
+camada abaixo. Leitura do código-fonte OFICIAL do OmniRoute (sem
+fork/patch, `C:\omniroute\open-sse\executors\firecrawl-fetch.ts`)
+confirmou a causa exata: `FIRECRAWL_DEFAULT_TIMEOUT_MS = 30_000`
+hardcoded, path `/v1/scrape` hardcoded (nenhuma variável de ambiente
+troca a versão do endpoint -- só a `FIRECRAWL_BASE_URL`, que muda o
+domínio, não o path). Uma busca fria desta página específica (86 ofertas
++ tabela de histórico extensa) genuinamente ultrapassa 30s em pior caso.
+`FIRECRAWL_TIMEOUT_MS` é lido pelo mesmo código-fonte
+(`getFirecrawlTimeoutMs`) -- mecanismo oficial real, aplicado em
+`compose.yaml` do César Core (`FIRECRAWL_TIMEOUT_MS: "60000"`, comentado
+com a causa raiz), serviço `omniroute` recriado
+(`docker compose up -d --no-deps omniroute`), saudável. Prova indireta:
+com o cache do Firecrawl já aquecido pelo diagnóstico direto, uma nova
+chamada pelo caminho oficial completo (GG → Core `/v1/fetch` → OmniRoute
+`/v1/web/fetch` → Firecrawl) teve sucesso (`fetched=true`, conteúdo real,
+~1,5s) -- não é uma prova de timeout a frio com o novo valor (o cache
+estava quente), mas fecha o círculo: a mesma cadeia que falhava
+consistentemente com 30s volta a funcionar, e o teto novo (60s) tem quase
+4x a folga da busca fria medida diretamente (~15,8s). Nenhuma alteração
+de arquitetura, nenhum fork do OmniRoute, nenhum acesso permanente do GG
+ao Firecrawl -- só uma variável de ambiente oficial do serviço já
+existente.
+
+**Correção do matching de identidade — reusa lógica já existente, sem
+conceito novo (2026-09-06, mesma continuação):** o matching determinístico
+de `_collect_candidates` (`identity_key` exato) recusava toda evidência
+real, porque toda loja real nomeia um fabricante/AIB específico (ex.:
+"Palit ... GamingPro-S"), enquanto o Product canônico de uma missão
+genérica ("NVIDIA GeForce RTX 5070 Ti") nunca tem essa informação --
+`identity_key` para GPU inclui `board_brand`/`vram` quando presentes no
+texto, então os dois nunca batiam. Correção EXPLICITAMENTE alinhada à
+lógica que o GG Oferta já usa em produção para o mesmo problema
+(`MissionCriteria.requested_family_key`/`requested_variant`,
+`app/missions/query.py`: missão sem marca aceita qualquer fabricante,
+missão com marca restringe) -- nenhum conceito novo de "modelo-base vs
+SKU" foi criado. Nova função `_match` (substitui `_matches`) compara
+`family_key` (sempre) + só os `attributes`/`variant` que o Product de
+fato tem (populados por `resolve_product_variant` na criação/seleção do
+Product, mesmo motor usado em toda a base) -- o que o Product não
+especificou fica em aberto, aceita qualquer valor da evidência; o que ele
+especifica precisa bater exatamente. O `Product` "detached" passado a
+`_collect_candidates` também tinha um bug real anterior a esta correção:
+só copiava `id/name/display_name/identity_key`, nunca `category`/
+`family_key`/`attributes`/`variant` -- isso já quebrava em silêncio a
+query dedicada do Hardware Barato (`product.category` sempre `None`) e
+quebraria o novo `_match`; corrigido para copiar todos os campos de
+identidade. Toda evidência aceita por um match "family" (fabricante que
+o Product não pediu) preserva o fabricante/atributos reais da evidência
+em `match_evidence` (JSONB) e marca `quality="family_match"` (vs.
+`"verified"` para match exato) -- nunca mistura os dois sem metadata,
+nunca descarta a informação. Testes atualizados/adicionados: fabricante
+diferente do pedido agora bate direto (zero IA) e preserva o fabricante
+em `match_evidence`; cenário de IA como última camada reescrito para um
+caso genuinamente ambíguo pro código determinístico (texto de combo com
+dois modelos de GPU, onde o parser pega o número errado) -- 7/7 testes
+passando.
+
+**Validação real com cache genuinamente frio + timeout elevado para 2
+minutos, cadeia completa (2026-09-06, mesma continuação, pedido explícito
+do usuário):** dois testes reais pelo caminho oficial completo, com
+páginas do Hardware Barato nunca antes tocadas nesta sessão (cache do
+Firecrawl genuinamente frio, URLs obtidas via `POST /v1/search` real
+antes do Fetch, nunca inventadas) confirmaram o fix do timeout acima
+funcionando de ponta a ponta: Ryzen 7 5800X3D em ~9,5s, RTX 5060 em
+~10,8s -- ambos bem abaixo até do teto antigo de 30s, o que também sugere
+que a página da RTX 5070 Ti (86 ofertas + tabela de histórico extensa) é
+um caso de pior cenário, não representativo do Hardware Barato como um
+todo.
+
+A pedido do usuário, o teto do Firecrawl foi então elevado de 60s para 2
+minutos -- e ao fazer isso foi identificado que ele é o terceiro elo de
+uma cadeia de três timeouts independentes; elevar só o mais interno não
+teria efeito nenhum na operação REAL do GG (só nos testes diretos via
+`curl` no Core desta sessão, que não passam pelo timeout do próprio GG):
+
+1. GG → Core `/v1/fetch` -- `cesar_core_fetch_timeout_seconds`
+   (`backend/app/core/config.py`, GG Oferta): **30s → 180s** (teto de
+   validação também elevado de `le=120` para `le=240`, sem o quê 180
+   seria inválido).
+2. Core → OmniRoute `/v1/web/fetch` -- `CESAR_CORE_OMNIROUTE_TIMEOUT_
+   SECONDS` (`compose.yaml`, César Core, serviço `cesar-core`): **90s →
+   150s** (compartilhado com AI/Search -- não há timeout por capability
+   no `OmniRouteConfig` hoje; um teto maior não piora AI/Search em
+   operação normal, só evita que ele corte o Fetch antes do OmniRoute
+   terminar de tentar o Firecrawl).
+3. OmniRoute → Firecrawl `/v1/scrape` -- `FIRECRAWL_TIMEOUT_MS`
+   (`compose.yaml`, César Core, serviço `omniroute`): **60s → 120s**
+   (mecanismo oficial do binário certificado, ver causa raiz acima).
+
+Os três serviços (`cesar-core`, `omniroute`) foram recriados
+(`docker compose up -d --no-deps omniroute cesar-core`) e confirmados
+saudáveis com os novos valores lidos de dentro dos containers
+(`FIRECRAWL_TIMEOUT_MS=120000`, `CESAR_CORE_OMNIROUTE_TIMEOUT_SECONDS=150`,
+`Settings().cesar_core_fetch_timeout_seconds=180.0`). `ruff check`/`format`
+limpos, `git diff --check` sem problemas. Nenhuma alteração de
+arquitetura, nenhum fork do OmniRoute.
+
+**E2E real completo, código real do GG, DB DEV real, FASE F1 concluída
+(2026-09-06, mesma continuação):** primeiro, o caminho `CesarCoreFetch
+Provider` (classe de produção do GG, não `curl`) foi exercitado
+diretamente contra o stack DEV -- `Settings()` real confirmou
+`cesar_core_fetch_timeout_seconds=180.0` genuinamente aplicado ao client
+httpx; `scrape_basic` da RTX 5070 Ti retornou conteúdo real em 1,54s
+(cache já quente, aceitável -- não era exigido frio desta vez).
+`CesarCoreFetchResult` não expõe `provider`/`fetched` ao GG por design
+(só `url`/`title`/`markdown`) -- a validação de `provider_gateway==
+"omniroute"` e `provider` não vazio acontece DENTRO do client antes de
+devolver um resultado não-`None` (senão levantaria `CesarCoreFetchError`),
+então um resultado válido já prova isso; o valor exato (`firecrawl`) foi
+confirmado nas rodadas anteriores por chamada direta ao Core.
+
+Auditoria do escopo do timeout: `cesar_core_fetch_timeout_seconds` tem UM
+único ponto de construção em todo o `backend/app`
+(`app/collection/worker.py:256`), uma única instância de
+`CesarCoreFetchProvider` compartilhada entre Market Research (TASK-113) e
+Historical Bootstrap (FASE F1) -- nenhum outro fluxo usa Fetch. Risco
+operacional identificado (reportado, NADA alterado): `orchestration.py`
+processa claims concorrentemente via `asyncio.gather` (não é um loop
+sequencial único), então um Fetch lento numa claim não trava as demais;
+mas `_MAX_FETCHES=3` em cada um dos dois fluxos significa que, no pior
+caso teórico (as 3 chamadas de Fetch de uma mesma claim atingindo o teto
+cheio), o enriquecimento de UMA claim pode ocupar até ~9 minutos (3×180s)
+de uma vaga de concorrência -- nunca observado na prática (as medições
+reais desta fase ficaram entre ~1,5s e ~16s), mas é uma superfície real
+caso o Hardware Barato (ou outra fonte) comece a falhar de forma lenta e
+sistemática. Não há necessidade de agir agora -- registrado para decisão
+futura se o padrão de latência mudar.
+
+Migration na Alembic head aplicada de fato ao Postgres DEV persistente
+(`20260901_0002 → 20260905_0001`, `alembic upgrade head`, forward-only) --
+diferente da validação de reversibilidade (item 9, sempre em PostgreSQL
+descartável, já comprovada antes): esta foi a aplicação real necessária
+para o E2E funcionar contra dados persistentes de verdade, normal e
+esperada para levar a feature ao DEV, nunca revertida.
+
+**E2E completo, com contadores reais (nunca mocks) envolvendo Search
+(`CesarCoreSearchProvider`), Fetch (`CesarCoreFetchProvider`) e IA
+(`build_admin_dev_ai_provider_manager`, perfil ADMIN) de produção, um
+Product real (`NVIDIA GeForce RTX 5070 Ti`, sem histórico interno) criado
+só para este teste e removido ao final:**
+
+1ª execução: `status=completed_with_references`; `search.calls=2`,
+`fetch.calls=3` (orçamento cheio), `ai.calls=0` (toda evidência real
+resolveu deterministicamente nesta rodada -- o caminho de IA continua
+validado pelos testes sintéticos, não foi exercitado aqui por não ter
+sido necessário). **3 referências históricas REAIS persistidas**:
+
+- Hardware Barato, página de comparação (`arc-b580-vs-rtx-5070-ti`) --
+  R$ 2.609,99, 13/12/2024, `quality=verified`,
+  `match_evidence={"method": "identity_key_exact"}` (identidade exata).
+- Hardware Barato, página principal da RTX 5070 Ti -- R$ 7.424,69,
+  05/09/2026 (preço do dia real da página), `quality=family_match`,
+  `match_evidence={"method": "family_key_market", "evidence_attributes":
+  {"vram": "16"}}` -- **Hardware Barato funcionou de ponta a ponta pelo
+  fluxo oficial** (Search → Fetch → matching família → persistência).
+- Buscapé -- R$ 19.979,97 (preço real do Buscapé para uma Palit 16GB;
+  valor correto agora, comprovando a correção do regex de preço da
+  rodada anterior), sem data (nenhuma no texto -- `historical_date=None`,
+  nunca inventada), `quality=family_match`, `evidence_attributes=
+  {"vram": "16", "board_brand": "palit"}` -- confirma fonte pública
+  diferente do Hardware Barato funcionando e o fabricante real preservado
+  como metadata, exatamente como pedido.
+
+2ª execução (mesmo `product_id`): `status=completed_with_references`
+(idêntico), `search.calls=2`, `fetch.calls=3`, `ai.calls=0` -- **contagens
+absolutas idênticas à 1ª execução, ZERO chamada nova** (checagem explícita
+`True`). Idempotência real confirmada, não só em teste sintético.
+
+FASE F1 concluída: **SIM.** Todos os pontos da regra canônica (Search
+first multi-fonte, Fetch seletivo com timeout em cadeia consistente, IA
+como última camada, matching respeitando o que a missão pediu, referência
+separada de `PriceObservation`, idempotência) estão implementados e
+comprovados com evidência real de ponta a ponta, incluindo Hardware
+Barato especificamente. Pendência que sobrevive ao fechamento (não
+bloqueia a conclusão da fase, é operacional): o risco de concorrência de
+`_MAX_FETCHES` em cadeias de falha lenta, registrado acima para decisão
+futura caso vire problema real.

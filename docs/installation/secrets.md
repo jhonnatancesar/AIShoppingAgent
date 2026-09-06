@@ -11,11 +11,7 @@ para o diretório e `0600` para cada arquivo.
 | Secret | Arquivo | API | Collection Worker | Telegram Notifier | PostgreSQL |
 | --- | --- | --- | --- | --- | --- |
 | Senha PostgreSQL | `postgres_password` | sim | sim | sim | sim |
-| Chave Gemini USER | `gemini_api_key_user` | sim | não | não | não |
-| Chave Gemini ADMIN/DEV | `gemini_api_key_admin_dev` | sim | sim (TASK-063) | não | não |
-| Chave Groq | `groq_api_key` | sim | sim (TASK-063, opcional -- fail-soft) | não | não |
-| Chave OpenRouter | `openrouter_api_key` | sim | sim (TASK-063, opcional -- fail-soft) | não | não |
-| Chave Firecrawl | `firecrawl_api_key` | sim | sim (TASK-113, opcional -- fail-soft) | não | não |
+| Credencial César Core | `cesar-core-client-dev` | sim | sim | não | não |
 | Token do bot Telegram | `telegram_bot_token` | sim | não | sim | não |
 | Segredo do webhook | `telegram_webhook_secret` | sim | não | não | não |
 | Assinatura do controlador operacional | `ops_controller_secret` | sim | não | não | não |
@@ -24,15 +20,10 @@ para o diretório e `0600` para cada arquivo.
 A coluna "Collection Worker" descreve o que o worker nativo Windows
 precisa (TASK-109: não é mais um serviço Docker, não monta `/run/secrets`
 -- os mesmos secrets chegam por arquivo local no host, fora do Git/chat,
-ver `docs/architecture/windows-collection-worker.md`). O worker (TASK-063)
-usa a chave Gemini ADMIN/DEV — a mesma cascata premium/Groq/OpenRouter
-gratuito já usada pela `api` (nunca a chave/cota do perfil `USER`,
-reservada a conversas reais no Telegram) — para normalizar título de
-exibição e classificar a correspondência missão↔oferta antes de um
-alerta; Groq e OpenRouter são níveis de fallback opcionais da mesma
-cascata (TASK-063), Firecrawl é opcional só para a avaliação de mercado
-da TASK-113. Não recebe token do bot, segredo do webhook nem a chave
-Gemini `USER`.
+ver `docs/architecture/windows-collection-worker.md`). O worker usa a
+mesma credencial do César Core para AI, grounding, Search e enrichment
+(Fase E.1) -- não guarda mais chave própria de Firecrawl. Não recebe token
+do bot nem segredo do webhook.
 
 **DEC-104 (`v1.2.2`):** o worker nunca lê `.env` -- só variáveis de
 ambiente de **Máquina** do Windows, geridas de forma reproduzível por
@@ -130,15 +121,24 @@ O PostgreSQL mantém uma única senha SCRAM por papel; portanto a troca pode
 exigir uma janela coordenada. Rotação sem interrupção por papéis duplicados ou
 cofre dinâmico não pertence à V1.
 
-### Provedores e Telegram
+### Serviços externos e Telegram
 
-- Gemini/Groq: emitir nova chave, atualizar o arquivo da API, recriar a API,
-  validar pelo AI Provider Manager e revogar a anterior.
 - Token do bot: atualizar `telegram_bot_token`, recriar API e worker, validar a
   Bot API e revogar a credencial antiga conforme o BotFather permitir.
 - Segredo do webhook: atualizar `telegram_webhook_secret`, recriar a API e
   registrar novamente o webhook com exatamente o mesmo novo valor; validar a
   entrega antes de descartar a cópia antiga.
+
+### César Core (TASK-118)
+
+`cesar-core-client-dev`: credencial de aplicação (Bearer) emitida **pelo
+próprio César Core** para este consumidor (`gg_oferta`), nunca a credencial
+upstream do OmniRoute nem a senha do Control Plane administrativo do Core.
+Para rotacionar: emitir uma nova credencial no Control Plane/API Admin do
+Core, atualizar o arquivo local, recriar o(s) consumidor(es) autorizado(s) e
+só então revogar a credencial antiga no lado do Core. Este repositório não
+controla quota nem capabilities — isso é decidido no `cesar-core`
+(`docs/architecture/cesar-core-integration.md`).
 
 ### Controlador operacional e Windows Ops Agent (TASK-109)
 

@@ -1,5 +1,18 @@
 # Instruções para agentes
 
+## Integração GG Oferta ↔ César Core
+
+Antes de qualquer alteração envolvendo AI, Search, providers, fallback,
+grounding, César Core, OmniRoute, Firecrawl ou Docker/configuração GG ↔ Core,
+leia integralmente `C:\cesar-core\docs\architecture\gg-oferta-core.md` e as
+ADRs/TASKs nele referenciadas. Preserve o fluxo
+`GG Oferta → César Core → OmniRoute → providers`; não confunda target lógico
+do Core com conexão real do OmniRoute, nem Search com Firecrawl Scrape. GG
+Oferta e seu worker nativo nunca devem depender diretamente de um provider
+externo (Gemini, Groq, OpenRouter, Firecrawl, SearXNG ou futuros) para
+capacidades cobertas por essa arquitetura — a dependência é sempre o César
+Core; providers concretos ficam abaixo dele.
+
 ## Leitura obrigatória
 
 Antes de qualquer tarefa, leia integralmente `CLAUDE.md`, todos os documentos em `docs/`, `docs/internal/roadmap.md` e o arquivo da tarefa em `docs/tasks/`.
@@ -110,13 +123,13 @@ Nunca iniciar automaticamente a próxima TASK. Encerrar apresentando resumo da i
 
 ## Estado atual
 
-**118G em validação DEV:** Search e enriquecimento separados; flags false.
-Ver `docs/tasks/TASK-118G.md`. Sem commit/push/PROD/118H.
+**118F/118G concluídas, aprovadas e publicadas:** GG `c383fdc`/`80dc135`,
+Core `95b6996`/`3578f2b`. AI tipada, Search SearXNG e enriquecimento separado;
+flags default false e sem deploy PROD. Ver os relatórios das duas tasks.
 
-**TASK-118F — DEV, aguardando revisão:** provider César Core integrado às
-factories de IA com flags false, messages tipadas, credencial DEV `*_FILE` e
-disaster opt-in restrito a conexão. Fluxo real validado. Sem commit/push/PROD;
-118G não iniciada. Detalhes e limites em `docs/tasks/TASK-118F.md`.
+**118H pronta para revisão DEV:** restart de processo, resiliência,
+rollback AI/Search e runbook (`docs/tasks/TASK-118H.md`). Sem commit/push/PROD.
+Preservar alterações paralelas do Claude, frontend e arquivos locais.
 
 **Atualização DEV 2026-08-22:** a TASK-104A integra Magalu ao contrato comum.
 Aquisição usa `MagaluSearchTransport`; Edge normal/CDP supervisionado e somente

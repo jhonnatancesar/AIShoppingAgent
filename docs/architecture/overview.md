@@ -74,6 +74,17 @@ imagem, claim PostgreSQL curto e execução externa fora da transação, sem bro
 scheduler externo ou chamada direta ao Telegram. Cada fonte termina e publica
 seu resultado de forma independente.
 
+A sequência TASK-118 adiciona uma integração opt-in, desligada por padrão,
+com o César Core — um gateway privado de IA e Web Search publicado em
+repositório próprio (`cesar-core`), fora deste monólito. Quando habilitado,
+`AIProviderManager` e `WebSearchManager` passam a rotear por ele antes da
+cascata gratuita/Firecrawl anteriores, que continuam como fallback ou
+caminho de rollback. Quota efetiva e o Control Plane administrativo dessa
+integração vivem no `cesar-core`, não aqui. Ver
+`docs/architecture/cesar-core-integration.md` (funcionalidade),
+`docs/installation/cesar-core.md` (instalação) e
+`docs/operations/cesar-core-runbook.md` (operação/rollback).
+
 As TASKs 038 a 041 adicionaram `app.purchase` como módulo determinístico. Ele
 consulta missões, fontes, coletas e histórico já persistidos, produz recomendação
 e comparação e cria uma confirmação vinculada à evidência apresentada. Não usa

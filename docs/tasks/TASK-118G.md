@@ -1,6 +1,9 @@
 # TASK-118G — Search pelo Core, enriquecimento separado
 
-Estado: implementação e validação DEV concluídas, aguardando revisão; sem commit/push/PROD/118H.
+Estado: concluída, aprovada, commitada e publicada em main; sem deploy PROD.
+GG Oferta: `80dc1353562bb841d9dd8fc25f98471eaf95475f`.
+César Core: `3578f2bff70eb92129761c92c0d4b24e4c8de039`.
+Etapa seguinte: TASK-118H, validação DEV concluída e aguardando revisão.
 
 ## Arquitetura
 
@@ -77,3 +80,10 @@ exibiu senha local de banco na saída do teste. Valor não reproduzido aqui.
 Usuário avisado e rotação recomendada, não executada. Harness corrigido para
 Settings isolados sem dotenv. Rodada corrigida não encontrou credenciais de
 Core/Firecrawl nos logs; não se afirma ausência de exposição na rodada inicial.
+
+Decisão de fechamento: usuário confirmou PostgreSQL DEV/local e aceitou a
+ocorrência remanescente no histórico local do Codex como não bloqueante. Esse
+histórico não pertence ao repositório e não foi editado/apagado. Senha e chaves
+conhecidas ausentes dos arquivos rastreados/staged na higiene final; secrets,
+harness temporário, build/proofs e logs ficaram fora dos commits. Nenhuma rotação
+foi executada ou exigida para fechar esta task. Isso não apaga a exposição inicial.

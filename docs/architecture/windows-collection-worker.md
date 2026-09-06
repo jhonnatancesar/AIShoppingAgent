@@ -228,15 +228,12 @@ worker (`LogonType Interactive`, usuário `Administrator`).
 | Setting | Obrigatório? | Secreto? | Variável |
 |---|---|---|---|
 | `database_password` | sim, sem default -- crasha no startup sem ele | sim | `AISHOPPING_DATABASE_PASSWORD_FILE` |
-| `gemini_api_key_admin_dev` | sim, sem default -- crasha no startup sem ele | sim | `AISHOPPING_GEMINI_API_KEY_ADMIN_DEV_FILE` |
-| `groq_api_key` | não -- fail-soft, cascata perde o 2º nível de fallback | sim | `AISHOPPING_GROQ_API_KEY_FILE` |
-| `openrouter_api_key` | não -- fail-soft, cascata perde o 3º nível (último) | sim | `AISHOPPING_OPENROUTER_API_KEY_FILE` |
-| `firecrawl_api_key` | não -- fail-soft, TASK-113 (avaliação de mercado) fica desligada | sim | `AISHOPPING_FIRECRAWL_API_KEY_FILE` |
+| `cesar-core-client-dev` | sim, sem default -- AI/Search falham fechados sem ele | sim | `AISHOPPING_CESAR_CORE_API_KEY_FILE` |
+| `firecrawl_api_key` | não -- sem ele, enriquecimento `/v2/scrape` fica desligado | sim | `AISHOPPING_FIRECRAWL_API_KEY_FILE` |
 | `edge_cdp_url` | não -- sem ela, Magalu/MercadoLivre/Terabyte falham isolados (sem fallback Playwright); Amazon/Kabum/Pichau caem para Playwright puro | não | `AISHOPPING_EDGE_CDP_URL` |
 | `database_host` | não, default `localhost` -- produção exige `127.0.0.1` explícito | não | `AISHOPPING_DATABASE_HOST` |
 | `database_port` | não, default já bate (`5432`) -- explícito por determinismo | não | `AISHOPPING_DATABASE_PORT` |
 | `database_name`, `database_user` | não, defaults já batem (`aishoppingagent`/`aishoppingagent`) -- **não sobrepostos**, evita duplicação desnecessária | não | -- |
-| `gemini_api_key_user` | **não usado pelo worker** (só pelo caminho de requisição do usuário final, função diferente em `manager.py`) | -- | nunca configurar aqui |
 | `telegram_bot_token`, `telegram_webhook_secret`, `ops_controller_secret`, `windows_ops_agent_secret` | **não usados pelo worker** (outros serviços) | -- | nunca configurar aqui |
 | demais (poll/batch/retry/circuit/cadence/fan-out/...) | não, defaults documentados em [Configuração](../installation/configuration.md) | não | não sobrepostos |
 

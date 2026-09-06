@@ -1,11 +1,12 @@
 # TASK-118 — Integrar o OmniRoute como camada central de roteamento de IA e Web Search
 
-**Atualização 118G:** integração Search em validação DEV, conforme TASK-118G.
-SearXNG certificado e enriquecimento separado. 118H não iniciada.
+**Estado atual:** 118A–118G concluídas; 118F/118G aprovadas, commitadas e
+publicadas. SearXNG certificado em DEV; Search e enriquecimento separados.
+118H com validação DEV concluída, aguardando revisão (`TASK-118H.md`).
+Flags continuam desligadas por padrão; nenhum rollout PROD autorizado.
 
-**Atualização 118F:** 118A–118E validadas no repositório César Core; integração
-AI DEV implementada, em revisão, conforme `TASK-118F.md`. O texto abaixo é
-o histórico do pré-flight original. Search 118G e rollout PROD não iniciados.
+O texto abaixo preserva o histórico do pré-flight original, não o status
+atual das etapas já entregues.
 
 Status: **Pré-flight fechado — zero decisões arquiteturais bloqueadoras
 (2026-08-30).** Fonte oficial confirmada, contratos reais extraídos do

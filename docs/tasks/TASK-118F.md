@@ -1,7 +1,8 @@
 # TASK-118F — Integração AI do GG Oferta com César Core
 
-Status: implementação DEV e validação real realizadas; aguardando revisão.
-Sem commit, push, PROD ou integração Search 118G.
+Status: concluída, aprovada, commitada e publicada em main.
+GG Oferta: `c383fdc`; César Core: `95b6996`. Sem deploy PROD.
+Search foi entregue separadamente na 118G; a 118H aguarda revisão da validação DEV.
 
 ## Escopo e pré-requisitos
 
@@ -49,7 +50,7 @@ Habilitar explicitamente com `AISHOPPING_RUN_CESAR_CORE_CONTRACTS=1`, configurar
 as variáveis DEV `AISHOPPING_CESAR_CORE_*` e manter o Core real iniciado; por
 padrão, esse teste externo é pulado. Core não-contract: **204 passaram**.
 Ruff e diff-check passaram; não há typechecker estático configurado no projeto.
-Não há promessa de migração PROD: ativação e rollback são por flag do processo
+Não houve migração PROD: ativação e rollback são por flag do processo
 DEV; os examples não propagam novas variáveis ao Compose.
 
 ## Operação local

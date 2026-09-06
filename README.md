@@ -54,6 +54,13 @@ provedores de IA passa pelo `AIProviderManager` — nenhum módulo fala
 diretamente com Gemini, Groq ou OpenRouter. Detalhes completos em
 [Arquitetura → Visão geral](docs/architecture/overview.md).
 
+Integração opt-in (desligada por padrão) com o
+[César Core](https://github.com/jhonnatancesar/cesar-core) — gateway privado
+de IA e Web Search em repositório próprio: veja
+[Arquitetura → Integração com César Core](docs/architecture/cesar-core-integration.md),
+[Instalação → César Core](docs/installation/cesar-core.md) e o
+[Runbook César Core](docs/operations/cesar-core-runbook.md).
+
 ## Plataforma atual
 
 A produção roda em **Windows Server**, com Docker Desktop (WSL2) e

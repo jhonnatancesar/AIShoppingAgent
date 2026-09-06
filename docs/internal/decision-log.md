@@ -1,5 +1,300 @@
 # Decision Log
 
+## DEC-112 — FASE E.3: hardening contra vazamento de dados na URL de Fetch/Enrichment
+
+- **Data:** 2026-09-05.
+- **Classificação:** Achado de auditoria de segurança read-only (categoria
+  "vazamento de dados", distinta de SSRF/`DEC-111`), corrigido nesta rodada
+  em GG Oferta e César Core (repositório separado `C:\cesar-core`).
+- **Contexto:** uma auditoria anterior a esta fase confirmou empiricamente
+  (teste sintético ao vivo) que o OmniRoute loga a URL completa
+  (query + fragment) de todo `POST /v1/web/fetch` em nível INFO, sempre.
+  Como a URL de enriquecimento vem de resultado de busca (input não
+  confiável) e é usada em três lugares — decisão de buscar, persistência
+  em `MarketPriceAssessment.evidence`, e prompt de `_interpret_evidence`
+  — um parâmetro como `?session_id=...`/`?access_token=...` ou uma URL
+  assinada de nuvem (AWS SigV4/GCS/Azure SAS) poderia vazar para logs,
+  banco e IA.
+- **Decisão:** política centralizada em dois módulos independentes (um
+  por repositório, sem pacote compartilhado): `app/search/url_safety.py`
+  (GG Oferta) e `src/cesar_core/fetch/contracts.py` (César Core,
+  `reject_sensitive_query_target`/`strip_url_fragment`). Uma URL com
+  parâmetro de alta confiança **nunca** é buscada (rejeição total, nunca
+  mascaramento — mascarar produziria URL inválida e esconderia o
+  problema); toda URL persistida/promptada tem fragment e parâmetros de
+  alta confiança removidos (nunca mascarados), preservando parâmetros
+  legítimos de e-commerce (`id`, `sku`, `ref`, `page`, `category`, `code`,
+  `key` — deliberadamente nunca tratados como sensíveis). `FetchRequestPayload`
+  (César Core) ganhou `extra="forbid"`. OmniRoute recebeu
+  `APP_LOG_LEVEL: warn` (mecanismo oficial, sem fork) para reduzir o log
+  de acesso que expunha a URL completa.
+- **Documento canônico:** `C:\cesar-core\docs\security\
+  fetch-data-leakage-hardening.md` — detalha as duas funções por
+  repositório, os testes novos (35 casos GG + 30 casos Core + testes de
+  rota), o efeito no contrato HTTP (`/v1/fetch` passa a rejeitar URL
+  sensível com 422, mesmo padrão do erro de URL malformada pré-existente)
+  e as pendências abaixo.
+- **Fechamento:** auditoria integral `SELECT` em DEV (0 assessments) e PROD
+  (5/5 assessments, 50 URLs recursivas em `evidence`, mais
+  `historical_low_source`/`last_error`) encontrou zero fragmento, parâmetro
+  sensível, URL assinada, família sensível, erro suspeito ou possível segredo
+  real. `_interpret_evidence` deixou de enviar markdown ilimitado: preserva
+  todas as fontes/URLs, limita título a 500 e descrição a 2.000 caracteres e,
+  quando reduz, mantém começo/fim com marcador explícito. Identidade continua
+  validada sobre o conteúdo original; só o prompt é minimizado.
+- **Security Guidance:** SSRF inicial, vazamento URL→logs/evidence/prompt,
+  markdown ilimitado e campos extras foram findings válidos corrigidos. O
+  risco de redirect/DNS rebinding no provider terceiro permanece válido,
+  não bloqueante e documentado para Firecrawl Cloud; classificar `id`/`sku`/
+  `ref`/`code`/`key` isolados como segredo é falso positivo.
+- **Validação:** PostgreSQL 18.4 descartável, migration `20260901_0002`,
+  `tests/integration/test_market_research.py` 13/13. **FASE E.3 concluída**, sem
+  commit/push e sem alteração de PROD.
+
+## DEC-111 — SSRF no Fetch/Enrichment: encerrado para a topologia SaaS atual, com risco residual de terceiro documentado
+
+- **Data:** 2026-09-05.
+- **Classificação:** Achado de revisão automática de segurança (SSRF, HIGH)
+  na capability de Fetch/Enrichment (`POST /v1/fetch` do César Core,
+  `src/cesar_core/fetch/contracts.py`), investigado e encerrado nesta rodada
+  — sem alteração de código nesta última verificação (a correção de código
+  já tinha sido aplicada numa rodada anterior; esta rodada só confirmou/
+  fechou a questão de SSRF-via-redirect que ficou em aberto).
+- **Contexto:** a capability aceita uma `url` fornecida pelo GG Oferta
+  (originada de resultados de Search) e a envia ao OmniRoute, que a repassa
+  a um provider de scrape real (Firecrawl Cloud, hoje o único configurado).
+  Duas perguntas de segurança foram levantadas em sequência: (1) a URL
+  inicial pode apontar direto pra um alvo interno? (2) uma URL inicial
+  pública pode redirecionar (HTTP 30x) pra um alvo interno depois da
+  validação?
+- **Pergunta 1 (URL inicial) — corrigida com código, rodada anterior:**
+  `reject_ssrf_target()` (`src/cesar_core/fetch/contracts.py`), chamada
+  explicitamente na rota `POST /v1/fetch` antes de qualquer chamada
+  upstream. Resolve o host via `socket.getaddrinfo` e bloqueia loopback,
+  RFC1918, link-local (inclui `169.254.169.254`, metadata de nuvem),
+  reservado, multicast e não-especificado (IPv4 e IPv6); rejeita
+  credenciais embutidas na URL (`user:pass@`) e limita a porta a 80/443.
+  Testes: `tests/test_fetch_ssrf_guard.py` (14 casos, só literais de IP,
+  sem DNS/rede real) e um teste de rota real em `tests/test_api_routes.py`
+  provando 400 antes de o `FetchManager` ser acionado.
+- **Pergunta 2 (redirect pós-validação) — investigada nesta rodada, sem
+  alteração de código:** auditoria do código-fonte real do OmniRoute
+  (`open-sse/handlers/webFetch.ts` e os 5 executors de provider —
+  `firecrawl-fetch.ts`, `jina-reader-fetch.ts`, `tavily-fetch.ts`,
+  `tinyfish-fetch.ts`, `context7-fetch.ts`) confirmou que **nenhum dos 5
+  faz `fetch()` usando a URL do chamador como destino da requisição** —
+  cada um sempre chama um domínio fixo e conhecido da própria API do
+  provider (ex.: `api.firecrawl.dev`, `r.jina.ai`), passando a URL alvo
+  como dado (corpo JSON ou segmento de path codificado), nunca como host
+  da conexão. Quem de fato resolve/conecta no host da URL alvo (e portanto
+  quem segue um eventual redirect dela) é o backend do provider terceiro,
+  fora do código do César Core e do OmniRoute.
+- **Evidência oficial do provider (verificada pelo usuário):** advisory
+  Firecrawl `GHSA-vjp8-2wgg-p734` — a vulnerabilidade original era
+  exatamente SSRF via alvo malicioso que redirecionava pra um endereço
+  local; o Firecrawl declara essa correção aplicada ao **Cloud service**
+  em 27/12/2024. Uma ressalva posterior (13/03/2026) permanece
+  principalmente para instalações **Playwright OSS/self-hosted**, onde o
+  próprio fornecedor recomenda proxy seguro adicional. A topologia atual
+  usa exclusivamente **Firecrawl Cloud** (`api.firecrawl.dev`), não
+  self-hosted.
+- **Decisão: RESOLVIDO PARA A TOPOLOGIA ATUAL, COM RISCO RESIDUAL DE
+  TERCEIRO DOCUMENTADO.** Divisão de responsabilidade registrada
+  explicitamente:
+  1. **César Core** — valida a URL inicial (loopback/privado/link-local/
+     reservado/metadata bloqueados, credenciais embutidas rejeitadas,
+     porta limitada a 80/443); defesa em profundidade, não depende de
+     nenhuma camada abaixo pra isso.
+  2. **OmniRoute** — não acessa diretamente o host alvo; envia a URL como
+     dado pra uma API fixa e conhecida do provider.
+  3. **Firecrawl Cloud** — executa de fato o acesso ao alvo (incluindo
+     qualquer redirect); o fornecedor declara a correção do SSRF por
+     redirect nesse serviço (`GHSA-vjp8-2wgg-p734`, Cloud, 27/12/2024).
+- **Limites explícitos, não resolvidos e não resolvíveis por este
+  repositório:** o guard do Core (`reject_ssrf_target`) não é garantia
+  absoluta contra DNS rebinding (a resolução de DNS que ele faz pode
+  divergir da resolução feita, momentos depois, pelo Firecrawl); a
+  segurança final de quem executa o fetch (o provider terceiro) continua
+  sendo uma trust boundary externa a este projeto, não uma garantia deste
+  código.
+- **Gatilho de reabertura:** se no futuro houver migração de Firecrawl
+  Cloud pra Firecrawl self-hosted (ou troca do provider padrão configurado
+  em `CESAR_CORE_FETCH_DEFAULT_PROVIDER`), esta análise deve ser reaberta e
+  proxy/egress filtering deve ser avaliado, conforme a própria recomendação
+  do Firecrawl para instalações self-hosted/OSS.
+- **Não implementado nesta rodada, por decisão explícita:** proxy próprio,
+  qualquer chamada HTTP direta do Core ao alvo, ou qualquer mudança de
+  arquitetura. Nenhum código alterado; nenhuma suíte de testes repetida.
+
+## DEC-110 — FASE E.1: enrichment migrado para trás do César Core, fechando a pendência do DEC-109
+
+- **Data:** 2026-09-05.
+- **Classificação:** Implementar agora, continuação direta do `DEC-109` (mesma
+  sessão de retomada, 2ª rodada). Implementação real nos dois repositórios,
+  validada por testes automatizados; sem commit/push/PROD nesta rodada.
+- **O que foi implementado:** César Core ganhou o Central Web Fetch/
+  Enrichment Gateway (`src/cesar_core/fetch/`: contratos, policy, manager,
+  adapter OmniRoute, rota `POST /v1/fetch`, mesmo padrão de Identity/
+  Capability/Quota/Usage/Tracing já usado por AI/Search), traduzindo para o
+  contrato real `POST /v1/web/fetch` do OmniRoute (Firecrawl é um dos
+  providers reais dele, confirmado contra o código-fonte oficial do
+  OmniRoute nesta mesma investigação). Nova migration SQLite
+  (`0002_add_fetch_capability.sql`) amplia os CHECKs de capability para
+  incluir `fetch`. GG Oferta substituiu `FirecrawlScrapeProvider` por
+  `CesarCoreFetchProvider` (`backend/app/search/cesar_core_fetch.py`) em
+  `worker.py`/`market_research/service.py`, reusando a credencial de
+  aplicação já existente (nenhum secret novo no GG). Confirmado que não
+  havia mais consumidor do cliente Firecrawl direto antes de remover
+  `backend/app/search/firecrawl.py`, `tests/test_firecrawl_scrape.py`,
+  `firecrawl_api_key(_file)` do `Settings`, `compose.yaml` e
+  `backend/.env.example`, e o secret correspondente de
+  `scripts/manage_collection_worker_config.ps1`. `scripts/check.ps1` também
+  parou de provisionar os secrets órfãos de Gemini/Groq identificados no
+  `DEC-109`.
+- **Resultado:** GG Oferta e worker nativo não dependem mais diretamente de
+  nenhum provider externo (Gemini, Groq, OpenRouter, Firecrawl) para AI,
+  grounding, Search ou enrichment — a dependência é sempre o César Core.
+  Testes: Core, 77 novos/ajustados passando a partir de um ambiente limpo
+  (o `.env` real de DEV do `cesar-core` colide com um bug pré-existente de
+  `pydantic-settings`, não corrigido aqui — ver runbook); GG, suíte completa
+  não-integração com 1766 passed, mesmas 6 falhas pré-existentes do
+  `DEC-109` sem relação com esta fase. Ruff limpo nos arquivos tocados nos
+  dois repositórios (débito pré-existente em arquivos não tocados
+  preservado, não corrigido por não fazer parte do escopo).
+- **Não implementado nesta rodada:** E2E real contra Firecrawl de verdade.
+  O stack Docker do César Core (`cesar-core-cesar-core-1` e vizinhos) já
+  estava em execução com uma imagem publicada anterior a esta mudança;
+  rebuildar/reiniciar esse serviço persistente para carregar o código novo
+  fica pendente de autorização explícita do usuário, por afetar um ambiente
+  já em uso (não um stack descartável como o de TASK-118H).
+- **Próxima ação:** ~~decisão do usuário sobre autorizar o E2E real~~ —
+  **superada**: usuário autorizou explicitamente; ver adendo abaixo.
+
+### Adendo — E2E real executado e aprovado (mesma data, 3ª rodada)
+
+Usuário autorizou rebuild/restart do stack DEV do César Core para o E2E real.
+Executado: `docker build` de `cesar-core:local` a partir do código atual;
+`docker compose up -d --no-deps cesar-core` (só esse serviço recriado).
+Redis/SearXNG nunca tocados; OmniRoute recriado só para carregar a variável
+`INITIAL_PASSWORD` (arquivo local `.secrets/omniroute-admin.env`, nunca em
+`.env`/Git) e a publicação de porta `127.0.0.1:20128` (achado: essa
+publicação já existia no container rodando antes desta sessão, mas nunca
+tinha sido declarada em `compose.yaml` — corrigido, sem alterar nada além
+disso). Nenhum volume resetado; nenhum dado apagado.
+
+**Onboarding administrativo do OmniRoute DEV concluído** (nunca tinha sido
+feito antes — instância ficava na tela inicial de setup): senha forte gerada
+localmente com `secrets.choice`, persistida só em
+`C:\cesar-core\.secrets\omniroute-admin-password` (fora do Git, nunca exibida
+no chat). Login confirmado via `POST /api/auth/login`.
+
+**Credencial OmniRoute dedicada para enrichment**: criada via
+`POST /api/keys` (`ggoferta-fetch`) e restrita via
+`PATCH /api/keys/{id}` a `allowedEndpoints: ["web-fetch"]` — confirmado por
+teste direto que essa chave é aceita em `/v1/web/fetch` e **rejeitada** em
+`/v1/search` (prova de escopo mínimo real, não só declarado). `ggoferta-ai`/
+`ggoferta-search` não foram lidas, alteradas nem tiveram seu valor
+reaproveitado — `.secrets/ggoferta-fetch` (que antes era uma cópia
+provisória da chave de AI, prática explicitamente vetada pelo usuário) foi
+substituído pelo valor da chave dedicada nova.
+
+**Achado real de arquitetura do OmniRoute**: uma API key só é restrita a
+categorias de endpoint (`allowedEndpoints`) quando essa lista é
+explicitamente preenchida — vazia/ausente permite qualquer categoria
+(default retrocompatível). As chaves pré-existentes do projeto já eram
+restritas cada uma à sua própria categoria; por isso reaproveitar valor
+entre capabilities nunca teria funcionado, mesmo que o arquivo/nome fosse
+diferente — confirma que credenciais por capability aqui não são só
+higiene de "arquivo separado", são uma autorização real e distinta no
+OmniRoute.
+
+**Firecrawl como provider do OmniRoute**: a instância OmniRoute DEV nunca
+tinha uma conexão de provider Firecrawl configurada
+(`/v1/web/fetch` retornava 400 "No credentials configured for web-fetch
+provider: firecrawl" mesmo com a API key correta). Registrada via
+`POST /api/providers` reaproveitando a chave real de Firecrawl que já
+existia em `C:\AIShoppingAgent\AIShoppingAgent\.secrets\firecrawl_api_key`
+(provisionada para o GG antes desta fase, hoje sem nenhum consumidor de
+código) — passa a viver exclusivamente no OmniRoute, o único lugar da
+arquitetura onde uma credencial de provider concreto deve existir.
+
+**Prova real obtida**: `POST /v1/web/fetch` direto no OmniRoute com a chave
+dedicada retornou conteúdo real (Wikipedia, artigo da RTX 50 series) via
+Firecrawl. `CesarCoreFetchProvider.scrape_basic()` (GG, código de produção,
+não mock) contra o César Core recém-recriado devolveu o mesmo conteúdo
+normalizado (~20 KB, respeitando `max_content_length`). Teste focado real de
+`app.market_research.service._search_with_enrichment` (Search real via
+SearXNG + enrichment real, `min_items` forçado alto para exercitar o ramo de
+enrichment) devolveu evidência real de domínios reais (`kabum.com.br`,
+`adrenaline.com.br`), respeitando o teto de 3 URLs — nenhuma mudança de
+código nessa função nesta rodada. `/ready` e `/v1/capabilities` (`fetch:
+available`) confirmados depois de cada restart.
+
+**Resultado**: FASE E.1 concluída integralmente, incluindo E2E real. Próxima
+fase: FASE F.
+
+## DEC-109 — FASE E (recuperação GG↔Core): manter Firecrawl `/v2/scrape` direto foi interpretação incorreta; enrichment fica pendente
+
+- **Data:** 2026-09-05.
+- **Classificação:** Correção de rumo (documentação apenas nesta rodada;
+  nenhum código de scrape/enrichment alterado). Retomada de sessão do Codex
+  (limite atingido) pelo Claude, no meio da FASE E da "recuperação" GG↔César
+  Core (fases 0/A–F, distintas de TASK-118A–H, já concluídas e publicadas).
+- **Contexto:** a FASE E remove os legados diretos de AI/Search do GG Oferta.
+  A auditoria desta retomada confirmou AI e Search corretamente concluídos:
+  `AIProviderManager`/`WebSearchManager` só constroem `CesarCore*Provider`;
+  Gemini/Groq/OpenRouter diretos, suas factories, flags `cesar_core_*_enabled`
+  e o disaster fallback antigo foram removidos do `Settings`; `WebSearchManager`
+  não tem mais fallback Firecrawl. Suíte completa (exceto integração/E2E)
+  reexecutada: 1761 passaram; as 6 falhas restantes (autenticação e contrato
+  de schema de `products`/`users`) são pré-existentes, sem relação com esta
+  fase. Ruff/format aplicados só nos arquivos tocados pela FASE E.
+- **O que estava errado:** a mesma rodada da FASE E documentou (em
+  `docs/internal/project-context.md`, `docs/architecture/
+  cesar-core-integration.md` deste repositório e `docs/architecture/
+  gg-oferta-core.md` do `cesar-core`) que manter `FirecrawlScrapeProvider`
+  chamando `https://api.firecrawl.dev/v2/scrape` diretamente do GG Oferta
+  (Market Research e worker nativo, credencial Firecrawl própria) era o
+  estado final aceitável da FASE E. Isso contraria o mesmo invariante já
+  aplicado a AI/Search: GG Oferta e worker nativo não devem depender
+  diretamente de provider externo — a dependência deve ser sempre o César
+  Core, com o provider concreto abaixo dele.
+- **Correção aplicada nesta rodada:** documentação dos dois repositórios
+  corrigida para não apresentar mais o Firecrawl scrape direto como decisão
+  final — está marcado como pendência real da FASE E. Nenhum código de
+  scrape/Market Research foi alterado ou revertido (o comportamento
+  funcional é idêntico ao de antes desta sessão). `CLAUDE.md`/`AGENTS.md`
+  dos dois repositórios ganharam a frase explícita do invariante ("GG Oferta
+  e seu worker nativo nunca devem depender diretamente de um provider
+  externo... a dependência é sempre o César Core").
+- **Achado relevante para a decisão pendente:** `DEC-107` (pré-flight real do
+  OmniRoute v3.8.51) já registra que o OmniRoute expõe `POST /v1/web/fetch`
+  e que esse endpoint **já reconhece Firecrawl como um dos seus providers**.
+  Ou seja, existe um caminho plausível para fechar essa pendência sem
+  inventar integração nova (`César Core → OmniRoute /v1/web/fetch →
+  Firecrawl`), mas ele exige uma extensão real do César Core (contrato
+  neutro de enrichment, adapter OmniRoute, migração do consumidor GG, testes
+  e documentação nos dois repositórios) que ainda não foi implementada nem
+  autorizada.
+- **Próxima ação:** decisão explícita do usuário sobre implementar essa
+  extensão agora (fechando de vez a FASE E) ou tratá-la como item separado,
+  antes de declarar a FASE E integralmente concluída. Sem commit/push/PROD
+  nesta rodada, por instrução explícita.
+
+## TASK-118H — início do preflight DEV
+
+Classificação: **Implementar agora**, etapa da TASK-118 explicitamente solicitada
+após publicação da 118G. Atualizar status e validar resiliência/rollback em DEV
+isolado; reutilizar arquitetura e contracts, sem migrar grounding, ativar Claudião
+ou alterar PROD. A validação herdada não equivale à aprovação da nova rodada.
+Deployment PROD depende de autorização explícita, topologia e credenciais próprias.
+
+Continuação autorizada: restart do processo Core e rollback configuracional real
+sem reiniciar GG para recuperar dependência. Reload de Settings/factories para
+rollback equivale ao restart direcionado do consumidor documentado no runbook.
+Não persistir quota, alterar transporte de produção ou criar integração Claudião
+nesta validação. HTTP injetado é identificado separadamente de API externa real.
+
 ## TASK-118G — Search versus enriquecimento
 
 Classificação: **Implementar agora**, autorizado pelo usuário. SearXNG

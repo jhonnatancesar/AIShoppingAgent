@@ -2,19 +2,22 @@
 
 Escopo: TASK-118H, operação **DEV local** validada. Este documento não autoriza
 deploy nem mudança em PROD. Código publicado, rollout habilitado e serviço em
-execução são estados diferentes. Configurações padrão continuam desligadas.
+execução são estados diferentes. O Core é dependência obrigatória no GG.
+Funcionalidade da integração:
+[Arquitetura → Integração com César Core](../architecture/cesar-core-integration.md).
+Primeira instalação: [Instalação → César Core](../installation/cesar-core.md).
+Este documento cobre só falhas, rollback e reprodução da validação.
 
 ## Arquitetura e limites
 
 - AI: GG Oferta → AIProviderManager → CesarCoreAIProvider → Core → OmniRoute.
 - Search: GG Oferta → WebSearchManager → CesarCoreSearchProvider → Core →
   OmniRoute → SearXNG.
-- Indisponibilidade elegível de Search: Firecrawl `/v2/search` como fallback.
 - Evidência insuficiente: Firecrawl `/v2/scrape` nas URLs selecionadas, até três
   domínios distintos. É enriquecimento; não é outra busca nem fallback Search.
 
-AI e Search não compartilham interface de provider. Grounding mantém o caminho
-anterior. `FREE_ONLY` é preservado no Core; Firecrawl usa a conta/créditos já
+AI e Search não compartilham interface de provider. Grounding passa pelo Core.
+`FREE_ONLY` é preservado no Core; Firecrawl Scrape usa a conta/créditos já
 existentes e sua utilização precisa ser observada separadamente.
 
 `max_tokens` exige capability certificada e defesa fail-closed após resposta;
@@ -42,10 +45,6 @@ GG Oferta, processo DEV:
 $env:AISHOPPING_ENVIRONMENT='development'
 $env:AISHOPPING_CESAR_CORE_BASE_URL='http://127.0.0.1:8100'
 $env:AISHOPPING_CESAR_CORE_API_KEY_FILE='C:\AIShoppingAgent\AIShoppingAgent\.secrets\cesar-core-client-dev'
-$env:AISHOPPING_CESAR_CORE_AI_ENABLED='true'
-$env:AISHOPPING_CESAR_CORE_SEARCH_ENABLED='true'
-$env:AISHOPPING_CESAR_CORE_SEARCH_FALLBACK_ENABLED='true'
-$env:AISHOPPING_CESAR_CORE_DISASTER_FALLBACK_ENABLED='false'
 $env:AISHOPPING_FIRECRAWL_API_KEY_FILE='C:\AIShoppingAgent\AIShoppingAgent\.secrets\firecrawl_api_key'
 ```
 
@@ -91,12 +90,12 @@ de suas capabilities passarem. `capabilities=available` descreve configuração,
 não substitui readiness nem garante provider externo saudável.
 
 Após recuperação de Core/OmniRoute/SearXNG, o próximo Search tenta novamente o
-Core: Firecrawl não é armazenado como provider principal. AI recupera sem restart
+Core. AI recupera sem restart
 do GG; se o circuit breaker abriu após falhas repetidas, aguardar seu período
 (`AISHOPPING_CIRCUIT_OPEN_SECONDS`, default 30s) para a tentativa half-open.
 Não limpar circuitos em produção como estratégia habitual de recuperação.
 
-Mudanças de flags, caminhos ou URLs exigem reload de Settings/factories. Como
+Mudanças de caminhos ou URLs exigem reload de Settings/factories. Como
 processos podem manter managers/configuração em cache, **reiniciar somente os
 processos consumidores afetados** é o procedimento operacional conservador.
 Alterar arquivo de ambiente não modifica automaticamente processos em execução.
@@ -121,53 +120,21 @@ Reiniciar dependência indisponível não exige reiniciar todo o stack.
 | AI 401 | Credencial aplicação → Core inválida/ausente | Arquivo legível e cópias correspondentes, sem imprimir | Corrigir configuração; não fallback |
 | AI 502 | Auth/contrato/limite upstream violado | Código normalizado e request/correlation IDs | Corrigir target/credencial/contrato; não truncar para ocultar consumo |
 | AI 503 | OmniRoute/rede indisponível | Ready, health e IDs | Restaurar dependência; não repetir inferência incerta |
-| Search fallback ativo | Core/OmniRoute/SearXNG indisponível | `fallback_reason`, ready e health de cada camada | Restaurar componente; próximo Search retorna ao principal |
 | Search vazio | Sem resultados ou limitação do motor | Provider/source, status e evidência | Aceitar vazio; sem segunda busca ou URLs inventadas |
 | SearXNG fora | Processo, rede ou configuração JSON | Health, conexão OmniRoute e rede isolada | Restaurar instância/configuração |
 | Core degraded | Credencial/configuração/dependência obrigatória | Corpo de ready e capacidades habilitadas | Corrigir causa; não afrouxar readiness |
 | Quota 429 | Janela Redis da aplicação esgotada (limite lido do Control Plane) | HTTP counter por aplicação/rota/status, Retry-After | Aguardar janela; sem retry/fallback para burlar quota; mudar o limite exige a API Admin (ADR 0018), não o restart do Core |
 | Search 400/401/403 | Input/auth/capability/policy | Código/IDs e config | Corrigir requisição/autorização, não cascata |
-| Firecrawl fora | Rede, 429/5xx ou autenticação | Erro normalizado `firecrawl_search_failed` e tentativas | Encerrar controladamente; investigar, sem loop |
+| Firecrawl Scrape fora | Rede, 429/5xx ou autenticação | Erro normalizado e tentativas de enriquecimento | Seguir sem enriquecimento; investigar, sem loop |
 
-AI disaster é opt-in e só aceita falha de conexão. HTTP de erro e timeout de
-resultado incerto não disparam cascata local. Search admite indisponibilidade
-elegível, mas não 400/401/403/404/429, quota/policy ou contrato inválido. Retries
-internos Firecrawl são finitos (default 3), não alternância infinita entre providers.
+AI, grounding e Search falham fechados em configuração, rede, timeout, HTTP,
+quota ou policy. Retries internos do Firecrawl Scrape são finitos (default 3).
 
-## Rollback configuracional validado em DEV
+## Recuperação operacional
 
-Pré-requisitos: manter credenciais antigas DEV disponíveis em arquivos:
-`AISHOPPING_GEMINI_API_KEY_ADMIN_DEV_FILE`, `AISHOPPING_GROQ_API_KEY_FILE`,
-`AISHOPPING_OPENROUTER_API_KEY_FILE` e `AISHOPPING_FIRECRAWL_API_KEY_FILE`.
-Perfil USER usa sua chave Gemini própria, não a ADMIN/DEV. A prova executada é
-ADMIN/DEV. Não trocar modelos para contornar falhas de conta/cota no rollback.
-
-1. Caminho habilitado: flags AI/Search true, construir managers e validar
-   `provider=cesar_core`, Search `source=searxng-search`.
-2. Encerrar graciosamente apenas o consumidor DEV selecionado; aguardar chamadas
-   em andamento para não duplicar consumo/efeitos.
-3. No ambiente que iniciará esse processo:
-
-   ```powershell
-   $env:AISHOPPING_CESAR_CORE_AI_ENABLED='false'
-   $env:AISHOPPING_CESAR_CORE_SEARCH_ENABLED='false'
-   ```
-
-4. Reiniciar o consumidor com o comando/gerenciador já adotado e as mesmas
-   demais configurações. Na API Python DEV, isso significa relançar
-   `python -m uvicorn app.main:app --host 127.0.0.1 --port 8000` com o backend
-   no PYTHONPATH; não usar esse comando para substituir o worker Windows.
-5. Verificar AI no manager anterior (na prova: Gemini `gemini-3.6-flash`),
-   resposta textual; Search Firecrawl com resultados e `fallback_reason=None`.
-   O contador passivo de chamadas ao Core deve permanecer inalterado.
-6. Reabilitar as duas flags para `true`, recarregar managers/reiniciar apenas
-   consumidor e confirmar Core/SearXNG novamente.
-
-AI e Search podem ser revertidos independentemente. Não exige rollback de
-banco, migration reversa, exclusão de dados ou alteração de credenciais. Desligar
-a flag não desfaz requisições que já estavam em andamento. A prova automatizada
-faz reload explícito de Settings/factories no processo de teste, com chamadas
-reais antes/depois; não altera serviço compartilhado nem o ambiente persistente.
+Não existe rollback para providers diretos. Restaure Core/OmniRoute/provider ou
+corrija URL/credencial/capability; até lá AI, grounding e Search permanecem
+indisponíveis de forma fechada. Banco e dados comerciais não são revertidos.
 
 ## Reprodução da validação isolada
 
