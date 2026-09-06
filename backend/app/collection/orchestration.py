@@ -99,6 +99,7 @@ from app.core.config import Settings
 from app.database.time import utc_now
 from app.events import (
     AggregateType,
+    AppliedCouponPayload,
     AvailabilityChangedPayload,
     CollectionCompletedPayload,
     CollectionFailedPayload,
@@ -110,6 +111,8 @@ from app.events import (
     PrelistOfferPayload,
     ProductVariantOptionPayload,
 )
+from app.coupons.pricing import AppliedCoupon, best_applicable_coupon
+from app.coupons.service import get_candidate_coupons_for_offer
 from app.events.service import publish_event_async
 from app.historical_bootstrap.service import run_historical_bootstrap
 from app.market_research.service import (
@@ -1804,6 +1807,13 @@ class _AIOutcome:
     conseguiu resolver um -- `None` quando pesquisa foi pulada
     (identidade não resolvida, gatilho não disparou, ou outro worker
     está com o claim). Valor simples (TASK-079), nunca ORM."""
+    applied_coupon: AppliedCoupon | None = None
+    """Consumo de cupons (2026-09-06): melhor cupom aplicável calculado
+    na Fase B, reaproveitado pela Fase C para usar o preço FINAL com
+    cupom na decisão de alerta -- nunca o preço original coletado, que
+    continua intacto em `PriceObservation.amount`. `None` quando não há
+    cupom aplicável ou a etapa de cupom falhou (nunca derruba a coleta,
+    ver `_classify`)."""
 
 
 def _deterministic_product_relevance(
@@ -2239,6 +2249,7 @@ async def _run_phase_b(
                 profile=ai_profile,
                 now=outcome.completed_at,
             )
+        applied_coupon: AppliedCoupon | None = None
         if (
             market_research_enabled
             and effective_relevance is OfferRelevance.MATCH
@@ -2247,6 +2258,34 @@ async def _run_phase_b(
         ):
             assert session_factory is not None
             assert settings is not None
+            try:
+                async with session_factory() as coupon_session:
+                    offer_row = await coupon_session.get(Offer, pending.offer_id)
+                    if offer_row is not None:
+                        candidates = await get_candidate_coupons_for_offer(
+                            coupon_session,
+                            offer_id=pending.offer_id,
+                            store_id=outcome.store_id,
+                        )
+                        applied_coupon = best_applicable_coupon(
+                            offer_row, candidates, pending.amount, pending.currency
+                        )
+            except Exception:
+                # Falha na etapa de cupom (infraestrutura/integração) NUNCA
+                # derruba o processamento normal da oferta -- segue com o
+                # preço original, como se nenhum cupom tivesse sido
+                # encontrado. Distinto de "consulta válida com zero
+                # candidatos" (que não cai aqui, só devolve `None` de
+                # `best_applicable_coupon` normalmente).
+                logger.warning(
+                    "coupon_evaluation_failed",
+                    extra={"offer_id": str(pending.offer_id)},
+                    exc_info=True,
+                )
+                applied_coupon = None
+            evaluation_amount = (
+                applied_coupon.final_amount if applied_coupon is not None else pending.amount
+            )
             market_snapshot = await evaluate_trigger_and_maybe_research(
                 session_factory,
                 ai_manager,
@@ -2254,7 +2293,7 @@ async def _run_phase_b(
                 mission_id=outcome.mission_id,
                 product_id=pending.product_id,
                 store_id=outcome.store_id,
-                current_amount=pending.amount,
+                current_amount=evaluation_amount,
                 current_currency=pending.currency,
                 previous_amount=pending.previous_amount,
                 target_amount=outcome.target_amount,
@@ -2262,7 +2301,9 @@ async def _run_phase_b(
                 now=outcome.completed_at,
                 settings=settings,
             )
-        return _AIOutcome(pending.offer_id, relevance, display_title, market_snapshot)
+        return _AIOutcome(
+            pending.offer_id, relevance, display_title, market_snapshot, applied_coupon
+        )
 
     to_process = [
         item
@@ -2404,10 +2445,47 @@ async def _persist_phase_c(
                 # CHANGED chegam aqui, e ambos garantem `current.id !=
                 # previous.id` (quando previous existe), preservando o
                 # guard de distinção do evaluator (app/alerts/evaluator.py).
+                # Consumo de cupons (2026-09-06): quando a Fase B calculou
+                # um cupom aplicável, a decisão de alerta usa o preço FINAL
+                # com cupom como "candidato" -- nunca o `PriceObservation`
+                # persistido (que já foi gravado com `pending.amount`
+                # original na Fase A, intocado). `current` aqui é só um
+                # valor efêmero pro evaluator (mesmo padrão já existente
+                # para `previous` logo abaixo), nunca uma segunda linha no
+                # banco.
+                #
+                # Correção (revisão pós-implementação, mesma sessão): o
+                # evento gerado pelo evaluator precisa PRESERVAR qual foi
+                # esse cupom -- o Telegram não pode mais buscar "o melhor
+                # cupom agora" na hora de montar a mensagem (o cupom pode
+                # ter expirado, sido atualizado, ou um cupom melhor pode
+                # ter aparecido nesse meio-tempo; nada disso pode mudar o
+                # que ESTA decisão específica anunciou). `coupon_snapshot`
+                # é montado a partir do MESMO `AppliedCoupon` usado para
+                # `evaluation_amount` -- `coupon_snapshot.final_amount ==
+                # evaluation_amount == current.amount == current_total`
+                # por construção; `AppliedCouponPayload`/`PriceDecreased
+                # Payload`/`PriceTargetReachedPayload` (catálogo) validam
+                # essa igualdade de novo como segunda linha de defesa.
+                evaluation_amount = pending.amount
+                coupon_snapshot: AppliedCouponPayload | None = None
+                if ai_outcome is not None and ai_outcome.applied_coupon is not None:
+                    applied = ai_outcome.applied_coupon
+                    evaluation_amount = applied.final_amount
+                    coupon_snapshot = AppliedCouponPayload(
+                        coupon_id=applied.coupon_id,
+                        code=applied.code,
+                        discount_kind=applied.discount_kind,
+                        original_amount=applied.original_amount,
+                        discount_amount=applied.discount_amount,
+                        final_amount=applied.final_amount,
+                        currency=applied.currency,
+                        raw_rule_text=applied.raw_rule_text,
+                    )
                 current = PriceObservation(
                     id=pending.observation_id,
                     offer_id=pending.offer_id,
-                    amount=pending.amount,
+                    amount=evaluation_amount,
                     currency=pending.currency,
                     availability=pending.availability,
                     observed_at=pending.observed_at,
@@ -2482,6 +2560,7 @@ async def _persist_phase_c(
                         market_assessment_supports_realert=market_assessment_supports_realert,
                         realert_window=realert_window,
                         now=outcome.completed_at,
+                        coupon=coupon_snapshot,
                     )
                 except Exception:
                     # Avaliação/notificação de alerta é uma etapa derivada

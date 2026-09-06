@@ -2331,3 +2331,519 @@ Barato especificamente. Pendência que sobrevive ao fechamento (não
 bloqueia a conclusão da fase, é operacional): o risco de concorrência de
 `_MAX_FETCHES` em cadeias de falha lenta, registrado acima para decisão
 futura caso vire problema real.
+
+# Consumo de cupons — schema, persistência e leitura básica (2026-09-06)
+
+Auditoria prévia (pedida explicitamente antes de qualquer código) achou
+um bloqueio real, não uma regra de negócio em aberto: o Coupon Worker
+(repositório separado `AIShoppingAgent-cupom`, DEC-105/106) só persistia
+em SQLite local (`data/worker.db`); o GG Oferta não tinha NENHUMA
+tabela/modelo de cupom, e o frontend (`CouponsPage.tsx`/`CouponCard.tsx`,
+Subtask 11) já documentava explicitamente "sem backend, sem integração,
+tudo precisa chegar do futuro contrato real". Reportado ao usuário antes
+de qualquer implementação, por não haver decisão registrada em nenhum
+lugar sobre transporte de dados entre os dois repositórios.
+
+**Decisão de arquitetura do usuário (2026-09-06):** o Coupon Worker roda
+na MESMA máquina do GG Oferta e passa a persistir diretamente no MESMO
+PostgreSQL dele -- sem sync de SQLite, sem API intermediária, sem
+segundo banco para integração. `source_candidates`/`control`
+(bookkeeping interno de descoberta do worker, nunca consumido pelo GG)
+continuam no SQLite local.
+
+## Schema (migration `20260906_0002_add_coupons.py`)
+
+- **`coupons`** -- espelha EXATAMENTE os campos que o worker produz hoje
+  (`coupons/persistence.py` daquele repositório, dataclass `Coupon`):
+  `store_id` (FK real `stores.id`, nunca texto solto -- resolvida a
+  partir do `store_id` textual do worker, ex. `"amazon"`, via
+  `Store.code`), `code` (`TEXT NOT NULL DEFAULT ''`, nunca `NULL` --
+  preserva o dedup exato já usado pelo worker sem cair na diferença de
+  semântica de `NULL` em `UNIQUE` entre SQLite e Postgres),
+  `discount_kind`/`discount_value`/`minimum_purchase_amount`/
+  `maximum_discount_amount` (monetários viram `NUMERIC(19,4)`, mesma
+  convenção de `PriceObservation`/`ExternalPriceReference`),
+  `scope_kind`/`scope_reference`/`valid_until` **preservados CRUS**
+  (`TEXT`, sem parsing/validação -- `valid_until` fica texto porque o
+  worker deliberadamente nunca infere data relativa, nunca garante
+  formato), `raw_rule_text`/`source_url`/`evidence`/`last_seen_at`/
+  `status`. Dedup: `UNIQUE(store_id, code, evidence)`, idêntico ao
+  worker. Nenhum `CHECK` no vocabulário de `status`/`scope_kind`/
+  `discount_kind` -- mesmo espírito de preservação crua, nunca travar a
+  escrita do worker se o vocabulário evoluir.
+- **`coupon_offer_links`** -- associação N:N separada (correção do
+  usuário à proposta original, que tinha `offer_id` direto em
+  `coupons`): um cupom pode se aplicar a mais de uma `Offer`; sem
+  nenhuma linha aqui, o cupom é simplesmente genérico, ainda não
+  avaliado. `UNIQUE(coupon_id, offer_id)`. FKs `RESTRICT` (mesma
+  convenção do projeto inteiro, nunca `CASCADE`) -- na prática, apagar
+  uma `Offer` com vínculo ativo é bloqueado, nunca cascateia a exclusão
+  do cupom (o `Coupon` nunca tem FK direta pra `Offer`, então sobrevive
+  a qualquer cenário). **O worker NUNCA cria linhas em
+  `coupon_offer_links`** (não conhece a regra de aplicabilidade) -- só o
+  GG Oferta, numa fase futura.
+
+`app/database/model_registry.py` atualizado (`Coupon`, `CouponOfferLink`)
+-- sem isso, `Base.metadata` fica incompleta e o Alembic/testes de drift
+não veem a tabela nova.
+
+## Persistência (`PostgresCouponStore`, no repositório do worker)
+
+Nova classe em `coupons/persistence.py` (`AIShoppingAgent-cupom`),
+implementando a MESMA interface `CouponStore` -- "nenhum outro módulo
+muda" (`scanner.py`/`worker.py` só enxergam a interface). Internamente é
+um híbrido: `upsert`/`expire_stale` (tabela `coupons`) vão para o
+Postgres via `psycopg` (mesmo driver do GG); `record_candidate`/
+`mark_candidate_status`/`get_adopted_candidates`/`get_control`/
+`set_control`/`get_promo_window` continuam delegados a uma
+`SqliteCouponStore` interna (SQLite local, nunca tocado pelo GG).
+`store_id` textual é resolvido pra UUID real via `SELECT ... FROM stores
+WHERE code = ...` (cache em processo); código de loja desconhecido pelo
+GG levanta `CouponStoreIntegrationError` explícito -- **o worker nunca
+cria uma loja nova sozinho**, exatamente como pedido. Factory
+`open_coupon_store(db_path, *, postgres_dsn=None)`: sem `postgres_dsn`,
+comportamento IDÊNTICO a antes (SQLite completo, nunca quebra).
+
+`worker.py` lê `COUPONS_POSTGRES_DSN` do próprio `.env` do worker
+(opcional) -- **nunca lê o `.env` do GG Oferta diretamente**; o usuário
+configura os mesmos dados de conexão (host/porta/banco/usuário/senha) de
+forma independente nos dois arquivos. `requirements.txt` do worker
+ganhou `psycopg[binary]>=3.2`.
+
+## Leitura pelo GG (`app/coupons/service.py`)
+
+Só leitura, sem nenhuma lógica de aplicabilidade:
+`get_coupons_for_offer(session, offer_id=...)` (cupons ativos já
+vinculados) e `get_unlinked_coupons_for_store(session, store_id=...)`
+(cupons ativos genéricos, candidatos a avaliação futura, via `NOT
+EXISTS` no vínculo). Nenhuma chamada a partir de F2/F3/alerta/Telegram/
+frontend ainda -- fica para a próxima fase.
+
+## Validação real
+
+- `python scripts/run_integration_tests.py tests/integration/
+  test_coupons.py` -- **5/5 passando** (dedup por `(store, code,
+  evidence)`, dedup por evidência quando `code=""`, `UNIQUE` de
+  `coupon_offer_links`, `RESTRICT` bloqueando exclusão de `Offer`
+  vinculada, `get_coupons_for_offer`/`get_unlinked_coupons_for_store`
+  filtrando corretamente por vínculo/status/loja). Migration
+  `20260906_0002` validada pelo próprio `alembic_upgrade_and_check` do
+  runner (upgrade → downgrade -1 → upgrade → `alembic check`).
+- **`PostgresCouponStore` validada contra o Postgres DEV real** (script
+  descartável, não commitado, dados sintéticos limpos ao final):
+  resolução de loja real (`kabum`) com sucesso; loja desconhecida
+  levanta `CouponStoreIntegrationError` de verdade; `upsert` real
+  persiste e deduplica corretamente (mesma chave não duplica, evidência
+  diferente gera linha nova); `expire_stale` real marca `status`
+  corretamente. Nenhum dado de teste restante no banco.
+- Migration aplicada de fato ao Postgres DEV persistente (forward-only,
+  mesmo critério já usado para a F1 -- necessário para a validação real
+  contra dados persistentes).
+- Achado colateral corrigido (drift pré-existente, sem relação com
+  cupons): `tests/test_database.py::test_metadata_contains_only_
+  implemented_tables` já estava desatualizado antes desta rodada
+  (faltavam `historical_bootstraps`/`external_price_references`, da FASE
+  F1, e `user_feedback`/`verification_challenges`, de outra sessão) --
+  corrigido junto, já que eu estava tocando a mesma área. Suíte não-
+  integração completa (exceto `tests/e2e/`, que depende de browser real):
+  **5 falhas pré-existentes e sem relação** (mesmas do `DEC-109`:
+  autenticação mock + contrato de schema `products`/`users`), 1802
+  passed, 13 skipped.
+
+**Fora de escopo desta rodada, explicitamente adiado pelo usuário:**
+aplicabilidade (cruzar cupom com `Offer`/`Product`, decidir
+`coupon_offer_links`), F2/F3 recebendo preço com cupom, IA recebendo
+preço final, exibição no Telegram/frontend. Nenhum desses foi tocado.
+
+## Consumo de cupons — correções de revisão (2026-09-06, mesma sessão)
+
+Três correções sobre o que foi entregue acima, pedidas explicitamente
+antes de aprovar a etapa.
+
+### 1. FK de `coupon_offer_links` corrigida
+
+`offer_id` estava `ondelete="RESTRICT"` (bloquearia excluir uma `Offer`
+com cupom vinculado) -- **corrigido para `ondelete="CASCADE"`**: apagar
+uma `Offer` remove só o `CouponOfferLink`, nunca o `Coupon` (que não tem
+FK direta pra `Offer`, então nunca é afetado, independente do
+`ondelete`). `coupon_id` continua `RESTRICT` (nunca apagar um `Coupon`
+que já tem histórico de vínculo, decisão não questionada pelo usuário).
+Migration `20260906_0002` editada in-place (ainda não commitada) e
+reaplicada no DEV (`downgrade -1` + `upgrade head`) para reconciliar o
+schema real.
+
+### 2. Backend do worker: falha explícita, nunca fallback silencioso
+
+`PostgresCouponStore.__init__` agora faz um `SELECT 1` real logo após
+conectar e levanta `CouponStoreIntegrationError` imediatamente se
+falhar -- nunca deixa o erro só aparecer no primeiro `upsert`, muito
+menos cai para SQLite silenciosamente. `worker.py` captura esse erro na
+inicialização e sai com `sys.exit(1)` e mensagem clara (mesmo padrão já
+usado pro `AUTH_TOKEN` ausente). `open_coupon_store` loga explicitamente
+qual backend foi escolhido (`INFO` para Postgres, `WARNING` para SQLite
+puro, deixando claro que o GG não recebe nada nesse modo) -- nunca fica
+implícito qual dos dois está ativo. SQLite continua existindo como modo
+INTENCIONAL de uso/teste local (ausência de `COUPONS_POSTGRES_DSN`),
+nunca como destino de um fallback de erro.
+
+### 3. Ciclo de vida do cupom -- auditado, sem estado novo
+
+Vocabulário já existente no worker (`active`/`expired`) cobre os três
+cenários pedidos, sem precisar de nenhum estado novo:
+
+- **(A) Continua ativo** -- sem mudança, `status="active"`.
+- **(B) Some da fonte** -- mecanismo JÁ EXISTENTE, `expire_stale`
+  (`coupons/scanner.py`, chamado uma vez por rodada bem-sucedida com
+  `before_iso=round_start`): cupom `active` não reconfirmado nesta
+  rodada vira `expired`. Auditado, reaproveitado sem alteração de
+  lógica -- só passou a rodar contra a tabela `coupons` do Postgres
+  (`PostgresCouponStore.expire_stale`) em vez de SQLite.
+- **(C) Aparece mas está esgotado/encerrado** -- **gap real encontrado**:
+  o worker já tinha uma detecção literal de "esgotado"/"esgotando"
+  (`evidence.py`, `_STATUS_HINT_PATTERNS`, desde antes desta sessão),
+  mas por desenho deliberado NUNCA mudava `status` -- só anexava o texto
+  como `raw_rule_text`. Corrigido: quando o texto contém "esgotad[oa]"
+  (tempo passado/presente -- já esgotou, distinto de "está esgotando",
+  que é só aviso de que está acabando e o cupom pode continuar válido
+  hoje) **e** a fonte é de escopo confiável por item
+  (`CARD_KINDS = {"cards", "search", "product"}`, `coupons/stores.py`),
+  o cupom nasce/atualiza como `status="expired"` -- reaproveitando o
+  MESMO estado já usado pra "sumiu", nenhum estado novo criado.
+  **Limitação residual, deixada de propósito**: fontes de escopo de
+  página inteira (`home`/`coupons`/`banners`, `STORE_LEVEL_KINDS`) NÃO
+  disparam essa mudança de status -- "esgotado" ali pode se referir a um
+  produto qualquer da página, sem relação com o cupom encontrado na
+  mesma varredura; nesse escopo largo, o texto continua só anotado em
+  `raw_rule_text`, exatamente como antes desta correção (nunca inventa
+  uma certeza que o escopo não sustenta).
+
+**Efeito nas leituras do GG**: nenhuma mudança necessária em
+`get_coupons_for_offer`/`get_unlinked_coupons_for_store` -- ambas já
+filtravam `status == "active"` desde a primeira versão; um cupom
+`expired` por QUALQUER motivo (sumiu, esgotou, ou qualquer futuro
+terceiro motivo que reutilize o mesmo estado) já ficava de fora das
+consultas de candidato. Registro nunca é apagado -- só filtrado das
+consultas de candidato, continua consultável diretamente por `id`.
+
+### Testes atualizados/novos
+
+`tests/integration/test_coupons.py` -- **7/7 passando**:
+`test_coupon_offer_link_unique_pair` (separado do teste de FK),
+`test_deleting_offer_removes_only_the_link_never_the_coupon` (reescrito
+-- agora prova CASCADE, não mais `IntegrityError`),
+`test_get_unlinked_coupons_for_store_excludes_linked_and_other_stores`
+(ganhou um cupom genérico já `expired`, prova que não aparece como
+candidato), `test_expired_coupon_row_survives_as_history_never_deleted`
+(novo -- registro histórico nunca some do banco). Dedup
+(`test_coupon_dedup_by_store_code_evidence`/`test_coupon_without_code_
+deduplicates_by_evidence`) e `test_get_coupons_for_offer_only_returns_
+linked_active` inalterados, continuam passando.
+
+Validação real (script descartável em scratchpad, não commitado,
+limpo ao final): (1) `PostgresCouponStore` com credencial ERRADA levanta
+`CouponStoreIntegrationError` de verdade, imediatamente, sem cair pra
+SQLite; (2) credencial correta continua inicializando normalmente
+(`SELECT 1` não quebra o caminho feliz); (3) `build_coupons` com
+"esgotado" em escopo `cards` produz `status=expired`; (4) o mesmo texto
+em escopo `home` NÃO produz `expired` (sem falso positivo); (5) "está
+esgotando" nunca produz `expired` em nenhum escopo.
+
+Migration `20260906_0002` (corrigida) reaplicada no DEV real
+(`downgrade -1` + `upgrade head`) -- schema DEV reconciliado com a FK
+`CASCADE`.
+
+## Consumo real de cupons pelo GG Oferta (2026-09-06)
+
+Infraestrutura/ciclo de vida (bloco anterior) aprovados; esta etapa
+implementa a aplicação de fato do desconto na avaliação de oportunidade
+(F2/F3), na página do usuário e no alerta do Telegram. Decisão de
+arquitetura explícita do usuário: nenhuma regra nova inventada sem
+confirmação -- as três perguntas em aberto (precisão do match de URL,
+`scope_kind=None`, persistência de vínculo) foram decididas antes de
+qualquer código.
+
+### 1. Regra de aplicabilidade (`app/coupons/pricing.py::is_coupon_applicable`)
+
+- `scope_kind="store_wide"` -- aplica a qualquer `Offer` da mesma Store.
+- `scope_kind="product"` -- aplica só quando `scope_reference` normalizada
+  é EXATAMENTE igual à `Offer.url` normalizada (`normalize_offer_url`).
+  Normalização CONSERVADORA, decisão explícita do usuário: protocolo
+  forçado `https`, host minúsculo sem `www.`, sem fragmento, sem barra
+  final, remove SÓ uma lista fechada de parâmetros de tracking já
+  conhecidos (`utm_*`, `gclid`, `fbclid`, `msclkid`, `igshid`, `mc_cid`,
+  `mc_eid`) -- preserva qualquer outro parâmetro (pode identificar
+  produto/variante de verdade), nunca reordena, nunca infere por
+  nome/path parecido. Zero falso positivo é a prioridade explícita, às
+  custas de perder algum match real por sujeira de URL não catalogada.
+- `scope_kind=None` (nunca definido pelo worker com segurança) e
+  `"category"` (nunca produzido de fato hoje) -- **excluídos da avaliação
+  automática** (decisão explícita do usuário): ficam no banco,
+  consultáveis, mas nunca aplicados sozinhos.
+- Cupom com `status != "active"` nunca é aplicável, em nenhum escopo.
+
+### 2. Deduplicação lógica (`deduplicate_logical_coupons`)
+
+Só do lado do CONSUMO -- nunca mexe na persistência/dedup do worker
+(constraint `uq_..._store_code_evidence` continua intacta). `(store_id,
+code)` com `code` não vazio: mantém só a linha `last_seen_at` mais
+recente (o worker pode gerar mais de uma linha para o mesmo cupom real,
+vindas de evidências diferentes). `code=""` (clipe automático sem
+código próprio): nenhum identificador estável para unir -- cada
+evidência fica distinta, nunca fundida por engano.
+
+### 3. Cálculo de desconto/preço final (`calculate_final_price`)
+
+Só `fixed_amount`/`percentage` (únicos tipos que o worker extrai com
+confiança) -- qualquer outro valor de `discount_kind`, ou
+`discount_value` ausente, faz o cupom ser tratado como não calculável
+(nunca uma suposição). `minimum_purchase_amount` (quando presente) é um
+gate binário -- abaixo dele, não calculável. `maximum_discount_amount`
+(quando presente) limita o desconto. Desconto nunca deixa o preço final
+negativo (`min(discount, reference_amount)`); desconto calculado `<= 0`
+também é tratado como não calculável. `best_applicable_coupon` escolhe
+o MELHOR cupom individual entre os aplicáveis (menor preço final) --
+nunca soma dois cupons (sem regra de acumulação definida, não
+inventada).
+
+### 4. Integração com F2/F3/IA -- substituição de valor, nunca lógica paralela
+
+`app/collection/orchestration.py::_classify` (Fase B) calcula
+`applied_coupon` UMA vez por oferta (consulta `get_candidate_coupons_
+for_offer` + `best_applicable_coupon`, usando `pending.amount` como
+referência) e o guarda em `_AIOutcome.applied_coupon` (valor simples,
+TASK-079 -- nunca um `Coupon` ORM atravessando fronteira de fase). Duas
+reutilizações do MESMO valor, nenhuma lógica de oportunidade nova:
+
+- **Gatilho F2** (`evaluate_trigger_and_maybe_research`): recebe
+  `current_amount = applied_coupon.final_amount` quando há cupom
+  aplicável, senão `pending.amount` -- `should_trigger_market_research`/
+  `is_material_improvement` (TASK-113) continuam absolutamente
+  intocados, só o valor de entrada muda.
+- **Decisão de alerta** (Fase C, `evaluate_price_alerts`): o
+  `PriceObservation` efêmero (`current`) passado ao evaluator usa a
+  MESMA substituição -- o `PriceObservation` JÁ PERSISTIDO na Fase A com
+  `pending.amount` (preço original coletado) nunca é tocado; a
+  substituição só existe nesse valor de comparação passageiro, igual ao
+  padrão já existente para o `previous` efêmero logo abaixo.
+
+Falha na consulta de cupom (infraestrutura) é capturada e logada
+(`coupon_evaluation_failed`) -- nunca derruba o processamento normal da
+oferta; distinta de "consulta válida com zero candidatos" (que apenas
+devolve `None` de `best_applicable_coupon` normalmente).
+
+### 5. Comportamento sem cupom aplicável
+
+Zero candidatos, todos inativos, ou nenhum aplicável ao escopo/URL desta
+Offer -- `applied_coupon=None` em todos os pontos de consumo, e o fluxo
+segue 100% igual ao que já existia antes desta etapa (preço original em
+toda parte).
+
+### 6. Site (`GET /api/v1/offers/{id}`)
+
+`get_user_offer` (`app/webapp/offers_router.py`) recalcula o cupom NA
+HORA da requisição (mesmas funções de `pricing.py`/`service.py`, nunca
+uma segunda régua, nunca reaproveita um `coupon_offer_links` persistido
+-- decisão explícita do usuário: nenhum vínculo é persistido nesta
+etapa, só calculado em tempo real). `OfferDetailResponse.applied_coupon`
+(novo campo, `null` por padrão) só aparece quando o cálculo realmente
+resolve um cupom. Falha na consulta é capturada e logada
+(`coupon_lookup_failed`) -- nunca impede a Offer de aparecer
+normalmente. Frontend: `CouponSection` (`OfferDetailPage.tsx`) só
+renderiza quando `offer.applied_coupon` não é `null`, reaproveitando o
+mesmo helper `money()` já usado pelo resto da página.
+
+### 7. Telegram
+
+`_applicable_coupon_for_alert_async` (`app/telegram/notifications.py`)
+consulta cupons NA HORA de montar a mensagem do alerta -- nunca no
+payload do evento, que fica intocado. `_render_alert` ganhou o parâmetro
+`applied_coupon`, e `_coupon_lines` acrescenta uma seção só quando há
+cupom (código ou "aplicado automaticamente" quando `code=""`, desconto,
+preço final) -- preço original do payload (`current_total`) continua
+aparecendo normalmente, nunca sobrescrito. Falha na consulta é
+capturada e logada (`telegram_coupon_lookup_failed`) -- a seção some
+silenciosamente, alerta continua sendo enviado no formato normal.
+
+### 8. Testes -- foco só no necessário
+
+- `tests/test_coupons_pricing.py` (novo, 25 testes, puro/sem banco):
+  `normalize_offer_url` (http==https, `www.`/case/fragmento/barra final,
+  só remove tracking conhecido, preserva parâmetro que pode identificar
+  variante), `is_coupon_applicable` (store_wide/product exato/product
+  sem referência/`None`/`category`/expirado), `calculate_final_price`
+  (fixed_amount/percentage/mínimo de compra/teto de desconto/nunca
+  negativo/tipo desconhecido/valor ausente), `deduplicate_logical_
+  coupons` (mesmo código funde no mais recente/código vazio nunca
+  funde/códigos diferentes nunca fundem), `best_applicable_coupon`
+  (melhor entre vários nunca soma, nenhum aplicável, ignora
+  expirado/inaplicável, preço original nunca sobrescrito).
+- `tests/test_collection_orchestration_async.py` (+2 testes): prova que
+  `_persist_phase_c` usa `applied_coupon.final_amount` como
+  `current.amount` do evaluator quando há cupom, e `pending.amount`
+  (preço original já persistido pela Fase A) quando não há.
+- `tests/integration/test_coupons.py` (+3 testes, Postgres real):
+  `get_candidate_coupons_for_offer` une vinculados+genéricos sem
+  duplicata; `best_applicable_coupon` end-to-end contra linhas reais do
+  banco para `store_wide` e para `product` (prova que URL diferente da
+  mesma Store/Product nunca aplica por semelhança).
+- `tests/test_telegram_notifications.py` (+2 testes): seção de cupom
+  aparece com código/desconto/preço final corretos quando há cupom
+  aplicável; falha na consulta nunca impede o envio do alerta (seção
+  some, resto da mensagem normal).
+- `tests/test_webapp_offers_router.py` (+2 testes): `applied_coupon` no
+  JSON de resposta quando há cupom aplicável (preço original do
+  `latest_observation` continua intocado); falha na consulta nunca
+  impede a Offer de aparecer (`applied_coupon: null`, resto normal).
+
+Resultado: `tests/test_coupons_pricing.py` 25/25;
+`tests/test_collection_orchestration_async.py` 75/75 (sem regressão);
+`tests/test_telegram_notifications.py` 65/65 (sem regressão);
+`tests/test_webapp_offers_router.py` 19/19 (sem regressão); suíte de
+integração completa (`scripts/run_integration_tests.py`, sem alvo --
+todos os 269 testes) **259 passed** (10 em `test_coupons.py` + 259 no
+total geral, incluindo `historical_bootstrap`/`market_research`/
+`shared_collection`) -- nenhuma regressão. Suíte completa não-integração
+(`pytest tests`, raiz do repo) sem novas falhas: as 5 falhas/67 erros
+observados são 100% pré-existentes e não relacionados (bloqueio de ACL
+de diretório temp do Windows já documentado, defasagem já conhecida de
+`test_products.py`/`test_users.py` com `updated_at`, e uma falha isolada
+em `test_authentication_service.py` -- nenhum desses arquivos foi
+tocado nesta etapa).
+
+**Gap de verificação conhecido, não fechado nesta etapa**: não foi feita
+checagem visual ao vivo do `CouponSection` no navegador (exigiria subir
+backend+frontend com um cupom real semeado no Postgres) -- verificado só
+por leitura de código + `npx tsc --noEmit` limpo (sessão anterior) +
+reuso do mesmo helper `money()`/padrão condicional já usado no restante
+da página.
+
+Ainda fora do escopo desta etapa (não pedido): persistência de
+`coupon_offer_links` (cálculo é sempre em tempo real), qualquer regra de
+acumulação entre múltiplos cupons, e suporte a `scope_kind="category"`.
+
+## Correção: consistência do alerta com cupom + deduplicação lógica (2026-09-06)
+
+Auditoria (sem código) sobre a etapa anterior encontrou dois problemas
+reais, ambos corrigidos nesta rodada, sem tocar site (que continua
+recalculando em tempo real, por decisão explícita do usuário) nem a
+deduplicação de persistência do worker.
+
+### 1. Alerta não representava a mesma oportunidade avaliada
+
+**Achado da auditoria**: F2/F3/o evaluator decidiam com um `AppliedCoupon`
+específico (preço final já embutido em `current_total`), mas o Telegram
+fazia uma busca TOTALMENTE INDEPENDENTE (`best_applicable_coupon` contra
+`observation.amount`, o preço original) na hora de montar a mensagem.
+Como nada ligava as duas pontas, cupom expirar, ser atualizado, ou um
+cupom "melhor" aparecer entre a decisão e o envio (assíncrono, worker de
+polling próprio) podia fazer o Telegram anunciar um preço com cupom
+(`current_total`) sem seção nenhuma explicando de onde ele veio, ou
+mostrar um cupom cujos números não batiam com o headline. Nenhum teste
+cobria isso.
+
+**Correção**: o evento passa a carregar um SNAPSHOT imutável do cupom
+que produziu a decisão.
+
+- `app/events/catalog.py`: novo `AppliedCouponPayload` (`coupon_id`,
+  `code`, `discount_kind`, `original_amount`, `discount_amount`,
+  `final_amount`, `currency`, `raw_rule_text` opcional) -- valida
+  internamente (`discount_amount <= original_amount`,
+  `final_amount == original_amount - discount_amount`). `Price
+  DecreasedPayload`/`PriceTargetReachedPayload` ganham `coupon:
+  AppliedCouponPayload | None = None` (campo opcional, retrocompatível
+  -- eventos antigos continuam válidos) com validação cruzada:
+  `coupon.final_amount` PRECISA ser igual a `current_total`, e
+  `coupon.currency` igual à moeda do alerta -- o catálogo recusa
+  publicar um evento cujo cupom e preço anunciado divergem.
+- `app/alerts/evaluator.py`: `evaluate_price_alerts` ganha o parâmetro
+  `coupon: AppliedCouponPayload | None = None`, repassado tal qual para
+  os dois payloads construídos -- o evaluator nunca decide sozinho o
+  cupom, só o preserva.
+- `app/collection/orchestration.py` (`_persist_phase_c`): monta
+  `coupon_snapshot` a partir do MESMO `AppliedCoupon` já usado para
+  `evaluation_amount`/`current.amount` -- `coupon_snapshot.final_amount
+  == evaluation_amount == current.amount == current_total` por
+  construção (a validação do catálogo é a segunda linha de defesa, não
+  a única).
+- `app/telegram/notifications.py`: `_applicable_coupon_for_alert_async`
+  (a busca independente) foi REMOVIDA -- `get_candidate_coupons_for_
+  offer`/`best_applicable_coupon` nem são mais importados neste módulo.
+  Nova `_coupon_snapshot_from_payload(payload)` reconstrói o `Applied
+  Coupon` de exibição a partir de `payload["coupon"]` (dict aninhado,
+  produzido automaticamente pelo serializer genérico já existente --
+  nenhuma mudança em `app/events/service.py` foi necessária). Evento sem
+  a chave `"coupon"` (publicado antes desta correção) -- `None`,
+  comportamento idêntico ao anterior, nunca inventa um cupom que não
+  fez parte da decisão original. `_coupon_lines` ganhou uma linha
+  opcional com `raw_rule_text` quando presente.
+
+**Efeito**: o Telegram não pode mais divergir da decisão -- não há
+mais NENHUMA consulta de cupom no caminho de renderização do alerta.
+
+### 2. Deduplicação lógica descartava evidências válidas por recência
+
+**Achado da auditoria**: `best_applicable_coupon` filtrava aplicabilidade
+e SÓ DEPOIS deduplicava por `(store_id, code)` usando `last_seen_at` --
+correto quanto à ORDEM (aplicabilidade antes de dedup), mas o dedup em
+si rodava ANTES do cálculo de preço, então duas evidências com o mesmo
+código, ambas aplicáveis, mas com desconto/regra diferentes, perdiam a
+mais antiga só por existir uma mais recente -- mesmo que a antiga fosse
+economicamente melhor. O teste existente (`test_same_store_and_code_
+deduplicates_to_most_recent`) travava esse comportamento como se fosse
+correto.
+
+**Correção** (`app/coupons/pricing.py`, só o lado do CONSUMO -- dedup de
+persistência do worker intocada): novo fluxo em `best_applicable_
+coupon` -- aplicabilidade por evidência -> preço final de TODAS as
+evidências aplicáveis (`_price_candidate`) -> deduplicação para
+apresentação (`_dedupe_priced_candidates`, pelo MENOR `final_amount`;
+`last_seen_at` só desempata quando os dois resultados são
+economicamente idênticos) -> melhor opção individual entre os grupos
+restantes (`min` por `final_amount`). `code=""` continua nunca sendo
+agrupado (nenhum identificador estável). A função pública `deduplicate_
+logical_coupons` foi removida (substituída por `_dedupe_priced_
+candidates`, que só faz sentido operando sobre candidatos JÁ
+precificados).
+
+### Testes atualizados/novos desta correção
+
+- `tests/test_coupons_pricing.py`: seção de dedup reescrita inteira via
+  `best_applicable_coupon` (fluxo real) -- mesmo código + descontos
+  diferentes (a menor vence, não a mais recente), evidência mais recente
+  porém pior nunca elimina a mais antiga melhor, empate econômico
+  desempata por `last_seen_at`, `code=""` nunca agrupado por engano.
+  **27/27 passando**.
+- `tests/test_event_catalog.py` (+5 testes): `coupon` é opcional/
+  retrocompatível; catálogo recusa `coupon.final_amount != current_
+  total`; recusa moeda divergente; `AppliedCouponPayload` recusa
+  desconto maior que o original e `final_amount` inconsistente.
+  **21/21 passando**.
+- `tests/test_event_publication.py` (+1 teste): snapshot serializa como
+  dict aninhado via o serializer genérico já existente. **38/38
+  passando** (1 teste pré-existente ajustado -- passou a incluir
+  `"coupon": None` no dict esperado).
+- `tests/test_collection_orchestration_async.py` (+3 testes): evaluator
+  recebe o snapshot batendo com `current.amount`; sem cupom, `coupon=
+  None` é passado explicitamente; F2 (`evaluate_trigger_and_maybe_
+  research`) recebe exatamente `applied_coupon.final_amount` como
+  `current_amount` (cenário 10, cobertura antes ausente). **78/78
+  passando**.
+- `tests/test_telegram_notifications.py`: as 2 telas antigas (que
+  dependiam da busca independente removida) foram substituídas por 5
+  novas cobrindo os cenários 1-5 da auditoria -- cupom A gera decisão e
+  o Telegram mostra exatamente cupom A; cupom "melhor" que aparece
+  depois nunca substitui (garantia estrutural: os símbolos de busca nem
+  são mais importados no módulo); snapshot imutável mantém headline e
+  seção de cupom sempre consistentes entre si; falha hipotética do
+  serviço de cupons não afeta o alerta (nada é consultado); evento
+  antigo sem `"coupon"` continua funcionando sem seção. **68/68
+  passando**.
+- Suíte de integração completa (`test_coupons`/`historical_bootstrap`/
+  `market_research`/`shared_collection`/`alert_checkpoint`/`telegram_
+  notifications`): **74/74 passando**, sem regressão. Suíte não-
+  integração completa (`pytest tests`, raiz): mesmas 5 falhas/67 erros
+  pré-existentes de antes desta correção, nenhuma nova.
+
+**Gap de verificação ainda aberto** (mesmo desde a etapa anterior, não
+fechado nesta rodada): checagem visual ao vivo do frontend continua
+pendente -- esta correção não toca o site.

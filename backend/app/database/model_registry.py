@@ -15,6 +15,7 @@ from app.collection.models import (
     MissionOfferRelevance,
     PriceObservation,
 )
+from app.coupons.models import Coupon, CouponOfferLink
 from app.events.models import Event, EventConsumptionAttempt, EventDeliveryCheckpoint
 from app.historical_bootstrap.models import ExternalPriceReference, HistoricalBootstrap
 from app.market_research.models import MarketPriceAssessment
@@ -40,6 +41,8 @@ REGISTERED_MODELS = (
     MarketPriceAssessment,
     HistoricalBootstrap,
     ExternalPriceReference,
+    Coupon,
+    CouponOfferLink,
     MissionProductAlertState,
     User,
     Product,

@@ -44,6 +44,7 @@ from app.collection.models import PriceObservation
 from app.collection.normalization import Availability
 from app.events import (
     AggregateType,
+    AppliedCouponPayload,
     EventType,
     PriceDecreasedPayload,
     PriceTargetReachedPayload,
@@ -105,6 +106,7 @@ def evaluate_price_alerts(
     market_assessment_supports_realert: bool = False,
     realert_window: timedelta | None = None,
     now: datetime | None = None,
+    coupon: AppliedCouponPayload | None = None,
 ) -> tuple[PriceAlertCandidate, ...]:
     """Avalia queda e cruzamento do alvo para uma nova observação persistida.
 
@@ -115,6 +117,16 @@ def evaluate_price_alerts(
     sobe de R$2000 para R$2050 mas o frete conhecido de R$100 desaparece, e
     total (2100 → 2050) pareceria uma queda. Custo final com frete continua
     exclusivo de `app.purchase` (TASK-038/039), que não muda aqui.
+
+    `coupon` (consumo de cupons, correção 2026-09-06): snapshot IMUTÁVEL
+    do cupom que produziu `current.amount`, quando houver -- gravado tal
+    qual no(s) evento(s) gerado(s) aqui, nunca recalculado depois. Quem
+    chama (`app.collection.orchestration._persist_phase_c`) é responsável
+    por montá-lo a partir do MESMO `AppliedCoupon` já usado para compor
+    `current.amount`, garantindo que `coupon.final_amount == current.
+    amount` por construção -- o catálogo (`AppliedCouponPayload`/
+    `PriceDecreasedPayload`/`PriceTargetReachedPayload`) ainda valida essa
+    igualdade como segunda linha de defesa.
     """
     _validate_entities(mission, criteria, current, previous)
     if mission.status is not MissionStatus.ACTIVE:
@@ -159,6 +171,7 @@ def evaluate_price_alerts(
             previous_total=previous.amount,
             current_total=current.amount,
             currency=current.currency,
+            coupon=coupon,
         )
         candidates.append(
             PriceAlertCandidate(
@@ -180,6 +193,7 @@ def evaluate_price_alerts(
             target_total=target_amount,
             current_total=current.amount,
             currency=current.currency,
+            coupon=coupon,
         )
         candidates.append(
             PriceAlertCandidate(

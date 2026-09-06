@@ -13,6 +13,7 @@ from app.database.base import Base
 from app.database.model_registry import REGISTERED_MODELS
 from app.events import (
     AggregateType,
+    AppliedCouponPayload,
     AuthenticationSessionPayload,
     CollectionCompletedPayload,
     Event,
@@ -69,9 +70,62 @@ def test_publish_event_persists_serialized_price_decrease_payload() -> None:
         "previous_total": "120.0000",
         "current_total": "90.0000",
         "currency": "BRL",
+        "coupon": None,
     }
     session.add.assert_called_once_with(event)
     session.flush.assert_called_once_with()
+
+
+def test_publish_event_serializes_coupon_snapshot_as_nested_dict() -> None:
+    """Correção 2026-09-06: `AppliedCouponPayload` é serializado como
+    dict aninhado pelo serializer genérico existente (nenhuma mudança
+    necessária em `_serialize_payload`/`_serialize_value`)."""
+    offer_id, observation_id, previous_id, coupon_id = (
+        uuid4(),
+        uuid4(),
+        uuid4(),
+        uuid4(),
+    )
+    coupon = AppliedCouponPayload(
+        coupon_id=coupon_id,
+        code="PROMO20",
+        discount_kind="fixed_amount",
+        original_amount=Decimal("100.00"),
+        discount_amount=Decimal("20.00"),
+        final_amount=Decimal("80.00"),
+        currency="BRL",
+        raw_rule_text="Válido até o fim do mês",
+    )
+    payload = PriceDecreasedPayload(
+        offer_id=offer_id,
+        observation_id=observation_id,
+        previous_observation_id=previous_id,
+        previous_total=Decimal("100.00"),
+        current_total=Decimal("80.00"),
+        currency="BRL",
+        coupon=coupon,
+    )
+    session = _session()
+
+    event = publish_event(
+        session,
+        event_type=EventType.PRICE_DECREASED_V1,
+        aggregate_type=AggregateType.OFFER,
+        aggregate_id=offer_id,
+        payload=payload,
+        occurred_at=NOW,
+    )
+
+    assert event.payload["coupon"] == {
+        "coupon_id": str(coupon_id),
+        "code": "PROMO20",
+        "discount_kind": "fixed_amount",
+        "original_amount": "100.00",
+        "discount_amount": "20.00",
+        "final_amount": "80.00",
+        "currency": "BRL",
+        "raw_rule_text": "Válido até o fim do mês",
+    }
 
 
 def test_publish_event_serializes_enum_and_int_fields() -> None:

@@ -111,6 +111,60 @@ class CollectionFailedPayload:
 
 
 @dataclass(frozen=True, slots=True)
+class AppliedCouponPayload:
+    """Snapshot IMUTÁVEL do cupom que efetivamente produziu `current_
+    total` desta decisão (consumo de cupons, correção 2026-09-06) --
+    preservado no próprio evento porque a linha `Coupon` pode ser
+    atualizada, expirar, ou um cupom melhor pode aparecer depois. O
+    alerta precisa reproduzir a MESMA oportunidade aprovada por
+    F2/F3/pelo evaluator, nunca uma nova busca no momento do envio --
+    ver `app.coupons.pricing.AppliedCoupon`, que espelha estes mesmos
+    campos no lado do consumo."""
+
+    coupon_id: UUID
+    code: str
+    discount_kind: str
+    original_amount: Decimal
+    discount_amount: Decimal
+    final_amount: Decimal
+    currency: str
+    raw_rule_text: str | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.code, str):
+            raise EventCatalogError("coupon code must be a string")
+        _validate_money(self.original_amount, self.currency)
+        _validate_money(self.discount_amount, self.currency)
+        _validate_money(self.final_amount, self.currency)
+        if self.discount_amount > self.original_amount:
+            raise EventCatalogError(
+                "coupon discount_amount must not exceed original_amount"
+            )
+        if self.final_amount != self.original_amount - self.discount_amount:
+            raise EventCatalogError(
+                "coupon final_amount must equal original_amount minus discount_amount"
+            )
+
+
+def _validate_coupon_snapshot(
+    coupon: AppliedCouponPayload | None, *, current_total: Decimal, currency: str
+) -> None:
+    """O snapshot e `current_total` precisam representar a MESMA
+    oportunidade -- nunca um cupom cujo preço final diverge do que o
+    alerta está de fato anunciando (correção 2026-09-06)."""
+    if coupon is None:
+        return
+    if not isinstance(coupon, AppliedCouponPayload):
+        raise EventCatalogError("coupon must use AppliedCouponPayload")
+    if coupon.currency != currency:
+        raise EventCatalogError("coupon currency must match the alert currency")
+    if coupon.final_amount != current_total:
+        raise EventCatalogError(
+            "coupon final_amount must equal current_total -- same opportunity"
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class PriceDecreasedPayload:
     offer_id: UUID
     observation_id: UUID
@@ -118,12 +172,16 @@ class PriceDecreasedPayload:
     previous_total: Decimal
     current_total: Decimal
     currency: str
+    coupon: AppliedCouponPayload | None = None
 
     def __post_init__(self) -> None:
         _validate_money(self.previous_total, self.currency)
         _validate_money(self.current_total, self.currency)
         if self.current_total >= self.previous_total:
             raise EventCatalogError("current_total must be lower than previous_total")
+        _validate_coupon_snapshot(
+            self.coupon, current_total=self.current_total, currency=self.currency
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -134,12 +192,16 @@ class PriceTargetReachedPayload:
     target_total: Decimal
     current_total: Decimal
     currency: str
+    coupon: AppliedCouponPayload | None = None
 
     def __post_init__(self) -> None:
         _validate_money(self.target_total, self.currency)
         _validate_money(self.current_total, self.currency)
         if self.current_total > self.target_total:
             raise EventCatalogError("current_total must not exceed target_total")
+        _validate_coupon_snapshot(
+            self.coupon, current_total=self.current_total, currency=self.currency
+        )
 
 
 @dataclass(frozen=True, slots=True)

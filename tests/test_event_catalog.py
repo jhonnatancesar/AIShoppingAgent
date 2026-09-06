@@ -11,6 +11,7 @@ from app.collection.relevance import OfferRelevance
 from app.events import (
     EVENT_CATALOG,
     AggregateType,
+    AppliedCouponPayload,
     AuthenticationCompletedPayload,
     AuthenticationSessionPayload,
     AvailabilityChangedPayload,
@@ -130,6 +131,92 @@ def test_price_decrease_contract_uses_exact_decreasing_money() -> None:
             Decimal("100"),
             90.0,
             "BRL",  # type: ignore[arg-type]
+        )
+
+
+def test_coupon_snapshot_is_optional_and_backward_compatible() -> None:
+    """Correção 2026-09-06: campo opcional, retrocompatível -- eventos
+    sem cupom continuam válidos exatamente como antes."""
+    payload = PriceDecreasedPayload(
+        uuid4(), uuid4(), uuid4(), Decimal("100.00"), Decimal("90.00"), "BRL"
+    )
+    assert payload.coupon is None
+
+
+def test_coupon_snapshot_final_amount_must_equal_current_total() -> None:
+    """O cupom e `current_total` precisam representar a MESMA
+    oportunidade -- catálogo recusa qualquer divergência."""
+    coupon = AppliedCouponPayload(
+        coupon_id=uuid4(),
+        code="PROMO",
+        discount_kind="fixed_amount",
+        original_amount=Decimal("100.00"),
+        discount_amount=Decimal("10.00"),
+        final_amount=Decimal("90.00"),
+        currency="BRL",
+    )
+    payload = PriceDecreasedPayload(
+        uuid4(), uuid4(), uuid4(), Decimal("100.00"), Decimal("90.00"), "BRL", coupon
+    )
+    assert payload.coupon is coupon
+
+    with pytest.raises(EventCatalogError, match="same opportunity"):
+        PriceDecreasedPayload(
+            uuid4(),
+            uuid4(),
+            uuid4(),
+            Decimal("100.00"),
+            Decimal("85.00"),  # não bate com coupon.final_amount (90.00)
+            "BRL",
+            coupon,
+        )
+
+
+def test_coupon_snapshot_currency_must_match_alert_currency() -> None:
+    coupon = AppliedCouponPayload(
+        coupon_id=uuid4(),
+        code="PROMO",
+        discount_kind="fixed_amount",
+        original_amount=Decimal("100.00"),
+        discount_amount=Decimal("10.00"),
+        final_amount=Decimal("90.00"),
+        currency="USD",
+    )
+    with pytest.raises(EventCatalogError, match="currency"):
+        PriceTargetReachedPayload(
+            uuid4(),
+            uuid4(),
+            uuid4(),
+            Decimal("100.00"),
+            Decimal("90.00"),
+            "BRL",
+            coupon,
+        )
+
+
+def test_coupon_snapshot_discount_must_not_exceed_original_amount() -> None:
+    with pytest.raises(EventCatalogError, match="discount_amount"):
+        AppliedCouponPayload(
+            coupon_id=uuid4(),
+            code="PROMO",
+            discount_kind="fixed_amount",
+            original_amount=Decimal("50.00"),
+            discount_amount=Decimal("60.00"),
+            final_amount=Decimal("0.00"),
+            currency="BRL",
+        )
+
+
+def test_coupon_snapshot_final_amount_must_equal_original_minus_discount() -> None:
+    with pytest.raises(EventCatalogError, match="final_amount"):
+        AppliedCouponPayload(
+            coupon_id=uuid4(),
+            code="PROMO",
+            discount_kind="fixed_amount",
+            original_amount=Decimal("100.00"),
+            discount_amount=Decimal("10.00"),
+            final_amount=Decimal("50.00"),
+            currency="BRL",
         )
 
 

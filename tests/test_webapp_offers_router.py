@@ -15,6 +15,7 @@ from app.collection.contracts import (
 from app.collection.models import OfferInstallmentOption, PriceObservation
 from app.collection.normalization import Availability
 from app.core.errors import register_api_error_handler
+from app.coupons.models import Coupon
 from app.database.dependency import get_web_async_session
 from app.offers.models import Offer
 from app.offers.query import (
@@ -184,6 +185,70 @@ def test_offer_with_canonical_and_different_own_image_exposes_both(
     body = response.json()
     assert body["image_url"] == "https://media.pichau.com.br/canonica.jpg"
     assert body["image_fallback_url"] == "https://images.example/offer.jpg"
+
+
+def test_offer_with_applicable_coupon_shows_final_price(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Consumo de cupons (2026-09-06): a API re-consulta cupons NA HORA
+    (nunca reaproveita um vínculo antigo persistido) e devolve o preço
+    final calculado -- o preço original (`latest_observation.amount`)
+    continua vindo intocado da mesma `PriceObservation` de sempre."""
+    detail = _detail()
+    coupon = Coupon(
+        id=uuid4(),
+        store_id=detail.offer.store_id,
+        code="SITE15",
+        discount_kind="fixed_amount",
+        discount_value=Decimal("100.00"),
+        scope_kind="store_wide",
+        evidence="ev",
+        status="active",
+        last_seen_at=NOW,
+    )
+    monkeypatch.setattr(
+        "app.webapp.offers_router.get_offer_detail_for_user",
+        AsyncMock(return_value=detail),
+    )
+    monkeypatch.setattr(
+        "app.webapp.offers_router.get_candidate_coupons_for_offer",
+        AsyncMock(return_value=(coupon,)),
+    )
+
+    response = client.get(f"/api/v1/offers/{detail.offer.id}", cookies=_cookies())
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["latest_observation"]["amount"] == "4599.00"  # original intocado
+    assert body["applied_coupon"] == {
+        "code": "SITE15",
+        "discount_kind": "fixed_amount",
+        "original_amount": "4599.00",
+        "discount_amount": "100.00",
+        "final_amount": "4499.00",
+        "currency": "BRL",
+    }
+
+
+def test_offer_coupon_lookup_failure_never_breaks_offer_display(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    detail = _detail()
+    monkeypatch.setattr(
+        "app.webapp.offers_router.get_offer_detail_for_user",
+        AsyncMock(return_value=detail),
+    )
+    monkeypatch.setattr(
+        "app.webapp.offers_router.get_candidate_coupons_for_offer",
+        AsyncMock(side_effect=RuntimeError("conexão perdida")),
+    )
+
+    response = client.get(f"/api/v1/offers/{detail.offer.id}", cookies=_cookies())
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["applied_coupon"] is None
+    assert body["latest_observation"]["amount"] == "4599.00"
 
 
 def test_other_user_cannot_access_offer(

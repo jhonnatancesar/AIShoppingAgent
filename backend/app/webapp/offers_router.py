@@ -1,5 +1,6 @@
 """Detalhe de oferta da área USER (TASK-095)."""
 
+import logging
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Annotated, Literal, NoReturn
@@ -22,6 +23,8 @@ from app.collection.contracts import (
 )
 from app.collection.normalization import Availability
 from app.core.errors import ApiError
+from app.coupons.pricing import AppliedCoupon, best_applicable_coupon
+from app.coupons.service import get_candidate_coupons_for_offer
 from app.database.dependency import get_web_async_session
 from app.offers.presentation import (
     resolve_offer_display_title,
@@ -42,6 +45,7 @@ from app.users.models import User
 from app.webapp.dependency import require_web_session
 
 router = APIRouter(prefix="/api/v1/offers", tags=["offers"])
+logger = logging.getLogger("app.webapp.offers_router")
 
 
 class StoreOut(BaseModel):
@@ -82,6 +86,18 @@ class LatestOfferObservationOut(BaseModel):
     installments: list[InstallmentOut]
 
 
+class AppliedCouponOut(BaseModel):
+    """Só presente quando um cupom REALMENTE se aplica (nunca porque
+    existe no banco) -- `app.coupons.pricing.best_applicable_coupon`."""
+
+    code: str | None
+    discount_kind: str
+    original_amount: Decimal
+    discount_amount: Decimal
+    final_amount: Decimal
+    currency: str
+
+
 class OfferDetailResponse(BaseModel):
     id: UUID
     title: str
@@ -93,6 +109,7 @@ class OfferDetailResponse(BaseModel):
     seller: SellerOut | None
     rating: OfferRatingOut | None
     latest_observation: LatestOfferObservationOut | None
+    applied_coupon: AppliedCouponOut | None = None
 
 
 class OfferSummaryObservationOut(BaseModel):
@@ -196,7 +213,9 @@ async def _deny_offer_unavailable(
     raise AssertionError("unreachable")
 
 
-def _as_response(detail: UserOfferDetail) -> OfferDetailResponse:
+def _as_response(
+    detail: UserOfferDetail, applied_coupon: AppliedCoupon | None = None
+) -> OfferDetailResponse:
     observation = detail.observation
     image_url, image_fallback_url = resolve_offer_image_chain(
         detail.offer, detail.product
@@ -246,6 +265,18 @@ def _as_response(detail: UserOfferDetail) -> OfferDetailResponse:
                 ],
             )
             if observation is not None
+            else None
+        ),
+        applied_coupon=(
+            AppliedCouponOut(
+                code=applied_coupon.code or None,
+                discount_kind=applied_coupon.discount_kind,
+                original_amount=applied_coupon.original_amount,
+                discount_amount=applied_coupon.discount_amount,
+                final_amount=applied_coupon.final_amount,
+                currency=applied_coupon.currency,
+            )
+            if applied_coupon is not None
             else None
         ),
     )
@@ -544,4 +575,23 @@ async def get_user_offer(
     )
     if detail is None:
         await _deny_offer_unavailable(session, user=user, offer_id=offer_id)
-    return _as_response(detail)
+    applied_coupon = None
+    if detail.observation is not None:
+        try:
+            candidates = await get_candidate_coupons_for_offer(
+                session, offer_id=detail.offer.id, store_id=detail.offer.store_id
+            )
+            applied_coupon = best_applicable_coupon(
+                detail.offer,
+                candidates,
+                detail.observation.amount,
+                detail.observation.currency,
+            )
+        except Exception:
+            # Consumo de cupons é uma etapa derivada da exibição, nunca
+            # parte crítica dela -- falha aqui nunca impede a Offer de
+            # aparecer normalmente.
+            logger.warning(
+                "coupon_lookup_failed", extra={"offer_id": str(offer_id)}, exc_info=True
+            )
+    return _as_response(detail, applied_coupon)

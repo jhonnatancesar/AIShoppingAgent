@@ -67,7 +67,10 @@ from app.collection.orchestration import (
 )
 from app.collection.relevance import OfferRelevance
 from app.collection.shared_collection import FanOutSweepSummary
+from app.coupons.models import Coupon
+from app.coupons.pricing import AppliedCoupon
 from app.missions.models import MissionStatus, VariantSelectionMode
+from app.offers.models import Offer
 from app.products.identity import classify_product_request
 from app.products.models import Product
 from app.users.models import UserRole
@@ -972,6 +975,452 @@ def test_persist_phase_c_persists_relevance_and_finishes_run(monkeypatch) -> Non
     evaluate_prelist.assert_awaited_once()
     # 1 alerta (PRICE_TARGET_REACHED nao se aplica sem target) + 1 COLLECTION_COMPLETED_V1
     assert publish.await_count >= 1
+
+
+def test_persist_phase_c_uses_coupon_final_amount_for_alert_but_never_the_persisted_row(
+    monkeypatch,
+) -> None:
+    """Consumo de cupons (2026-09-06): quando a Fase B calculou um cupom
+    aplicável, a decisão de alerta usa `applied_coupon.final_amount` como
+    `current.amount` -- o `PriceObservation` JÁ persistido na Fase A com
+    `pending.amount` (preço original coletado) nunca é tocado por isso;
+    aqui não existe nenhuma escrita usando `evaluation_amount`, só o valor
+    efêmero passado ao evaluator."""
+    mission_id, run_id, store_id, offer_id, product_id = (
+        uuid4(),
+        uuid4(),
+        uuid4(),
+        uuid4(),
+        uuid4(),
+    )
+    mission = SimpleNamespace(id=mission_id, status=MissionStatus.ACTIVE)
+    run = SimpleNamespace(
+        id=run_id,
+        mission_id=mission_id,
+        store_id=store_id,
+        status=CollectionRunStatus.RUNNING,
+    )
+    session = _mock_async_session()
+    current_criteria = SimpleNamespace(
+        request_kind="generic_category",
+        variant_selection_mode=VariantSelectionMode.NOT_REQUIRED,
+    )
+    session.scalar.side_effect = [mission, run, current_criteria]
+    product = SimpleNamespace(display_name=None)
+    session.get.return_value = product
+    monkeypatch.setattr(
+        "app.collection.orchestration.finish_collection_run", AsyncMock()
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration._reset_source_backoff", AsyncMock()
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration._evaluate_mission_prelist", AsyncMock()
+    )
+    monkeypatch.setattr("app.collection.orchestration.publish_event_async", AsyncMock())
+    evaluator = MagicMock(return_value=())
+    monkeypatch.setattr("app.collection.orchestration.evaluate_price_alerts", evaluator)
+    pending = _PendingOffer(
+        offer_id=offer_id,
+        product_id=product_id,
+        observation_id=uuid4(),
+        amount=Decimal("100"),  # preço original persistido pela Fase A
+        currency="BRL",
+        availability=Availability.AVAILABLE,
+        observed_at=NOW,
+        raw_title="Título bruto",
+        needs_relevance=True,
+        needs_display_name=True,
+        observation_created=True,
+        alert_comparison=PriceObservationComparison.FIRST_OBSERVATION,
+        previous_observation_id=None,
+        previous_amount=None,
+        previous_currency=None,
+        previous_availability=None,
+        previous_observed_at=None,
+    )
+    outcome = _PhaseAOutcome(
+        run_id=run_id,
+        mission_id=mission_id,
+        store_id=store_id,
+        mission_search_query="GPU",
+        target_amount=None,
+        target_currency=None,
+        completed_at=NOW,
+        offers=(pending,),
+    )
+    applied_coupon = AppliedCoupon(
+        coupon_id=uuid4(),
+        code="PROMO20",
+        discount_kind="fixed_amount",
+        original_amount=Decimal("100"),
+        discount_amount=Decimal("20"),
+        final_amount=Decimal("80"),
+        currency="BRL",
+    )
+    ai_outcomes = (
+        _AIOutcome(
+            offer_id, OfferRelevance.MATCH, "Título normalizado", applied_coupon=applied_coupon
+        ),
+    )
+
+    result = asyncio.run(
+        _persist_phase_c(_session_factory(session), outcome, ai_outcomes)
+    )
+
+    assert result is True
+    evaluator.assert_called_once()
+    current = evaluator.call_args.args[2]
+    assert current.amount == Decimal("80")  # preço final com cupom, não o original
+    # A Fase A já persistiu `pending.amount` original -- nunca sobrescrito aqui.
+    assert pending.amount == Decimal("100")
+
+
+def test_persist_phase_c_without_applicable_coupon_uses_original_amount_for_alert(
+    monkeypatch,
+) -> None:
+    mission_id, run_id, store_id, offer_id, product_id = (
+        uuid4(),
+        uuid4(),
+        uuid4(),
+        uuid4(),
+        uuid4(),
+    )
+    mission = SimpleNamespace(id=mission_id, status=MissionStatus.ACTIVE)
+    run = SimpleNamespace(
+        id=run_id,
+        mission_id=mission_id,
+        store_id=store_id,
+        status=CollectionRunStatus.RUNNING,
+    )
+    session = _mock_async_session()
+    current_criteria = SimpleNamespace(
+        request_kind="generic_category",
+        variant_selection_mode=VariantSelectionMode.NOT_REQUIRED,
+    )
+    session.scalar.side_effect = [mission, run, current_criteria]
+    product = SimpleNamespace(display_name=None)
+    session.get.return_value = product
+    monkeypatch.setattr(
+        "app.collection.orchestration.finish_collection_run", AsyncMock()
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration._reset_source_backoff", AsyncMock()
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration._evaluate_mission_prelist", AsyncMock()
+    )
+    monkeypatch.setattr("app.collection.orchestration.publish_event_async", AsyncMock())
+    evaluator = MagicMock(return_value=())
+    monkeypatch.setattr("app.collection.orchestration.evaluate_price_alerts", evaluator)
+    pending = _PendingOffer(
+        offer_id=offer_id,
+        product_id=product_id,
+        observation_id=uuid4(),
+        amount=Decimal("100"),
+        currency="BRL",
+        availability=Availability.AVAILABLE,
+        observed_at=NOW,
+        raw_title="Título bruto",
+        needs_relevance=True,
+        needs_display_name=True,
+        observation_created=True,
+        alert_comparison=PriceObservationComparison.FIRST_OBSERVATION,
+        previous_observation_id=None,
+        previous_amount=None,
+        previous_currency=None,
+        previous_availability=None,
+        previous_observed_at=None,
+    )
+    outcome = _PhaseAOutcome(
+        run_id=run_id,
+        mission_id=mission_id,
+        store_id=store_id,
+        mission_search_query="GPU",
+        target_amount=None,
+        target_currency=None,
+        completed_at=NOW,
+        offers=(pending,),
+    )
+    # applied_coupon=None -- nenhum cupom aplicável (comportamento padrão,
+    # sem regressão para o fluxo já existente sem cupons).
+    ai_outcomes = (_AIOutcome(offer_id, OfferRelevance.MATCH, "Título normalizado"),)
+
+    result = asyncio.run(
+        _persist_phase_c(_session_factory(session), outcome, ai_outcomes)
+    )
+
+    assert result is True
+    evaluator.assert_called_once()
+    current = evaluator.call_args.args[2]
+    assert current.amount == Decimal("100")
+
+
+def test_persist_phase_c_passes_coupon_snapshot_matching_current_total_to_evaluator(
+    monkeypatch,
+) -> None:
+    """Correção 2026-09-06: o evaluator precisa RECEBER o snapshot do
+    cupom que produziu `current.amount` -- é isso que depois vira
+    `PriceDecreasedPayload.coupon`/`PriceTargetReachedPayload.coupon`, o
+    que o Telegram vai usar para não precisar buscar de novo (ver
+    `tests/test_telegram_notifications.py`)."""
+    mission_id, run_id, store_id, offer_id, product_id = (
+        uuid4(),
+        uuid4(),
+        uuid4(),
+        uuid4(),
+        uuid4(),
+    )
+    mission = SimpleNamespace(id=mission_id, status=MissionStatus.ACTIVE)
+    run = SimpleNamespace(
+        id=run_id,
+        mission_id=mission_id,
+        store_id=store_id,
+        status=CollectionRunStatus.RUNNING,
+    )
+    session = _mock_async_session()
+    current_criteria = SimpleNamespace(
+        request_kind="generic_category",
+        variant_selection_mode=VariantSelectionMode.NOT_REQUIRED,
+    )
+    session.scalar.side_effect = [mission, run, current_criteria]
+    product = SimpleNamespace(display_name=None)
+    session.get.return_value = product
+    monkeypatch.setattr(
+        "app.collection.orchestration.finish_collection_run", AsyncMock()
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration._reset_source_backoff", AsyncMock()
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration._evaluate_mission_prelist", AsyncMock()
+    )
+    monkeypatch.setattr("app.collection.orchestration.publish_event_async", AsyncMock())
+    evaluator = MagicMock(return_value=())
+    monkeypatch.setattr("app.collection.orchestration.evaluate_price_alerts", evaluator)
+    pending = _PendingOffer(
+        offer_id=offer_id,
+        product_id=product_id,
+        observation_id=uuid4(),
+        amount=Decimal("100"),
+        currency="BRL",
+        availability=Availability.AVAILABLE,
+        observed_at=NOW,
+        raw_title="Título bruto",
+        needs_relevance=True,
+        needs_display_name=True,
+        observation_created=True,
+        alert_comparison=PriceObservationComparison.FIRST_OBSERVATION,
+        previous_observation_id=None,
+        previous_amount=None,
+        previous_currency=None,
+        previous_availability=None,
+        previous_observed_at=None,
+    )
+    outcome = _PhaseAOutcome(
+        run_id=run_id,
+        mission_id=mission_id,
+        store_id=store_id,
+        mission_search_query="GPU",
+        target_amount=None,
+        target_currency=None,
+        completed_at=NOW,
+        offers=(pending,),
+    )
+    applied_coupon = AppliedCoupon(
+        coupon_id=uuid4(),
+        code="PROMO20",
+        discount_kind="fixed_amount",
+        original_amount=Decimal("100"),
+        discount_amount=Decimal("20"),
+        final_amount=Decimal("80"),
+        currency="BRL",
+        raw_rule_text="Válido só para compras acima de R$50",
+    )
+    ai_outcomes = (
+        _AIOutcome(
+            offer_id, OfferRelevance.MATCH, "Título normalizado", applied_coupon=applied_coupon
+        ),
+    )
+
+    result = asyncio.run(
+        _persist_phase_c(_session_factory(session), outcome, ai_outcomes)
+    )
+
+    assert result is True
+    evaluator.assert_called_once()
+    current = evaluator.call_args.args[2]
+    snapshot = evaluator.call_args.kwargs["coupon"]
+    assert snapshot is not None
+    assert snapshot.coupon_id == applied_coupon.coupon_id
+    assert snapshot.code == "PROMO20"
+    assert snapshot.final_amount == current.amount == Decimal("80")
+    assert snapshot.raw_rule_text == "Válido só para compras acima de R$50"
+
+
+def test_persist_phase_c_without_coupon_passes_no_snapshot_to_evaluator(
+    monkeypatch,
+) -> None:
+    mission_id, run_id, store_id, offer_id, product_id = (
+        uuid4(),
+        uuid4(),
+        uuid4(),
+        uuid4(),
+        uuid4(),
+    )
+    mission = SimpleNamespace(id=mission_id, status=MissionStatus.ACTIVE)
+    run = SimpleNamespace(
+        id=run_id,
+        mission_id=mission_id,
+        store_id=store_id,
+        status=CollectionRunStatus.RUNNING,
+    )
+    session = _mock_async_session()
+    current_criteria = SimpleNamespace(
+        request_kind="generic_category",
+        variant_selection_mode=VariantSelectionMode.NOT_REQUIRED,
+    )
+    session.scalar.side_effect = [mission, run, current_criteria]
+    product = SimpleNamespace(display_name=None)
+    session.get.return_value = product
+    monkeypatch.setattr(
+        "app.collection.orchestration.finish_collection_run", AsyncMock()
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration._reset_source_backoff", AsyncMock()
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration._evaluate_mission_prelist", AsyncMock()
+    )
+    monkeypatch.setattr("app.collection.orchestration.publish_event_async", AsyncMock())
+    evaluator = MagicMock(return_value=())
+    monkeypatch.setattr("app.collection.orchestration.evaluate_price_alerts", evaluator)
+    pending = _PendingOffer(
+        offer_id=offer_id,
+        product_id=product_id,
+        observation_id=uuid4(),
+        amount=Decimal("100"),
+        currency="BRL",
+        availability=Availability.AVAILABLE,
+        observed_at=NOW,
+        raw_title="Título bruto",
+        needs_relevance=True,
+        needs_display_name=True,
+        observation_created=True,
+        alert_comparison=PriceObservationComparison.FIRST_OBSERVATION,
+        previous_observation_id=None,
+        previous_amount=None,
+        previous_currency=None,
+        previous_availability=None,
+        previous_observed_at=None,
+    )
+    outcome = _PhaseAOutcome(
+        run_id=run_id,
+        mission_id=mission_id,
+        store_id=store_id,
+        mission_search_query="GPU",
+        target_amount=None,
+        target_currency=None,
+        completed_at=NOW,
+        offers=(pending,),
+    )
+    ai_outcomes = (_AIOutcome(offer_id, OfferRelevance.MATCH, "Título normalizado"),)
+
+    asyncio.run(_persist_phase_c(_session_factory(session), outcome, ai_outcomes))
+
+    evaluator.assert_called_once()
+    assert evaluator.call_args.kwargs["coupon"] is None
+
+
+def test_run_phase_b_feeds_f2_gate_with_coupon_final_amount(monkeypatch) -> None:
+    """Cenário 10 (auditoria 2026-09-06): F2 (`evaluate_trigger_and_
+    maybe_research`) precisa receber EXATAMENTE o preço final do cupom
+    vencedor -- reaproveita o `best_applicable_coupon` real (não
+    mockado), já coberto por `tests/test_coupons_pricing.py`; este teste
+    só verifica a fiação até o gatilho."""
+    offer_id, product_id, store_id = uuid4(), uuid4(), uuid4()
+    pending = _PendingOffer(
+        offer_id=offer_id,
+        product_id=product_id,
+        observation_id=uuid4(),
+        amount=Decimal("300.00"),
+        currency="BRL",
+        availability=Availability.AVAILABLE,
+        observed_at=NOW,
+        raw_title="Título bruto",
+        needs_relevance=False,
+        needs_display_name=False,
+        observation_created=True,
+        alert_comparison=PriceObservationComparison.FIRST_OBSERVATION,
+        previous_observation_id=None,
+        previous_amount=None,
+        previous_currency=None,
+        previous_availability=None,
+        previous_observed_at=None,
+        forced_relevance=OfferRelevance.MATCH,
+    )
+    outcome = _PhaseAOutcome(
+        run_id=uuid4(),
+        mission_id=uuid4(),
+        store_id=store_id,
+        mission_search_query="GPU",
+        target_amount=None,
+        target_currency=None,
+        completed_at=NOW,
+        offers=(pending,),
+    )
+    offer_row = Offer(
+        id=offer_id,
+        product_id=product_id,
+        store_id=store_id,
+        url="https://loja.example/produto",
+    )
+    session = _mock_async_session()
+    session.get.return_value = offer_row
+    coupon = Coupon(
+        id=uuid4(),
+        store_id=store_id,
+        code="F2CUP",
+        discount_kind="fixed_amount",
+        discount_value=Decimal("30.00"),
+        scope_kind="store_wide",
+        evidence="ev",
+        status="active",
+        last_seen_at=NOW,
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration.get_candidate_coupons_for_offer",
+        AsyncMock(return_value=(coupon,)),
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration.run_historical_bootstrap", AsyncMock()
+    )
+    trigger = AsyncMock(return_value=None)
+    monkeypatch.setattr(
+        "app.collection.orchestration.evaluate_trigger_and_maybe_research", trigger
+    )
+    settings = SimpleNamespace(
+        historical_bootstrap_revalidation_days=90,
+        market_assessment_lease_seconds=300,
+        market_assessment_failure_backoff_minutes=15,
+        market_assessment_failure_backoff_max_minutes=360,
+    )
+
+    outcomes = asyncio.run(
+        _run_phase_b(
+            outcome,
+            _StubAIManager(),
+            UserRole.ADMIN,
+            session_factory=_session_factory(session),
+            firecrawl=None,
+            settings=settings,
+        )
+    )
+
+    trigger.assert_awaited_once()
+    assert trigger.call_args.kwargs["current_amount"] == Decimal("270.00")
+    assert outcomes[0].applied_coupon is not None
+    assert outcomes[0].applied_coupon.final_amount == Decimal("270.00")
 
 
 def test_persist_phase_c_reused_observation_skips_evaluator_and_run_succeeds(

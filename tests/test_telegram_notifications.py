@@ -127,7 +127,40 @@ def _mission(user: User) -> Mission:
     )
 
 
-def _event(mission: Mission, *, event_type: str = "price.decreased.v1") -> Event:
+def _coupon_snapshot_payload(
+    *,
+    coupon_id: UUID | None = None,
+    code: str = "QUEDA10",
+    discount_kind: str = "fixed_amount",
+    original_amount: str = "4549.90",
+    discount_amount: str = "50.00",
+    final_amount: str = "4499.90",
+    currency: str = "BRL",
+    raw_rule_text: str | None = None,
+) -> dict:
+    """Mesmo formato JSON que `AppliedCouponPayload`
+    (`app.events.catalog`) produz via `_serialize_payload` -- construído
+    à mão aqui, mesmo padrão já usado por `_event()` pro resto do
+    payload, para não depender do serializer real do evento nestes
+    testes de renderização."""
+    return {
+        "coupon_id": str(coupon_id or uuid4()),
+        "code": code,
+        "discount_kind": discount_kind,
+        "original_amount": original_amount,
+        "discount_amount": discount_amount,
+        "final_amount": final_amount,
+        "currency": currency,
+        "raw_rule_text": raw_rule_text,
+    }
+
+
+def _event(
+    mission: Mission,
+    *,
+    event_type: str = "price.decreased.v1",
+    coupon: dict | None = None,
+) -> Event:
     payload = {
         "offer_id": str(uuid4()),
         "observation_id": str(uuid4()),
@@ -145,6 +178,8 @@ def _event(mission: Mission, *, event_type: str = "price.decreased.v1") -> Event
             "current_total": "4499.90",
             "currency": "BRL",
         }
+    if coupon is not None:
+        payload["coupon"] = coupon
     return Event(
         id=uuid4(),
         event_type=event_type,
@@ -323,6 +358,207 @@ async def test_process_sends_alert_and_records_success(
     assert attempt.consumer_name == TELEGRAM_NOTIFICATION_CONSUMER
     assert attempt.outcome is ConsumptionOutcome.SUCCEEDED
     assert attempt.failure_code is None
+
+
+@pytest.mark.anyio
+async def test_alert_shows_exactly_the_coupon_that_produced_the_decision(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cenário 1 (correção 2026-09-06): o Telegram NUNCA mais busca "o
+    melhor cupom agora" -- reconstrói o snapshot preservado no próprio
+    evento (`_coupon_snapshot_from_payload`), a MESMA oportunidade que
+    F2/F3/o evaluator aprovaram."""
+    user = _user()
+    mission = _mission(user)
+    coupon_snapshot = _coupon_snapshot_payload(code="CUPOM_A")
+    event = _event(mission, event_type="price.decreased.v1", coupon=coupon_snapshot)
+    offer, product, store = _offer_context()
+    session_factory, session = _fake_session_factory()
+    observation = _observation_for(event, offer, kind=MarketplacePartyKind.PLATFORM)
+    session.get.side_effect = [mission, user, offer, product, store, observation, event]
+    # Só a consulta de parcelamento é permitida -- qualquer chamada extra
+    # a `session.scalars` (ex.: uma busca de cupom reintroduzida por
+    # engano) estoura `StopIteration` aqui: prova de que não há nenhuma
+    # consulta de cupom neste caminho.
+    session.scalars = AsyncMock(side_effect=[[]])
+    monkeypatch.setattr(
+        "app.telegram.notifications.claim_unconsumed_events_async",
+        AsyncMock(return_value=[event]),
+    )
+    sent: list[str] = []
+
+    async def _send(chat_id: int, text: str, *, bot_token: SecretStr, **kwargs: object) -> None:
+        sent.append(text)
+
+    monkeypatch.setattr("app.telegram.notifications.send_message", _send)
+
+    result = await process_telegram_notifications(
+        session_factory, bot_token=SecretStr("token")
+    )
+
+    assert result.succeeded == 1
+    assert "CUPOM_A" in sent[0]
+    assert "R$ 50,00" in sent[0]  # desconto do snapshot
+    assert "R$ 4.499,90" in sent[0]  # current_total E "preço com cupom" (mesmo valor)
+
+
+@pytest.mark.anyio
+async def test_alert_never_switches_to_a_coupon_that_appeared_after_the_decision(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cenário 2: mesmo que um cupom "melhor" (CUPOM_B) exista na tabela
+    no momento do envio, o Telegram não pode trocar para ele -- garantia
+    estrutural: `app.telegram.notifications` não importa mais nem
+    `get_candidate_coupons_for_offer` nem `best_applicable_coupon`."""
+    import app.telegram.notifications as notifications_module
+
+    assert not hasattr(notifications_module, "get_candidate_coupons_for_offer")
+    assert not hasattr(notifications_module, "best_applicable_coupon")
+    user = _user()
+    mission = _mission(user)
+    coupon_snapshot = _coupon_snapshot_payload(code="CUPOM_A")
+    event = _event(mission, event_type="price.decreased.v1", coupon=coupon_snapshot)
+    offer, product, store = _offer_context()
+    session_factory, session = _fake_session_factory()
+    observation = _observation_for(event, offer, kind=MarketplacePartyKind.PLATFORM)
+    session.get.side_effect = [mission, user, offer, product, store, observation, event]
+    session.scalars = AsyncMock(side_effect=[[]])
+    monkeypatch.setattr(
+        "app.telegram.notifications.claim_unconsumed_events_async",
+        AsyncMock(return_value=[event]),
+    )
+    sent: list[str] = []
+
+    async def _send(chat_id: int, text: str, *, bot_token: SecretStr, **kwargs: object) -> None:
+        sent.append(text)
+
+    monkeypatch.setattr("app.telegram.notifications.send_message", _send)
+
+    result = await process_telegram_notifications(
+        session_factory, bot_token=SecretStr("token")
+    )
+
+    assert result.succeeded == 1
+    assert "CUPOM_A" in sent[0]
+    assert "CUPOM_B" not in sent[0]
+
+
+@pytest.mark.anyio
+async def test_alert_coupon_snapshot_stays_consistent_with_current_total(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cenário 3: o snapshot é IMUTÁVEL -- mesmo que a linha `Coupon` no
+    banco tenha sido atualizada depois da decisão, a mensagem usa só o
+    que foi congelado no payload, e os dois números (headline `current_
+    total` e "preço com cupom") sempre batem entre si (nenhuma consulta
+    nova pode fazê-los divergir, porque nenhuma consulta acontece)."""
+    user = _user()
+    mission = _mission(user)
+    coupon_snapshot = _coupon_snapshot_payload(
+        code="CUPOM_A",
+        original_amount="4549.90",
+        discount_amount="50.00",
+        final_amount="4499.90",
+    )
+    event = _event(mission, event_type="price.decreased.v1", coupon=coupon_snapshot)
+    offer, product, store = _offer_context()
+    session_factory, session = _fake_session_factory()
+    observation = _observation_for(event, offer, kind=MarketplacePartyKind.PLATFORM)
+    session.get.side_effect = [mission, user, offer, product, store, observation, event]
+    session.scalars = AsyncMock(side_effect=[[]])
+    monkeypatch.setattr(
+        "app.telegram.notifications.claim_unconsumed_events_async",
+        AsyncMock(return_value=[event]),
+    )
+    sent: list[str] = []
+
+    async def _send(chat_id: int, text: str, *, bot_token: SecretStr, **kwargs: object) -> None:
+        sent.append(text)
+
+    monkeypatch.setattr("app.telegram.notifications.send_message", _send)
+
+    result = await process_telegram_notifications(
+        session_factory, bot_token=SecretStr("token")
+    )
+
+    assert result.succeeded == 1
+    assert sent[0].count("R$ 4.499,90") >= 2  # headline + "preço com cupom"
+    assert "R$ 50,00" in sent[0]
+
+
+@pytest.mark.anyio
+async def test_alert_coupon_snapshot_survives_even_if_coupon_service_would_fail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cenário 4: mesmo que o serviço de cupons esteja indisponível, isso
+    não pode mais afetar o alerta -- o caminho de renderização não o
+    chama (dados já preservados no evento sobrevivem intactos)."""
+    user = _user()
+    mission = _mission(user)
+    coupon_snapshot = _coupon_snapshot_payload(code="CUPOM_A")
+    event = _event(mission, event_type="price.decreased.v1", coupon=coupon_snapshot)
+    offer, product, store = _offer_context()
+    session_factory, session = _fake_session_factory()
+    observation = _observation_for(event, offer, kind=MarketplacePartyKind.PLATFORM)
+    session.get.side_effect = [mission, user, offer, product, store, observation, event]
+    session.scalars = AsyncMock(side_effect=[[]])
+    monkeypatch.setattr(
+        "app.coupons.service.get_candidate_coupons_for_offer",
+        AsyncMock(side_effect=RuntimeError("coupons indisponível")),
+    )
+    monkeypatch.setattr(
+        "app.telegram.notifications.claim_unconsumed_events_async",
+        AsyncMock(return_value=[event]),
+    )
+    sent: list[str] = []
+
+    async def _send(chat_id: int, text: str, *, bot_token: SecretStr, **kwargs: object) -> None:
+        sent.append(text)
+
+    monkeypatch.setattr("app.telegram.notifications.send_message", _send)
+
+    result = await process_telegram_notifications(
+        session_factory, bot_token=SecretStr("token")
+    )
+
+    assert result.succeeded == 1
+    assert "CUPOM_A" in sent[0]
+
+
+@pytest.mark.anyio
+async def test_alert_without_coupon_snapshot_renders_normally_backward_compatible(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cenário 5: evento publicado ANTES desta correção não tem a chave
+    `"coupon"` -- comportamento idêntico ao existente antes do consumo
+    de cupons, nunca inventa um cupom que não fez parte da decisão
+    original."""
+    user = _user()
+    mission = _mission(user)
+    event = _event(mission, event_type="price.decreased.v1")  # sem coupon=
+    assert "coupon" not in event.payload
+    offer, product, store = _offer_context()
+    session_factory, session = _fake_session_factory()
+    observation = _observation_for(event, offer, kind=MarketplacePartyKind.PLATFORM)
+    session.get.side_effect = [mission, user, offer, product, store, observation, event]
+    monkeypatch.setattr(
+        "app.telegram.notifications.claim_unconsumed_events_async",
+        AsyncMock(return_value=[event]),
+    )
+    sent: list[str] = []
+
+    async def _send(chat_id: int, text: str, *, bot_token: SecretStr, **kwargs: object) -> None:
+        sent.append(text)
+
+    monkeypatch.setattr("app.telegram.notifications.send_message", _send)
+
+    result = await process_telegram_notifications(
+        session_factory, bot_token=SecretStr("token")
+    )
+
+    assert result.succeeded == 1
+    assert "Cupom" not in sent[0]
+    assert "R$ 4.499,90" in sent[0]
 
 
 @pytest.mark.anyio

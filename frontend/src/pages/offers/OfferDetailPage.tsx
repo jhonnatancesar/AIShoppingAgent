@@ -4,6 +4,7 @@ import { Link, useParams } from 'react-router-dom'
 import { ApiError } from '../../api/client'
 import { offersApi } from '../../api/offers'
 import type {
+  AppliedCoupon,
   MarketplacePartyKind,
   OfferAvailability,
   OfferComparison,
@@ -44,6 +45,23 @@ function ratingAverage(value: string) {
 function installmentLabel(item: OfferInstallment, currency: string) {
   const base = `${item.installment_count}x de ${money(item.installment_amount, currency)}${item.interest_kind === 'interest_free' ? ' sem juros' : ''}`
   return item.installment_total_amount ? `${base} — total ${money(item.installment_total_amount, currency)}` : base
+}
+
+// Consumo de cupons (2026-09-06): só aparece quando o backend calculou um
+// cupom REALMENTE aplicável (`app.coupons.pricing.best_applicable_coupon`)
+// -- nunca um placeholder, nunca porque um cupom qualquer existe no banco.
+function CouponSection({ coupon }: { coupon: AppliedCoupon }) {
+  return (
+    <div className="rounded-xl border border-primary/30 bg-primary/5 p-3 text-sm">
+      <p className="font-semibold text-primary">
+        {coupon.code ? `🏷️ Cupom ${coupon.code}` : '🏷️ Cupom aplicado automaticamente'}
+      </p>
+      <p className="mt-1 text-muted-foreground">
+        Desconto de {money(coupon.discount_amount, coupon.currency)} — preço final{' '}
+        <span className="font-semibold text-foreground">{money(coupon.final_amount, coupon.currency)}</span>
+      </p>
+    </div>
+  )
 }
 
 // Subtask 4 (auditoria GG Oferta, revisão): componente próprio (não só um
@@ -92,6 +110,7 @@ export function OfferDetailView({ offer, comparison }: { offer: OfferDetail; com
                   <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Preço à vista</p>
                   <p className="text-3xl font-bold tracking-tight">{money(observation.amount, observation.currency)}</p>
                 </div>
+                {offer.applied_coupon ? <CouponSection coupon={offer.applied_coupon} /> : null}
                 {observation.installments.length > 0 ? (
                   <ul className="space-y-1.5 text-sm">
                     {observation.installments.map((item) => (

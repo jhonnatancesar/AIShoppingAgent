@@ -201,6 +201,15 @@ export interface LatestOfferObservation {
   installments: OfferInstallment[]
 }
 
+export interface AppliedCoupon {
+  code: string | null
+  discount_kind: string
+  original_amount: string
+  discount_amount: string
+  final_amount: string
+  currency: string
+}
+
 export interface OfferDetail {
   id: string
   title: string
@@ -216,6 +225,9 @@ export interface OfferDetail {
     observed_at: string
   } | null
   latest_observation: LatestOfferObservation | null
+  /** Só presente quando um cupom REALMENTE se aplica (nunca porque existe
+   * no banco) -- calculado pelo backend, `app.coupons.pricing`. */
+  applied_coupon: AppliedCoupon | null
 }
 
 export interface OfferComparisonItem {

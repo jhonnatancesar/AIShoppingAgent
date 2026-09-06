@@ -199,4 +199,8 @@ def test_metadata_contains_only_implemented_tables() -> None:
         # TASK-113: avaliação inteligente de preço e checkpoint de alerta.
         "market_price_assessments",
         "mission_product_alert_state",
+        # Consumo de cupons (2026-09-06): Coupon Worker persiste direto
+        # no mesmo PostgreSQL do GG Oferta.
+        "coupons",
+        "coupon_offer_links",
     }

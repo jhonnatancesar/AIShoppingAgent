@@ -24,6 +24,7 @@ from app.collection.contracts import (
 from app.collection.models import OfferInstallmentOption, PriceObservation
 from app.collection.normalization import Availability
 from app.collection.relevance import OfferRelevance
+from app.coupons.pricing import AppliedCoupon
 from app.database.time import utc_now
 from app.events import ConsumptionOutcome, Event, EventType
 from app.events.consumption import (
@@ -604,6 +605,7 @@ async def _prepare_notification_async(
     link = await get_or_create_offer_short_link(session, offer.id)
     short_url = build_offer_short_url(public_base_url, link.token)
     image_url, image_fallback_url = resolve_offer_image_chain(offer, product)
+    applied_coupon = _coupon_snapshot_from_payload(event.payload)
     return (
         user.telegram_chat_id,
         (
@@ -619,11 +621,49 @@ async def _prepare_notification_async(
                     observation,
                     installment_options,
                     short_url=short_url,
+                    applied_coupon=applied_coupon,
                 ),
                 image_url,
                 image_fallback_url,
             ),
         ),
+    )
+
+
+def _coupon_snapshot_from_payload(payload: object) -> AppliedCoupon | None:
+    """Reconstrói o cupom que REALMENTE produziu `current_total` NESTA
+    decisão (F2/F3/evaluator), a partir do snapshot preservado no
+    próprio evento -- correção 2026-09-06: uma nova busca no banco na
+    hora do envio podia mostrar um cupom diferente do que motivou o
+    alerta (expirado, atualizado, ou substituído por um "melhor" que
+    surgiu depois). Nunca consulta `app.coupons.service` aqui.
+
+    Eventos publicados ANTES desta correção não têm a chave `"coupon"`
+    -- `payload.get("coupon")` devolve `None` e o comportamento é
+    idêntico ao existente antes desta mudança (sem seção de cupom,
+    nunca inventa um cupom que não fez parte da decisão original)."""
+    if not isinstance(payload, dict):
+        raise TelegramNotificationError("notification_payload_invalid")
+    raw = payload.get("coupon")
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise TelegramNotificationError("notification_payload_invalid")
+    code = raw.get("code")
+    if not isinstance(code, str):
+        raise TelegramNotificationError("notification_payload_invalid")
+    raw_rule_text = raw.get("raw_rule_text")
+    if raw_rule_text is not None and not isinstance(raw_rule_text, str):
+        raise TelegramNotificationError("notification_payload_invalid")
+    return AppliedCoupon(
+        coupon_id=_required_uuid(raw, "coupon_id"),
+        code=code,
+        discount_kind=_required_text(raw, "discount_kind"),
+        original_amount=_money(raw, "original_amount"),
+        discount_amount=_money(raw, "discount_amount"),
+        final_amount=_money(raw, "final_amount"),
+        currency=_currency(raw),
+        raw_rule_text=raw_rule_text,
     )
 
 
@@ -896,6 +936,33 @@ def _render_authentication_message(
     raise TelegramNotificationError("notification_payload_invalid")
 
 
+def _coupon_lines(applied_coupon: AppliedCoupon | None) -> str:
+    """Só aparece quando o EVENTO carrega um snapshot de cupom (a
+    decisão F2/F3/evaluator usou um cupom real) -- reconstruído por
+    `_coupon_snapshot_from_payload`, nunca uma nova busca no banco na
+    hora de montar a mensagem (correção 2026-09-06). Preço original
+    continua vindo do payload do evento (`current_total`), nunca
+    sobrescrito."""
+    if applied_coupon is None:
+        return ""
+    code_line = (
+        f"🏷️ Cupom: {html.escape(applied_coupon.code)}\n"
+        if applied_coupon.code
+        else "🏷️ Cupom aplicado automaticamente (sem código)\n"
+    )
+    rule_line = (
+        f"ℹ️ {html.escape(applied_coupon.raw_rule_text)}\n"
+        if applied_coupon.raw_rule_text
+        else ""
+    )
+    return (
+        f"{code_line}"
+        f"{rule_line}"
+        f"➖ Desconto: {format_money(applied_coupon.discount_amount, applied_coupon.currency)}\n"
+        f"💳 Preço com cupom: {format_money(applied_coupon.final_amount, applied_coupon.currency)}\n"
+    )
+
+
 def _render_alert(
     event: Event,
     mission_title: str,
@@ -906,6 +973,7 @@ def _render_alert(
     installment_options: Sequence[OfferInstallmentOption],
     *,
     short_url: str,
+    applied_coupon: AppliedCoupon | None = None,
 ) -> str:
     """Monta a mensagem do alerta com dados reais da oferta.
 
@@ -927,6 +995,7 @@ def _render_alert(
     marketplace_line = _marketplace_party_line(store, observation)
     rating_line = _rating_line(offer)
     link_line = _telegram_link(short_url)
+    coupon_line = _coupon_lines(applied_coupon)
     try:
         event_type = EventType(event.event_type)
         currency = _currency(payload)
@@ -943,6 +1012,7 @@ def _render_alert(
                 f"{rating_line}"
                 f"💰 À vista: {format_money(current_total, currency)}\n"
                 f"{installment_line}"
+                f"{coupon_line}"
                 f"↘️ Preço anterior: {format_money(previous_total, currency)}\n"
                 f"🔎 Missão: {mission_title_safe}\n\n"
                 "🔗 Ver anúncio\n"
@@ -961,6 +1031,7 @@ def _render_alert(
                 f"{rating_line}"
                 f"💰 À vista: {format_money(current_total, currency)}\n"
                 f"{installment_line}"
+                f"{coupon_line}"
                 f"🎯 Preço-alvo: {format_money(target_total, currency)}\n"
                 f"🔎 Missão: {mission_title_safe}\n\n"
                 "🔗 Ver anúncio\n"
