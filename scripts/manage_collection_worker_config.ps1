@@ -31,12 +31,25 @@ Settings realmente consumidos pelo collection worker (auditado em
 tags, só compose.yaml mudou):
 
   OBRIGATÓRIOS (sem default, worker crasha no startup sem eles):
-    - database_password       (secreto)  -> AISHOPPING_DATABASE_PASSWORD_FILE
-    - cesar-core-client-dev (secreto) -> AISHOPPING_CESAR_CORE_API_KEY_FILE
+    - database_password    (secreto)  -> AISHOPPING_DATABASE_PASSWORD_FILE
+    - cesar_core_api_key   (secreto)  -> AISHOPPING_CESAR_CORE_API_KEY_FILE
         FASE E.1: também usada para o enriquecimento de mercado (antigo
         TASK-113/Firecrawl direto) -- o worker não guarda mais credencial
         própria de Firecrawl; enriquecimento é capability do César Core
         (`/v1/fetch`), mesma credencial de aplicação de AI/Search.
+        DEC-122: renomeado de `cesar-core-client-dev` para
+        `cesar_core_api_key` -- é o MESMO arquivo (`C:\App\AIShoppingAgent\
+        .secrets\cesar_core_api_key`) que `compose.yaml` monta no
+        container `api` (secret `cesar_core_api_key`, `DEC-121`); uma só
+        materialização do lado GG, nunca duas cópias divergentes. O nome
+        antigo `cesar-core-client-dev` continua válido só para execução
+        NATIVA em DEV (`backend/.env`, fora do escopo deste script --
+        este script nunca roda em DEV, é específico do worker nativo em
+        PROD/Windows Server). O César Core mantém seu próprio arquivo
+        separado (`deploy/prod/cesar-core/.secrets/ggoferta-core-client`,
+        deployment independente por decisão de topologia -- `DEC-118`
+        item 8) com o MESMO valor -- duas materializações da mesma
+        identidade `ggoferta-core-client`, não duas credenciais.
 
   OPCIONAIS, com efeito real se ausentes (fail-soft, nunca crasha):
     - edge_cdp_url    (não secreto) -> AISHOPPING_EDGE_CDP_URL
@@ -63,6 +76,11 @@ tags, só compose.yaml mudou):
       "localhost"; produção exige "127.0.0.1" explícito).
     - database_port -> AISHOPPING_DATABASE_PORT (default já bate com
       produção, mas fica explícito por determinismo).
+    - cesar_core_base_url -> AISHOPPING_CESAR_CORE_BASE_URL (DEC-122:
+      default do Settings já é "http://127.0.0.1:8100", correto para o
+      worker nativo -- mas fica explícito em Máquina pelo mesmo motivo de
+      database_host/database_port: configuração de PROD nunca deve
+      depender implicitamente de um default de código).
 
 Uso:
     powershell -File scripts\manage_collection_worker_config.ps1 -Action Status
@@ -89,7 +107,14 @@ param(
     # CDP na porta já validada ao vivo nesta máquina, DEC-103/DEC-104).
     [string]$DatabaseHost = "127.0.0.1",
     [int]$DatabasePort = 5432,
-    [string]$EdgeCdpUrl = "http://127.0.0.1:9223"
+    [string]$EdgeCdpUrl = "http://127.0.0.1:9223",
+
+    # DEC-122: o worker nativo fala com o César Core por loopback --
+    # transporte diferente do container `api` (que usa
+    # host.docker.internal, DEC-121). Já é o default de código de
+    # `Settings.cesar_core_base_url`; explícito aqui pelo mesmo motivo de
+    # DatabaseHost/DatabasePort acima.
+    [string]$CesarCoreBaseUrl = "http://127.0.0.1:8100"
 )
 
 Set-StrictMode -Version Latest
@@ -117,8 +142,8 @@ function Assert-Administrator {
 # não existir (nunca inventa valor); "Required=$false" apenas deixa a
 # variável de fora (comportamento fail-soft já suportado pelo código).
 $script:SecretFileMap = [ordered]@{
-    "AISHOPPING_DATABASE_PASSWORD_FILE"        = @{ File = "postgres_password"; Required = $true }
-    "AISHOPPING_CESAR_CORE_API_KEY_FILE"        = @{ File = "cesar-core-client-dev"; Required = $true }
+    "AISHOPPING_DATABASE_PASSWORD_FILE"  = @{ File = "postgres_password"; Required = $true }
+    "AISHOPPING_CESAR_CORE_API_KEY_FILE" = @{ File = "cesar_core_api_key"; Required = $true }
 }
 
 # Identidades esperadas na ACL de $SecretsDir (DEC-104) -- qualquer outra
@@ -134,12 +159,14 @@ function Get-NonSecretVars {
     param(
         [Parameter(Mandatory = $true)][string]$DatabaseHost,
         [Parameter(Mandatory = $true)][int]$DatabasePort,
-        [Parameter(Mandatory = $true)][string]$EdgeCdpUrl
+        [Parameter(Mandatory = $true)][string]$EdgeCdpUrl,
+        [Parameter(Mandatory = $true)][string]$CesarCoreBaseUrl
     )
     return [ordered]@{
-        "AISHOPPING_DATABASE_HOST" = $DatabaseHost
-        "AISHOPPING_DATABASE_PORT" = [string]$DatabasePort
-        "AISHOPPING_EDGE_CDP_URL"  = $EdgeCdpUrl
+        "AISHOPPING_DATABASE_HOST"        = $DatabaseHost
+        "AISHOPPING_DATABASE_PORT"        = [string]$DatabasePort
+        "AISHOPPING_EDGE_CDP_URL"         = $EdgeCdpUrl
+        "AISHOPPING_CESAR_CORE_BASE_URL"  = $CesarCoreBaseUrl
     }
 }
 
@@ -211,12 +238,14 @@ function Install-OrUpdate-WorkerConfig {
         [Parameter(Mandatory = $true)][string]$SecretsDir,
         [Parameter(Mandatory = $true)][string]$DatabaseHost,
         [Parameter(Mandatory = $true)][int]$DatabasePort,
-        [Parameter(Mandatory = $true)][string]$EdgeCdpUrl
+        [Parameter(Mandatory = $true)][string]$EdgeCdpUrl,
+        [Parameter(Mandatory = $true)][string]$CesarCoreBaseUrl
     )
 
     Assert-Preflight -ProjectRoot $ProjectRoot -SecretsDir $SecretsDir
 
-    $nonSecret = Get-NonSecretVars -DatabaseHost $DatabaseHost -DatabasePort $DatabasePort -EdgeCdpUrl $EdgeCdpUrl
+    $nonSecret = Get-NonSecretVars -DatabaseHost $DatabaseHost -DatabasePort $DatabasePort `
+        -EdgeCdpUrl $EdgeCdpUrl -CesarCoreBaseUrl $CesarCoreBaseUrl
     foreach ($name in $nonSecret.Keys) {
         $value = $nonSecret[$name]
         if ($PSCmdlet.ShouldProcess("Variável de Máquina $name", "definir")) {
@@ -244,7 +273,8 @@ function Install-OrUpdate-WorkerConfig {
     }
 
     Write-Host "Configuração de Máquina do worker aplicada."
-    Get-WorkerConfigStatus -SecretsDir $SecretsDir -DatabaseHost $DatabaseHost -DatabasePort $DatabasePort -EdgeCdpUrl $EdgeCdpUrl
+    Get-WorkerConfigStatus -SecretsDir $SecretsDir -DatabaseHost $DatabaseHost -DatabasePort $DatabasePort `
+        -EdgeCdpUrl $EdgeCdpUrl -CesarCoreBaseUrl $CesarCoreBaseUrl
 }
 
 function Get-WorkerConfigStatus {
@@ -252,12 +282,16 @@ function Get-WorkerConfigStatus {
         [Parameter(Mandatory = $true)][string]$SecretsDir,
         [string]$DatabaseHost,
         [int]$DatabasePort,
-        [string]$EdgeCdpUrl
+        [string]$EdgeCdpUrl,
+        [string]$CesarCoreBaseUrl
     )
 
     Write-Host ""
     Write-Host "--- configuração não secreta ---"
-    $nonSecretNames = @("AISHOPPING_DATABASE_HOST", "AISHOPPING_DATABASE_PORT", "AISHOPPING_EDGE_CDP_URL")
+    $nonSecretNames = @(
+        "AISHOPPING_DATABASE_HOST", "AISHOPPING_DATABASE_PORT",
+        "AISHOPPING_EDGE_CDP_URL", "AISHOPPING_CESAR_CORE_BASE_URL"
+    )
     foreach ($name in $nonSecretNames) {
         $current = [Environment]::GetEnvironmentVariable($name, "Machine")
         $state = if ($current) { "configurada ($current)" } else { "não configurada" }
@@ -284,7 +318,10 @@ function Get-WorkerConfigStatus {
 }
 
 function Remove-WorkerConfig {
-    $nonSecretNames = @("AISHOPPING_DATABASE_HOST", "AISHOPPING_DATABASE_PORT", "AISHOPPING_EDGE_CDP_URL")
+    $nonSecretNames = @(
+        "AISHOPPING_DATABASE_HOST", "AISHOPPING_DATABASE_PORT",
+        "AISHOPPING_EDGE_CDP_URL", "AISHOPPING_CESAR_CORE_BASE_URL"
+    )
     foreach ($name in $nonSecretNames + $script:SecretFileMap.Keys) {
         if ($PSCmdlet.ShouldProcess("Variável de Máquina $name", "remover")) {
             [Environment]::SetEnvironmentVariable($name, $null, "Machine")
@@ -298,15 +335,17 @@ Assert-Administrator
 switch ($Action) {
     "Install" {
         Install-OrUpdate-WorkerConfig -ProjectRoot $ProjectRoot -SecretsDir $SecretsDir `
-            -DatabaseHost $DatabaseHost -DatabasePort $DatabasePort -EdgeCdpUrl $EdgeCdpUrl
+            -DatabaseHost $DatabaseHost -DatabasePort $DatabasePort -EdgeCdpUrl $EdgeCdpUrl `
+            -CesarCoreBaseUrl $CesarCoreBaseUrl
     }
     "Update" {
         Install-OrUpdate-WorkerConfig -ProjectRoot $ProjectRoot -SecretsDir $SecretsDir `
-            -DatabaseHost $DatabaseHost -DatabasePort $DatabasePort -EdgeCdpUrl $EdgeCdpUrl
+            -DatabaseHost $DatabaseHost -DatabasePort $DatabasePort -EdgeCdpUrl $EdgeCdpUrl `
+            -CesarCoreBaseUrl $CesarCoreBaseUrl
     }
     "Status" {
         Get-WorkerConfigStatus -SecretsDir $SecretsDir -DatabaseHost $DatabaseHost `
-            -DatabasePort $DatabasePort -EdgeCdpUrl $EdgeCdpUrl
+            -DatabasePort $DatabasePort -EdgeCdpUrl $EdgeCdpUrl -CesarCoreBaseUrl $CesarCoreBaseUrl
     }
     "Remove" {
         Remove-WorkerConfig

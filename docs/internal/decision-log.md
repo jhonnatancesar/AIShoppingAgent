@@ -1,5 +1,135 @@
 # Decision Log
 
+## DEC-122 — Worker nativo sem wiring do César Core em PROD; diagnóstico inicial (`backend\.env`) descartado por contradizer o `DEC-104`
+
+- **Data:** 2026-09-07.
+- **Classificação:** Corrigir agora (mais um blocker real do mesmo
+  deploy PROD -- GG em `v1.3.4`, banco migrado até `20260906_0002`,
+  backup validado, stack ainda parada porque Core/OmniRoute não tinham
+  subido; `AIShoppingAgent-CollectionWorker` é Scheduled Task nativa;
+  `C:\App\AIShoppingAgent\backend\.env` não existe).
+- **Diagnóstico inicial proposto, e por que foi descartado:** a
+  primeira hipótese (do próprio usuário) era que o worker nativo lê
+  `backend/.env` e que o handoff precisava de um script para
+  criar/atualizar esse arquivo em PROD. Auditoria de código encontrou
+  uma contradição real antes de qualquer implementação:
+  [`docs/architecture/windows-collection-worker.md:200`](../architecture/windows-collection-worker.md)
+  já registra, desde `DEC-104` (`v1.2.2`, comprovado ao vivo em PROD em
+  2026-08-28), **"Nunca `backend\.env` em produção"** para este
+  processo -- ele é configurado exclusivamente por variáveis de
+  ambiente de **Máquina** do Windows, já geridas por um script
+  versionado e oficial,
+  [`scripts/manage_collection_worker_config.ps1`](../../scripts/manage_collection_worker_config.ps1),
+  que **já incluía** `AISHOPPING_CESAR_CORE_API_KEY_FILE` como variável
+  obrigatória antes desta rodada. Criar um script gerando `backend/.env`
+  criaria um segundo mecanismo de configuração concorrente com o já
+  validado em produção -- e como variáveis de Máquina têm precedência
+  sobre `.env` no `pydantic-settings`, um `.env` novo poderia ser
+  **silenciosamente ignorado** se variáveis de Máquina também
+  existissem, exatamente o tipo de comportamento implícito que o
+  `DEC-104` foi escrito para eliminar. Apresentado ao usuário antes de
+  qualquer implementação (`AskUserQuestion`); usuário confirmou a
+  correção e pediu para fechar o gap no mecanismo já existente, não
+  criar um novo.
+- **Gap real, uma vez corrigida a premissa:** `manage_collection_worker_config.ps1`
+  já cobria a credencial, mas (a) o handoff nunca instruía rodá-lo como
+  parte da ordem de deploy; (b) o nome de arquivo que ele esperava
+  (`cesar-core-client-dev`, herdado da convenção de execução nativa em
+  DEV) não batia com o nome já usado pelo container `api`
+  (`cesar_core_api_key`, `DEC-121`); (c) `AISHOPPING_CESAR_CORE_BASE_URL`
+  não era setado explicitamente (ficava só no default de código).
+- **Correção:**
+  - `scripts/manage_collection_worker_config.ps1`: novo parâmetro
+    `-CesarCoreBaseUrl` (default `http://127.0.0.1:8100`, já o default
+    de código -- explícito em Máquina pelo mesmo motivo de
+    `-DatabaseHost`/`-DatabasePort`); `AISHOPPING_CESAR_CORE_BASE_URL`
+    somado a `Get-NonSecretVars`/`Get-WorkerConfigStatus`/
+    `Remove-WorkerConfig`; `$script:SecretFileMap` da credencial
+    renomeado de `cesar-core-client-dev` para **`cesar_core_api_key`**
+    -- o MESMO arquivo que `compose.yaml` monta no container `api`
+    (`C:\App\AIShoppingAgent\.secrets\cesar_core_api_key`), uma só
+    materialização do lado GG Oferta para as duas formas de execução.
+    Nenhuma outra mudança de comportamento (preflight, ACL, idempotência,
+    fail-closed em secret ausente -- tudo herdado do `DEC-104` sem
+    alteração).
+  - **Compatibilidade com DEV auditada** (pedido explícito do usuário):
+    `cesar-core-client-dev` continua em uso, inalterado, em
+    `.env.example`/`backend/.env.example`/`docs/installation/
+    {cesar-core,secrets,integrated-setup}.md` e num teste
+    (`tests/test_118h_recovery_contract.py`) -- todos sobre execução
+    **nativa em DEV** (`backend/.env`), um mecanismo diferente que este
+    script nunca toca (ele é específico do worker nativo em
+    PROD/Windows Server, requer Administrador, grava variável de
+    Máquina). Nenhuma quebra de compatibilidade em DEV.
+  - **Identidade GG↔Core unificada, não duplicada:** o César Core
+    mantém seu próprio arquivo separado
+    (`deploy/prod/cesar-core/.secrets/ggoferta-core-client`) com o
+    MESMO valor -- duas materializações da identidade
+    `ggoferta-core-client`, não duas credenciais. Não foi unificado num
+    único arquivo compartilhado entre os dois deployments Compose
+    (exigiria bind mount cruzando os diretórios, contrariando a
+    independência de lifecycle/secrets já decidida -- `DEC-118` item 8)
+    -- redesenho fora do escopo desta correção, por instrução explícita
+    do usuário. O procedimento antes manual ("gere um valor forte para
+    os dois lados") agora tem geração determinística versionada no
+    handoff (seção 4, "Geração de secrets locais") -- gera um valor
+    aleatório de 32 bytes e grava nos dois arquivos na mesma sessão,
+    nunca exibe o valor, preserva um arquivo já existente em vez de
+    sobrescrever.
+  - Handoff: nova subseção "GG Oferta — worker nativo" (seção 4),
+    subseção de geração de secrets atualizada, ordem de deploy (seção 7,
+    dentro do passo 7) com os 5 passos explícitos pedidos (identidade →
+    secret → `manage_collection_worker_config.ps1 -Action Install` →
+    validar `-Action Status` → só então iniciar a Scheduled Task), duas
+    novas proibições na seção 12, referência na seção 13.
+    `docs/architecture/windows-collection-worker.md` atualizado com o
+    novo nome de arquivo e a nova linha de `AISHOPPING_CESAR_CORE_BASE_URL`
+    na tabela de settings.
+- **Achado incidental, fora do escopo desta correção (flagueado
+  separadamente, não corrigido aqui):** `Test-SecretsAcl` em
+  `manage_collection_worker_config.ps1` compara `IdentityReference.Value`
+  contra strings hardcoded em inglês (`"NT AUTHORITY\SYSTEM"`,
+  `"BUILTIN\Administrators"`). Testado ao vivo nesta máquina de
+  desenvolvimento (Windows em PT-BR): `New-Object
+  System.Security.Principal.NTAccount("BUILTIN\Administrators")` falha
+  ao traduzir, porque o grupo local se chama "Administradores" nesta
+  instalação -- ou seja, se o Windows Server de PROD também estiver em
+  PT-BR, essa checagem de ACL pode nunca retornar `Ok=true`, bloqueando
+  `-Action Install`/`-Action Update` permanentemente. Não investigado
+  se PROD roda em inglês ou português (não temos acesso direto); não
+  corrigido nesta rodada por estar fora do escopo pedido (é um problema
+  pré-existente no script, não introduzido por esta correção).
+- **Testes (ambiente de desenvolvimento local, sem elevação de
+  Administrador disponível nesta sessão -- ver relatório para o detalhe
+  completo do que foi e não foi exercido):** lógica de preflight
+  isolada (`Get-NonSecretVars` inclui a nova variável; secret ausente
+  detectado; secret presente após criação detectado; caminho relativo
+  rejeitado; ACL incompatível rejeitada -- via `-File`, não `-Command`,
+  por causa de uma peculiaridade de escopo `$script:` do PowerShell ao
+  dot-source). Prova real e completa da cadeia de consumo (o que
+  efetivamente importa -- é o mesmo código que o worker roda): `Settings()`
+  configurado só por variáveis de ambiente de **processo** (sem
+  `backend/.env`, sem argumentos explícitos, simulando exatamente o
+  estado de PROD) resolveu `cesar_core_base_url`/`cesar_core_api_key_file`
+  corretamente a partir do arquivo renomeado, e uma chamada `AI` real
+  contra o César Core/OmniRoute local completou com sucesso
+  (`provider="cesar_core"`, `model="gemini-3.6-flash"`); sem a variável
+  de credencial, a mesma chamada falhou explicitamente
+  (`AIRequestError: Cesar Core requires AISHOPPING_CESAR_CORE_API_KEY_FILE`),
+  não silenciosamente. A escrita real de variável de **Máquina**
+  (`-Action Install`/reexecução idempotente/`-Action Remove`) e o
+  disparo real da Scheduled Task **não foram reexercidos** nesta
+  sessão -- exigem Administrador, indisponível neste ambiente; o
+  mecanismo de escrita em si é idêntico ao já comprovado ao vivo em PROD
+  em 2026-08-28 (`DEC-104`), só o conjunto de variáveis mudou.
+- **Release:** `v1.3.4` não foi movida (tags imutáveis). Esta correção
+  foi publicada como **`v1.3.5`** -- ver hash real no commit/tag em
+  `origin`.
+- **Não incluído nesta rodada:** nenhum deploy real foi executado (fora
+  do escopo desta decisão, por instrução explícita do usuário) -- só o
+  código do script, o wiring e a documentação foram corrigidos e
+  validados no que foi possível nesta sessão.
+
 ## DEC-121 — `api` containerizado não falava com o César Core em PROD (blocker real do deploy, `v1.3.3`)
 
 - **Data:** 2026-09-07.

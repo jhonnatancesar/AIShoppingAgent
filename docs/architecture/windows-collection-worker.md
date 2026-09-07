@@ -228,7 +228,8 @@ worker (`LogonType Interactive`, usuário `Administrator`).
 | Setting | Obrigatório? | Secreto? | Variável |
 |---|---|---|---|
 | `database_password` | sim, sem default -- crasha no startup sem ele | sim | `AISHOPPING_DATABASE_PASSWORD_FILE` |
-| `cesar-core-client-dev` | sim, sem default -- AI/Search falham fechados sem ele | sim | `AISHOPPING_CESAR_CORE_API_KEY_FILE` |
+| `cesar_core_api_key_file` | sim, sem default -- AI/Search falham fechados sem ele | sim | `AISHOPPING_CESAR_CORE_API_KEY_FILE` |
+| `cesar_core_base_url` | não, default `http://127.0.0.1:8100` (já correto para o worker nativo) -- explícito por determinismo, mesma razão de `database_host`/`database_port` | não | `AISHOPPING_CESAR_CORE_BASE_URL` |
 | `firecrawl_api_key` | não -- sem ele, enriquecimento `/v2/scrape` fica desligado | sim | `AISHOPPING_FIRECRAWL_API_KEY_FILE` |
 | `edge_cdp_url` | não -- sem ela, Magalu/MercadoLivre/Terabyte falham isolados (sem fallback Playwright); Amazon/Kabum/Pichau caem para Playwright puro | não | `AISHOPPING_EDGE_CDP_URL` |
 | `database_host` | não, default `localhost` -- produção exige `127.0.0.1` explícito | não | `AISHOPPING_DATABASE_HOST` |
@@ -238,7 +239,33 @@ worker (`LogonType Interactive`, usuário `Administrator`).
 | demais (poll/batch/retry/circuit/cadence/fan-out/...) | não, defaults documentados em [Configuração](../installation/configuration.md) | não | não sobrepostos |
 
 Valores de produção: `AISHOPPING_DATABASE_HOST=127.0.0.1`,
-`AISHOPPING_DATABASE_PORT=5432`, `AISHOPPING_EDGE_CDP_URL=http://127.0.0.1:9223`.
+`AISHOPPING_DATABASE_PORT=5432`, `AISHOPPING_EDGE_CDP_URL=http://127.0.0.1:9223`,
+`AISHOPPING_CESAR_CORE_BASE_URL=http://127.0.0.1:8100`.
+
+**`DEC-122` (2026-09-07) -- arquivo do secret renomeado e unificado com o
+container `api`:** o arquivo referenciado por `AISHOPPING_CESAR_CORE_
+API_KEY_FILE` passou de `cesar-core-client-dev` (nome herdado da
+convenção de execução nativa em DEV, `backend/.env`) para
+**`cesar_core_api_key`** -- o MESMO arquivo
+(`C:\App\AIShoppingAgent\.secrets\cesar_core_api_key`) que
+`compose.yaml` monta como secret no container `api` (`DEC-121`). Uma só
+materialização do lado GG Oferta para as duas formas de execução
+(container e worker nativo), nunca duas cópias divergentes. O nome
+antigo `cesar-core-client-dev` continua válido e inalterado para
+execução **nativa em DEV** (`backend/.env`, fora do escopo deste
+mecanismo -- este script nunca roda em DEV comum, é específico do
+worker nativo em PROD/Windows Server).
+
+O César Core mantém seu próprio arquivo separado
+(`deploy/prod/cesar-core/.secrets/ggoferta-core-client`, repositório GG
+Oferta, deployment independente por decisão de topologia -- `DEC-118`
+item 8) com o **mesmo valor** de credencial -- duas materializações da
+identidade `ggoferta-core-client`, não duas credenciais diferentes.
+Não foi unificado num único arquivo compartilhado entre os dois
+deployments porque isso exigiria um bind mount cruzando o diretório do
+GG Oferta para dentro do Compose independente do César Core,
+contrariando a independência de lifecycle/secrets já decidida (`DEC-118`
+item 8) -- redesenho fora do escopo desta correção.
 
 **Provisionamento/reprovisionamento -- reproduzível via
 `scripts\manage_collection_worker_config.ps1`** (companheiro de

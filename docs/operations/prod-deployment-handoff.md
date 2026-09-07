@@ -141,7 +141,7 @@ migration acima precisa estar aplicada **antes** de configurar
 
 ## 4. Configuração necessária (nomes de variável — nunca valores aqui)
 
-### GG Oferta (`backend/.env` nativo ou `.env` do Compose + `.secrets/`)
+### GG Oferta — container `api` (`.env` do Compose + `.secrets/`, nunca `backend/.env`)
 
 | Variável | Papel |
 |---|---|
@@ -157,6 +157,48 @@ migration acima precisa estar aplicada **antes** de configurar
 
 Detalhe completo de todas as variáveis (não só as novas):
 [`docs/installation/configuration.md`](../installation/configuration.md).
+
+### GG Oferta — worker nativo (`AIShoppingAgent-CollectionWorker`, Scheduled Task Windows)
+
+**`DEC-104`/`DEC-122`, nunca `backend\.env` em produção para este
+processo** (isso é diferente do container `api` acima -- são dois
+mecanismos de configuração deliberadamente separados, ver
+[`docs/architecture/windows-collection-worker.md`](../architecture/windows-collection-worker.md#configuração-do-worker-dec-104----padronizado-v122)).
+O worker nativo é configurado exclusivamente por **variáveis de
+ambiente de Máquina do Windows**, geridas de forma reproduzível e
+idempotente por
+[`scripts/manage_collection_worker_config.ps1`](../../scripts/manage_collection_worker_config.ps1):
+
+```powershell
+# Auditar sem gravar nada:
+powershell -File scripts\manage_collection_worker_config.ps1 -Action Status
+
+# Aplicar/reaplicar (idempotente):
+powershell -File scripts\manage_collection_worker_config.ps1 -Action Install
+```
+
+O script já cobre (desde `DEC-122`) o wiring completo do César Core
+para este processo -- nenhum parâmetro extra é necessário além dos
+defaults, que já são os valores corretos de PROD:
+
+| Variável de Máquina | Papel | Valor |
+|---|---|---|
+| `AISHOPPING_CESAR_CORE_BASE_URL` | URL do César Core visto pelo processo nativo -- **`http://127.0.0.1:8100`** (loopback -- transporte diferente do container `api`, que usa `host.docker.internal`; mesma arquitetura lógica, `DEC-121`) | já é o default do script, gravado explicitamente por determinismo |
+| `AISHOPPING_CESAR_CORE_API_KEY_FILE` | Caminho **absoluto** para o mesmo Bearer GG→Core do container -- `C:\App\AIShoppingAgent\.secrets\cesar_core_api_key` | gravado automaticamente pelo script, apontando para o arquivo em `-SecretsDir` (default `C:\App\AIShoppingAgent\.secrets`) |
+
+**Pré-requisito único:** o arquivo `C:\App\AIShoppingAgent\.secrets\cesar_core_api_key`
+precisa existir (mesmo valor do secret `application`/`ggoferta-core-client`
+do lado do César Core -- seção "Geração de secrets locais" abaixo) --
+o script **falha explícito e não inventa valor** se estiver ausente
+(preflight, `Assert-Preflight`). Nunca escreve nem imprime o conteúdo do
+secret, só referencia o caminho do arquivo.
+
+**Task Scheduler lê as variáveis de Máquina frescas a cada disparo**,
+sem precisar de logoff/reboot/restart -- comprovado ao vivo em PROD em
+2026-08-28 para este exato mecanismo (comentário no próprio script).
+Não é necessário reiniciar a Scheduled Task manualmente depois de rodar
+`-Action Install`; a próxima vez que ela disparar já lê a configuração
+nova.
 
 ### César Core (`deploy/prod/.env` — lido pelo Compose por estar na mesma
 pasta de `cesar-core.compose.yaml`, não é o `.env` de nenhum repositório
@@ -261,10 +303,36 @@ auditoria de código, não wireados de propósito.
 
 ### Geração de secrets locais na primeira instalação
 
-Estes dois secrets **não existem em nenhum repositório** e precisam ser
+Estes três secrets **não existem em nenhum repositório** e precisam ser
 gerados uma vez, diretamente no servidor, na primeira instalação. Em
-nenhum dos dois casos você deve inventar/digitar manualmente um valor,
+nenhum dos três casos você deve inventar/digitar manualmente um valor,
 nem exibir o valor gerado em log, relatório ou chat.
+
+**Identidade GG↔Core (`ggoferta-core-client`/`cesar_core_api_key`,
+`DEC-122`)** — Bearer que autentica as chamadas do GG Oferta (container
+`api` **e** worker nativo, mesmo valor para os dois -- seção 4 acima)
+contra o César Core. Um único valor, gravado em **dois arquivos** (um
+por deployment independente, `DEC-118` item 8) -- gere uma vez e grave
+nos dois, na mesma sessão PowerShell, sem nunca exibir o valor:
+
+```powershell
+$bytes = New-Object byte[] 32
+[System.Security.Cryptography.RandomNumberGenerator]::Fill($bytes)
+$secret = [Convert]::ToBase64String($bytes) -replace '\+','-' -replace '/','_' -replace '='
+New-Item -ItemType Directory -Force -Path ".secrets" | Out-Null
+New-Item -ItemType Directory -Force -Path "deploy\prod\cesar-core\.secrets" | Out-Null
+Set-Content -Path ".secrets\cesar_core_api_key" -Value $secret -NoNewline -Encoding utf8
+Set-Content -Path "deploy\prod\cesar-core\.secrets\ggoferta-core-client" -Value $secret -NoNewline -Encoding utf8
+Remove-Variable secret, bytes
+```
+
+Confirme que os dois arquivos existem e não estão vazios
+(`(Get-Item .secrets\cesar_core_api_key).Length -gt 0` e o equivalente
+para o outro caminho) — nunca exiba o conteúdo. Se um dos dois arquivos
+já existir de uma instalação anterior, **não sobrescreva** -- copie o
+valor já existente para o arquivo que estiver faltando em vez de gerar
+um novo (senão os dois lados passam a usar credenciais diferentes e
+toda chamada GG→Core falha por `401`/`403`).
 
 **`verification_code_pepper` (GG Oferta)** — usado pelo HMAC do código
 de verificação de 6 dígitos. Não está coberto pelo fluxo automático de
@@ -466,13 +534,12 @@ ative uma de cada vez, prove antes de ativar a próxima):
    [Backup e restauração](backup-restore.md) do GG Oferta).
 4. **Migrations** (seção 3) — só GG Oferta, só depois do backup.
 5. **Secrets de primeira instalação** (seção 4, subseção "Geração de
-   secrets locais") — `verification_code_pepper` e `INITIAL_PASSWORD`
-   do OmniRoute, se ainda não existirem. Inclui também
-   `.secrets/cesar_core_api_key` do GG Oferta (`DEC-121`) — mesmo valor
-   Bearer de `deploy/prod/cesar-core/.secrets/ggoferta-core-client`
-   (passo 6 abaixo cria esse último); sem os dois arquivos com o mesmo
-   valor, o `api` sobe mas toda chamada de AI ao Core falha por
-   credencial.
+   secrets locais") — a identidade GG↔Core (`ggoferta-core-client`/
+   `cesar_core_api_key`, `DEC-122` -- grava os **dois** arquivos de uma
+   vez, mesmo valor), `verification_code_pepper` e `INITIAL_PASSWORD`
+   do OmniRoute, se ainda não existirem. Sem os dois arquivos da
+   identidade GG↔Core com o mesmo valor, tanto o `api` quanto o worker
+   nativo sobem mas toda chamada de AI ao Core falha por credencial.
 6. **César Core + OmniRoute + Redis + SearXNG** via o bundle
    `deploy/prod/cesar-core.compose.yaml` (seção 5.1), em duas etapas
    obrigatórias: **(a)** subir só o `omniroute` e rodar
@@ -484,15 +551,38 @@ ative uma de cada vez, prove antes de ativar a próxima):
    obrigatória (fail-closed) de AI/Search/enrichment. Confirmar `GET
    /health` e `GET /ready` antes de prosseguir. **Nenhum clone/build do
    repositório `cesar-core`.**
-7. **GG Oferta** (api + `collection_worker` + `telegram_notifier`) —
-   com todas as flags da seção 6 **ainda OFF** neste ponto. Confirmar
-   `GET /health` e `GET /ready`. Confirmar também (`DEC-121`, blocker
-   real do preflight anterior): dentro do container `api`, `curl
-   http://host.docker.internal:8100/health` responde (prova que o
-   `extra_hosts` resolve o Windows Server) e uma mensagem real via
-   Telegram que exija interpretação de linguagem natural retorna uma
-   resposta coerente, não um erro de credencial/conexão -- essa é a
-   única chamada ao Core que o `api` faz (capability AI, só isso).
+7. **GG Oferta — container `api` + `telegram_notifier`** (`docker
+   compose up -d`) — com todas as flags da seção 6 **ainda OFF** neste
+   ponto. Confirmar `GET /health` e `GET /ready`. Confirmar também
+   (`DEC-121`, blocker real do preflight anterior): dentro do container
+   `api`, `curl http://host.docker.internal:8100/health` responde
+   (prova que o `extra_hosts` resolve o Windows Server) e uma mensagem
+   real via Telegram que exija interpretação de linguagem natural
+   retorna uma resposta coerente, não um erro de credencial/conexão --
+   essa é a única chamada ao Core que o `api` faz (capability AI, só
+   isso).
+
+   **GG Oferta — worker nativo (`AIShoppingAgent-CollectionWorker`,
+   Scheduled Task) — ordem obrigatória, `DEC-122`, blocker real
+   encontrado num preflight posterior a este mesmo passo 7:**
+   1. Identidade GG→Core já provisionada no passo 5 acima
+      (`.secrets\cesar_core_api_key` existe com o valor real).
+   2. Confirmar de novo que `C:\App\AIShoppingAgent\.secrets\cesar_core_api_key`
+      existe e não está vazio (mesmo arquivo do passo 5 -- não crie uma
+      segunda cópia).
+   3. Executar `powershell -File scripts\manage_collection_worker_config.ps1 -Action Install`
+      (idempotente, sem decisão manual -- ver seção 4, subseção "GG
+      Oferta — worker nativo"). **Nunca `backend\.env` para este
+      processo.**
+   4. Validar com `-Action Status`: `AISHOPPING_CESAR_CORE_BASE_URL` e
+      `AISHOPPING_CESAR_CORE_API_KEY_FILE` aparecem como "configurada"
+      nas variáveis de Máquina (o comando nunca exibe o conteúdo do
+      secret, só se a variável está definida e se o arquivo referenciado
+      existe).
+   5. **Só então** iniciar/confirmar a Scheduled Task
+      `AIShoppingAgent-CollectionWorker` (`manage_collection_worker_task.ps1`)
+      — ela lê as variáveis de Máquina frescas a cada disparo, sem
+      precisar de reboot.
 8. **Coupon Worker — primeira instalação em PROD** (seção 9) — diretório,
    `.env` (`AUTH_TOKEN` + `COUPONS_POSTGRES_DSN` apontando para o
    Postgres de PROD), instalar o agendamento (Windows Scheduled Task).
@@ -670,6 +760,19 @@ com todas as 4 connections ativas e nenhum fallback forçado:
   blocker do `DEC-121`). O valor correto para o `api` é
   `http://host.docker.internal:8100` (já é o default em
   `compose.yaml`).
+- Não criar/editar `backend\.env` para configurar o worker nativo
+  (`AIShoppingAgent-CollectionWorker`) em PROD -- `DEC-104`/`DEC-122`:
+  esse processo usa exclusivamente variáveis de ambiente de Máquina do
+  Windows, via `scripts\manage_collection_worker_config.ps1`. Um
+  `backend\.env` criado manualmente não quebraria nada sozinho (variável
+  de Máquina tem precedência), mas é um mecanismo de configuração
+  concorrente que não deveria existir -- se você achar um
+  `backend\.env` em PROD, não assuma que ele é a fonte de verdade real
+  do worker nativo.
+- Não criar um segundo arquivo de secret para o worker nativo --
+  `AISHOPPING_CESAR_CORE_API_KEY_FILE` do worker aponta para o MESMO
+  arquivo (`.secrets\cesar_core_api_key`) que o secret do container
+  `api`, nunca uma cópia própria.
 
 ## 13. Referências (mesma arquitetura, sem redesenho)
 
@@ -688,6 +791,11 @@ com todas as 4 connections ativas e nenhum fallback forçado:
   acima já bastam): `docs/architecture/gg-oferta-core.md` no
   repositório `cesar-core`, se você tiver acesso a ele; se não tiver,
   não é bloqueante.
+- Configuração do worker nativo (`DEC-104`/`DEC-122`, Machine
+  Environment, nunca `backend\.env`):
+  [`scripts/manage_collection_worker_config.ps1`](../../scripts/manage_collection_worker_config.ps1)
+  e
+  [`docs/architecture/windows-collection-worker.md`](../architecture/windows-collection-worker.md).
 - Setup integrado dos três componentes (visão de instalação, não de
   deploy): [`docs/installation/integrated-setup.md`](../installation/integrated-setup.md).
 - Runbook operacional geral (rotina, diagnóstico, rollback pós-deploy):

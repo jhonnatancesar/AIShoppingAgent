@@ -3685,3 +3685,62 @@ em `origin`.
 **Nenhum deploy foi executado nesta rodada** -- só o código, o wiring do
 compose e a documentação foram corrigidos e validados em DEV, por
 instrução explícita do usuário ("Não faça deploy").
+
+## Mais um blocker real do deploy PROD: worker nativo sem wiring do César Core (2026-09-07)
+
+Com GG em `v1.3.4`, banco migrado até `20260906_0002` e backup validado,
+a stack ainda estava parada -- `AIShoppingAgent-CollectionWorker`
+(Scheduled Task nativa) não tinha nenhuma configuração de César Core, e
+`C:\App\AIShoppingAgent\backend\.env` não existe em PROD. Ver `DEC-122`
+em `decision-log.md` para o registro completo.
+
+**Correção de diagnóstico antes de qualquer código:** a hipótese inicial
+era criar um script para gerar/atualizar `backend/.env`. Auditoria
+encontrou que isso contrariaria uma decisão já tomada e validada ao
+vivo em PROD (`DEC-104`, 2026-08-28): o worker nativo **nunca** usa
+`backend/.env`, só variáveis de ambiente de **Máquina** do Windows, já
+geridas por um script oficial existente
+(`scripts/manage_collection_worker_config.ps1`) que **já incluía** a
+credencial do César Core como variável obrigatória. Apresentado ao
+usuário antes de implementar (`AskUserQuestion`) -- confirmado: fechar o
+gap no mecanismo existente, não criar um segundo mecanismo concorrente
+(que poderia ser silenciosamente ignorado, já que variável de Máquina
+tem precedência sobre `.env`).
+
+**O que foi corrigido de fato:** `manage_collection_worker_config.ps1`
+ganhou `AISHOPPING_CESAR_CORE_BASE_URL` explícito (default
+`http://127.0.0.1:8100`, já correto, mas agora auditável) e o nome do
+arquivo de credencial foi unificado de `cesar-core-client-dev` (nome
+antigo, específico de execução nativa em DEV, inalterado lá) para
+`cesar_core_api_key` -- o MESMO arquivo que o container `api` já monta
+(`DEC-121`). O César Core mantém seu próprio arquivo separado
+(`ggoferta-core-client`, deployment independente por `DEC-118` item 8)
+com o mesmo valor -- duas materializações da mesma identidade, não
+redesenhado para um único arquivo compartilhado (exigiria cruzar
+diretórios entre dois deployments independentes, fora do escopo). O
+procedimento antes manual de gerar essa credencial ("gere um valor
+forte para os dois lados") agora é determinístico e versionado no
+handoff, gravando os dois arquivos na mesma sessão sem nunca exibir o
+valor.
+
+Achado incidental fora do escopo, flagueado separadamente: a checagem
+de ACL do script (`Test-SecretsAcl`) usa strings em inglês
+(`"BUILTIN\Administrators"`) que falharam ao traduzir numa máquina
+Windows em PT-BR testada nesta sessão -- risco real se o Windows Server
+de PROD também estiver em português, não investigado nem corrigido
+aqui.
+
+Validado com uma chamada `AI` real e completa simulando exatamente a
+configuração do worker nativo em PROD (variáveis de ambiente de
+processo, sem `backend/.env`, arquivo de credencial renomeado): sucesso,
+`provider="cesar_core"`. Sem a credencial, falha explícita
+(`AIRequestError`), não silenciosa. A escrita real de variável de
+Máquina via `-Action Install` não foi reexercida nesta sessão por falta
+de elevação de Administrador no ambiente de desenvolvimento -- o
+mecanismo de escrita em si é idêntico ao já comprovado ao vivo em PROD.
+
+**Nova release do GG Oferta:** `v1.3.4` não foi movida. Esta correção
+foi publicada como **`v1.3.5`** -- ver hash real no próprio commit/tag
+em `origin`.
+
+**Nenhum deploy foi executado nesta rodada.**
