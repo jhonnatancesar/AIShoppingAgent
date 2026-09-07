@@ -19,6 +19,7 @@ from app.ai_provider.contracts import (
 )
 from app.ai_provider.manager import (
     CesarCoreAIProviderManager,
+    _build_cesar_core_manager,
     build_admin_dev_ai_provider_manager,
     build_user_ai_provider_manager,
 )
@@ -41,13 +42,14 @@ def request(profile: UserRole = UserRole.USER):
     )
 
 
-def provider(tmp_path, handler):
+def provider(tmp_path, handler, *, ai_profile="admin_dev"):
     key = tmp_path / "key"
     key.write_text("synthetic-fixture-only", encoding="utf-8")
     return CesarCoreAIProvider(
         api_key_file=key,
         base_url="http://127.0.0.1:8100",
         service="backend",
+        ai_profile=ai_profile,
         max_tokens=512,
         client_factory=lambda **kwargs: httpx.AsyncClient(
             transport=httpx.MockTransport(handler), **kwargs
@@ -78,6 +80,7 @@ def test_messages_preserved_and_response_normalized(tmp_path, caplog):
     result = asyncio.run(provider(tmp_path, handler).generate(original))
     assert wire == [
         {
+            "ai_profile": "admin_dev",
             "messages": [
                 {"role": m.role.value, "content": m.content} for m in original.messages
             ],
@@ -194,6 +197,24 @@ def test_core_is_mandatory_for_user_and_admin_dev(tmp_path):
     assert isinstance(
         build_admin_dev_ai_provider_manager(core_config), CesarCoreAIProviderManager
     )
+
+
+@pytest.mark.parametrize(
+    ("profile", "expected_ai_profile"),
+    [
+        (UserRole.USER, "user"),
+        (UserRole.ADMIN, "admin_dev"),
+        (UserRole.DEV, "admin_dev"),
+        (None, "admin_dev"),
+    ],
+)
+def test_ai_profile_is_derived_from_the_manager_profile_never_from_service_class(
+    tmp_path, profile, expected_ai_profile
+) -> None:
+    """GG só informa quem está chamando -- nunca escolhe provider/rota."""
+    config = Settings(_env_file=None, cesar_core_api_key_file=tmp_path / "key")
+    manager = _build_cesar_core_manager(config, profile)
+    assert manager._provider._ai_profile == expected_ai_profile
 
 
 def test_public_ai_package_exposes_no_direct_provider_factory() -> None:

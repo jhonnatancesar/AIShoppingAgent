@@ -74,11 +74,13 @@ def _build_cesar_core_manager(
 ) -> CesarCoreAIProviderManager:
     if settings.cesar_core_api_key_file is None:
         raise AIRequestError("Cesar Core requires AISHOPPING_CESAR_CORE_API_KEY_FILE")
+    ai_profile = "user" if profile is UserRole.USER else "admin_dev"
     return CesarCoreAIProviderManager(
         CesarCoreAIProvider(
             api_key_file=settings.cesar_core_api_key_file,
             base_url=settings.cesar_core_base_url,
             service=settings.cesar_core_service,
+            ai_profile=ai_profile,
             service_class=settings.cesar_core_service_class,
             max_tokens=settings.cesar_core_max_tokens,
             timeout_seconds=settings.cesar_core_timeout_seconds,

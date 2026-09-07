@@ -1,5 +1,61 @@
 # Decision Log
 
+## DEC-117 — Política de providers AI real (`ai_profile`, 4 connections, 2 combos) — happy path Gemini fica como validação operacional pendente pré-PROD
+
+- **Data:** 2026-09-07.
+- **Classificação:** Implementar agora (aprovado pelo usuário após auditoria
+  de dois pontos e uma bateria de falha controlada/reversível).
+- **Contexto:** o OmniRoute nunca teve Gemini/Groq/OpenRouter provisionados
+  como AI provider real (achado de sessão anterior, registrado em
+  `DEC-116`) — só o catálogo nativo sem credencial. Esta decisão fecha essa
+  lacuna, sem colocar seleção de provider no GG Oferta.
+- **Decisão — contrato:** novo campo explícito `ai_profile: "user" |
+  "admin_dev"` no contrato GG → César Core (`cesar_core.policy.ai_profile.
+  AIProfile`), sibling de `requirements`, não reaproveitando `service_class`
+  (rejeitado explicitamente: acoplamento errado com um sinal que já tem
+  semântica própria de custo/qualidade). O GG só declara quem está
+  chamando (derivado do `profile: UserRole` já rastreado localmente); não
+  escolhe provider/modelo, não conhece o provider final além do que
+  `AIResponse.provider`/`.model` já expunham.
+- **Decisão — policy:** 4 connections reais no OmniRoute (duas chaves
+  Gemini distintas, USER e ADMIN/DEV) e 2 combos (`strategy: "priority"`):
+  `user-cascade` = Gemini USER → `oc/mimo-v2.5-free` (Groq/OpenRouter
+  ausentes por construção, não por checagem em runtime); `admin-dev-cascade`
+  = Gemini ADMIN/DEV → Groq → OpenRouter → `oc/mimo-v2.5-free`. Modelos
+  reaproveitados do GG legado pré-migração para o Core (`DEC-050`):
+  `gemini-3.6-flash`, `openai/gpt-oss-120b`, `openrouter/free` — nenhum
+  modelo novo, nenhum `latest`/preview.
+- **Decisão — observabilidade:** `X-OmniRoute-Provider` (mecanismo real do
+  OmniRoute, "choke-point" anexado em todo retorno de sucesso não
+  streaming, não inferência por nome de modelo) propagado para
+  `AIResponse.provider` via `OmniRouteResponse.selected_provider`, mesmo
+  padrão já usado para `upstream_request_id`.
+- **Validação real e reversível:** cada connection ADMIN/DEV desativada
+  (`isActive: false`), testada, reativada imediatamente — provou
+  Gemini→Groq, Gemini+Groq→OpenRouter, Gemini+Groq+OpenRouter→
+  `oc/mimo-v2.5-free` (ADMIN/DEV) e Gemini→`oc/mimo-v2.5-free` (USER);
+  estado final de todas as 4 connections conferido idêntico ao inicial
+  (ativas). **Validação operacional pendente, não blocker técnico:** o
+  happy path com Gemini prioridade 1 respondendo (USER e ADMIN/DEV, tudo
+  ativo) não foi reproduzido nesta sessão — 20 chamadas reais (10 por
+  perfil) ao longo de ~47 minutos, em janelas espaçadas, caíram
+  consistentemente no fallback, nunca em `gemini`, apesar de ambas as
+  connections seguirem `valid: true` no teste isolado. Causa observada:
+  `RATE_LIMIT_EXECUTION_TIMEOUT` (indisponibilidade/quota real da API
+  Gemini gratuita, pelo volume desta própria sessão de testes) — não uma
+  falha de configuração. Nenhuma fila foi reiniciada, nenhuma prioridade
+  alterada, nenhum fallback desativado, nenhum workaround criado para
+  forçar sucesso.
+- **Gate obrigatório antes de PROD:** registrado em
+  `C:\cesar-core\docs\operations\omniroute-ai-provider-provisioning.md`
+  §6 — reexecutar a prova do happy path Gemini (USER e ADMIN/DEV) depois
+  que a quota/disponibilidade se normalizar; falha fora de uma condição de
+  quota conhecida no momento do teste vira blocker operacional, não mais
+  uma pendência aceita.
+- **Próxima ação:** nenhuma ativação em PROD sem o gate acima. Runbook
+  completo de provisionamento determinístico (sem UUIDs de DEV, secrets só
+  por nome) no mesmo arquivo do César Core.
+
 ## DEC-116 — FASE G: fechamento operacional de F1/F2/F3/cupons — feature flags, validação integrada, lacuna do OmniRoute registrada
 
 - **Data:** 2026-09-06/07.

@@ -29,6 +29,7 @@ class CesarCoreAIProvider:
         api_key_file: Path,
         base_url: str,
         service: str,
+        ai_profile: str,
         service_class: str = "economy",
         max_tokens: int = 1024,
         timeout_seconds: float = 90,
@@ -43,11 +44,14 @@ class CesarCoreAIProvider:
             "quality",
         }:
             raise ValueError("Invalid Cesar Core service configuration")
+        if ai_profile not in {"user", "admin_dev"}:
+            raise ValueError("Invalid Cesar Core ai_profile")
         if max_tokens < 1 or timeout_seconds <= 0:
             raise ValueError("Invalid Cesar Core limits")
         self._key_file = api_key_file
         self._endpoint = endpoint + "/v1/ai/generate"
         self._service = service
+        self._ai_profile = ai_profile
         self._service_class = service_class
         self._max_tokens = max_tokens
         self._timeout = timeout_seconds
@@ -63,6 +67,7 @@ class CesarCoreAIProvider:
         if not token:
             raise AIProviderError("cesar_core_credential_unavailable", retryable=False)
         payload = {
+            "ai_profile": self._ai_profile,
             "messages": [
                 {"role": item.role.value, "content": item.content}
                 for item in request.messages

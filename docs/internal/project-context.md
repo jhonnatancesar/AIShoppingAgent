@@ -3337,3 +3337,87 @@ corrigir a lacuna do OmniRoute em si (só foi registrada); backfill de
 config de TASK-113/F1 anterior a esta sessão (gap pré-existente,
 descoberto mas não coberto por esta TASK); checagem visual ao vivo do
 frontend (mesmo gap das etapas anteriores); o próprio deploy em PROD.
+
+## Política de providers AI ativada em DEV: `ai_profile` + 4 conexões + 2 combos (2026-09-07)
+
+Fecha a lacuna registrada em `project_omniroute_ai_providers_not_configured`
+(memória): o OmniRoute nunca teve Gemini/Groq/OpenRouter provisionados como
+AI provider real, só o catálogo nativo sem credencial. Documentação
+canônica completa (conexões, combos, modelos aprovados, validação real)
+está em `C:\cesar-core\docs\architecture\gg-oferta-core.md`, seção
+"Política de providers AI"; aqui só o resumo do lado GG Oferta.
+
+**Contrato GG → Core:** novo campo `ai_profile: "user" | "admin_dev"`
+(`cesar_core.ai.policy.ai_profile.AIProfile`, GG-side em
+`backend/app/ai_provider/cesar_core.py`/`manager.py`) -- não reutiliza
+`service_class` (rejeitado explicitamente pelo usuário: teria acoplamento
+errado com um sinal que já tem semântica própria de custo/qualidade).
+`_build_cesar_core_manager` deriva o perfil do `profile: UserRole` que já
+existia localmente (`UserRole.USER` → `"user"`; `ADMIN`/`DEV`/`None` →
+`"admin_dev"`) -- o GG continua sem escolher provider/modelo, só declara
+quem está chamando.
+
+**Policy real (aprovada pelo usuário antes da implementação):** USER só
+alcança Gemini USER → fallback gratuito `oc/mimo-v2.5-free`, nunca
+Groq/OpenRouter (ausência estrutural no combo, não checagem em runtime).
+ADMIN/DEV alcança Gemini ADMIN/DEV → Groq → OpenRouter → mesmo fallback
+gratuito. Os três modelos (`gemini-3.6-flash`, `openai/gpt-oss-120b`,
+`openrouter/free`) são os mesmos já aprovados no GG Oferta antes da
+migração para o Core (achados por arqueologia de `git show` sobre os
+providers removidos na FASE E, DEC-050) -- nenhum modelo novo foi
+inventado nem `latest`/preview usado.
+
+**Validação real:** `POST /v1/ai/generate` ponta a ponta (container
+`cesar-core:local` rebuildado e recriado localmente, Redis/OmniRoute
+preservados) confirmou `ai_profile=user` → `gemini-3.6-flash` e
+`ai_profile=admin_dev` → `openai/gpt-oss-120b` numa queda real de
+prioridade (não simulada) quando Gemini ADMIN/DEV não respondeu. Suíte
+focada do GG (`tests/test_cesar_core_ai_provider.py`, 30 testes) e suíte
+completa não-integração (1853 passed, 13 skipped) passando; as 5 falhas
+pré-existentes (`test_authentication_service.py`,
+`test_products.py`, `test_users.py`) foram confirmadas via `git stash`
+como já existentes antes desta mudança, sem relação com `ai_profile`.
+
+**Não incluído nesta rodada, deliberadamente:** deploy em PROD (PROD
+continua no cascade anterior, `default_model=oc/mimo-v2.5-free`); teste
+de queda forçada de cada conexão individualmente (a única queda real
+observada foi espontânea, por quota); commit/push (aguardando revisão
+explícita do usuário, per instrução vigente).
+
+## Auditoria de correção: falha controlada, tracing real e provisionamento (2026-09-07)
+
+O usuário não aprovou o fechamento acima antes de três pontos serem
+auditados/corrigidos. Detalhe completo em
+`C:\cesar-core\docs\architecture\gg-oferta-core.md`, seção "Política de
+providers AI"; resumo aqui:
+
+1. **Falha controlada e reversível real**: cada conexão ADMIN/DEV foi
+   desativada (`PATCH /api/providers/{id}`, `isActive: false`), testada
+   e reativada imediatamente, provando Gemini→Groq, Gemini+Groq→
+   OpenRouter, Gemini+Groq+OpenRouter→`oc/mimo-v2.5-free` (USER: Gemini
+   USER→`oc/mimo-v2.5-free`); estado final de `isActive` conferido
+   idêntico ao inicial (as 4 conexões ativas). **Limitação real
+   registrada, não contornada:** o cenário "Gemini funcionando" (USER e
+   ADMIN/DEV) não foi reproduzido — 9 tentativas reais em ~3 min caíram
+   em Groq/`oc`; causa raiz confirmada (`RATE_LIMIT_EXECUTION_TIMEOUT`,
+   fila local do OmniRoute para `gemini` saturada pelo próprio volume de
+   testes desta sessão) via chamada direta fora de combo; as conexões
+   Gemini continuam `valid: true` no teste isolado (~400 ms) -- não é um
+   problema de configuração.
+2. **Provider real em usage/tracing**: o OmniRoute expõe a conexão
+   escolhida via cabeçalho real `X-OmniRoute-Provider` (mecanismo
+   deliberado do produto, "choke-point" em todo retorno de sucesso,
+   confirmado no código-fonte e empiricamente) -- não era null por falta
+   de alternativa, era um campo que o Core simplesmente não lia ainda.
+   Corrigido: `OmniRouteResponse.selected_provider` (mesmo padrão já
+   usado para `upstream_request_id`) alimenta `AIResponse.provider`
+   antes do corpo/target; tracing e usage já liam esse campo, sem
+   mudança adicional necessária ali.
+3. **Configuração reproduzível**: novo runbook
+   `docs/operations/omniroute-ai-provider-provisioning.md` (repositório
+   César Core) com nomes de connections/combos/secrets e prioridades --
+   sem nenhum UUID do DEV, para provisionar PROD do zero.
+
+Testes focados do Core re-executados após as correções: 339 passed
+(337 anteriores + 2 novos, cobrindo a precedência do header sobre
+corpo/target). Ainda sem commit/push -- aguardando nova revisão.
