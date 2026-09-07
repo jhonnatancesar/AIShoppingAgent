@@ -46,8 +46,8 @@ uma foto de um instante, não uma garantia de que nada mudou depois):
 
 | Componente | Tag | Commit | Observação |
 |---|---|---|---|
-| GG Oferta | **`v1.3.1`** | `28af361` (`main`) | Cota ADMIN/DEV=50, correção do Telegram, saneamento de documentação, este handoff |
-| César Core | **`v1.2.1`** | `a5ba084` (`main`) | Política real de providers AI (`ai_profile`, 4 connections, 2 combos) + saneamento documental. **Imagem já publicada e verificada no GHCR:** `ghcr.io/jhonnatancesar/cesar-core:1.2.1` (também `:1.2`, `:1`, `:latest`) |
+| GG Oferta | **`v1.3.2`** | `7710646` (`main`) | Substitui `v1.3.1` (que ainda dependia do repositório `cesar-core` no servidor — corrigido). Inclui o bundle `deploy/prod/`, este handoff corrigido, cota ADMIN/DEV=50, correção do Telegram |
+| César Core | **`v1.2.1`** | `a5ba084` | Política real de providers AI (`ai_profile`, 4 connections, 2 combos) + saneamento documental. **Imagem já publicada e verificada no GHCR:** `ghcr.io/jhonnatancesar/cesar-core:1.2.1` (também `:1.2`, `:1`, `:latest`). **PROD não usa esta tag/repositório diretamente — só a imagem, via `deploy/prod/cesar-core.compose.yaml`.** |
 | Coupon Worker | **`v1.0.0`** | `5f502e1` (`master`) | Primeira release — coleta real de cupons com persistência no Postgres do GG |
 
 **`v1.2.0` do César Core existiu por um instante e falhou na
@@ -66,13 +66,13 @@ Histórico relevante anterior a estas tags, para contexto:
   refinamento de esgotamento).
 
 **Para o deploy em si:** faça checkout das tags acima nos dois
-repositórios que existem em PROD (`git checkout v1.3.1` — ou a mais
-recente, confirme na seção "Repositórios" atualizada — no GG Oferta,
-`v1.0.0` no Coupon Worker). O César Core **não tem repositório em
-PROD**: use `deploy/prod/cesar-core.compose.yaml` (deste próprio
-checkout do GG Oferta), que já referencia `ghcr.io/jhonnatancesar/
-cesar-core:1.2.1` como imagem padrão — nenhum `docker build`, nenhum
-clone do repositório `cesar-core`.
+repositórios que existem em PROD (`git checkout v1.3.2` — confirme que é
+essa a mais recente com `git tag --sort=-creatordate` antes — no GG
+Oferta, `v1.0.0` no Coupon Worker). O César Core **não tem repositório
+em PROD**: use `deploy/prod/cesar-core.compose.yaml` (deste próprio
+checkout do GG Oferta, já em `v1.3.2`), que já referencia `ghcr.io/
+jhonnatancesar/cesar-core:1.2.1` como imagem padrão — nenhum `docker
+build`, nenhum clone do repositório `cesar-core`.
 
 ## 2. O que fazer primeiro (antes de qualquer deploy)
 
