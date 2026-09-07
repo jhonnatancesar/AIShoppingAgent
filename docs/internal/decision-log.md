@@ -1,5 +1,88 @@
 # Decision Log
 
+## DEC-123 — Checagem de ACL de `manage_collection_worker_config.ps1` dependia do idioma do Windows (blocker do mesmo deploy, `v1.3.5`)
+
+- **Data:** 2026-09-07.
+- **Classificação:** Corrigir agora (achado incidental do `DEC-122`
+  reclassificado como blocker do mesmo deploy PROD -- o script roda em
+  Windows Server real, e a checagem quebrada bloquearia
+  `-Action Install`/`-Action Update` permanentemente se o servidor
+  estiver em português).
+- **Causa confirmada:** `Test-SecretsAcl` comparava
+  `IdentityReference.Value` (nome de exibição, traduzido pelo Windows
+  conforme o idioma da instalação) contra strings hardcoded em inglês --
+  `"NT AUTHORITY\SYSTEM"` e `"BUILTIN\Administrators"`. Contas e grupos
+  embutidos do Windows têm nome real localizado no SAM, não é só rótulo
+  de UI: testado ao vivo nesta máquina (Windows PT-BR),
+  `New-Object System.Security.Principal.NTAccount("BUILTIN\Administrators")`
+  lança exceção ("Não foi possível converter algumas ou todas as
+  referências de identidade") porque o grupo se chama "Administradores"
+  aqui; e a conta administrativa embutida (RID 500) se chama
+  "Administrador" (nem "Administrator" nem uma tradução literal de uma
+  palavra composta -- confirma que qualquer comparação de string em
+  inglês nunca bateria). Em qualquer Windows Server instalado em
+  português, `Assert-Preflight` reprovaria a ACL mesmo com as permissões
+  fisicamente corretas.
+- **Correção:** identidades resolvidas por **SID**, nunca por nome
+  traduzido -- SID nunca muda com idioma (`S-1-5-18` é sempre SYSTEM,
+  `S-1-5-32-544` é sempre o grupo Administrators embutido, em qualquer
+  instalação/idioma do Windows). Nova função `Get-ExpectedAclSids`:
+  `LocalSystemSid`/`BuiltinAdministratorsSid` via
+  `[System.Security.Principal.WellKnownSidType]` (universal, não precisa
+  de contexto de domínio); a conta administrativa local (antes
+  `"$env:COMPUTERNAME\Administrator"`, um nome também localizado)
+  passou a ser localizada via `Get-CimInstance Win32_UserAccount` pelo
+  próprio SID (sufixo `-500`, o RID fixo da conta embutida em qualquer
+  instalação do Windows, mesmo renomeada) -- nunca por nome. `Test-SecretsAcl`
+  agora traduz cada `IdentityReference` da ACL real para SID
+  (`.Translate([System.Security.Principal.SecurityIdentifier])`) antes
+  de comparar; identidade que não traduz (conta órfã) nunca é ignorada
+  silenciosamente -- entra na comparação e reprova como inesperada
+  (fail-closed preservado). Nova função `Get-AclIdentityLabel` traduz o
+  SID de volta para nome localizado **só para a mensagem de erro** (o
+  operador continua vendo um nome legível no idioma da própria máquina),
+  nunca para a comparação em si. Nenhuma regra de segurança foi
+  relaxada -- é exatamente o mesmo conjunto de 3 identidades permitidas,
+  resolvido de um jeito que não depende de tradução.
+- **Testes** (mesma máquina de desenvolvimento PT-BR, sem elevação de
+  Administrador disponível -- ver limitação abaixo): `Get-ExpectedAclSids`
+  resolve os 3 SIDs corretos nesta máquina (`S-1-5-18`, `S-1-5-32-544`,
+  RID 500 real -- confirmado como "NOSTROMO\Administrador", não
+  "Administrator"); ACL construída diretamente por SID (não por nome,
+  simulando o resultado que seria idêntico em Windows/en-US -- SIDs são
+  os mesmos independente de idioma, representação equivalente pedida
+  explicitamente em vez de uma segunda VM) com exatamente as 3
+  identidades esperadas é aceita; a mesma ACL com `Everyone`/`Todos`
+  (`S-1-1-0`) adicionado é rejeitada, com mensagem de erro legível
+  (nome traduzido) e nunca um tipo `.NET` cru; caminho relativo
+  continua rejeitado; secret ausente continua detectado (mesma lógica
+  inalterada da rodada anterior, exercida à parte porque a ACL
+  restritiva de verdade bloqueia até o próprio `Test-Path` de um usuário
+  não-administrador -- ver nota); `-CesarCoreBaseUrl`/nome canônico do
+  secret confirmados sem regressão; nenhuma leitura de conteúdo de
+  secret encontrada no código-fonte.
+- **Limitação real desta validação, registrada honestamente:** com a
+  ACL de verdade restrita a SYSTEM/Administrators-grupo/RID500, um
+  usuário comum (mesmo sendo o Owner do diretório de teste) não
+  consegue nem listar/checar arquivos dentro dele -- `READ_CONTROL`/
+  `WRITE_DAC` são implícitos ao Owner no NTFS, mas acesso a dados
+  (`FILE_LIST_DIRECTORY`) não é. Isso significa que o cenário exato
+  "ACL de PROD restrita + Administrator lendo o secret lá dentro" só é
+  totalmente exercitável rodando de fato como Administrador -- que não
+  estava disponível nesta sessão. Em PROD real, `Assert-Administrator`
+  já garante que o processo roda elevado antes de chegar nesse ponto, o
+  que resolve esse acesso -- mas não foi reexercido ao vivo aqui.
+- **Release:** `v1.3.5` não foi movida (tags imutáveis). Esta correção
+  foi publicada como **`v1.3.6`** -- ver hash real no commit/tag em
+  `origin`.
+- **Handoff/decision-log:** nenhuma mudança de procedimento ou de
+  comando visível ao operador (continua `-Action Install`/`-Action
+  Status`, mesmos parâmetros) -- só o mecanismo interno de validação de
+  ACL ficou robusto a idioma. `docs/operations/prod-deployment-handoff.md`
+  não precisou de edição nesta rodada.
+- **Não incluído nesta rodada:** nenhum deploy real foi executado (fora
+  do escopo desta decisão, por instrução explícita do usuário).
+
 ## DEC-122 — Worker nativo sem wiring do César Core em PROD; diagnóstico inicial (`backend\.env`) descartado por contradizer o `DEC-104`
 
 - **Data:** 2026-09-07.

@@ -146,15 +146,6 @@ $script:SecretFileMap = [ordered]@{
     "AISHOPPING_CESAR_CORE_API_KEY_FILE" = @{ File = "cesar_core_api_key"; Required = $true }
 }
 
-# Identidades esperadas na ACL de $SecretsDir (DEC-104) -- qualquer outra
-# identidade com acesso (BUILTIN\Users, Authenticated Users, Everyone,
-# etc.) reprova o preflight.
-$script:ExpectedAclIdentities = @(
-    "NT AUTHORITY\SYSTEM",
-    "BUILTIN\Administrators",
-    "$env:COMPUTERNAME\Administrator"
-)
-
 function Get-NonSecretVars {
     param(
         [Parameter(Mandatory = $true)][string]$DatabaseHost,
@@ -170,23 +161,85 @@ function Get-NonSecretVars {
     }
 }
 
+# DEC-123: identidades esperadas na ACL de $SecretsDir, resolvidas por SID
+# -- nunca por nome traduzido (`BUILTIN\Administrators`,
+# `NT AUTHORITY\SYSTEM` etc. são nomes de EXIBIÇÃO, localizados pelo
+# próprio Windows conforme o idioma da instalação -- em PT-BR o grupo
+# embutido se chama "Administradores", e uma comparação de string em
+# inglês nunca bate). SID nunca muda com idioma: `S-1-5-18` é sempre o
+# SYSTEM local, `S-1-5-32-544` é sempre o grupo Administrators embutido,
+# em qualquer instalação do Windows, em qualquer idioma.
+function Get-ExpectedAclSids {
+    $systemSid = New-Object System.Security.Principal.SecurityIdentifier(
+        [System.Security.Principal.WellKnownSidType]::LocalSystemSid, $null)
+    $adminsGroupSid = New-Object System.Security.Principal.SecurityIdentifier(
+        [System.Security.Principal.WellKnownSidType]::BuiltinAdministratorsSid, $null)
+
+    # Conta administrativa local embutida: RID 500 é fixo em qualquer
+    # instalação do Windows, mesmo que a conta tenha sido renomeada --
+    # localizada via WMI/CIM pelo próprio SID (sufixo "-500"), nunca por
+    # nome. Nenhum outro mecanismo (NTAccount("...\Administrator")) é
+    # confiável aqui: o nome de exibição também é localizado.
+    $builtinAdminAccount = Get-CimInstance -ClassName Win32_UserAccount `
+        -Filter "LocalAccount=True" -ErrorAction Stop |
+        Where-Object { $_.SID -match "^S-1-5-21-\d+-\d+-\d+-500$" } |
+        Select-Object -First 1
+    if (-not $builtinAdminAccount) {
+        throw "Não foi possível localizar a conta administrativa local embutida (SID terminado em -500) via WMI/CIM -- não é seguro validar a ACL sem essa identidade confirmada."
+    }
+    $adminAccountSid = New-Object System.Security.Principal.SecurityIdentifier($builtinAdminAccount.SID)
+
+    return @($systemSid, $adminsGroupSid, $adminAccountSid)
+}
+
+# Só para mensagens de erro legíveis pelo operador -- nunca usado na
+# comparação em si, que é sempre por SID.
+function Get-AclIdentityLabel {
+    param([Parameter(Mandatory = $true)][string]$SidValue)
+    try {
+        $sid = New-Object System.Security.Principal.SecurityIdentifier($SidValue)
+        return "$($sid.Translate([System.Security.Principal.NTAccount]).Value) ($SidValue)"
+    }
+    catch {
+        return $SidValue
+    }
+}
+
 function Test-SecretsAcl {
     param([Parameter(Mandatory = $true)][string]$SecretsDir)
 
     if (-not (Test-Path -LiteralPath $SecretsDir)) {
         return @{ Ok = $false; Detail = "diretório não existe" }
     }
+
+    $expectedSids = (Get-ExpectedAclSids | ForEach-Object { $_.Value })
+
     $acl = Get-Acl -LiteralPath $SecretsDir
-    $identities = $acl.Access | ForEach-Object { $_.IdentityReference.Value }
-    $unexpected = $identities | Where-Object { $_ -notin $script:ExpectedAclIdentities } | Select-Object -Unique
+    $actualSids = $acl.Access | ForEach-Object {
+        try {
+            $_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value
+        }
+        catch {
+            # Identidade que não pôde ser traduzida para SID (conta
+            # órfã/deletada, por exemplo) -- nunca ignorada
+            # silenciosamente, entra na comparação e sempre reprova como
+            # inesperada (fail-closed).
+            $_.IdentityReference.Value
+        }
+    } | Select-Object -Unique
+
+    $unexpected = $actualSids | Where-Object { $_ -notin $expectedSids }
     if ($unexpected) {
-        return @{ Ok = $false; Detail = "identidades inesperadas com acesso: $($unexpected -join ', ')" }
+        $labels = $unexpected | ForEach-Object { Get-AclIdentityLabel $_ }
+        return @{ Ok = $false; Detail = "identidades inesperadas com acesso: $($labels -join ', ')" }
     }
-    $missing = $script:ExpectedAclIdentities | Where-Object { $_ -notin $identities }
+    $missing = $expectedSids | Where-Object { $_ -notin $actualSids }
     if ($missing) {
-        return @{ Ok = $false; Detail = "identidades esperadas sem acesso: $($missing -join ', ')" }
+        $labels = $missing | ForEach-Object { Get-AclIdentityLabel $_ }
+        return @{ Ok = $false; Detail = "identidades esperadas sem acesso: $($labels -join ', ')" }
     }
-    return @{ Ok = $true; Detail = "somente $($script:ExpectedAclIdentities -join ', ')" }
+    $allLabels = $expectedSids | ForEach-Object { Get-AclIdentityLabel $_ }
+    return @{ Ok = $true; Detail = "somente $($allLabels -join ', ')" }
 }
 
 function Assert-Preflight {

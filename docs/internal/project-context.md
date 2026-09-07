@@ -3744,3 +3744,24 @@ foi publicada como **`v1.3.5`** -- ver hash real no próprio commit/tag
 em `origin`.
 
 **Nenhum deploy foi executado nesta rodada.**
+
+## Checagem de ACL de `manage_collection_worker_config.ps1` dependia de idioma do Windows (2026-09-07)
+
+O achado incidental do DEC-122 (checagem de ACL comparando nomes em
+inglês) foi reclassificado como blocker do mesmo deploy PROD, já que o
+script roda direto no Windows Server. Ver `DEC-123` para o registro
+completo. Resumo: `Test-SecretsAcl` foi reescrita para comparar
+identidades por **SID** (`S-1-5-18`, `S-1-5-32-544`, RID 500 real via
+`Win32_UserAccount`) em vez de nome de exibição traduzido -- confirmado
+ao vivo nesta máquina (Windows PT-BR) que o grupo/conta embutidos se
+chamam "Administradores"/"Administrador", não "Administrators"/
+"Administrator", e que a comparação antiga nunca bateria aqui. Mesmas
+regras de segurança, nenhum relaxamento -- só a resolução de identidade
+ficou independente de idioma. Nenhuma mudança de comando/procedimento
+visível ao operador.
+
+**Nova release do GG Oferta:** `v1.3.5` não foi movida. Esta correção
+foi publicada como **`v1.3.6`** -- ver hash real no próprio commit/tag
+em `origin`.
+
+**Nenhum deploy foi executado nesta rodada.**
