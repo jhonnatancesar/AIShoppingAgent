@@ -29,12 +29,26 @@ não escolhe nem substitui as decisões centrais do Core.
 
 ## Pré-requisitos
 
-- Um César Core acessível por HTTP (loopback em DEV, `http://127.0.0.1:8100`
-  por padrão) — já rodando, com `AI_ENABLED`/`SEARCH_ENABLED` habilitados.
+- Um César Core acessível por HTTP — já rodando, com
+  `AI_ENABLED`/`SEARCH_ENABLED` habilitados. O **endereço muda conforme quem
+  está chamando** (dois transportes distintos, mesma arquitetura lógica, ver
+  `DEC-121`):
+  - Processo **nativo** no Windows (`collection_worker`, ou `api`/pytest
+    rodados diretamente com `uvicorn`/`python`, fora do Docker): loopback,
+    `http://127.0.0.1:8100`.
+  - Container `api` (`docker compose up`, `compose.yaml` deste repositório):
+    `http://host.docker.internal:8100` — `127.0.0.1` de dentro do container
+    aponta para o próprio container, nunca para o Windows Server que hospeda
+    o César Core. Mesmo mecanismo já usado por
+    `WINDOWS_OPS_AGENT_URL`/`ops_controller` (`DEC-103`): `extra_hosts:
+    host-gateway`.
 - Uma credencial de aplicação (Bearer) exclusiva para este consumidor
   (`gg_oferta`) — uma credencial dinâmica emitida pelo Control Plane ou a
   credencial legada compatível fornecida por arquivo; nunca a credencial
-  upstream do OmniRoute nem a senha do Control Plane administrativo.
+  upstream do OmniRoute nem a senha do Control Plane administrativo. É a
+  **mesma credencial para AI, Search e Fetch** — a distinção de capability é
+  feita pelo Core (`X-Service`/`X-Purpose`), nunca por uma credencial
+  separada por capability no lado do GG (`app/search/cesar_core_fetch.py`).
 
 ## Passo a passo
 
@@ -45,29 +59,49 @@ não escolhe nem substitui as decisões centrais do Core.
    uma única vez pelo Core. A credencial legada compatível não é emitida nem
    persistida pelo Control Plane: o mesmo valor é provisionado em arquivos
    locais separados no consumidor e no Core.
-2. **Grave a credencial num arquivo local**, fora do Git:
+2. **Grave a credencial num arquivo local**, fora do Git — o caminho depende
+   de como o `api` vai rodar (passo 4 decide qual):
 
    ```powershell
+   # Execução nativa (backend/.env aponta para este caminho)
    Set-Content -Path .secrets\cesar-core-client-dev -Value '<credencial-emitida-pelo-core>' -NoNewline
+   # Container `api` via compose.yaml (mesmo valor, arquivo dedicado ao secret do Compose)
+   Set-Content -Path .secrets\cesar_core_api_key -Value '<mesma-credencial>' -NoNewline
    ```
 
    Veja o inventário completo de secrets em [Secrets](secrets.md).
-3. **Configure o `backend/.env`** deste repositório (é esse arquivo que o
-   `Settings` do backend lê em execução nativa; ver a tabela completa em
+3. **Configure a URL/credencial** no ponto que corresponde a como o `api` vai
+   rodar (ver tabela completa em
    [Configuração](configuration.md#césar-core-ia-e-web-search)):
 
-   ```dotenv
-   AISHOPPING_CESAR_CORE_BASE_URL=http://127.0.0.1:8100
-   AISHOPPING_CESAR_CORE_API_KEY_FILE=C:\AIShoppingAgent\AIShoppingAgent\.secrets\cesar-core-client-dev
-   ```
+   - **Execução nativa** — `backend/.env` (lido pelo `Settings` do backend):
+
+     ```dotenv
+     AISHOPPING_CESAR_CORE_BASE_URL=http://127.0.0.1:8100
+     AISHOPPING_CESAR_CORE_API_KEY_FILE=C:\AIShoppingAgent\AIShoppingAgent\.secrets\cesar-core-client-dev
+     ```
+
+   - **Container `api`** — já vem com wiring versionado em `compose.yaml`
+     (`DEC-121`, sem precisar editar o Compose): `AISHOPPING_CESAR_CORE_
+     BASE_URL` já tem o default `http://host.docker.internal:8100`, e o
+     secret `cesar_core_api_key` já é montado em
+     `AISHOPPING_CESAR_CORE_API_KEY_FILE=/run/secrets/cesar_core_api_key`.
+     Só é preciso o arquivo local do passo 2 existir com o valor real —
+     `.secrets\cesar_core_api_key` (ou o caminho de
+     `${AISHOPPING_SECRETS_DIR}`, se customizado).
 
    As capabilities precisam estar `ACTIVE` no Core; ausência ou negação fecha
-   a chamada sem fallback local.
-4. **Suba/reinicie** o processo consumidor nativo (API e/ou `collection_worker`,
-   conforme `AISHOPPING_CESAR_CORE_SERVICE`) para carregar a nova
-   configuração. O `compose.yaml` atual não encaminha as variáveis
-   `AISHOPPING_CESAR_CORE_*` nem monta esta credencial; não o trate como caminho
-   integrado até existir wiring versionado específico.
+   a chamada sem fallback local. Só a capability **AI** é usada pelo `api`
+   (interpretação de linguagem natural do webhook do Telegram,
+   `app/telegram/router.py`) — Search/Fetch continuam concern exclusivo do
+   `collection_worker` nativo (TASK-109), que sempre usa loopback.
+4. **Suba/reinicie** o processo consumidor: nativo (API e/ou
+   `collection_worker`, conforme `AISHOPPING_CESAR_CORE_SERVICE`) ou
+   `docker compose up -d api` para o container. O `compose.yaml` encaminha as
+   variáveis `AISHOPPING_CESAR_CORE_*` e monta a credencial desde `DEC-121`
+   (2026-09-07) — antes disso era um gap real, encontrado só no preflight de
+   PROD (o `api` tentava `127.0.0.1:8100`, que dentro do container aponta
+   para o próprio container, e não tinha a credencial montada).
 5. **Verifique**, nessa ordem:
 
    ```powershell

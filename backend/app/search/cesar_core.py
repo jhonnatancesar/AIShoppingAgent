@@ -4,7 +4,7 @@ from pathlib import Path
 
 import httpx
 
-from app.core.urls import normalize_loopback_http_endpoint
+from app.core.urls import normalize_cesar_core_http_endpoint
 from app.search.contracts import WebSearchError, WebSearchResponse, WebSearchResult
 
 
@@ -19,9 +19,11 @@ class CesarCoreSearchProvider:
         timeout_seconds: float = 30,
         client_factory=httpx.AsyncClient,
     ) -> None:
-        endpoint = normalize_loopback_http_endpoint(base_url)
+        endpoint = normalize_cesar_core_http_endpoint(base_url)
         if endpoint is None:
-            raise ValueError("Cesar Core DEV endpoint must be HTTP loopback")
+            raise ValueError(
+                "Cesar Core endpoint must be HTTP loopback or host.docker.internal"
+            )
         self._endpoint = endpoint + "/v1/search"
         self._key_file = api_key_file
         self._service = service

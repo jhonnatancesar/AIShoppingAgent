@@ -12,7 +12,7 @@ from app.ai_provider.contracts import (
     AIRequest,
     AIResponse,
 )
-from app.core.urls import normalize_loopback_http_endpoint
+from app.core.urls import normalize_cesar_core_http_endpoint
 
 
 class CesarCoreConnectionUnavailable(AIProviderUnavailable):
@@ -35,9 +35,11 @@ class CesarCoreAIProvider:
         timeout_seconds: float = 90,
         client_factory: Callable[..., httpx.AsyncClient] = httpx.AsyncClient,
     ) -> None:
-        endpoint = normalize_loopback_http_endpoint(base_url)
+        endpoint = normalize_cesar_core_http_endpoint(base_url)
         if endpoint is None:
-            raise ValueError("Cesar Core DEV endpoint must be HTTP loopback")
+            raise ValueError(
+                "Cesar Core endpoint must be HTTP loopback or host.docker.internal"
+            )
         if not service.strip() or service_class not in {
             "economy",
             "standard",

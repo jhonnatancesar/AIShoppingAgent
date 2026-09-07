@@ -27,3 +27,20 @@ def test_operational_ports_bind_to_loopback_by_default() -> None:
     )
     assert "${JAEGER_BIND_ADDRESS:-127.0.0.1}:${JAEGER_UI_PORT:-16686}:16686" in content
     assert '"127.0.0.1:${OTEL_HEALTH_PORT:-13133}:13133"' in content
+
+
+def test_api_reaches_cesar_core_via_host_docker_internal() -> None:
+    """DEC-121: dentro do container `api`, `127.0.0.1` aponta para o
+    próprio container, não para o Windows Server que hospeda o César
+    Core -- precisa do mesmo mecanismo host.docker.internal/host-gateway
+    já usado por `ops_controller` (DEC-103), agora também aqui."""
+    content = COMPOSE.read_text(encoding="utf-8")
+
+    assert (
+        "AISHOPPING_CESAR_CORE_BASE_URL: "
+        "${AISHOPPING_CESAR_CORE_BASE_URL:-http://host.docker.internal:8100}"
+        in content
+    )
+    assert "AISHOPPING_CESAR_CORE_API_KEY_FILE: /run/secrets/cesar_core_api_key" in content
+    assert "- cesar_core_api_key" in content
+    assert content.count('"host.docker.internal:host-gateway"') == 2

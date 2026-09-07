@@ -130,12 +130,24 @@ Integração obrigatória com o gateway privado César Core (repositório própr
 
 | Variável | Finalidade | Padrão |
 | --- | --- | --- |
-| `AISHOPPING_CESAR_CORE_BASE_URL` | Endpoint HTTP loopback do Core | `http://127.0.0.1:8100` |
+| `AISHOPPING_CESAR_CORE_BASE_URL` | Endpoint HTTP do Core -- loopback OU `host.docker.internal` (`DEC-121`, ver nota) | `http://127.0.0.1:8100` (execução nativa) / `http://host.docker.internal:8100` (container `api`, `compose.yaml`) |
 | `AISHOPPING_CESAR_CORE_SERVICE` | Identifica o chamador (`backend`/`collection_worker`) perante o Core | `backend` |
 | `AISHOPPING_CESAR_CORE_SERVICE_CLASS` | Classe de serviço solicitada (`economy`/`standard`/`quality`) | `economy` |
 | `AISHOPPING_CESAR_CORE_MAX_TOKENS` | Teto de tokens da geração de IA | `1024` |
 | `AISHOPPING_CESAR_CORE_TIMEOUT_SECONDS` | Timeout da chamada de IA | `90` |
-| `AISHOPPING_CESAR_CORE_SEARCH_TIMEOUT_SECONDS` | Timeout da chamada de Search | `30` |
+| `AISHOPPING_CESAR_CORE_SEARCH_TIMEOUT_SECONDS` | Timeout da chamada de Search (só `collection_worker`) | `30` |
+
+**`DEC-121` (2026-09-07):** `127.0.0.1` de dentro do container `api` aponta
+para o próprio container, nunca para o Windows Server que hospeda o César
+Core -- por isso o `compose.yaml` deste repositório já define
+`AISHOPPING_CESAR_CORE_BASE_URL` com default `http://host.docker.internal:8100`
+para o serviço `api` (`extra_hosts: host-gateway`, mesmo mecanismo de
+`WINDOWS_OPS_AGENT_URL`/`ops_controller`, `DEC-103`). O `collection_worker`
+nativo continua com `127.0.0.1:8100` (`backend/.env`) -- diferença de
+transporte por ambiente de execução, não mudança da arquitetura lógica. Só a
+capability **AI** é usada pelo `api` (nunca Search/Fetch, que são concern
+exclusivo do `collection_worker`) -- por isso só o `api` recebe este wiring
+no `compose.yaml`, não `telegram_notifier`/`ops_controller`.
 
 A credencial (`AISHOPPING_CESAR_CORE_API_KEY_FILE`) é secret, não vai nesta
 página — ver [Secrets](secrets.md). Quota efetiva (limite) não é configurada

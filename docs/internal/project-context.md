@@ -3638,3 +3638,50 @@ em `origin`.
 **Nenhum deploy foi executado nesta rodada** -- só o procedimento foi
 criado, validado em DEV e documentado, por instrução explícita do
 usuário ("Pare depois disso. Não faça deploy").
+
+## Blocker real do deploy PROD: `api` containerizado não falava com o César Core (2026-09-07)
+
+Backup+restore-teste do PostgreSQL de PROD já feito, migrations já
+aplicadas com sucesso até `20260906_0002` -- a stack da aplicação
+continuou parada porque `compose.yaml` nunca encaminhava nenhuma
+variável `AISHOPPING_CESAR_CORE_*` nem montava a credencial no serviço
+`api`. Ver `DEC-121` em `decision-log.md` para o registro completo
+(causa, variáveis reais, escopo por processo, correção, testes).
+
+Resumo: `127.0.0.1` (default de código de
+`AISHOPPING_CESAR_CORE_BASE_URL`) aponta para o próprio container `api`
+quando usado de dentro dele, nunca para o Windows Server que hospeda o
+César Core -- gap já documentado honestamente em
+`docs/installation/cesar-core.md` numa rodada anterior, nunca fechado
+até agora. Corrigido reaproveitando o mesmo mecanismo já em produção
+para `WINDOWS_OPS_AGENT_URL`/`ops_controller` (`DEC-103`):
+`host.docker.internal` + `extra_hosts: host-gateway`, agora também no
+`api`. Precisou também de uma mudança de código
+(`normalize_cesar_core_http_endpoint` em `backend/app/core/urls.py`) --
+sem ela, o wiring do compose sozinho não bastaria, porque
+`CesarCoreAIProvider`/`CesarCoreSearchProvider`/`CesarCoreFetchProvider`
+rejeitavam qualquer hostname que não fosse loopback estrito.
+
+Auditoria de código confirmou dois fatos que corrigem a premissa inicial
+do pedido: (1) GG Oferta usa **uma única credencial/URL** para AI,
+Search e Fetch (nunca uma por capability) -- as 3 credenciais
+`ggoferta-ai`/`ggoferta-search`/`ggoferta-fetch` do OmniRoute são
+internas ao deployment do César Core, já fechadas desde `DEC-120`, nunca
+tocadas pelo GG; (2) só o `api` chama a capability AI do Core
+(interpretação de linguagem natural do Telegram) -- Search/Fetch
+continuam concern exclusivo do `collection_worker` nativo, que já usava
+`127.0.0.1` corretamente e não precisou de nenhuma mudança.
+
+Validado em DEV com uma chamada `AI` real e completa (não mockada):
+container Docker com o mesmo `extra_hosts` do `compose.yaml`, código
+atual, credencial real -- resposta `200`, `provider="cesar_core"` do
+César Core/OmniRoute local. Ausência do secret produz falha explícita
+(`cesar_core_credential_unavailable`), não fallback silencioso.
+
+**Nova release do GG Oferta:** `v1.3.3` não foi movida. Esta correção
+foi publicada como **`v1.3.4`** -- ver hash real no próprio commit/tag
+em `origin`.
+
+**Nenhum deploy foi executado nesta rodada** -- só o código, o wiring do
+compose e a documentação foram corrigidos e validados em DEV, por
+instrução explícita do usuário ("Não faça deploy").

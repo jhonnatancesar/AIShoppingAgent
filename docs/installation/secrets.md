@@ -11,7 +11,7 @@ para o diretório e `0600` para cada arquivo.
 | Secret | Arquivo | API | Collection Worker | Telegram Notifier | PostgreSQL |
 | --- | --- | --- | --- | --- | --- |
 | Senha PostgreSQL | `postgres_password` | sim | sim | sim | sim |
-| Credencial César Core | `cesar-core-client-dev` | sim | sim | não | não |
+| Credencial César Core | `cesar_core_api_key` (container `api`, `compose.yaml`) / `cesar-core-client-dev` (execução nativa, `backend/.env`) -- mesmo valor, dois arquivos por ambiente de execução | sim | sim | não | não |
 | Token do bot Telegram | `telegram_bot_token` | sim | não | sim | não |
 | Segredo do webhook | `telegram_webhook_secret` | sim | não | não | não |
 | Assinatura do controlador operacional | `ops_controller_secret` | sim | não | não | não |
@@ -34,6 +34,17 @@ obrigatório ausente) e valida que `.secrets\` está com ACL restrita a
 `Administrator`/`BUILTIN\Administrators`/`SYSTEM` -- ver tabela completa
 de settings e procedimento de reprovisionamento em
 `docs/architecture/windows-collection-worker.md`.
+
+**`DEC-121` (2026-09-07):** até essa data, `compose.yaml` não encaminhava
+nenhuma variável `AISHOPPING_CESAR_CORE_*` nem montava esta credencial no
+serviço `api` -- gap real, encontrado só no preflight de PROD (o container
+tentava `127.0.0.1:8100`, que dentro dele mesmo aponta para o próprio
+container). Fechado com o secret `cesar_core_api_key`
+(`${AISHOPPING_SECRETS_DIR:-./.secrets}/cesar_core_api_key`) e
+`extra_hosts: host-gateway` no serviço `api` -- mesmo valor Bearer do
+arquivo `cesar-core-client-dev` já usado em execução nativa (é uma decisão
+manual do operador copiar o mesmo valor para os dois arquivos, não um
+secret auto-gerado por `manage_secrets.py`).
 
 `windows_ops_agent_secret` (TASK-109, fechamento) é consumido só pelo
 `ops_controller` (Docker), para assinar chamadas ao Windows Ops Agent

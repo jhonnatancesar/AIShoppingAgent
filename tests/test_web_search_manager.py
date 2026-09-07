@@ -57,6 +57,31 @@ def core(tmp_path, handler):
     )
 
 
+def test_accepts_host_docker_internal_base_url(tmp_path):
+    """DEC-121: mesmo validador compartilhado com AI/Fetch -- coberto aqui
+    também para não deixar Search desalinhado se algum dia rodar em
+    container (hoje é concern exclusivo do collection_worker nativo)."""
+    key = tmp_path / "key"
+    key.write_text("synthetic-only", encoding="utf-8")
+    provider_instance = CesarCoreSearchProvider(
+        api_key_file=key,
+        base_url="http://host.docker.internal:8100",
+        service="worker",
+    )
+    assert provider_instance is not None
+
+
+def test_rejects_arbitrary_hostname_base_url(tmp_path):
+    key = tmp_path / "key"
+    key.write_text("synthetic-only", encoding="utf-8")
+    with pytest.raises(ValueError, match="loopback or host.docker.internal"):
+        CesarCoreSearchProvider(
+            api_key_file=key,
+            base_url="http://cesar-core.example.com:8100",
+            service="worker",
+        )
+
+
 def test_payload_normalization_and_final_limit(tmp_path):
     wire = []
 

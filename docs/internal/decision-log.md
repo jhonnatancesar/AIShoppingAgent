@@ -1,5 +1,106 @@
 # Decision Log
 
+## DEC-121 — `api` containerizado não falava com o César Core em PROD (blocker real do deploy, `v1.3.3`)
+
+- **Data:** 2026-09-07.
+- **Classificação:** Corrigir agora (blocker real encontrado durante o
+  próprio deploy em PROD, depois de backup+restore-teste do banco e
+  migrations aplicadas com sucesso até `20260906_0002` -- stack da
+  aplicação parada até esta correção).
+- **Causa confirmada, por auditoria de código (não suposição):**
+  `compose.yaml` nunca encaminhava nenhuma variável
+  `AISHOPPING_CESAR_CORE_*` nem montava a credencial no serviço `api`.
+  `AISHOPPING_CESAR_CORE_BASE_URL` teria o default de código
+  `http://127.0.0.1:8100` (`backend/app/core/config.py`) -- que **de
+  dentro do container `api` aponta para o próprio container**, nunca
+  para o Windows Server que hospeda o César Core (deployment Docker
+  Compose separado, `deploy/prod/cesar-core.compose.yaml`). Esse gap já
+  estava documentado honestamente em
+  `docs/installation/cesar-core.md` ("compose.yaml atual não encaminha
+  as variáveis... não trate como caminho integrado"), mas nunca tinha
+  sido fechado.
+- **Variáveis reais confirmadas no código (não inventadas):** GG Oferta
+  usa **uma única credencial/URL** para as três capabilities (AI,
+  Search, Fetch) -- `settings.cesar_core_api_key_file` +
+  `settings.cesar_core_base_url` (`AISHOPPING_CESAR_CORE_API_KEY_FILE`/
+  `AISHOPPING_CESAR_CORE_BASE_URL`), consumidas por
+  `CesarCoreAIProvider`, `CesarCoreSearchProvider` e
+  `CesarCoreFetchProvider` -- a distinção de capability é feita pelo
+  Core via `X-Service`/`X-Purpose`, nunca por credencial separada do
+  lado do GG (`app/search/cesar_core_fetch.py`, docstring já explícita
+  sobre isso). As 3 credenciais `ggoferta-ai`/`ggoferta-search`/
+  `ggoferta-fetch` (OmniRoute) são uma coisa **diferente**: consumidor
+  Core → OmniRoute, internas ao deployment do César Core, nunca tocadas
+  pelo GG Oferta (já wireadas desde `DEC-120`) -- a mensagem que abriu
+  esta rodada citava as três por engano; auditoria de código confirmou
+  que só existe uma credencial do lado do GG.
+- **Escopo real por processo, confirmado por auditoria dos importadores
+  (`grep` dos consumidores de `build_user_ai_provider_manager`/
+  `build_admin_dev_ai_provider_manager`/`build_web_search_manager`/
+  `CesarCoreFetchProvider`):** só o `api` chama a capability **AI** do
+  Core (`app/telegram/router.py`, interpretação de linguagem natural do
+  webhook -- único consumidor real dentro do container). Search e Fetch
+  são concern exclusivo do `collection_worker` **nativo** (TASK-109) --
+  nenhuma rota/router do `api` importa `orchestration.py`,
+  `market_research.service` ou `historical_bootstrap.service`.
+  `telegram_notifier` e `ops_controller` não chamam o César Core em
+  nenhum código real. Por isso o wiring ficou restrito ao `api`, sem
+  espalhar credencial onde o código não exige.
+- **Correção:**
+  - `compose.yaml`: serviço `api` ganhou `AISHOPPING_CESAR_CORE_BASE_URL`
+    (default `http://host.docker.internal:8100`),
+    `AISHOPPING_CESAR_CORE_API_KEY_FILE` (`/run/secrets/cesar_core_api_key`),
+    `AISHOPPING_CESAR_CORE_SERVICE`/`_SERVICE_CLASS`/`_MAX_TOKENS`/
+    `_TIMEOUT_SECONDS`, o secret `cesar_core_api_key` (arquivo local
+    `.secrets/cesar_core_api_key`, mesmo valor de
+    `deploy/prod/cesar-core/.secrets/ggoferta-core-client`) e
+    `extra_hosts: ["host.docker.internal:host-gateway"]` -- reaproveita
+    exatamente o mecanismo já validado e em produção para
+    `WINDOWS_OPS_AGENT_URL`/`ops_controller` (`DEC-103`), agora com dois
+    consumidores desse mapeamento. `collection_worker` nativo continua
+    com `127.0.0.1:8100` (`backend/.env`), inalterado -- diferença de
+    transporte por ambiente de execução, não mudança de arquitetura.
+  - `backend/app/core/urls.py`: nova função
+    `normalize_cesar_core_http_endpoint` -- mesma forma de
+    `normalize_loopback_http_endpoint`, mas aceita também
+    `host.docker.internal` (lista fechada, nunca um hostname arbitrário).
+    Deliberadamente **não** flexibiliza `normalize_loopback_http_endpoint`
+    em si, que continua estritamente loopback e é usada também por
+    `edge_cdp_url` (CDP do Playwright/Edge, um limite de segurança
+    diferente e sem relação com o César Core) -- flexibilizar a função
+    compartilhada teria afrouxado essa outra fronteira sem necessidade.
+    Sem essa mudança, o wiring do compose sozinho não seria suficiente:
+    `CesarCoreAIProvider`/`CesarCoreSearchProvider`/
+    `CesarCoreFetchProvider` rejeitariam `host.docker.internal` com
+    `ValueError` antes mesmo de tentar a chamada HTTP.
+  - Documentação: `docs/operations/prod-deployment-handoff.md`
+    (seções 4, 7, "Portas/URLs aprovadas", 12), `docs/installation/
+    cesar-core.md`, `configuration.md`, `secrets.md` -- todas passam a
+    documentar os dois transportes (nativo vs. container) lado a lado,
+    substituindo o gap antigo.
+- **Testes (ambiente DEV/descartável, nunca em PROD):** novos testes
+  unitários em `tests/test_cesar_core_ai_provider.py`,
+  `tests/test_cesar_core_fetch_provider.py`,
+  `tests/test_web_search_manager.py` (aceita `host.docker.internal`,
+  rejeita hostname arbitrário) e `tests/test_privacy_compose.py`
+  (wiring literal do `compose.yaml`). Além disso, prova real fora da
+  suíte automatizada: um container Docker com o mesmo
+  `extra_hosts: host-gateway` do `compose.yaml`, rede isolada, código
+  atual montado e a credencial real de DEV, completou uma chamada real
+  `AI` ponta a ponta contra o César Core/OmniRoute local rodando nesta
+  máquina (`provider="cesar_core"`, HTTP 200) -- e falhou de forma
+  explícita (`cesar_core_credential_unavailable`, não fallback
+  silencioso) quando o secret não foi montado. `docker compose config`
+  confirmou que o serviço `api` resolvido tem exatamente o `extra_hosts`,
+  os `secrets` e as variáveis `AISHOPPING_CESAR_CORE_*` esperadas.
+- **Release:** `v1.3.3` não foi movida (tags imutáveis). Esta correção
+  foi publicada como **`v1.3.4`** -- ver hash real no commit/tag em
+  `origin`.
+- **Não incluído nesta rodada:** nenhum deploy real foi executado (fora
+  do escopo desta decisão, por instrução explícita do usuário) -- só o
+  código, o wiring do compose e a documentação foram corrigidos e
+  validados em DEV.
+
 ## DEC-120 — Bootstrap determinístico das credenciais consumidoras do OmniRoute (fecha o gap do DEC-119)
 
 - **Data:** 2026-09-07.

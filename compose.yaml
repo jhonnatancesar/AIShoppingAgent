@@ -73,6 +73,29 @@ services:
       # código). `api` processa o webhook do Telegram e a criação de missão
       # via Web -- os dois pontos onde essa cota é checada.
       AISHOPPING_DEFAULT_MAX_ACTIVE_MISSIONS_ADMIN_DEV: ${AISHOPPING_DEFAULT_MAX_ACTIVE_MISSIONS_ADMIN_DEV:-50}
+      # DEC-121 (2026-09-07): wiring real do César Core para o `api`
+      # containerizado -- só a capability AI (o interpretador de intenção
+      # em linguagem natural do webhook do Telegram, `app.telegram.router`,
+      # é o único consumidor de `build_user_ai_provider_manager`/
+      # `build_admin_dev_ai_provider_manager` dentro do `api`). Search/Fetch
+      # continuam concern exclusivo do `collection_worker` nativo (comentário
+      # acima, TASK-109) -- não recebem variável aqui de propósito, o
+      # código do `api` nunca constrói esses dois providers.
+      # `127.0.0.1` dentro do container aponta para o próprio container, não
+      # para o Windows Server que hospeda o César Core (deployment Docker
+      # Compose separado, `deploy/prod/cesar-core.compose.yaml`) -- mesmo
+      # mecanismo já validado para container -> host nesta máquina
+      # (`WINDOWS_OPS_AGENT_URL`/`ops_controller`, ver comentário/`extra_hosts`
+      # abaixo e DEC-103): `host.docker.internal` + `host-gateway`. O
+      # `collection_worker` nativo continua usando `127.0.0.1:8100`
+      # (backend/.env.example) -- diferença de transporte por ambiente de
+      # execução, não mudança da arquitetura lógica.
+      AISHOPPING_CESAR_CORE_BASE_URL: ${AISHOPPING_CESAR_CORE_BASE_URL:-http://host.docker.internal:8100}
+      AISHOPPING_CESAR_CORE_API_KEY_FILE: /run/secrets/cesar_core_api_key
+      AISHOPPING_CESAR_CORE_SERVICE: ${AISHOPPING_CESAR_CORE_SERVICE:-backend}
+      AISHOPPING_CESAR_CORE_SERVICE_CLASS: ${AISHOPPING_CESAR_CORE_SERVICE_CLASS:-economy}
+      AISHOPPING_CESAR_CORE_MAX_TOKENS: ${AISHOPPING_CESAR_CORE_MAX_TOKENS:-1024}
+      AISHOPPING_CESAR_CORE_TIMEOUT_SECONDS: ${AISHOPPING_CESAR_CORE_TIMEOUT_SECONDS:-90}
     ports:
       - "${API_BIND_ADDRESS:-127.0.0.1}:${API_PORT:-8000}:8000"
     secrets:
@@ -81,6 +104,7 @@ services:
       - telegram_webhook_secret
       - ops_controller_secret
       - verification_code_pepper
+      - cesar_core_api_key
     depends_on:
       database:
         condition: service_healthy
@@ -95,6 +119,15 @@ services:
       timeout: 3s
       retries: 10
       start_period: 5s
+    # DEC-121: `api` agora também alcança um serviço nativo do Windows
+    # (César Core, `127.0.0.1:8100` do lado de fora do Docker) -- mesmo
+    # mecanismo e mesmo motivo do `extra_hosts` de `ops_controller` abaixo
+    # (DEC-103: `host.docker.internal` não é resolvido automaticamente
+    # pelo DNS embutido dos containers neste servidor, corrigido com
+    # `host-gateway`, o mecanismo nativo do Docker Engine). `api` passa a
+    # ser o segundo consumidor deste mapeamento (antes só `ops_controller`).
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
   telegram_notifier:
     logging: *bounded-logging
@@ -319,3 +352,12 @@ secrets:
     # Precisa ser copiado manualmente para este arquivo -- os dois lados
     # não sincronizam sozinhos, e o valor nunca deve passar por chat/Git.
     file: ${AISHOPPING_SECRETS_DIR:-./.secrets}/windows_ops_agent_secret
+  cesar_core_api_key:
+    # DEC-121: mesmo valor Bearer que o César Core espera do GG Oferta --
+    # lá é o secret `application`/`ggoferta-core-client`
+    # (deploy/prod/cesar-core.compose.yaml,
+    # CESAR_CORE_SECURITY_GG_OFERTA_API_KEY_FILE). É uma decisão manual do
+    # operador (gerar um valor forte e copiar para os dois lados), não um
+    # secret auto-gerado por manage_secrets.py -- nunca deve passar por
+    # chat/Git.
+    file: ${AISHOPPING_SECRETS_DIR:-./.secrets}/cesar_core_api_key

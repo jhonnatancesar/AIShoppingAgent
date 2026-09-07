@@ -57,6 +57,32 @@ def provider(tmp_path, handler, *, ai_profile="admin_dev"):
     )
 
 
+def test_accepts_host_docker_internal_base_url(tmp_path):
+    """DEC-121: o container `api` fala com o Core via `host.docker.internal`,
+    nunca `127.0.0.1` (que dentro do container aponta para si mesmo)."""
+    key = tmp_path / "key"
+    key.write_text("synthetic-fixture-only", encoding="utf-8")
+    provider_instance = CesarCoreAIProvider(
+        api_key_file=key,
+        base_url="http://host.docker.internal:8100",
+        service="backend",
+        ai_profile="admin_dev",
+    )
+    assert provider_instance is not None
+
+
+def test_rejects_arbitrary_hostname_base_url(tmp_path):
+    key = tmp_path / "key"
+    key.write_text("synthetic-fixture-only", encoding="utf-8")
+    with pytest.raises(ValueError, match="loopback or host.docker.internal"):
+        CesarCoreAIProvider(
+            api_key_file=key,
+            base_url="http://cesar-core.example.com:8100",
+            service="backend",
+            ai_profile="admin_dev",
+        )
+
+
 def test_messages_preserved_and_response_normalized(tmp_path, caplog):
     original = request()
     wire = []

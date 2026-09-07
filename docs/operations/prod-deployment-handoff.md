@@ -150,8 +150,8 @@ migration acima precisa estar aplicada **antes** de configurar
 | `AISHOPPING_HISTORICAL_BOOTSTRAP_ENABLED` | Flag F1 — default `false` |
 | `AISHOPPING_MARKET_RESEARCH_EXTERNAL_REFERENCE_ENABLED` | Flag F3 — default `false` |
 | `AISHOPPING_COUPONS_ENABLED` | Flag de consumo de cupons — default `false` |
-| `AISHOPPING_CESAR_CORE_BASE_URL` | URL do César Core (ver "Portas/URLs aprovadas para PROD" abaixo) |
-| `AISHOPPING_CESAR_CORE_API_KEY_FILE` | Arquivo com o Bearer do GG Oferta → César Core |
+| `AISHOPPING_CESAR_CORE_BASE_URL` | URL do César Core visto pelo container `api` -- **`http://host.docker.internal:8100`**, já é o default em `compose.yaml` desde `DEC-121` (ver "Portas/URLs aprovadas para PROD" abaixo; `127.0.0.1` não funciona daqui) |
+| `AISHOPPING_CESAR_CORE_API_KEY_FILE` | Arquivo com o Bearer do GG Oferta → César Core -- já aponta para `/run/secrets/cesar_core_api_key` em `compose.yaml`; só é preciso gravar o arquivo host (`.secrets/cesar_core_api_key`, mesmo valor de `deploy/prod/cesar-core/.secrets/ggoferta-core-client`) |
 | `AISHOPPING_TELEGRAM_BOT_TOKEN_FILE` / `AISHOPPING_TELEGRAM_WEBHOOK_SECRET_FILE` | Secrets do bot (já existentes, sem mudança nesta rodada) |
 | `AISHOPPING_DATABASE_*` | PostgreSQL do GG Oferta (já existente) |
 
@@ -234,6 +234,30 @@ César Core publica só `127.0.0.1:8100` no host que o hospeda; Redis/
 OmniRoute/SearXNG não têm porta publicada. Se a topologia real do
 servidor divergir do que este parágrafo descreve, **pare e reporte** —
 não é uma decisão que este handoff autoriza a improvisar.
+
+**`DEC-121` (2026-09-07) — blocker real encontrado no deploy, corrigido:**
+como GG Oferta e César Core são dois projetos Compose independentes no
+mesmo host, `127.0.0.1:8100` **de dentro do container `api`** do GG
+Oferta aponta para o próprio container `api`, nunca para o Windows
+Server que publica o César Core em `127.0.0.1:8100` -- o `api` não
+conseguia falar com o Core de jeito nenhum com esse valor. Corrigido
+reaproveitando o mesmo mecanismo já usado por
+`WINDOWS_OPS_AGENT_URL`/`ops_controller` (`DEC-103`): `host.docker.internal`
++ `extra_hosts: host-gateway`, agora também no serviço `api`. **URL
+correta por tipo de processo** (a mesma distinção lógica, dois
+transportes):
+
+| Processo | `AISHOPPING_CESAR_CORE_BASE_URL` |
+|---|---|
+| Container `api` (`compose.yaml`, Docker) | `http://host.docker.internal:8100` -- já é o default no `compose.yaml`, não precisa de `.env` para isso |
+| `collection_worker` nativo (Windows, fora do Docker) | `http://127.0.0.1:8100` -- inalterado, `backend/.env` |
+
+Só o `api` recebe este wiring (`extra_hosts` + variáveis
+`AISHOPPING_CESAR_CORE_*` + secret `cesar_core_api_key`) porque só ele
+usa a capability AI do Core (`app/telegram/router.py`, interpretação de
+linguagem natural do webhook). `telegram_notifier` e `ops_controller`
+não chamam o César Core em nenhum código real -- confirmado por
+auditoria de código, não wireados de propósito.
 
 ### Geração de secrets locais na primeira instalação
 
@@ -443,7 +467,12 @@ ative uma de cada vez, prove antes de ativar a próxima):
 4. **Migrations** (seção 3) — só GG Oferta, só depois do backup.
 5. **Secrets de primeira instalação** (seção 4, subseção "Geração de
    secrets locais") — `verification_code_pepper` e `INITIAL_PASSWORD`
-   do OmniRoute, se ainda não existirem.
+   do OmniRoute, se ainda não existirem. Inclui também
+   `.secrets/cesar_core_api_key` do GG Oferta (`DEC-121`) — mesmo valor
+   Bearer de `deploy/prod/cesar-core/.secrets/ggoferta-core-client`
+   (passo 6 abaixo cria esse último); sem os dois arquivos com o mesmo
+   valor, o `api` sobe mas toda chamada de AI ao Core falha por
+   credencial.
 6. **César Core + OmniRoute + Redis + SearXNG** via o bundle
    `deploy/prod/cesar-core.compose.yaml` (seção 5.1), em duas etapas
    obrigatórias: **(a)** subir só o `omniroute` e rodar
@@ -457,7 +486,13 @@ ative uma de cada vez, prove antes de ativar a próxima):
    repositório `cesar-core`.**
 7. **GG Oferta** (api + `collection_worker` + `telegram_notifier`) —
    com todas as flags da seção 6 **ainda OFF** neste ponto. Confirmar
-   `GET /health` e `GET /ready`.
+   `GET /health` e `GET /ready`. Confirmar também (`DEC-121`, blocker
+   real do preflight anterior): dentro do container `api`, `curl
+   http://host.docker.internal:8100/health` responde (prova que o
+   `extra_hosts` resolve o Windows Server) e uma mensagem real via
+   Telegram que exija interpretação de linguagem natural retorna uma
+   resposta coerente, não um erro de credencial/conexão -- essa é a
+   única chamada ao Core que o `api` faz (capability AI, só isso).
 8. **Coupon Worker — primeira instalação em PROD** (seção 9) — diretório,
    `.env` (`AUTH_TOKEN` + `COUPONS_POSTGRES_DSN` apontando para o
    Postgres de PROD), instalar o agendamento (Windows Scheduled Task).
@@ -624,6 +659,17 @@ com todas as 4 connections ativas e nenhum fallback forçado:
   de erro do script (restaurar o arquivo de um backup, ou remover a
   chave órfã pelo painel administrativo e reexecutar) -- não invente
   outro caminho.
+- Não montar a credencial `cesar_core_api_key` (ou qualquer variável
+  `AISHOPPING_CESAR_CORE_*`) em `telegram_notifier`/`ops_controller` --
+  auditoria de código (`DEC-121`) confirmou que nenhum dos dois chama o
+  César Core; só o `api` usa a capability AI. Não espalhar credencial
+  onde o código não exige.
+- Não usar `127.0.0.1`/`localhost` em `AISHOPPING_CESAR_CORE_BASE_URL`
+  do container `api` -- dentro dele aponta para o próprio container,
+  não para o Windows Server que hospeda o César Core (causa raiz do
+  blocker do `DEC-121`). O valor correto para o `api` é
+  `http://host.docker.internal:8100` (já é o default em
+  `compose.yaml`).
 
 ## 13. Referências (mesma arquitetura, sem redesenho)
 
