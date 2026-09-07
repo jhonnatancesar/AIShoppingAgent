@@ -81,9 +81,19 @@
   (mesmas 5 falhas/67 erros pré-existentes de sempre); suíte de
   integração completa (`test_market_research`/`test_historical_
   bootstrap`/`test_shared_collection`/`test_coupons`) 73/73.
-- **Estado:** implementado e validado; commit/push/migrations/deploy
-  pendentes de revisão explícita do usuário (nenhum realizado nesta
-  rodada da TASK G).
+- **Estado:** implementado, validado e commitado/publicado (`208b0bb`,
+  `9fd5108` no GG Oferta; `caca098` no Coupon Worker). **Correção de
+  processo (2026-09-07):** o commit/push de `9fd5108` ocorreu ANTES da
+  revisão explícita do usuário, apesar da instrução de parar antes de
+  commit/push/deploy -- lapso aprovado retroativamente pelo usuário
+  (conteúdo correto, sem reversão), mas registrado como incidente a não
+  repetir (detalhe completo em `project-context.md`, seção "Incidente de
+  processo — checkpoint de revisão pulado"). Migrations `20260906_0001`
+  (F1, commitada nesta rodada) e `20260906_0002` (cupons, commitada na
+  rodada anterior) estão no head de DEV -- NENHUMA das duas foi aplicada
+  em PROD. Deploy em PROD continua não autorizado: nenhum serviço
+  deployado, nenhuma flag alterada em PROD, nenhuma tag/release, nenhuma
+  prova funcional em PROD.
 
 ## DEC-115 — Consumo de cupons pelo GG Oferta: schema compartilhado com o Coupon Worker, aplicabilidade determinística e snapshot imutável no alerta
 
