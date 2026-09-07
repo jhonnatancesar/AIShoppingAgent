@@ -42,9 +42,13 @@ Os mesmos princípios da instalação em Linux se aplicam integralmente:
 - a instalação oficial do Python da máquina, somente para os utilitários
   locais (`backend/scripts/manage_secrets.py`) — a aplicação em si roda
   inteiramente dentro dos containers;
-- acesso de saída HTTPS liberado para: Telegram (`api.telegram.org`),
-  Gemini, Groq, OpenRouter, Firecrawl, as lojas pesquisadas e o registro de
-  imagens Docker;
+- acesso de saída HTTPS liberado para: Telegram (`api.telegram.org`), as
+  lojas pesquisadas, o registro de imagens Docker e o César Core (desde a
+  FASE E, toda IA/Search/enrichment do GG Oferta passa exclusivamente pelo
+  César Core — o GG Oferta não fala mais direto com Gemini/Groq/OpenRouter/
+  Firecrawl; ver [Instalação → César Core](cesar-core.md)). Egress direto a
+  esses providers passa a ser necessidade do **César Core**, não deste
+  servidor, quando ele roda em máquina separada;
 - [Tailscale](https://tailscale.com/) instalado e autenticado, usado para
   expor o webhook do Telegram publicamente via **Tailscale Funnel** (é o
   mecanismo de HTTPS público realmente usado nesta instalação — veja a

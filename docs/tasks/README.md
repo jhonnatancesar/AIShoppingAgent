@@ -1,5 +1,42 @@
 # Tarefas
 
+**Estado real em 2026-09-07 (saneamento de documentação) — o que faltava
+desde a última atualização deste arquivo (TASK-118H):**
+
+- **TASK-119** (status desatualizado pós pausar/retomar/cancelar) —
+  investigada, **não reproduzida**, rebaixada a registro histórico. Ver
+  `TASK-119.md`.
+- **TASK-120** (datas cruas em pt-BR no Histórico de missão) —
+  **concluída e publicada** (`a06397e`). Ver `TASK-120.md`.
+- **SUBTASK-010** (landing pública) — **concluída e publicada**
+  (`73014a3`); o arquivo de planejamento nunca tinha sido atualizado.
+  Ver `SUBTASK-010-landing-publica-ggoferta.md`.
+- **TASK-117** (verificação de e-mail via Cloudflare Access) — pré-flight
+  feito (dependência instalada), **estacionada por decisão explícita do
+  usuário**, não é a próxima prioridade. Ver `TASK-117.md`.
+- **Iniciativa FASE E–G + cupons + política de providers AI** (sem TASK
+  formal única, rastreada em `docs/internal/decision-log.md`
+  DEC-109 a DEC-117 e em `docs/internal/project-context.md`): Fetch/
+  Enrichment atrás do César Core, bootstrap histórico (F1), avaliação de
+  mercado com referência externa (F2/F3), consumo de cupons no GG Oferta
+  (`208b0bb`) e coleta de cupons real no worker dedicado
+  (`AIShoppingAgent-cupom`), ativação por feature flags (FASE G,
+  `9fd5108`), e política real de providers AI USER/ADMIN_DEV via César
+  Core/OmniRoute (`ai_profile`, `cab1f98`) — todas **concluídas,
+  testadas e publicadas em `origin/main`**, **nenhuma implantada em
+  PROD**. Corrige a linha abaixo ("TASK-106 em pausa"): cupons **não
+  estão mais em pausa**, a pesquisa/coleta de cupons foi implementada.
+- **Cota de missões ADMIN/DEV separada da de USER** e **correção do
+  fluxo do Telegram quando a cota está cheia** (missão parcial ficava
+  persistida mesmo com a criação recusada) — ver
+  `docs/internal/project-context.md`, seção mais recente.
+
+Este arquivo não foi mantido linha a linha para cada TASK entre
+TASK-118H e esta atualização -- para o estado real e a ordem de
+trabalho, `docs/internal/decision-log.md` e
+`docs/internal/project-context.md` são as fontes de verdade; este
+índice é um resumo de apoio, não a fonte primária.
+
 **TASK-118F/118G concluídas, aprovadas e publicadas:** AI e Search integrados;
 flags desligadas por padrão, sem deploy PROD. Ver `TASK-118F.md` e `TASK-118G.md`.
 

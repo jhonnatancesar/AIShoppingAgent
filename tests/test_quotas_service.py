@@ -26,6 +26,7 @@ NOW = datetime(2026, 8, 22, 15, 30, tzinfo=UTC)
 
 def _user(
     *,
+    role: UserRole = UserRole.USER,
     max_active_missions_override: int | None = None,
     max_store_slots_override: int | None = None,
     max_daily_searches_override: int | None = None,
@@ -33,7 +34,7 @@ def _user(
     return User(
         id=uuid4(),
         display_name="Teste",
-        role=UserRole.USER,
+        role=role,
         max_active_missions_override=max_active_missions_override,
         max_store_slots_override=max_store_slots_override,
         max_daily_searches_override=max_daily_searches_override,
@@ -64,6 +65,52 @@ def test_resolve_quota_limits_prefers_user_override() -> None:
     assert limits.max_active_missions == 10
     assert limits.max_store_slots == 40
     assert limits.max_daily_searches == 100
+
+
+@pytest.mark.parametrize("role", [UserRole.ADMIN, UserRole.DEV])
+def test_resolve_quota_limits_admin_dev_falls_back_to_user_default_when_unconfigured(
+    role: UserRole,
+) -> None:
+    """Sem `default_max_active_missions_admin_dev` configurado, ADMIN/DEV
+    preserva o comportamento anterior à separação (mesmo default do USER)."""
+    limits = resolve_quota_limits(_user(role=role), _settings())
+
+    assert limits.max_active_missions == 5
+
+
+@pytest.mark.parametrize("role", [UserRole.ADMIN, UserRole.DEV])
+def test_resolve_quota_limits_admin_dev_uses_its_own_configured_default(
+    role: UserRole,
+) -> None:
+    """Com `default_max_active_missions_admin_dev` configurado, ADMIN/DEV
+    usa esse valor -- independente do default de USER, sem tocar em
+    `service_class` nem em nenhum outro sinal indireto. `50` é o valor
+    real decidido (`DEC-118`), não um placeholder."""
+    settings = Settings(_env_file=None, default_max_active_missions_admin_dev=50)
+
+    limits = resolve_quota_limits(_user(role=role), settings)
+
+    assert limits.max_active_missions == 50
+
+
+def test_resolve_quota_limits_user_ignores_admin_dev_default() -> None:
+    """O default ADMIN/DEV nunca vaza para USER, mesmo quando configurado."""
+    settings = Settings(_env_file=None, default_max_active_missions_admin_dev=50)
+
+    limits = resolve_quota_limits(_user(role=UserRole.USER), settings)
+
+    assert limits.max_active_missions == 5
+
+
+def test_resolve_quota_limits_per_user_override_still_wins_for_admin_dev() -> None:
+    """Override pontual por usuário continua tendo prioridade sobre o
+    default de cota (de USER ou de ADMIN/DEV, igualmente)."""
+    settings = Settings(_env_file=None, default_max_active_missions_admin_dev=50)
+    user = _user(role=UserRole.ADMIN, max_active_missions_override=2)
+
+    limits = resolve_quota_limits(user, settings)
+
+    assert limits.max_active_missions == 2
 
 
 def test_day_start_utc_rejects_naive_datetime() -> None:

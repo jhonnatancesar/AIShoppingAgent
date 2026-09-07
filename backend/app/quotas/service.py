@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 from app.core.config import Settings
 from app.missions.models import Mission, MissionSource, MissionStatus
 from app.quotas.models import SearchReceipt
-from app.users.models import User
+from app.users.models import User, UserRole
 
 
 class QuotaKind(StrEnum):
@@ -65,14 +65,31 @@ class QuotaUsage:
     daily_searches: int
 
 
+def _default_max_active_missions_for_role(user: User, settings: Settings) -> int:
+    """USER e ADMIN/DEV têm defaults de cota de missões ativas
+    independentes, chaveados pelo `role` já existente em `User` -- nunca
+    `service_class` nem outro sinal indireto. Sem um valor ADMIN/DEV
+    explicitamente configurado (`default_max_active_missions_admin_dev`),
+    o comportamento permanece idêntico ao anterior a esta separação."""
+    if user.role is UserRole.USER:
+        return settings.default_max_active_missions
+    return (
+        settings.default_max_active_missions_admin_dev
+        if settings.default_max_active_missions_admin_dev is not None
+        else settings.default_max_active_missions
+    )
+
+
 def resolve_quota_limits(user: User, settings: Settings) -> QuotaLimits:
     """`NULL` no override do usuário usa o default do sistema -- nenhum
-    plano/tier novo, só um valor pontual por usuário (`DEC-094`)."""
+    plano/tier novo, só um valor pontual por usuário (`DEC-094`). O
+    default de `max_active_missions` em si já é sensível ao `role`
+    (USER vs. ADMIN/DEV, ver `_default_max_active_missions_for_role`)."""
     return QuotaLimits(
         max_active_missions=(
             user.max_active_missions_override
             if user.max_active_missions_override is not None
-            else settings.default_max_active_missions
+            else _default_max_active_missions_for_role(user, settings)
         ),
         max_store_slots=(
             user.max_store_slots_override

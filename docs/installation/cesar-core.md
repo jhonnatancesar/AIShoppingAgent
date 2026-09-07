@@ -79,25 +79,35 @@ Não existe rollback para providers diretos no GG Oferta. Se o Core ou sua
 configuração estiver indisponível, AI, grounding e Search falham de forma
 fechada; Firecrawl `/v2/scrape` continua apenas como enriquecimento.
 
-## Lacuna conhecida — OmniRoute sem provider real configurado (FASE G, 2026-09-06)
+## Política real de providers AI (`ai_profile`, resolvido em 2026-09-07)
 
-Achado de uma sessão anterior, registrado aqui por decisão explícita do
-usuário: o OmniRoute (dentro do César Core) nunca teve Gemini/Groq/
-OpenRouter configurados como **provider connections reais** — só o
-catálogo nativo gratuito (`opencode/mimo-v2.5-free`) foi validado ao
-vivo. Isso é diferente de qualquer target lógico/config de roteamento já
-existente no OmniRoute (que pode apontar para esses nomes sem que a
-credencial/conexão real exista por trás).
+A lacuna anterior deste documento (OmniRoute sem Gemini/Groq/OpenRouter
+como provider connections reais, só o catálogo nativo gratuito) **foi
+fechada nesta rodada** (`DEC-117`, commits `cab1f98` no GG Oferta e
+`83d3347` no César Core). O GG Oferta declara explicitamente
+`ai_profile: "user" | "admin_dev"` em cada chamada a
+`POST /v1/ai/generate` (derivado do `UserRole` já rastreado
+localmente, nunca escolhendo provider); o César Core resolve isso para
+um dos dois combos reais provisionados no OmniRoute:
 
-Efeito prático: uma chamada do GG Oferta via `AIProviderManager`/
-`WebSearchManager` que dependa especificamente de Gemini/Groq/OpenRouter
-como fallback dentro do OmniRoute não tem hoje nenhuma credencial real
-configurada para atendê-la — só o provider nativo gratuito está
-efetivamente disponível. Antes de confiar em qualidade de IA
-multi-provider em PROD via César Core, confirmar no Control Plane do
-Core (`/admin`) se as credenciais desses providers foram de fato
-provisionadas.
+- `ai_profile=user` → combo `user-cascade` = Gemini USER →
+  `oc/mimo-v2.5-free` (Groq/OpenRouter nunca alcançáveis por USER --
+  ausência estrutural no combo).
+- `ai_profile=admin_dev` → combo `admin-dev-cascade` = Gemini ADMIN/DEV
+  → Groq → OpenRouter → `oc/mimo-v2.5-free`.
 
-Este documento só registra a lacuna — nenhum provider, credencial ou
-fallback foi criado, configurado ou inventado por esta anotação. A
-correção (se decidida) é uma TASK própria no repositório `cesar-core`.
+Fallback controlado e reversível validado ponta a ponta em DEV
+(cada conexão desativada/testada/reativada individualmente). Detalhe
+completo, incluindo o runbook de provisionamento determinístico (sem
+UUIDs de ambiente nenhum, só nomes/secrets) para reconstruir isso em
+outro ambiente: `C:\cesar-core\docs\architecture\gg-oferta-core.md`
+(seção "Política de providers AI") e
+`C:\cesar-core\docs\operations\omniroute-ai-provider-provisioning.md`.
+
+**Validação operacional pendente (não bloqueia PROD por si só, mas é
+gate obrigatório antes de ativar esta política lá):** o happy path com
+Gemini respondendo como prioridade 1 (USER e ADMIN/DEV, todas as
+conexões ativas) não foi reproduzido em DEV por indisponibilidade/quota
+real da API Gemini gratuita durante os testes desta sessão — as
+conexões seguem `valid: true` isoladamente. Antes de PROD, reexecutar
+essa prova específica (ver runbook §6).

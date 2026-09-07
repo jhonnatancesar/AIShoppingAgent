@@ -68,6 +68,11 @@ services:
       # external_reference` são concerns só do collection_worker nativo
       # (TASK-109) -- configuradas em backend/.env, nunca aqui.
       AISHOPPING_COUPONS_ENABLED: ${AISHOPPING_COUPONS_ENABLED:-false}
+      # DEC-118 (2026-09-07): cota de missões ativas ADMIN/DEV, independente
+      # da de USER (AISHOPPING_DEFAULT_MAX_ACTIVE_MISSIONS=5, default do
+      # código). `api` processa o webhook do Telegram e a criação de missão
+      # via Web -- os dois pontos onde essa cota é checada.
+      AISHOPPING_DEFAULT_MAX_ACTIVE_MISSIONS_ADMIN_DEV: ${AISHOPPING_DEFAULT_MAX_ACTIVE_MISSIONS_ADMIN_DEV:-50}
     ports:
       - "${API_BIND_ADDRESS:-127.0.0.1}:${API_PORT:-8000}:8000"
     secrets:

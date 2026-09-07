@@ -979,6 +979,15 @@ async def _resolve_pending_intent(
     except AuthorizationDenied:
         raise
     except _KNOWN_DISPATCH_ERRORS as error:
+        # Desfaz qualquer INSERT já dado `flush` pela tentativa (ex.:
+        # missão DRAFT + critérios + fontes de `create_mission_from_
+        # criteria_async`, antes de `transition_mission_async` recusar a
+        # ativação) -- sem isso, o commit incondicional de "Fase C" em
+        # `_process_authenticated_message` persistiria uma missão
+        # parcial mesmo com a criação recusada. `user` continua anexado
+        # à sessão após o rollback; a limpeza do intent pendente é
+        # reaplicada depois para não se perder junto.
+        await session.rollback()
         user.pending_intent = None
         logger.warning(
             "telegram_webhook_mission_failed",
@@ -986,6 +995,7 @@ async def _resolve_pending_intent(
         )
         return str(error)
     except QuotaExceededError as error:
+        await session.rollback()
         user.pending_intent = None
         logger.warning(
             "telegram_webhook_mission_failed",
@@ -993,6 +1003,7 @@ async def _resolve_pending_intent(
         )
         return _describe_quota_error(error)
     except MissionCreationError as error:
+        await session.rollback()
         user.pending_intent = None
         logger.warning(
             "telegram_webhook_mission_failed",

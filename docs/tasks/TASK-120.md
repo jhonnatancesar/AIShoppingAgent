@@ -1,8 +1,14 @@
 # TASK-120 — Formatar datas do Histórico de missão para pt-BR/Brasília
 
-Status: **PLANNED/BACKLOG** — pedido pelo usuário durante o smoke funcional
-pós-limpeza de lint do frontend (2026-09-04). Nenhuma alteração de código
-feita ainda (mudança visual, fora do escopo autorizado naquela rodada).
+Status: **Concluída e publicada em `origin/main`** (commit `a06397e`,
+05/09/2026 -- `fix(web): format dates in pt-BR timezone`, cita esta TASK
+diretamente no código). Novo helper centralizado
+`frontend/src/lib/formatDateTime.ts` (`Intl.DateTimeFormat` pt-BR,
+`timeZone: "America/Sao_Paulo"` explícito) já é usado em
+`MissionDetailPage.tsx`/`transition.transitioned_at`, exatamente o ponto
+descrito abaixo. Cabeçalho corrigido nesta auditoria de saneamento de
+documentação (2026-09-07); o problema original permanece registrado
+abaixo para contexto.
 
 ## Problema
 

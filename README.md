@@ -54,12 +54,17 @@ provedores de IA passa pelo `AIProviderManager` — nenhum módulo fala
 diretamente com Gemini, Groq ou OpenRouter. Detalhes completos em
 [Arquitetura → Visão geral](docs/architecture/overview.md).
 
-Integração opt-in (desligada por padrão) com o
+Toda IA e Web Search (normal e com grounding) passam obrigatoriamente pelo
 [César Core](https://github.com/jhonnatancesar/cesar-core) — gateway privado
-de IA e Web Search em repositório próprio: veja
+em repositório próprio; não é mais opt-in (a integração direta com
+Gemini/Groq/OpenRouter foi removida do GG Oferta na FASE E). Sem o César
+Core acessível e configurado, essas capabilities fecham de forma
+fail-closed, sem fallback local. Veja
 [Arquitetura → Integração com César Core](docs/architecture/cesar-core-integration.md),
-[Instalação → César Core](docs/installation/cesar-core.md) e o
-[Runbook César Core](docs/operations/cesar-core-runbook.md).
+[Instalação → César Core](docs/installation/cesar-core.md), o
+[Runbook César Core](docs/operations/cesar-core-runbook.md) e, para subir
+os dois lados (e o Coupon Worker) juntos do zero,
+[Instalação → Setup integrado](docs/installation/integrated-setup.md).
 
 ## Plataforma atual
 
@@ -94,10 +99,10 @@ A documentação técnica completa vive em [`docs/`](docs/):
 
 | Área | Conteúdo |
 | --- | --- |
-| [`docs/installation/`](docs/installation/) | Instalação (Windows Server, Docker local, Linux legado), configuração, atualização. |
+| [`docs/installation/`](docs/installation/) | Instalação (Windows Server, Docker local, Linux legado), configuração, atualização; [setup integrado dos 3 componentes](docs/installation/integrated-setup.md). |
 | [`docs/architecture/`](docs/architecture/) | Como cada parte do sistema funciona (missões, ofertas, Telegram, IA, privacidade). |
 | [`docs/administration/`](docs/administration/) | Administração manual de usuários e missões. |
-| [`docs/operations/`](docs/operations/) | Runbook, containers, backup/restauração, health checks. |
+| [`docs/operations/`](docs/operations/) | Runbook, containers, backup/restauração, health checks; [**handoff de deploy para PROD**](docs/operations/prod-deployment-handoff.md) (GG Oferta + César Core/OmniRoute + Coupon Worker). |
 | [`docs/database/`](docs/database/) | Schema, acesso ao PostgreSQL, migrations. |
 | [`docs/development/`](docs/development/) | Ambiente de desenvolvimento, testes, convenções. |
 | [`docs/troubleshooting.md`](docs/troubleshooting.md) | Problemas comuns e como resolvê-los. |

@@ -1,5 +1,33 @@
 # Roadmap
 
+**Estado real em 2026-09-07 (saneamento de documentação).** Este
+roadmap não foi atualizado desde ~2026-08-30 (fechamento da V1.2) e não
+cobre o que veio depois: TASK-113 (absorve item 17 da V1.2), TASK-117
+(verificação de e-mail via Cloudflare Access -- pré-flight feito,
+**estacionada** por decisão do usuário, fora da prioridade atual),
+TASK-118A a 118H (integração completa com César Core/OmniRoute,
+concluída e publicada), TASK-119 (não reproduzida) e TASK-120
+(concluída). Depois de TASK-118H, uma iniciativa sem TASK formal única
+(FASE E–G, DEC-109 a DEC-117 em `docs/internal/decision-log.md`)
+implementou e publicou em `origin/main` -- **nenhuma implantada em
+PROD**: Fetch/Enrichment atrás do Core, bootstrap histórico de preços
+(F1), avaliação de mercado com referência externa (F2/F3), consumo real
+de cupons no GG Oferta com coleta real no worker dedicado
+(`AIShoppingAgent-cupom`), tudo atrás de feature flags (FASE G), e a
+política real de providers AI USER/ADMIN_DEV via César Core/OmniRoute
+(`ai_profile`). Nesta mesma rodada: cota de missões ADMIN/DEV separada
+da de USER e correção do fluxo do Telegram quando a cota de missões
+está cheia. Para o estado real e a ordem de trabalho, tratar
+`docs/internal/decision-log.md` e `docs/internal/project-context.md`
+como fonte de verdade -- este documento descreve a estrutura de fases
+originais da V1, ainda válida como histórico, mas não o trabalho mais
+recente. **V1.5 (estudo futuro, sem implementação):** avaliar substituir
+alguns workers especializados por pesquisas via César Core/Search
+(Search + IA centralizados no Core), reduzindo processos/workers
+separados quando fizer sentido e preservando workers só com
+justificativa real -- inspirado no mecanismo usado pelo projeto
+"Hardware Barato". Registrado aqui como direção, não como TASK.
+
 **118F/118G concluídas e publicadas em main**, sem deploy PROD. AI tipada,
 Search SearXNG e enriquecimento separado; flags default false.
 

@@ -233,6 +233,14 @@ class Settings(BaseSettings):
     default_max_active_missions: int = Field(default=5, ge=1, le=1000)
     default_max_store_slots: int = Field(default=18, ge=1, le=10000)
     default_max_daily_searches: int = Field(default=30, ge=1, le=100000)
+    # Cota de missões ativas dedicada a ADMIN/DEV, independente da de USER
+    # (reaproveita o `role` já existente em `User`, nunca `service_class`
+    # nem outro sinal indireto). `None` preserva o comportamento anterior
+    # -- ADMIN/DEV cai no mesmo `default_max_active_missions` do USER --
+    # até que um valor real seja decidido explicitamente e configurado
+    # aqui. `max_active_missions_override` por usuário continua tendo
+    # prioridade sobre este default, igual ao de USER.
+    default_max_active_missions_admin_dev: int | None = Field(default=None, ge=1, le=1000)
     quota_warning_threshold: float = Field(default=0.8, gt=0, le=1.0)
     # TASK-108: fila justa por usuário -- camada ortogonal ao backoff por
     # provider (`MissionSource.next_eligible_at`, DEC-046, já existente,

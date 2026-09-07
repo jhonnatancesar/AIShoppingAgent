@@ -106,6 +106,13 @@ Para cada item novo, registrar uma descrição curta, a motivação e eventuais 
 - API pública.
 - Sistema de pagamentos.
 - Integrações adicionais não essenciais à V1.
+- **V1.5 (estudo futuro, registrado em 2026-09-07, sem implementação):**
+  estudar a substituição de alguns workers especializados por pesquisas
+  executadas através do próprio César Core/Search, de forma semelhante
+  ao mecanismo usado no projeto "Hardware Barato". Objetivo: reduzir
+  processos/workers separados quando fizer sentido, centralizar Search/
+  IA no Core, preservar workers só com justificativa real. Não altera a
+  arquitetura atual nem cria implementação nesta rodada.
 
 ## Papéis e planos da V2
 

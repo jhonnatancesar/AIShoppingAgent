@@ -43,7 +43,7 @@ A V1 permite pesquisar Pichau, Terabyte, Amazon, Kabum, Magalu e Mercado Livre, 
 
 ## Fonte de verdade
 
-`docs/internal/project-context.md` registra o estado vivo; `docs/internal/roadmap.md` registra a ordem de trabalho; `docs/tasks/` contém o escopo unitário.
+`docs/internal/project-context.md` registra o estado vivo; `docs/internal/roadmap.md` registra a ordem de trabalho; `docs/tasks/` contém o escopo unitário. Para executar um deploy em PROD (GG Oferta + César Core/OmniRoute + Coupon Worker), o documento autossuficiente é `docs/operations/prod-deployment-handoff.md` — escrito para ser lido sem depender de nenhuma conversa anterior.
 
 ## Continuidade no servidor — estado atual em 2026-08-28
 

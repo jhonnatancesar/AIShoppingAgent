@@ -1,5 +1,51 @@
 # Decision Log
 
+## DEC-118 — Cota de missões ADMIN/DEV independente da de USER + correção de missão parcial no Telegram
+
+- **Data:** 2026-09-07.
+- **Classificação:** Implementar agora (auditoria + correção pedidas
+  explicitamente pelo usuário, parte de um fechamento maior de
+  saneamento de documentação/instalação/quotas/Telegram).
+- **Achado 1 (cota):** `resolve_quota_limits` (`backend/app/quotas/
+  service.py`) nunca considerava `user.role` -- USER e ADMIN/DEV sempre
+  usavam o mesmo `settings.default_max_active_missions` (5), a menos que
+  um override manual por usuário já existisse. Decisão: separar por
+  perfil reaproveitando o `role` já existente em `User` (nunca
+  `service_class` nem outro sinal indireto) -- novo
+  `Settings.default_max_active_missions_admin_dev: int | None = None`
+  em código (`None` = preserva o comportamento anterior, fallback para o
+  default do USER) -- **nenhum número foi inventado**, por instrução
+  explícita. **Valor real decidido pelo usuário nesta mesma rodada:
+  USER=5 (já era o default), ADMIN/DEV=50**
+  (`AISHOPPING_DEFAULT_MAX_ACTIVE_MISSIONS_ADMIN_DEV=50` em
+  `.env.example` -- raiz e `backend/` -- e em `compose.yaml`, serviço
+  `api`). Achado corrigido no mesmo commit: o fallback inicial em
+  `compose.yaml` (`${VAR:-}`) gerava string vazia quando a variável
+  estivesse ausente, e `Settings` rejeita string vazia para um campo
+  `int | None` com `ValidationError` -- quebraria o boot do `api`.
+  Corrigido para `${VAR:-50}`.
+- **Achado 2 (Telegram, bug real confirmado):** `create_mission_from_
+  criteria_async` grava (`flush`) a missão `DRAFT` + critérios + fontes
+  antes de `transition_mission_async` checar a cota e levantar
+  `QuotaExceededError`; o handler do webhook já capturava esse erro e
+  respondia uma mensagem amigável, mas sem desfazer a escrita -- o
+  commit incondicional de "Fase C" em `_process_authenticated_message`
+  persistia a missão `DRAFT` mesmo com a criação recusada ("missão
+  parcial"). Confirmado com um teste de integração real contra
+  PostgreSQL ANTES da correção (a missão `DRAFT` aparecia de fato no
+  banco), corrigido com `await session.rollback()` nos três blocos de
+  captura que convertem o erro em mensagem, reaplicando a limpeza de
+  `pending_intent` depois do rollback.
+- **Evidência:** `tests/test_quotas_service.py` (+4 testes de cota por
+  role), `tests/integration/test_telegram_webhook.py` (novo -- não
+  existia cobertura de integração real do webhook Telegram antes desta
+  rodada). Suíte completa não-integração sem regressão (1858 passed).
+- **Próxima ação:** nenhuma pendente sobre o valor -- decidido e
+  configurado nesta mesma rodada. Falta só aplicar em PROD como parte do
+  deploy geral já registrado (`DEC-117` e itens anteriores), sujeito aos
+  mesmos blockers operacionais (acesso ao servidor, autorização de
+  deploy).
+
 ## DEC-117 — Política de providers AI real (`ai_profile`, 4 connections, 2 combos) — happy path Gemini fica como validação operacional pendente pré-PROD
 
 - **Data:** 2026-09-07.

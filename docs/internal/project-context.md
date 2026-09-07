@@ -3420,4 +3420,111 @@ providers AI"; resumo aqui:
 
 Testes focados do Core re-executados após as correções: 339 passed
 (337 anteriores + 2 novos, cobrindo a precedência do header sobre
-corpo/target). Ainda sem commit/push -- aguardando nova revisão.
+corpo/target). **Aprovado e publicado em 2026-09-07:** GG Oferta
+`cab1f98`, César Core `83d3347`, ambos em `origin/main`. Happy path
+Gemini (USER e ADMIN/DEV com Gemini respondendo como prioridade 1) não
+foi reproduzido em ~47 min de tentativas reais espaçadas (20 chamadas) e
+ficou registrado como validação operacional pendente por
+indisponibilidade/quota externa (`DEC-117`), com gate obrigatório antes
+de PROD em `docs/operations/omniroute-ai-provider-provisioning.md` §6 --
+não bloqueou a aprovação técnica.
+
+## Saneamento de documentação + cota de missões ADMIN/DEV + correção do Telegram (2026-09-07)
+
+Rodada de fechamento sob pedido explícito do usuário, cobrindo quatro
+frentes nos três repositórios (GG Oferta, César Core, Coupon Worker).
+Sem commit/push nesta rodada -- aguardando revisão.
+
+**1. Saneamento de documentação.** Falsos positivos corrigidos com
+evidência de commit real (não só ajuste de texto):
+- `docs/tasks/SUBTASK-010-landing-publica-ggoferta.md` (landing pública)
+  -- estava "adiada", mas já concluída (`73014a3`,
+  `frontend/src/pages/LandingPage.tsx` ativo em `/`); arquivo nunca
+  tinha sido commitado.
+- `docs/tasks/TASK-120.md` (datas pt-BR no Histórico de missão) --
+  estava "PLANNED/BACKLOG", mas já concluída (`a06397e`, cita a própria
+  TASK no código-fonte).
+- `docs/tasks/README.md` -- parado em TASK-118H, sem registrar
+  TASK-119/120, a iniciativa FASE E-G/cupons/política de providers AI,
+  nem a correção de cota/Telegram desta rodada; e ainda dizia "cupons em
+  pausa" (falso -- já implementados). Corrigido com uma entrada nova no
+  topo, redirecionando para `decision-log.md`/`project-context.md` como
+  fonte de verdade primária a partir de TASK-118H.
+- `docs/internal/roadmap.md` -- parado em ~2026-08-30 (fechamento da
+  V1.2), sem cobrir nada do que veio depois. Corrigido com uma nota de
+  estado real no topo, preservando a tabela de fases original como
+  histórico.
+- **TASK-117 (verificação de e-mail via Cloudflare Access) permanece
+  estacionada** por decisão explícita do usuário nesta rodada -- não é a
+  próxima prioridade, não é blocker deste fechamento. Documentação
+  atualizada só para refletir isso (`README.md` acima), nenhum código
+  tocado.
+- **V1.5 registrada como estudo futuro** (`docs/internal/roadmap.md` e
+  `docs/internal/backlog.md`): avaliar substituir workers especializados
+  por pesquisas via César Core/Search, inspirado no mecanismo do projeto
+  "Hardware Barato" -- sem implementação, sem alteração de arquitetura
+  atual.
+- Guia de instalação conjunta dos três componentes (GG Oferta + César
+  Core/OmniRoute + Coupon Worker): ver
+  `docs/installation/integrated-setup.md` (novo).
+
+**2. Cota de missões ADMIN/DEV independente da de USER.** Auditoria real
+(`backend/app/quotas/service.py`) confirmou o problema relatado:
+`resolve_quota_limits` nunca olhava `user.role` -- USER e ADMIN/DEV
+sempre caíam no mesmo `settings.default_max_active_missions` (5), a
+menos que um override manual por usuário já existisse. Corrigido
+reaproveitando o `role` já existente em `User` (nunca `service_class`
+nem outro sinal indireto, per instrução explícita): novo
+`Settings.default_max_active_missions_admin_dev: int | None = None`
+(`backend/app/core/config.py`) e `_default_max_active_missions_for_role`
+em `quotas/service.py`, que separa o default por perfil.
+**Concluído com o valor real decidido pelo usuário: USER=5, ADMIN/DEV=50**
+(`AISHOPPING_DEFAULT_MAX_ACTIVE_MISSIONS_ADMIN_DEV=50`, `.env.example` na
+raiz e em `backend/`, e `compose.yaml` do serviço `api`, que processa o
+webhook do Telegram e a criação de missão via Web). O campo em código
+(`Settings.default_max_active_missions_admin_dev`) continua com default
+`None` -- é a configuração de ambiente (`.env`/`compose.yaml`), não o
+código, que fixa `50`; sem essa variável em algum ambiente futuro,
+ADMIN/DEV volta a herdar o default do USER (comportamento de
+segurança, não um valor inventado). **Achado corrigido nesta rodada:**
+o fallback inicial em `compose.yaml` usava `${VAR:-}` (string vazia
+quando a variável não existe) -- `Settings` rejeita string vazia para
+um campo `int | None` com `ValidationError`, o que quebraria o boot do
+`api` em qualquer ambiente sem essa variável explícita. Corrigido para
+`${VAR:-50}` (mesmo valor real decidido, também como fallback seguro no
+Compose). Override por usuário (`max_active_missions_override`)
+continua tendo prioridade sobre qualquer default, para os dois perfis.
+`max_store_slots`/`max_daily_searches` não foram tocados -- o pedido era
+especificamente sobre cota de missões ativas. Testes atualizados de `20`
+(placeholder) para `50` (valor real) em `tests/test_quotas_service.py`.
+
+**3. Bug real confirmado e corrigido: missão parcial persistida quando a
+cota está cheia no Telegram.** Rastreamento completo do fluxo real
+(`create_mission_from_criteria_async` grava/`flush` a missão `DRAFT` +
+critérios + fontes ANTES de `transition_mission_async` checar a cota e
+levantar `QuotaExceededError`; `_resolve_pending_intent` já capturava
+esse erro e devolvia uma mensagem amigável, mas sem desfazer a escrita
+já dada `flush` -- o commit incondicional de "Fase C" em
+`_process_authenticated_message` persistia a missão `DRAFT` mesmo com a
+criação recusada). **Confirmado com um teste de integração real contra
+PostgreSQL antes da correção** (`tests/integration/test_telegram_webhook.py`,
+novo -- não existia nenhuma cobertura de integração do webhook real
+antes desta rodada, apesar de um comentário em `test_telegram_router.py`
+já citar esse arquivo como se existisse): a missão `DRAFT` aparecia de
+fato no banco. Corrigido com `await session.rollback()` nos três blocos
+de captura que convertem o erro numa mensagem (`_KNOWN_DISPATCH_ERRORS`,
+`QuotaExceededError`, `MissionCreationError`) antes de `user.pending_intent
+= None` -- a limpeza do intent pendente é reaplicada depois do rollback
+para não se perder junto. O caminho de erro genuinamente inesperado
+(`except Exception: raise`) nunca teve esse problema (a exceção propaga
+antes do commit incondicional, e a sessão do webhook já não comita
+automaticamente por design -- `get_telegram_async_session`).
+
+**4. Testes desta rodada:** `tests/test_quotas_service.py` (+4, cota por
+role), `tests/integration/test_telegram_webhook.py` (novo, 3 cenários:
+acima do limite/recusado sem missão parcial, dentro do limite/sucesso,
+exatamente no limite/sucesso), suíte completa não-integração (1858
+passed -- as mesmas 6 falhas pré-existentes já confirmadas sem relação
+via `git stash` em rodadas anteriores desta sessão, mais uma flutuação
+de um teste de scraping do Magalu confirmada como flakiness pré-existente,
+não regressão, via re-execução isolada antes/depois desta mudança).
