@@ -3326,10 +3326,15 @@ Coupon Worker) -- PROD **não foi alterado**: as migrations novas
 (`20260906_0001`/`20260906_0002`) não foram aplicadas em PROD, nenhum
 serviço foi deployado, nenhuma flag foi alterada em PROD, nenhuma
 tag/release foi criada, nenhuma prova funcional em PROD foi executada.
-**O deploy continua não autorizado** -- nenhuma ação de migration em
-PROD, restart/redeploy, alteração de flag em PROD, tag/release ou prova
+**O deploy continua não autorizado [ESTADO HISTÓRICO -- ver "Autorização
+de deploy em PROD" mais abaixo]** -- nenhuma ação de migration em PROD,
+restart/redeploy, alteração de flag em PROD, tag/release ou prova
 funcional em PROD deve ser feita sem pedido explícito e uma nova
-aprovação, dado o incidente de processo registrado acima.
+aprovação, dado o incidente de processo registrado acima. Isto era
+verdade no momento em que esta seção foi escrita; **o usuário autorizou
+o deploy explicitamente ainda em 07/09/2026**, em uma rodada posterior
+desta mesma sessão -- não confundir este parágrafo histórico com o
+estado atual.
 
 **Pendências explicitamente fora do escopo desta fase** (não pedido):
 corrigir a lacuna do OmniRoute em si (só foi registrada); backfill de
@@ -3528,3 +3533,70 @@ passed -- as mesmas 6 falhas pré-existentes já confirmadas sem relação
 via `git stash` em rodadas anteriores desta sessão, mais uma flutuação
 de um teste de scraping do Magalu confirmada como flakiness pré-existente,
 não regressão, via re-execução isolada antes/depois desta mudança).
+
+## Autorização de deploy em PROD + correção do pacote de deploy (2026-09-07)
+
+**O usuário autorizou explicitamente o deploy em PROD nesta data**,
+revertendo o estado histórico descrito nas seções anteriores ("deploy
+continua não autorizado"). Ver `DEC-119` em `decision-log.md` para o
+registro formal. Referências anteriores a "nenhum deploy autorizado"
+neste arquivo e em `docs/installation/cesar-core.md` descrevem o estado
+*naquele momento*, não o atual -- não usar como base para negar que o
+deploy foi autorizado.
+
+**Preflight real em PROD encontrou o pacote de deploy incompleto** --
+o handoff original (`docs/operations/prod-deployment-handoff.md`,
+criado na rodada anterior) instruía o Claude do servidor a clonar/
+inspecionar o repositório `cesar-core` para montar a topologia, o que
+contraria o requisito real (`DEC-118`/`DEC-119`): **PROD nunca deve
+clonar nem buildar o repositório `cesar-core`**, só consumir a imagem
+já publicada. Corrigido com um bundle de deploy autossuficiente,
+versionado neste próprio repositório:
+
+- `deploy/prod/cesar-core.compose.yaml` -- reproduz fielmente a
+  topologia já aprovada e validada em DEV (`C:\cesar-core\compose.yaml`
+  na origem: César Core + Redis + OmniRoute 3.8.50 + SearXNG, `REQUIRE_
+  API_KEY=true` já presente na topologia original), usando exclusivamente
+  imagens prontas (`ghcr.io/jhonnatancesar/cesar-core:1.2.1` e as duas
+  imagens de terceiros fixadas por digest) -- nenhum `build:`, nenhuma
+  dependência do repositório `cesar-core` no servidor.
+- `deploy/prod/cesar-core/redis/redis.conf` e
+  `deploy/prod/cesar-core/searxng/{settings.yml,entrypoint.sh}` --
+  cópia fiel dos arquivos de config operacional de terceiros referenciados
+  pelo compose original (não é código-fonte do César Core em si, é
+  config de Redis/SearXNG, imagens de terceiros).
+- Caminhos de secret ajustados para `deploy/prod/cesar-core/.secrets/`
+  (já coberto pelo `.gitignore` existente, padrão `.secrets/` sem
+  âncora de início de caminho).
+
+**Coupon Worker -- primeira instalação em PROD, documentada
+explicitamente** (nenhuma escolha deixada para o Claude do servidor):
+diretório, tag (`v1.0.0`), `.env` (`AUTH_TOKEN`, `COUPONS_POSTGRES_DSN`
+apontando para o Postgres do GG), garantia de que `PostgresCouponStore`
+é usado (nunca SQLite silencioso -- `open_coupon_store()` já loga
+explicitamente qual backend está ativo, e `PostgresCouponStore.__init__`
+levanta `CouponStoreIntegrationError` em vez de cair para SQLite se a
+conexão configurada falhar), start/stop via
+`manage_coupon_worker_task.ps1`, health via `python worker.py --once` +
+logs. Detalhe completo na seção correspondente do handoff.
+
+**`verification_code_pepper` -- gap real encontrado e documentado:**
+esse secret nunca esteve em `backend/scripts/manage_secrets.py`
+(`SECRET_SOURCES`) nem em `docs/installation/secrets.md` -- ao contrário
+de `postgres_password`/`telegram_webhook_secret`/`ops_controller_secret`
+(gerados automaticamente via `secrets.token_urlsafe(48)` por
+`initialize_interactively`), este exigiria um humano digitar um valor
+manualmente via prompt oculto (`getpass`) se coberto pelo fluxo
+existente -- o que na prática nunca acontecia, porque ele nem está na
+lista. Documentado no handoff um procedimento PowerShell que gera um
+valor aleatório criptograficamente forte (32 bytes via
+`RandomNumberGenerator`, base64 URL-safe, sem newline final) e grava
+direto em `.secrets/verification_code_pepper`, sem exigir que ninguém
+invente uma string nem que o valor apareça em log/relatório/chat. Não
+alterado `manage_secrets.py` nesta rodada (pedido era documentar o
+procedimento, não corrigir a ferramenta) -- fica registrado aqui como
+possível melhoria futura da própria ferramenta.
+
+**Nova release do GG Oferta:** `v1.3.1` não foi movida (política de tags
+imutáveis já em vigor). A correção acima foi publicada como **`v1.3.2`**
+-- ver hash real no próprio commit/tag em `origin`.

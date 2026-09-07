@@ -1,5 +1,45 @@
 # Decision Log
 
+## DEC-119 — Autorização de deploy em PROD + bundle de deploy autossuficiente do César Core
+
+- **Data:** 2026-09-07.
+- **Classificação:** Implementar agora (correção de um pacote de deploy
+  já entregue, após preflight real em PROD encontrar uma lacuna).
+- **Autorização:** o usuário autorizou explicitamente o deploy em PROD
+  desta rodada (F1/F2/F3, cupons, FASE G, política de providers AI,
+  cota ADMIN/DEV, correção do Telegram) nesta data. Revoga o estado
+  histórico "deploy continua não autorizado" registrado em rodadas
+  anteriores da mesma sessão (`project-context.md`,
+  `docs/installation/cesar-core.md`) -- esses trechos ficam como
+  registro histórico, não como estado atual.
+- **Achado do preflight real:** o handoff (`docs/operations/
+  prod-deployment-handoff.md`) e `docs/installation/cesar-core.md`
+  ainda instruíam (ou permitiam ler como instrução) que o Claude do
+  servidor de PROD interagisse com o repositório-fonte `cesar-core`
+  para montar a topologia. Isso contraria a decisão real: **PROD nunca
+  deve clonar nem buildar `cesar-core`**, só consumir a imagem já
+  publicada e verificada no GHCR.
+- **Correção:** bundle de deploy autossuficiente versionado no próprio
+  GG Oferta -- `deploy/prod/cesar-core.compose.yaml` (topologia
+  fielmente reproduzida do compose já aprovado em DEV: César Core +
+  Redis + OmniRoute 3.8.50 + SearXNG, `REQUIRE_API_KEY=true`, networks/
+  volumes/portas/healthchecks idênticos) + `deploy/prod/cesar-core/
+  {redis,searxng}/...` (config operacional de terceiros, não
+  código-fonte do César Core). Único ajuste real: caminhos de secret
+  relativos ao novo local do bundle.
+- **Gaps de primeira instalação fechados na documentação** (handoff):
+  procedimento explícito do Coupon Worker (primeira vez em PROD, sem
+  escolha deixada para o Claude do servidor) e do `verification_code_
+  pepper` (gap real: nunca esteve em `manage_secrets.py`/`secrets.md`;
+  documentado um procedimento PowerShell de geração aleatória local,
+  sem exigir que um humano invente a string nem que o valor apareça em
+  log/relatório).
+- **Gate Gemini:** mantido exatamente como já decidido -- testar de
+  verdade em PROD; se falhar por quota externa já documentada como
+  aceita, não é motivo para alterar arquitetura/fallback.
+- **Release:** `v1.3.1` não foi movida (tags imutáveis). Correção
+  publicada como `v1.3.2`.
+
 ## DEC-118 — Cota de missões ADMIN/DEV independente da de USER + correção de missão parcial no Telegram
 
 - **Data:** 2026-09-07.

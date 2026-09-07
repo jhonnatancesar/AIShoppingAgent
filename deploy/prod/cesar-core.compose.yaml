@@ -1,0 +1,160 @@
+# Bundle de deploy do César Core para PROD -- vive no repositório GG Oferta
+# de propósito (DEC-118/DEC-119): PROD não clona nem builda o repositório
+# `cesar-core`. Usa exclusivamente a imagem já publicada no GHCR
+# (`ghcr.io/jhonnatancesar/cesar-core:1.2.1`, verificada pelo workflow
+# `container-release.yml` daquele repositório) e as duas imagens oficiais
+# de terceiros (OmniRoute 3.8.50, SearXNG), fixadas por digest.
+#
+# Topologia idêntica à aprovada e validada em DEV
+# (`C:\cesar-core\compose.yaml` no repositório de origem, mantido em sincronia
+# manual -- nenhum código-fonte do César Core em si, só orquestração de
+# containers e config operacional de terceiros). Ver
+# `docs/architecture/gg-oferta-core.md` (repositório `cesar-core`) para a
+# arquitetura completa e `docs/operations/prod-deployment-handoff.md`
+# (este repositório) para o procedimento de deploy ponta a ponta.
+#
+# Uso: `docker compose -f deploy/prod/cesar-core.compose.yaml up -d`
+# (os caminhos relativos abaixo -- `./cesar-core/...` -- resolvem sempre a
+# partir do diretório deste arquivo, `deploy/prod/`, independente de onde o
+# comando `docker compose` é chamado).
+name: cesar-core
+services:
+  cesar-core:
+    image: ${CESAR_CORE_IMAGE:-ghcr.io/jhonnatancesar/cesar-core:1.2.1}
+    platform: linux/amd64
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    stop_grace_period: 40s
+    ports: ["127.0.0.1:${CESAR_CORE_PUBLISHED_PORT:-8100}:8100"]
+    networks: [backend, ingress]
+    environment:
+      CESAR_CORE_OMNIROUTE_BASE_URL: http://omniroute:20128
+      # Precisa exceder FIRECRAWL_TIMEOUT_MS (serviço omniroute, abaixo) --
+      # os dois formam uma cadeia (Core -> OmniRoute -> Firecrawl).
+      CESAR_CORE_OMNIROUTE_TIMEOUT_SECONDS: ${CESAR_CORE_OMNIROUTE_TIMEOUT_SECONDS:-150}
+      CESAR_CORE_OMNIROUTE_AI_API_KEY_FILE: /run/secrets/omniroute_ai
+      CESAR_CORE_OMNIROUTE_SEARCH_API_KEY_FILE: /run/secrets/omniroute_search
+      CESAR_CORE_OMNIROUTE_FETCH_API_KEY_FILE: /run/secrets/omniroute_fetch
+      CESAR_CORE_SECURITY_GG_OFERTA_API_KEY_FILE: /run/secrets/application
+      CESAR_CORE_SECURITY_QUOTA_REDIS_URL: redis://redis:6379/0
+      CESAR_CORE_SECURITY_QUOTA_NAMESPACE: ${CESAR_CORE_SECURITY_QUOTA_NAMESPACE:-cesar-core:quota:v1}
+      CESAR_CORE_SECURITY_AI_REQUESTS_PER_MINUTE: ${CESAR_CORE_SECURITY_AI_REQUESTS_PER_MINUTE:-60}
+      CESAR_CORE_SECURITY_SEARCH_REQUESTS_PER_MINUTE: ${CESAR_CORE_SECURITY_SEARCH_REQUESTS_PER_MINUTE:-60}
+      CESAR_CORE_ADMIN_DATABASE_PATH: /var/lib/cesar-core/control-plane.sqlite3
+      # Flags -- default false, ativação gradual conforme
+      # docs/operations/prod-deployment-handoff.md seção 6.
+      CESAR_CORE_AI_ENABLED: ${CESAR_CORE_AI_ENABLED:-false}
+      CESAR_CORE_AI_DEFAULT_MODEL: ${CESAR_CORE_AI_DEFAULT_MODEL:-}
+      CESAR_CORE_AI_MODEL_ENFORCES_MAX_TOKENS: ${CESAR_CORE_AI_MODEL_ENFORCES_MAX_TOKENS:-false}
+      CESAR_CORE_AI_MAX_TOKENS_LIMIT: ${CESAR_CORE_AI_MAX_TOKENS_LIMIT:-4096}
+      # Nomes dos 2 combos provisionados no OmniRoute (ver seção 5 do
+      # handoff) -- user-cascade/admin-dev-cascade, USER e ADMIN/DEV.
+      CESAR_CORE_AI_USER_MODEL: ${CESAR_CORE_AI_USER_MODEL:-}
+      CESAR_CORE_AI_ADMIN_DEV_MODEL: ${CESAR_CORE_AI_ADMIN_DEV_MODEL:-}
+      CESAR_CORE_SEARCH_ENABLED: ${CESAR_CORE_SEARCH_ENABLED:-false}
+      CESAR_CORE_SEARCH_DEFAULT_PROVIDER: searxng-search
+      CESAR_CORE_SEARCH_PROVIDER_HEALTH_URL: http://searxng:8080/healthz
+      CESAR_CORE_SEARCH_TECHNICAL_DOCUMENTATION_PROVIDER: context7
+      CESAR_CORE_SEARCH_MAX_RESULTS_LIMIT: ${CESAR_CORE_SEARCH_MAX_RESULTS_LIMIT:-20}
+      CESAR_CORE_FETCH_ENABLED: ${CESAR_CORE_FETCH_ENABLED:-false}
+      CESAR_CORE_FETCH_DEFAULT_PROVIDER: firecrawl
+    secrets: [application, omniroute_ai, omniroute_search, omniroute_fetch]
+    volumes: [control-plane-data:/var/lib/cesar-core]
+    # A topologia aprovada não define healthcheck de Compose para este
+    # serviço (só redis/omniroute/searxng abaixo têm) -- verificação real
+    # é externa, via `curl http://127.0.0.1:8100/health` e `/ready`
+    # (seção 8 do handoff). Não inventar um healthcheck aqui sem decisão
+    # explícita: manter fiel à topologia já validada em DEV.
+
+  redis:
+    image: redis:8.6.5-alpine@sha256:cd218f4b106a332c5c992e38a9480bfb9d7e9f8f7b0ec9a0023bfa36d9a408f9
+    restart: unless-stopped
+    command: [redis-server, /usr/local/etc/redis/redis.conf]
+    networks: [backend]
+    volumes:
+      - ./cesar-core/redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
+      - quota-data:/data
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  omniroute:
+    # Oficial certificado 3.8.50 -- nunca rebuildar/customizar esta imagem.
+    image: diegosouzapw/omniroute@sha256:085c57adf499a8aaa9f35ccde95c0df9c11bd9ecd18d6c9edbf3b68b8079ba9d
+    platform: linux/amd64
+    restart: unless-stopped
+    # INITIAL_PASSWORD só bootstrapa a senha administrativa enquanto
+    # nenhuma senha existir ainda -- não sobrescreve uma senha já
+    # configurada. Valor real fica só em
+    # deploy/prod/cesar-core/.secrets/omniroute-admin.env (arquivo local,
+    # nunca versionado -- criado na primeira instalação, ver seção 5 do
+    # handoff). Conteúdo esperado: uma única linha
+    # `INITIAL_PASSWORD=<valor forte gerado localmente>`.
+    env_file: [./cesar-core/.secrets/omniroute-admin.env]
+    networks: [backend, egress]
+    environment:
+      # Requisito explícito desta rodada: nenhuma chamada a
+      # /v1/chat/completions ou /v1/search sem API key válida.
+      REQUIRE_API_KEY: "true"
+      QUOTA_STORE_DRIVER: sqlite
+      OMNIROUTE_ALLOW_PRIVATE_PROVIDER_URLS: "true"
+      # debug|info|warn|error, default info -- reduz o log de acesso, que
+      # inclui a URL completa (query e fragment) de cada /v1/web/fetch.
+      APP_LOG_LEVEL: warn
+      # Precisa exceder o timeout do Fetch em cadeia (GG -> Core ->
+      # OmniRoute -> Firecrawl); ver CESAR_CORE_OMNIROUTE_TIMEOUT_SECONDS
+      # acima e AISHOPPING_CESAR_CORE_FETCH_TIMEOUT_SECONDS no GG Oferta --
+      # os três precisam subir juntos, nunca só este.
+      FIRECRAWL_TIMEOUT_MS: "120000"
+    volumes: [omniroute-data:/app/data]
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:20128/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      start_period: 40s
+      retries: 3
+
+  searxng:
+    image: searxng/searxng@sha256:3602e6ddbeba037f5d800d1ed9d296a8b93c9f5b3cf9d05fa179d0e766dd59a1
+    restart: unless-stopped
+    networks: [backend, egress]
+    entrypoint: [/bin/sh, /opt/cesar/searxng-entrypoint.sh]
+    volumes:
+      - ./cesar-core/searxng/settings.yml:/etc/searxng/settings.yml:ro
+      - ./cesar-core/searxng/entrypoint.sh:/opt/cesar/searxng-entrypoint.sh:ro
+    secrets: [searxng]
+    healthcheck:
+      test: [CMD, wget, --quiet, --spider, http://127.0.0.1:8080/healthz]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+networks:
+  backend:
+    internal: true
+  # Publicação de porta no host exige uma bridge não-internal. Nenhuma
+  # dependência entra em ingress; só a porta loopback do Core é publicada.
+  ingress: {}
+  egress: {}
+volumes:
+  quota-data: {}
+  omniroute-data: {}
+  control-plane-data: {}
+secrets:
+  application:
+    file: ${CESAR_CORE_SECURITY_GG_OFERTA_API_KEY_FILE:-./cesar-core/.secrets/ggoferta-core-client}
+  omniroute_ai:
+    file: ${CESAR_CORE_OMNIROUTE_AI_API_KEY_FILE:-./cesar-core/.secrets/ggoferta-ai}
+  omniroute_search:
+    file: ${CESAR_CORE_OMNIROUTE_SEARCH_API_KEY_FILE:-./cesar-core/.secrets/ggoferta-search}
+  omniroute_fetch:
+    file: ${CESAR_CORE_OMNIROUTE_FETCH_API_KEY_FILE:-./cesar-core/.secrets/ggoferta-fetch}
+  searxng:
+    file: ${CESAR_CORE_SEARXNG_SECRET_FILE:-./cesar-core/.secrets/searxng}

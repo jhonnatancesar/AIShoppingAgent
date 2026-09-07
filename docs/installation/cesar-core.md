@@ -15,7 +15,12 @@ A arquitetura e a topologia oficiais estão em
 `C:\cesar-core\docs\architecture\gg-oferta-core.md`.
 
 O César Core é dependência obrigatória para AI, grounding e Search. Esta
-documentação continua restrita a DEV; não há rollout PROD aprovado.
+página cobre a instalação em DEV. **O rollout em PROD foi autorizado pelo
+usuário em 07/09/2026** (histórico: até essa data, nenhum deploy em PROD
+havia sido autorizado) — o procedimento completo, incluindo o bundle de
+deploy do César Core/OmniRoute/Redis/SearXNG que roda sem clonar o
+repositório `cesar-core`, está em
+[`docs/operations/prod-deployment-handoff.md`](../operations/prod-deployment-handoff.md).
 
 O César Core é a fonte de verdade para identidade, credentials, capabilities,
 policies, quotas, targets, readiness e observabilidade. O GG Oferta é somente
