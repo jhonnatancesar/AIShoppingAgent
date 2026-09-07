@@ -46,7 +46,7 @@ uma foto de um instante, não uma garantia de que nada mudou depois):
 
 | Componente | Tag | Commit | Observação |
 |---|---|---|---|
-| GG Oferta | **`v1.3.3`** | `ce8c1d1` (`main`) | Substitui `v1.3.2` (que ainda tinha um blocker documentado: emissão manual das 3 credenciais consumidoras do OmniRoute). Inclui o bootstrap determinístico dessas credenciais (`deploy/prod/cesar-core/bootstrap-omniroute-keys.{js,ps1}`) e este handoff atualizado (seção 5.1 em duas etapas) |
+| GG Oferta | **`v1.3.4`** | `01efcb0` (`main`) | Substitui `v1.3.3` (que ainda tinha um blocker real, encontrado no próprio deploy: o `api` containerizado não falava com o César Core -- `127.0.0.1` de dentro do container aponta para si mesmo). Inclui o wiring real (`host.docker.internal` + `extra_hosts` + secret `cesar_core_api_key`) e a correção de código que o viabiliza (`DEC-121`) |
 | César Core | **`v1.2.1`** | `a5ba084` | Política real de providers AI (`ai_profile`, 4 connections, 2 combos) + saneamento documental. **Imagem já publicada e verificada no GHCR:** `ghcr.io/jhonnatancesar/cesar-core:1.2.1` (também `:1.2`, `:1`, `:latest`). **PROD não usa esta tag/repositório diretamente — só a imagem, via `deploy/prod/cesar-core.compose.yaml`.** |
 | Coupon Worker | **`v1.0.0`** | `5f502e1` (`master`) | Primeira release — coleta real de cupons com persistência no Postgres do GG |
 
@@ -66,11 +66,11 @@ Histórico relevante anterior a estas tags, para contexto:
   refinamento de esgotamento).
 
 **Para o deploy em si:** faça checkout das tags acima nos dois
-repositórios que existem em PROD (`git checkout v1.3.3` — confirme que é
+repositórios que existem em PROD (`git checkout v1.3.4` — confirme que é
 essa a mais recente com `git tag --sort=-creatordate` antes — no GG
 Oferta, `v1.0.0` no Coupon Worker). O César Core **não tem repositório
 em PROD**: use `deploy/prod/cesar-core.compose.yaml` (deste próprio
-checkout do GG Oferta, já em `v1.3.3`), que já referencia `ghcr.io/
+checkout do GG Oferta, já em `v1.3.4`), que já referencia `ghcr.io/
 jhonnatancesar/cesar-core:1.2.1` como imagem padrão — nenhum `docker
 build`, nenhum clone do repositório `cesar-core`.
 
