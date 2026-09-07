@@ -180,30 +180,30 @@ desligados (estado inicial esperado, seção 7 passo 6).
 
 ### OmniRoute (dentro do volume do César Core, não é `.env`)
 
-- Senha administrativa do painel (`/api/auth/login`).
+- Senha administrativa do painel (`/api/auth/login`) — arquivo
+  `deploy/prod/cesar-core/.secrets/omniroute-admin.env`, gerado na
+  primeira instalação (ver "Geração de secrets locais" abaixo).
 - 4 chaves de provider AI: `gemini_user_api_key`,
   `gemini_admin_dev_api_key` (chave **diferente** da de USER),
-  `groq_admin_dev_api_key`, `openrouter_admin_dev_api_key`.
+  `groq_admin_dev_api_key`, `openrouter_admin_dev_api_key` — usadas só
+  no provisionamento manual das 4 connections (seção 5.2); não são
+  arquivo de secret montado pelo Compose.
+- 3 credenciais consumidoras (`ggoferta-ai`, `ggoferta-search`,
+  `ggoferta-fetch`) — **emitidas automaticamente pelo próprio
+  OmniRoute** e gravadas direto nos arquivos de secret pelo script
+  `bootstrap-omniroute-keys.ps1` (seção 5.1, etapa A). Procedimento
+  fechado nesta rodada (antes era um gap documentado, "pare e
+  reporte"): determinístico, idempotente, sem decisão manual, nenhum
+  valor passa por log/output/Git — ver seção 5.1 para o comando e
+  [`deploy/prod/cesar-core/bootstrap-omniroute-keys.js`](../../deploy/prod/cesar-core/bootstrap-omniroute-keys.js)
+  para o mecanismo interno.
+- 1 credencial compartilhada GG↔Core (`ggoferta-core-client`) — mesmo
+  valor usado em `AISHOPPING_CESAR_CORE_API_KEY_FILE` do lado do GG
+  Oferta (decisão sua, gere um valor forte para os dois lados; não tem
+  procedimento automático, ao contrário das 3 credenciais acima).
 
-**Gap conhecido, não coberto em detalhe por este handoff:** os 5
-arquivos de secret que `deploy/prod/cesar-core.compose.yaml` monta
-(`ggoferta-core-client`, `ggoferta-ai`, `ggoferta-search`,
-`ggoferta-fetch`, `searxng`) precisam existir com valores reais de PROD
-antes do passo 5.1 — o Bearer `ggoferta-core-client` é o mesmo valor
-usado em `AISHOPPING_CESAR_CORE_API_KEY_FILE` do lado do GG Oferta (uma
-decisão sua, gere um valor forte para os dois lados); já `ggoferta-ai`/
-`ggoferta-search`/`ggoferta-fetch` são credenciais **emitidas pelo
-próprio OmniRoute** (`api_keys`, escopo de consumidor) depois que ele já
-estiver no ar — ou seja, existe uma dependência circular parcial (o
-Core precisa dessas chaves para subir "completo", mas o OmniRoute
-precisa estar no ar para emiti-las). Se você não tiver um procedimento
-documentado para essa emissão específica, **pare e reporte** em vez de
-inventar um — não é coberto por este handoff nem pelo runbook de
-provisionamento de AI (que cobre só as 4 connections de provider, uma
-coisa diferente).
-
-Nomes de secret, procedimento completo e corpo de requisição exatos:
-seção 5 deste documento e
+Nomes de secret, procedimento completo e corpo de requisição exatos
+para as 4 connections/2 combos de provider: seção 5.2 deste documento e
 [`deploy/prod/omniroute-provisioning.md`](../../deploy/prod/omniroute-provisioning.md)
 (neste mesmo repositório — não precisa do repositório `cesar-core`).
 
@@ -283,13 +283,55 @@ nenhum outro lugar depois de gerado.
 
 ### 5.1. Subir César Core + OmniRoute + Redis + SearXNG (bundle, sem clonar `cesar-core`)
 
-Com os dois secrets acima já gerados e o restante de
-`deploy/prod/cesar-core/.secrets/` provisionado (as 4 chaves de AI
-seguem sendo criadas **dentro do OmniRoute** via API administrativa,
-não como arquivo — ver seção 5.2; os secrets de arquivo aqui são só os
-que o Compose monta: `ggoferta-core-client`, `ggoferta-ai`,
-`ggoferta-search`, `ggoferta-fetch`, `searxng`, mesmos nomes/convenção
-do `README.md` do `cesar-core`):
+**Duas etapas obrigatórias, nesta ordem.** O container `cesar-core`
+monta `omniroute_ai`/`omniroute_search`/`omniroute_fetch` como secrets
+de arquivo (Docker: fail-closed — o container não sobe se o arquivo não
+existir ou estiver vazio), e essas 3 credenciais são **emitidas pelo
+próprio OmniRoute**, que por sua vez precisa estar no ar para emiti-las.
+Por isso o OmniRoute sobe sozinho primeiro, emite as credenciais, e só
+depois o resto do stack sobe.
+
+Pré-requisito de ambas as etapas: `verification_code_pepper` e
+`INITIAL_PASSWORD` (subseção "Geração de secrets locais" acima) já
+gerados; `ggoferta-core-client` e `searxng` já provisionados com
+valores reais (não têm procedimento automático).
+
+**Etapa A — subir só o OmniRoute e emitir as 3 credenciais
+consumidoras:**
+
+```powershell
+docker compose -f deploy\prod\cesar-core.compose.yaml up -d omniroute
+.\deploy\prod\cesar-core\bootstrap-omniroute-keys.ps1
+```
+
+`bootstrap-omniroute-keys.ps1` (determinístico, idempotente, nenhuma
+decisão manual, nenhuma credencial em log/output):
+
+- espera o container `cesar-core-omniroute-1` ficar `healthy`;
+- lê a senha administrativa de
+  `deploy/prod/cesar-core/.secrets/omniroute-admin.env` sem nunca
+  exibi-la;
+- para cada uma das 3 credenciais (`ggoferta-ai`, `ggoferta-search`,
+  `ggoferta-fetch`): se o arquivo de secret correspondente já existe e
+  não está vazio, **pula** (idempotente — já provisionado); senão,
+  confere se já existe uma chave com esse nome no OmniRoute — se
+  existir sem o arquivo correspondente, o script **para com erro
+  explícito** (estado ambíguo real; não duplica, não apaga nada
+  sozinho, a mensagem de erro diz como recuperar); senão, cria a chave
+  via `POST /api/keys` e grava o valor bruto direto no arquivo de
+  secret, sem nunca passar pelo stdout/log do host.
+- termina com código de saída não-zero e mensagem clara se qualquer
+  etapa falhar. **Não prossiga para a etapa B se este script falhar.**
+
+Mecanismo interno (container descartável reaproveitando a própria
+imagem do OmniRoute, rede Docker, bind mount para o arquivo de saída):
+[`deploy/prod/cesar-core/bootstrap-omniroute-keys.js`](../../deploy/prod/cesar-core/bootstrap-omniroute-keys.js).
+Validado em DEV nos três cenários relevantes (criação inicial,
+reexecução idempotente, e chave existente com arquivo ausente
+corretamente recusada) antes de entrar neste handoff.
+
+**Etapa B — subir o restante do stack** (agora que os 3 secrets de
+arquivo da etapa A existem):
 
 ```powershell
 docker compose -f deploy\prod\cesar-core.compose.yaml up -d
@@ -403,11 +445,16 @@ ative uma de cada vez, prove antes de ativar a próxima):
    secrets locais") — `verification_code_pepper` e `INITIAL_PASSWORD`
    do OmniRoute, se ainda não existirem.
 6. **César Core + OmniRoute + Redis + SearXNG** via o bundle
-   `deploy/prod/cesar-core.compose.yaml` (seção 5.1) — subir/atualizar
-   antes do GG Oferta, já que ele é dependência obrigatória
-   (fail-closed) de AI/Search/enrichment. Confirmar `GET /health` e
-   `GET /ready` antes de prosseguir. **Nenhum clone/build do repositório
-   `cesar-core`.**
+   `deploy/prod/cesar-core.compose.yaml` (seção 5.1), em duas etapas
+   obrigatórias: **(a)** subir só o `omniroute` e rodar
+   `bootstrap-omniroute-keys.ps1` para emitir/gravar as 3 credenciais
+   consumidoras (`ggoferta-ai`/`ggoferta-search`/`ggoferta-fetch`) —
+   script determinístico e idempotente, sem decisão manual; **(b)** só
+   então subir o restante do stack (`docker compose ... up -d`).
+   Subir/atualizar antes do GG Oferta, já que ele é dependência
+   obrigatória (fail-closed) de AI/Search/enrichment. Confirmar `GET
+   /health` e `GET /ready` antes de prosseguir. **Nenhum clone/build do
+   repositório `cesar-core`.**
 7. **GG Oferta** (api + `collection_worker` + `telegram_notifier`) —
    com todas as flags da seção 6 **ainda OFF** neste ponto. Confirmar
    `GET /health` e `GET /ready`.
@@ -566,6 +613,17 @@ com todas as 4 connections ativas e nenhum fallback forçado:
   deste deploy -- as tags a usar (seção 1) já existem; se durante o
   deploy você achar necessário registrar uma correção documental/de
   código, isso é uma decisão separada, pare e reporte antes de taguear.
+- Não exibir/logar o valor de nenhuma credencial (senha administrativa
+  do OmniRoute, `ggoferta-ai`/`ggoferta-search`/`ggoferta-fetch`,
+  `ggoferta-core-client`, etc.) em nenhum momento -- nem em log, nem em
+  relatório, nem em saída de comando copiada para qualquer lugar.
+- Não habilitar `ALLOW_API_KEY_REVEAL` no OmniRoute para tentar
+  recuperar uma credencial consumidora perdida. Se
+  `bootstrap-omniroute-keys.ps1` parar porque a chave já existe no
+  OmniRoute mas o arquivo de secret sumiu, siga exatamente a mensagem
+  de erro do script (restaurar o arquivo de um backup, ou remover a
+  chave órfã pelo painel administrativo e reexecutar) -- não invente
+  outro caminho.
 
 ## 13. Referências (mesma arquitetura, sem redesenho)
 
@@ -573,6 +631,12 @@ com todas as 4 connections ativas e nenhum fallback forçado:
   [`deploy/prod/cesar-core.compose.yaml`](../../deploy/prod/cesar-core.compose.yaml).
 - Runbook de provisionamento OmniRoute (cópia local, sem clonar o
   repositório): [`deploy/prod/omniroute-provisioning.md`](../../deploy/prod/omniroute-provisioning.md).
+- Bootstrap determinístico das 3 credenciais consumidoras
+  (`ggoferta-ai`/`ggoferta-search`/`ggoferta-fetch`), seção 5.1 etapa A:
+  [`deploy/prod/cesar-core/bootstrap-omniroute-keys.ps1`](../../deploy/prod/cesar-core/bootstrap-omniroute-keys.ps1)
+  (wrapper) e
+  [`deploy/prod/cesar-core/bootstrap-omniroute-keys.js`](../../deploy/prod/cesar-core/bootstrap-omniroute-keys.js)
+  (mecanismo interno).
 - Arquitetura canônica GG ↔ Core (background/racional -- não é
   operacionalmente necessário para executar este deploy, os dois itens
   acima já bastam): `docs/architecture/gg-oferta-core.md` no

@@ -97,6 +97,12 @@ services:
     # handoff). Conteúdo esperado: uma única linha
     # `INITIAL_PASSWORD=<valor forte gerado localmente>`.
     env_file: [./cesar-core/.secrets/omniroute-admin.env]
+    # As 3 credenciais consumidoras que o serviço `cesar-core` monta
+    # (secrets omniroute_ai/omniroute_search/omniroute_fetch, abaixo)
+    # são emitidas por este serviço, não por arquivo estático -- ver
+    # `cesar-core/bootstrap-omniroute-keys.ps1` (seção 5.1 etapa A do
+    # handoff): sobe só este serviço primeiro, emite as 3 credenciais,
+    # só então sobe o resto do stack.
     networks: [backend, egress]
     environment:
       # Requisito explícito desta rodada: nenhuma chamada a

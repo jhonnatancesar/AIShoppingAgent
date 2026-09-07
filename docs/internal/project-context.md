@@ -3600,3 +3600,41 @@ possível melhoria futura da própria ferramenta.
 **Nova release do GG Oferta:** `v1.3.1` não foi movida (política de tags
 imutáveis já em vigor). A correção acima foi publicada como **`v1.3.2`**
 -- ver hash real no próprio commit/tag em `origin`.
+
+## Bootstrap determinístico das credenciais consumidoras do OmniRoute (2026-09-07)
+
+O bundle `v1.3.2` foi aprovado pelo usuário exceto por um blocker que o
+próprio handoff registrava como gap: emitir `ggoferta-ai`/
+`ggoferta-search`/`ggoferta-fetch` ainda exigia intervenção/parada
+durante o deploy real, porque essas 3 credenciais são emitidas pelo
+próprio OmniRoute (não são arquivo estático) e não havia procedimento
+determinístico documentado para isso -- o handoff instruía "pare e
+reporte" em vez de inventar um. Ver `DEC-120` em `decision-log.md` para
+o registro formal completo (mecanismo, idempotência, validação).
+
+Resumo: `deploy/prod/cesar-core/bootstrap-omniroute-keys.js` roda dentro
+de um container descartável (reaproveita a própria imagem do OmniRoute,
+que já tem Node + `fetch`) conectado à rede Docker do bundle, grava os
+3 arquivos de secret direto no host via bind mount -- o valor bruto
+nunca aparece em stdout/log/Git, só linhas de status. O wrapper
+`deploy/prod/cesar-core/bootstrap-omniroute-keys.ps1` orquestra: espera
+o `omniroute` ficar `healthy`, lê a senha administrativa sem exibi-la, e
+chama o `docker run` com os 3 pares nome:caminho reais. Idempotente
+(detecta arquivo já existente e pula) e seguro no estado ambíguo (chave
+existe no OmniRoute mas arquivo sumiu -- para com erro explícito, nunca
+duplica nem adivinha). Validado com 3 cenários reais em DEV (criação,
+reexecução, estado ambíguo) usando chaves de teste depois removidas.
+
+O handoff (`docs/operations/prod-deployment-handoff.md`) foi atualizado
+para refletir o procedimento fechado: a seção 5.1 agora tem duas etapas
+explícitas (A -- subir só `omniroute` + rodar o bootstrap; B -- subir o
+restante do stack), e o parágrafo de gap na seção 4 foi substituído pela
+descrição do mecanismo real.
+
+**Nova release do GG Oferta:** `v1.3.2` não foi movida. Este fechamento
+foi publicado como **`v1.3.3`** -- ver hash real no próprio commit/tag
+em `origin`.
+
+**Nenhum deploy foi executado nesta rodada** -- só o procedimento foi
+criado, validado em DEV e documentado, por instrução explícita do
+usuário ("Pare depois disso. Não faça deploy").

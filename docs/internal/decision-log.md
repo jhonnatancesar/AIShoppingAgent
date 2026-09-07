@@ -1,5 +1,67 @@
 # Decision Log
 
+## DEC-120 — Bootstrap determinístico das credenciais consumidoras do OmniRoute (fecha o gap do DEC-119)
+
+- **Data:** 2026-09-07.
+- **Classificação:** Implementar agora (o bundle `v1.3.2` foi aprovado
+  exceto por um blocker que o próprio handoff registrava: emissão das
+  credenciais `ggoferta-ai`/`ggoferta-search`/`ggoferta-fetch` ainda
+  exigia intervenção/parada durante o deploy real em PROD).
+- **Gap fechado:** a subseção "OmniRoute" da seção 4 do handoff
+  (`docs/operations/prod-deployment-handoff.md`) continha um parágrafo
+  "Gap conhecido... pare e reporte" para essas 3 credenciais -- eram
+  emitidas pelo próprio OmniRoute (`POST /api/keys`, escopo de
+  consumidor) depois que ele já estivesse no ar, sem procedimento
+  determinístico documentado, deixando a decisão de como emiti-las para
+  o Claude executando em PROD.
+- **Mecanismo:** script Node (`deploy/prod/cesar-core/
+  bootstrap-omniroute-keys.js`) rodado dentro de um container
+  descartável que reaproveita a própria imagem do OmniRoute (já tem
+  Node + `fetch` embutido), conectado à mesma rede Docker do bundle
+  (`cesar-core_backend`) e com um bind mount para gravar os arquivos de
+  secret direto no host -- o valor bruto nunca passa por stdout/stderr/
+  log do host, só as linhas de status (`OK <nome>: ...`) chegam ao
+  terminal. Wrapper PowerShell (`deploy/prod/cesar-core/
+  bootstrap-omniroute-keys.ps1`) orquestra: espera o container
+  `omniroute` ficar `healthy`, lê a senha administrativa do arquivo já
+  existente (`omniroute-admin.env`) sem exibi-la, e chama o `docker run`
+  com os 3 pares nome:caminho reais.
+- **Idempotência:** para cada credencial, o script primeiro confere se
+  o arquivo de secret já existe e não está vazio (sinal primário -- se
+  sim, pula). Só se o arquivo estiver ausente é que confere por nome na
+  lista de chaves do OmniRoute (`GET /api/keys`) -- se já existir uma
+  chave com esse nome sem o arquivo correspondente, o script **para com
+  erro explícito** em vez de duplicar, apagar ou adivinhar um valor;
+  a mensagem de erro diz como recuperar (restaurar backup do arquivo ou
+  remover a chave órfã pelo painel administrativo). Deliberadamente
+  **não usa** `GET /api/keys/{id}/reveal` para recuperação automática
+  nesse estado ambíguo -- esse endpoint só funciona com
+  `ALLOW_API_KEY_REVEAL=true` no serviço de longa duração, e habilitar
+  essa flag (permanentemente, como regressão de segurança, ou
+  temporariamente, como coreografia frágil de recriar o serviço duas
+  vezes) foi julgado pior do que simplesmente parar e reportar o estado
+  ambíguo.
+- **Validação real em DEV** (ambiente descartável, chaves de teste
+  `bootstrap-test-*` criadas e depois removidas do OmniRoute): (1)
+  criação inicial -- grava arquivo com valor real, formato `sk-...`; (2)
+  reexecução idempotente -- detecta arquivo existente, não duplica a
+  chave no OmniRoute; (3) estado ambíguo (chave existe, arquivo ausente)
+  -- script sai com código 1 e a mensagem `BOOTSTRAP_FAILED` esperada,
+  sem criar uma segunda chave.
+- **Handoff atualizado:** seção 4 (parágrafo do gap substituído pela
+  descrição do procedimento fechado), seção 5.1 (dividida em etapa A --
+  subir só `omniroute` + rodar o bootstrap -- e etapa B -- subir o
+  restante do stack), seção 7 (passo 6 do "Ordem de deploy" descreve as
+  duas etapas), seção 12 (duas novas proibições explícitas: nunca
+  exibir/logar valor de credencial; nunca habilitar
+  `ALLOW_API_KEY_REVEAL` para tentar recuperar uma chave perdida), seção
+  13 (referências aos dois novos arquivos).
+- **Release:** `v1.3.2` não foi movida (tags imutáveis). Fechamento
+  publicado como `v1.3.3`.
+- **Não incluído nesta rodada:** nenhum deploy real foi executado (fora
+  do escopo desta decisão) -- só o procedimento foi criado, validado em
+  DEV e documentado.
+
 ## DEC-119 — Autorização de deploy em PROD + bundle de deploy autossuficiente do César Core
 
 - **Data:** 2026-09-07.
