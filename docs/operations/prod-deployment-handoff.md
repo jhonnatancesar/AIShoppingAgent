@@ -28,22 +28,38 @@ ali como aceito, pare e não force nada — reporte, não improvise.
 | César Core | `https://github.com/jhonnatancesar/cesar-core.git` | `main` |
 | Coupon Worker | `https://github.com/jhonnatancesar/AIShoppingAgent-cupom.git` | **`master`** (não é `main` — confirme antes de qualquer comando que assuma o nome da branch) |
 
-**HEAD real em `origin` no momento em que este handoff foi publicado**
-(confirme sempre com `git fetch` + `git log` no servidor — não assuma
-que nenhum commit novo aconteceu depois; isto é uma foto de um
-instante, não uma garantia):
+**Tags de release reais existem agora — use-as, não hashes de commit
+soltos** (confirme sempre com `git fetch --tags` no servidor; isto é
+uma foto de um instante, não uma garantia de que nada mudou depois):
 
-- **GG Oferta:** `bc6021e` (`main`) — histórico relevante até aqui:
-  `208b0bb` (consumo de cupons), `9fd5108` (FASE G: F1/F2/F3 + cupons
-  sob flags), `fba5472` (correção de checkpoint de revisão), `cab1f98`
-  (`ai_profile` no contrato com o Core), `bc6021e` (quota ADMIN/DEV=50 +
-  correção do Telegram + saneamento de documentação + este handoff).
-- **César Core:** `5cb292d` (`main`) — histórico relevante: `83d3347`
-  (política real de providers AI: 4 connections + 2 combos), `5cb292d`
-  (commit documental desta rodada).
-- **Coupon Worker:** `5f502e1` (`master`) — histórico relevante:
-  `caca098` (persistência no PostgreSQL do GG + refinamento de
-  esgotamento), `5f502e1` (commit documental desta rodada).
+| Componente | Tag | Commit | Observação |
+|---|---|---|---|
+| GG Oferta | **`v1.3.1`** | `28af361` (`main`) | Cota ADMIN/DEV=50, correção do Telegram, saneamento de documentação, este handoff |
+| César Core | **`v1.2.1`** | `a5ba084` (`main`) | Política real de providers AI (`ai_profile`, 4 connections, 2 combos) + saneamento documental. **Imagem já publicada e verificada no GHCR:** `ghcr.io/jhonnatancesar/cesar-core:1.2.1` (também `:1.2`, `:1`, `:latest`) |
+| Coupon Worker | **`v1.0.0`** | `5f502e1` (`master`) | Primeira release — coleta real de cupons com persistência no Postgres do GG |
+
+**`v1.2.0` do César Core existiu por um instante e falhou na
+verificação do workflow** (`__version__` do pacote não batia com a tag —
+corrigido na hora, tag não foi movida, ver `README.md` do `cesar-core`,
+seção "Release privada"). **Não usar `v1.2.0` nem a imagem
+`ghcr.io/jhonnatancesar/cesar-core:1.2.0`** — use `v1.2.1`/`1.2.1`.
+
+Histórico relevante anterior a estas tags, para contexto:
+- GG Oferta: `208b0bb` (consumo de cupons), `9fd5108` (FASE G:
+  F1/F2/F3 + cupons sob flags), `fba5472` (correção de checkpoint de
+  revisão), `cab1f98` (`ai_profile` no contrato com o Core).
+- César Core: `83d3347` (política real de providers AI, primeira
+  implementação).
+- Coupon Worker: `caca098` (persistência no PostgreSQL do GG +
+  refinamento de esgotamento).
+
+**Para o deploy em si:** faça checkout das tags acima (`git checkout
+v1.3.1` no GG Oferta, `v1.0.0` no Coupon Worker), e para o César Core
+prefira usar a **imagem já publicada** (`CESAR_CORE_IMAGE=ghcr.io/
+jhonnatancesar/cesar-core:1.2.1` no `.env`, `docker compose pull` — ver
+seção "Execução Docker / Compose" do `README.md` do `cesar-core`) em
+vez de buildar localmente, já que é exatamente esse artefato que passou
+pela verificação automatizada.
 
 ## 2. O que fazer primeiro (antes de qualquer deploy)
 
