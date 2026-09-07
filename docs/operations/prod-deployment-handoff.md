@@ -28,22 +28,22 @@ ali como aceito, pare e não force nada — reporte, não improvise.
 | César Core | `https://github.com/jhonnatancesar/cesar-core.git` | `main` |
 | Coupon Worker | `https://github.com/jhonnatancesar/AIShoppingAgent-cupom.git` | **`master`** (não é `main` — confirme antes de qualquer comando que assuma o nome da branch) |
 
-**HEAD esperado em `origin` no momento em que este handoff foi escrito**
+**HEAD real em `origin` no momento em que este handoff foi publicado**
 (confirme sempre com `git fetch` + `git log` no servidor — não assuma
-que nenhum commit novo aconteceu depois):
+que nenhum commit novo aconteceu depois; isto é uma foto de um
+instante, não uma garantia):
 
-- **GG Oferta:** `<PREENCHER_APOS_PUSH_DESTA_RODADA>` — histórico
-  relevante até aqui: `208b0bb` (consumo de cupons), `9fd5108` (FASE G:
-  F1/F2/F3 + cupons sob flags), `fba5472` (correção de checkpoint de
-  revisão), `cab1f98` (`ai_profile` no contrato com o Core), e o commit
-  desta rodada (quota ADMIN/DEV=50 + correção do Telegram + saneamento
-  de documentação + este handoff).
-- **César Core:** `<PREENCHER_APOS_PUSH_DESTA_RODADA>` — histórico
-  relevante: `83d3347` (política real de providers AI: 4 connections +
-  2 combos), e o commit documental desta rodada.
-- **Coupon Worker:** `<PREENCHER_APOS_PUSH_DESTA_RODADA>` — histórico
-  relevante: `caca098` (persistência no PostgreSQL do GG + refinamento
-  de esgotamento), e o commit documental desta rodada.
+- **GG Oferta:** `bc6021e` (`main`) — histórico relevante até aqui:
+  `208b0bb` (consumo de cupons), `9fd5108` (FASE G: F1/F2/F3 + cupons
+  sob flags), `fba5472` (correção de checkpoint de revisão), `cab1f98`
+  (`ai_profile` no contrato com o Core), `bc6021e` (quota ADMIN/DEV=50 +
+  correção do Telegram + saneamento de documentação + este handoff).
+- **César Core:** `5cb292d` (`main`) — histórico relevante: `83d3347`
+  (política real de providers AI: 4 connections + 2 combos), `5cb292d`
+  (commit documental desta rodada).
+- **Coupon Worker:** `5f502e1` (`master`) — histórico relevante:
+  `caca098` (persistência no PostgreSQL do GG + refinamento de
+  esgotamento), `5f502e1` (commit documental desta rodada).
 
 ## 2. O que fazer primeiro (antes de qualquer deploy)
 
