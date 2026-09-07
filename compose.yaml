@@ -62,6 +62,12 @@ services:
       # criação de agenda (Telegram/api e backfill/worker) nunca divergirem.
       AISHOPPING_COLLECTION_SCHEDULE_INTERVAL_MINUTES: ${AISHOPPING_COLLECTION_SCHEDULE_INTERVAL_MINUTES:-30}
       AISHOPPING_COLLECTION_SCHEDULE_STAGGER_SECONDS: ${AISHOPPING_COLLECTION_SCHEDULE_STAGGER_SECONDS:-300}
+      # FASE G (2026-09-06): consumo de cupons no site (`get_user_offer`)
+      # -- default seguro "false", idêntico ao comportamento anterior a
+      # cupons existirem. `historical_bootstrap`/`market_research_
+      # external_reference` são concerns só do collection_worker nativo
+      # (TASK-109) -- configuradas em backend/.env, nunca aqui.
+      AISHOPPING_COUPONS_ENABLED: ${AISHOPPING_COUPONS_ENABLED:-false}
     ports:
       - "${API_BIND_ADDRESS:-127.0.0.1}:${API_PORT:-8000}:8000"
     secrets:

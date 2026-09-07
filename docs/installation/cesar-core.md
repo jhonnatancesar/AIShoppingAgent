@@ -78,3 +78,26 @@ não escolhe nem substitui as decisões centrais do Core.
 Não existe rollback para providers diretos no GG Oferta. Se o Core ou sua
 configuração estiver indisponível, AI, grounding e Search falham de forma
 fechada; Firecrawl `/v2/scrape` continua apenas como enriquecimento.
+
+## Lacuna conhecida — OmniRoute sem provider real configurado (FASE G, 2026-09-06)
+
+Achado de uma sessão anterior, registrado aqui por decisão explícita do
+usuário: o OmniRoute (dentro do César Core) nunca teve Gemini/Groq/
+OpenRouter configurados como **provider connections reais** — só o
+catálogo nativo gratuito (`opencode/mimo-v2.5-free`) foi validado ao
+vivo. Isso é diferente de qualquer target lógico/config de roteamento já
+existente no OmniRoute (que pode apontar para esses nomes sem que a
+credencial/conexão real exista por trás).
+
+Efeito prático: uma chamada do GG Oferta via `AIProviderManager`/
+`WebSearchManager` que dependa especificamente de Gemini/Groq/OpenRouter
+como fallback dentro do OmniRoute não tem hoje nenhuma credencial real
+configurada para atendê-la — só o provider nativo gratuito está
+efetivamente disponível. Antes de confiar em qualidade de IA
+multi-provider em PROD via César Core, confirmar no Control Plane do
+Core (`/admin`) se as credenciais desses providers foram de fato
+provisionadas.
+
+Este documento só registra a lacuna — nenhum provider, credencial ou
+fallback foi criado, configurado ou inventado por esta anotação. A
+correção (se decidida) é uma TASK própria no repositório `cesar-core`.

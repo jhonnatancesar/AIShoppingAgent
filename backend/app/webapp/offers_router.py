@@ -22,6 +22,7 @@ from app.collection.contracts import (
     OfferCondition,
 )
 from app.collection.normalization import Availability
+from app.core.config import Settings, get_settings
 from app.core.errors import ApiError
 from app.coupons.pricing import AppliedCoupon, best_applicable_coupon
 from app.coupons.service import get_candidate_coupons_for_offer
@@ -554,6 +555,7 @@ async def get_user_offer(
     offer_id: UUID,
     user: User = Depends(require_web_session),
     session: AsyncSession = Depends(get_web_async_session),
+    settings: Settings = Depends(get_settings),
 ) -> OfferDetailResponse:
     try:
         authorize(
@@ -576,7 +578,7 @@ async def get_user_offer(
     if detail is None:
         await _deny_offer_unavailable(session, user=user, offer_id=offer_id)
     applied_coupon = None
-    if detail.observation is not None:
+    if settings.coupons_enabled and detail.observation is not None:
         try:
             candidates = await get_candidate_coupons_for_offer(
                 session, offer_id=detail.offer.id, store_id=detail.offer.store_id

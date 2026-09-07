@@ -199,6 +199,14 @@ def test_metadata_contains_only_implemented_tables() -> None:
         # TASK-113: avaliação inteligente de preço e checkpoint de alerta.
         "market_price_assessments",
         "mission_product_alert_state",
+        # FASE F1 (2026-09-05): bootstrap histórico externo one-shot.
+        "historical_bootstraps",
+        "external_price_references",
+        # Achado de drift pré-existente, sem relação com este trabalho --
+        # tabelas já implementadas em sessões anteriores, nunca
+        # adicionadas a esta lista.
+        "user_feedback",
+        "verification_challenges",
         # Consumo de cupons (2026-09-06): Coupon Worker persiste direto
         # no mesmo PostgreSQL do GG Oferta.
         "coupons",

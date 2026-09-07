@@ -13,6 +13,7 @@ from sqlalchemy import (
     Enum,
     ForeignKey,
     Index,
+    Integer,
     Numeric,
     String,
     Text,
@@ -31,6 +32,12 @@ class HistoricalBootstrapStatus(StrEnum):
     PROCESSING = "processing"
     COMPLETED_WITH_REFERENCES = "completed_with_references"
     COMPLETED_WITHOUT_REFERENCES = "completed_without_references"
+    FAILED = "failed"
+    """Reaproveita o mesmo padrão de `MarketAssessmentStatus.FAILED`
+    (TASK-113) -- nunca confundido com `COMPLETED_*`. `retry_after`/
+    `failure_count` controlam quando uma linha `FAILED` pode ser
+    reclamada de novo; `completed_at` (revalidação de 90 dias) nunca é
+    tocado por uma falha."""
 
 
 class HistoricalBootstrap(Base):
@@ -39,8 +46,17 @@ class HistoricalBootstrap(Base):
         CheckConstraint(
             "currency ~ '^[A-Z]{3}$'", name="ck_historical_bootstraps_currency"
         ),
+        CheckConstraint(
+            "failure_count >= 0",
+            name="ck_historical_bootstraps_failure_count_non_negative",
+        ),
         UniqueConstraint(
             "product_id", "condition", "currency", name="uq_historical_bootstraps_scope"
+        ),
+        Index(
+            "ix_historical_bootstraps_processing_lease",
+            "lease_until",
+            postgresql_where="status = 'processing'",
         ),
     )
 
@@ -69,6 +85,21 @@ class HistoricalBootstrap(Base):
         server_default=func.now(),
     )
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    """Exclusivo do caminho de SUCESSO -- só a revalidação de 90 dias
+    (`historical_bootstrap_revalidation_days`) lê este campo. Uma falha
+    NUNCA grava aqui (ver `retry_after` abaixo)."""
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    """Mesmo papel de `MarketPriceAssessment.lease_until` (TASK-113,
+    §33.3) -- permite reclamar um `PROCESSING` abandonado (crash, kill,
+    exceção não tratada) sem esperar para sempre."""
+    retry_after: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    """Exclusivo do caminho de FALHA -- nunca confundido com
+    `completed_at`. Só uma linha `FAILED` com `retry_after` vencido pode
+    ser reclamada de novo."""
+    failure_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    last_error: Mapped[str | None] = mapped_column(String(2000))
 
 
 class ExternalPriceReference(Base):

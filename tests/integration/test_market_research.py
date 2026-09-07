@@ -12,7 +12,7 @@ import asyncio
 import json
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from app.ai_provider.contracts import AIRequest, AIResponse
@@ -23,6 +23,11 @@ from app.collection.contracts import (
     RawCollectedOffer,
 )
 from app.core.config import Settings
+from app.historical_bootstrap.models import (
+    ExternalPriceReference,
+    HistoricalBootstrap,
+    HistoricalBootstrapStatus,
+)
 from app.market_research.models import (
     MarketAssessmentStatus,
     MarketPriceAssessment,
@@ -52,6 +57,13 @@ pytestmark = pytest.mark.integration
 
 NOW = datetime(2026, 8, 27, 12, 0, tzinfo=UTC)
 _SETTINGS = Settings(_env_file=None)
+# FASE G (2026-09-06): flag da F3 -- só os testes que exercitam o reuso da
+# referência externa (FASE F1) precisam dela ligada; os demais continuam
+# com o default (`False`), provando que o comportamento sem a flag é
+# idêntico ao original da TASK-113.
+_SETTINGS_WITH_EXTERNAL_REFERENCE = Settings(
+    _env_file=None, market_research_external_reference_enabled=True
+)
 
 
 def _gpu_product(sessions, *, title: str = "NVIDIA GeForce RTX 5070 Ti") -> Product:
@@ -523,6 +535,189 @@ def test_scrape_enrichment_only_when_search_below_quorum(
     assert len(firecrawl_insufficient.scrape_calls) >= 1
 
 
+# ---------------------------------------------------------------------------
+# L: FASE F3 -- reaproveita `ExternalPriceReference` da FASE F1, nunca
+# repete uma busca de histórico que a F1 já fez com sucesso.
+# ---------------------------------------------------------------------------
+
+
+def _seed_external_price_reference(
+    sessions,
+    *,
+    product_id: UUID,
+    amount: Decimal,
+    collected_at: datetime,
+    historical_date=None,
+    safe_url: str = "https://comparador.example/historico",
+    source: str = "comparador.example",
+) -> None:
+    with sessions.begin() as session:
+        bootstrap = HistoricalBootstrap(
+            id=uuid4(),
+            product_id=product_id,
+            condition="new",
+            currency="BRL",
+            status=HistoricalBootstrapStatus.COMPLETED_WITH_REFERENCES,
+            started_at=collected_at,
+            completed_at=collected_at,
+        )
+        session.add(bootstrap)
+        session.flush()
+        session.add(
+            ExternalPriceReference(
+                bootstrap_id=bootstrap.id,
+                product_id=product_id,
+                source=source,
+                amount=amount,
+                currency="BRL",
+                historical_date=historical_date,
+                safe_url=safe_url,
+                condition="new",
+                matched_identity_key="whatever-does-not-need-to-match-for-this-query",
+                quality="verified",
+                collected_at=collected_at,
+            )
+        )
+
+
+def test_external_reference_skips_history_search_and_is_reused(
+    integration_database, monkeypatch
+) -> None:
+    product = _gpu_product(
+        integration_database.sessions, title="NVIDIA GeForce RTX 5070"
+    )
+    _seed_external_price_reference(
+        integration_database.sessions,
+        product_id=product.id,
+        amount=Decimal("3499.00"),
+        collected_at=NOW - timedelta(days=10),
+    )
+    search = _FakeSearchProvider(
+        (_evidence("lojaa.com.br"), _evidence("lojab.com.br"))
+    )
+    _use_search(monkeypatch, search)
+
+    asyncio.run(
+        run_market_research(
+            _session_factory(integration_database),
+            _StubAIManager(),
+            _FakeFirecrawl(),
+            product=product,
+            store_id=None,
+            reference_price=Decimal("4199.99"),
+            reference_currency="BRL",
+            profile=UserRole.ADMIN,
+            now=NOW,
+            settings=_SETTINGS_WITH_EXTERNAL_REFERENCE,
+        )
+    )
+
+    # Só a busca de mercado atual roda -- a de histórico é dispensada
+    # porque a FASE F1 já tem uma referência utilizável.
+    assert len(search.calls) == 1
+
+    with integration_database.sessions() as session:
+        row = session.get(MarketPriceAssessment, product.id)
+        assert row is not None
+        assert row.historical_low_external == Decimal("3499.00")
+        assert row.historical_low_source == "https://comparador.example/historico"
+        assert row.evidence["historical_low_reference"]["method"] == "f1_bootstrap_reuse"
+
+
+def test_external_reference_flag_off_preserves_task_113_behavior(
+    integration_database, monkeypatch
+) -> None:
+    """FASE G: com `market_research_external_reference_enabled=False`
+    (default), uma `ExternalPriceReference` já coletada pela F1 é
+    IGNORADA -- `run_market_research` busca histórico ao vivo exatamente
+    como fazia antes da F3 existir (comportamento original da TASK-113)."""
+    product = _gpu_product(
+        integration_database.sessions, title="NVIDIA GeForce RTX 5070 Super"
+    )
+    _seed_external_price_reference(
+        integration_database.sessions,
+        product_id=product.id,
+        amount=Decimal("3499.00"),
+        collected_at=NOW - timedelta(days=10),
+    )
+    search = _FakeSearchProvider(
+        (_evidence("lojaa.com.br"), _evidence("lojab.com.br"))
+    )
+    _use_search(monkeypatch, search)
+
+    asyncio.run(
+        run_market_research(
+            _session_factory(integration_database),
+            _StubAIManager(),
+            _FakeFirecrawl(),
+            product=product,
+            store_id=None,
+            reference_price=Decimal("4199.99"),
+            reference_currency="BRL",
+            profile=UserRole.ADMIN,
+            now=NOW,
+            settings=_SETTINGS,
+        )
+    )
+
+    # Flag desligada: busca de mercado E busca de histórico rodam (2
+    # chamadas) -- a referência da F1 nunca é sequer consultada.
+    assert len(search.calls) == 2
+
+    with integration_database.sessions() as session:
+        row = session.get(MarketPriceAssessment, product.id)
+        assert row is not None
+        assert row.evidence.get("historical_low_reference") is None
+
+
+def test_external_reference_is_reused_regardless_of_age(
+    integration_database, monkeypatch
+) -> None:
+    """Um preço histórico é um FATO ("este produto foi encontrado por
+    este valor naquele momento") -- `collected_at` nunca expira essa
+    referência. 200 dias é só um valor "bem velho" para o teste, não um
+    limite de nenhum tipo; qualquer idade deveria produzir o mesmo
+    resultado."""
+    product = _gpu_product(
+        integration_database.sessions, title="NVIDIA GeForce RTX 5060 Ti"
+    )
+    _seed_external_price_reference(
+        integration_database.sessions,
+        product_id=product.id,
+        amount=Decimal("2999.00"),
+        collected_at=NOW - timedelta(days=200),
+    )
+    search = _FakeSearchProvider(
+        (_evidence("lojaa.com.br"), _evidence("lojab.com.br"))
+    )
+    _use_search(monkeypatch, search)
+
+    asyncio.run(
+        run_market_research(
+            _session_factory(integration_database),
+            _StubAIManager(),
+            _FakeFirecrawl(),
+            product=product,
+            store_id=None,
+            reference_price=Decimal("3199.99"),
+            reference_currency="BRL",
+            profile=UserRole.ADMIN,
+            now=NOW,
+            settings=_SETTINGS_WITH_EXTERNAL_REFERENCE,
+        )
+    )
+
+    # Referência de 200 dias ainda é reaproveitada -- idade nunca é
+    # motivo para descartar um fato histórico já coletado.
+    assert len(search.calls) == 1
+
+    with integration_database.sessions() as session:
+        row = session.get(MarketPriceAssessment, product.id)
+        assert row is not None
+        assert row.historical_low_external == Decimal("2999.00")
+        assert row.evidence["historical_low_reference"]["method"] == "f1_bootstrap_reuse"
+
+
 def test_evidence_persists_only_safe_urls_and_minimizes_ai_content(
     integration_database, monkeypatch
 ) -> None:
@@ -852,3 +1047,198 @@ def test_shared_fan_out_reuses_single_assessment_across_ten_missions(
     # e seu próprio evento (o assessment é compartilhado, o ALERTA não).
     assert len(checkpoints) == 10
     assert len(events) == 10
+
+
+def test_phase_g_integrated_flow_flags_on_coupon_f1_f3_and_alert_snapshot(
+    integration_database, monkeypatch
+) -> None:
+    """Prova integrada da TASK G (FASE G, 2026-09-06), flags LIGADAS:
+    coleta real -> F1 (histórico externo já revalidado, sem nova busca) ->
+    F2 (gatilho de oportunidade, preço COM cupom) -> F3 (reaproveita a
+    referência da F1, só 1 busca de mercado) -> cupom (aplicado ao preço)
+    -> avaliação -> alerta com snapshot imutável do cupom, consistente com
+    `current_total`. Postgres real, sem rede -- mesmo padrão do resto da
+    suíte."""
+    from app.alerts.models import MissionProductAlertState
+    from app.collection.shared_collection import collect_monitoring_item_store
+    from app.coupons.models import Coupon
+    from app.events import Event, EventType
+    from app.telegram.notifications import _coupon_snapshot_from_payload
+
+    product = _gpu_product(integration_database.sessions)
+    with integration_database.sessions.begin() as session:
+        session.add(
+            Coupon(
+                store_id=session.scalar(
+                    select(Store.id).where(Store.code == "amazon")
+                ),
+                code="PHASEG20",
+                discount_kind="fixed_amount",
+                discount_value=Decimal("200.00"),
+                scope_kind="store_wide",
+                evidence="Cupom de R$200 na Amazon",
+                raw_rule_text="Válido só hoje",
+                status="active",
+                last_seen_at=NOW,
+            )
+        )
+    _seed_external_price_reference(
+        integration_database.sessions,
+        product_id=product.id,
+        amount=Decimal("3499.00"),
+        collected_at=NOW,
+    )
+    user_id = _seed_user(integration_database.sessions)
+    mission = _make_gpu_mission(
+        integration_database, user_id, target_amount=Decimal("4500.00")
+    )
+    with integration_database.sessions() as session:
+        item_id = session.get(MissionMonitoringItem, mission.id).monitoring_item_id
+        amazon_id = session.scalar(select(Store.id).where(Store.code == "amazon"))
+
+    provider = _StableGpuProvider()
+    ai_manager = _MarketAwareAIManager()
+    firecrawl = _FakeFirecrawl()
+    search = _FakeSearchProvider((_evidence("lojaa.com.br"), _evidence("lojab.com.br")))
+    _use_search(monkeypatch, search)
+    settings = Settings(
+        _env_file=None,
+        historical_bootstrap_enabled=True,
+        market_research_external_reference_enabled=True,
+        coupons_enabled=True,
+    )
+
+    result = asyncio.run(
+        collect_monitoring_item_store(
+            integration_database.async_sessions,
+            CollectionAdapter(providers=(provider,)),
+            ai_manager,
+            monitoring_item_id=item_id,
+            store_id=amazon_id,
+            now=NOW,
+            firecrawl=firecrawl,
+            settings=settings,
+        )
+    )
+    assert result.succeeded is True
+
+    # F3: reaproveitou a referência da F1 -- só a busca de mercado atual
+    # roda, a de histórico é dispensada (mesma prova de
+    # `test_external_reference_skips_history_search_and_is_reused`).
+    assert len(search.calls) == 1
+
+    with integration_database.sessions() as session:
+        assessment = session.get(MarketPriceAssessment, product.id)
+        assert assessment is not None
+        assert assessment.historical_low_external == Decimal("3499.00")
+        assert assessment.evidence["historical_low_reference"]["method"] == (
+            "f1_bootstrap_reuse"
+        )
+
+        checkpoint = session.get(MissionProductAlertState, (mission.id, product.id))
+        assert checkpoint is not None
+
+        event = session.scalar(
+            select(Event).where(
+                Event.mission_id == mission.id,
+                Event.event_type == EventType.PRICE_TARGET_REACHED_V1.value,
+            )
+        )
+    assert event is not None
+    # F2 recebeu e o alerta anuncia o preço COM cupom (3999.90 - 200.00),
+    # nunca o preço original coletado.
+    assert Decimal(event.payload["current_total"]) == Decimal("3799.90")
+    coupon_payload = event.payload["coupon"]
+    assert coupon_payload["code"] == "PHASEG20"
+    assert Decimal(coupon_payload["final_amount"]) == Decimal("3799.90")
+
+    # Telegram reconstrói o mesmo cupom só a partir do snapshot -- nenhuma
+    # consulta nova ao banco.
+    rendered = _coupon_snapshot_from_payload(event.payload)
+    assert rendered is not None
+    assert rendered.code == "PHASEG20"
+    assert rendered.final_amount == Decimal("3799.90")
+    assert rendered.raw_rule_text == "Válido só hoje"
+
+
+def test_phase_g_integrated_flow_flags_off_preserves_legacy_behavior(
+    integration_database, monkeypatch
+) -> None:
+    """Mesmo cenário do teste anterior (cupom aplicável + referência
+    externa já coletada), mas com as 3 flags da FASE G desligadas
+    (default de produção) -- o alerta usa o preço ORIGINAL, sem cupom, e
+    F3 busca histórico ao vivo como sempre fez (TASK-113 original)."""
+    from app.collection.shared_collection import collect_monitoring_item_store
+    from app.coupons.models import Coupon
+    from app.events import Event, EventType
+
+    product = _gpu_product(integration_database.sessions)
+    with integration_database.sessions.begin() as session:
+        session.add(
+            Coupon(
+                store_id=session.scalar(
+                    select(Store.id).where(Store.code == "amazon")
+                ),
+                code="PHASEG20OFF",
+                discount_kind="fixed_amount",
+                discount_value=Decimal("200.00"),
+                scope_kind="store_wide",
+                evidence="Cupom de R$200 na Amazon (flags off)",
+                status="active",
+                last_seen_at=NOW,
+            )
+        )
+    _seed_external_price_reference(
+        integration_database.sessions,
+        product_id=product.id,
+        amount=Decimal("3499.00"),
+        collected_at=NOW,
+    )
+    user_id = _seed_user(integration_database.sessions)
+    mission = _make_gpu_mission(
+        integration_database, user_id, target_amount=Decimal("4500.00")
+    )
+    with integration_database.sessions() as session:
+        item_id = session.get(MissionMonitoringItem, mission.id).monitoring_item_id
+        amazon_id = session.scalar(select(Store.id).where(Store.code == "amazon"))
+
+    provider = _StableGpuProvider()
+    ai_manager = _MarketAwareAIManager()
+    firecrawl = _FakeFirecrawl()
+    search = _FakeSearchProvider((_evidence("lojaa.com.br"), _evidence("lojab.com.br")))
+    _use_search(monkeypatch, search)
+
+    result = asyncio.run(
+        collect_monitoring_item_store(
+            integration_database.async_sessions,
+            CollectionAdapter(providers=(provider,)),
+            ai_manager,
+            monitoring_item_id=item_id,
+            store_id=amazon_id,
+            now=NOW,
+            firecrawl=firecrawl,
+            settings=_SETTINGS,
+        )
+    )
+    assert result.succeeded is True
+
+    # Flags off: F1 nem tenta reclamar/revalidar o bootstrap (nem chega a
+    # rodar), F3 busca histórico ao vivo -- 2 chamadas de busca, como
+    # sempre foi antes desta iniciativa inteira.
+    assert len(search.calls) == 2
+
+    with integration_database.sessions() as session:
+        assessment = session.get(MarketPriceAssessment, product.id)
+        assert assessment is not None
+        assert assessment.evidence.get("historical_low_reference") is None
+
+        event = session.scalar(
+            select(Event).where(
+                Event.mission_id == mission.id,
+                Event.event_type == EventType.PRICE_TARGET_REACHED_V1.value,
+            )
+        )
+    assert event is not None
+    # Preço original, sem cupom -- nenhuma chave "coupon" no payload.
+    assert Decimal(event.payload["current_total"]) == Decimal("3999.90")
+    assert event.payload.get("coupon") is None

@@ -2237,17 +2237,34 @@ async def _run_phase_b(
                 )
             effective_relevance = cached.classification if cached is not None else None
         market_snapshot = None
-        if market_research_enabled and effective_relevance is OfferRelevance.MATCH:
+        if (
+            market_research_enabled
+            and effective_relevance is OfferRelevance.MATCH
+            and settings.historical_bootstrap_enabled
+        ):
             assert session_factory is not None
             assert settings is not None
+            # `search` é uma fábrica, nunca um `WebSearchManager` já
+            # construído -- `run_historical_bootstrap` só a invoca depois
+            # de confirmar que precisa mesmo pesquisar (produto/identity_key
+            # válidos, histórico interno insuficiente, bootstrap ainda não
+            # feito). Search nunca é uma dependência antecipada de toda
+            # coleta, só da funcionalidade que realmente a usa.
             await run_historical_bootstrap(
                 session_factory,
                 product_id=pending.product_id,
-                search=build_web_search_manager(settings),
+                search=lambda: build_web_search_manager(settings),
                 fetch=firecrawl,
                 ai=ai_manager,
                 profile=ai_profile,
                 now=outcome.completed_at,
+                revalidation_days=settings.historical_bootstrap_revalidation_days,
+                # Reaproveita o MESMO padrão já aprovado de
+                # `MarketPriceAssessment` (TASK-113) -- nenhum config
+                # novo criado para o bootstrap histórico.
+                lease_seconds=settings.market_assessment_lease_seconds,
+                failure_backoff_minutes=settings.market_assessment_failure_backoff_minutes,
+                failure_backoff_max_minutes=settings.market_assessment_failure_backoff_max_minutes,
             )
         applied_coupon: AppliedCoupon | None = None
         if (
@@ -2258,31 +2275,32 @@ async def _run_phase_b(
         ):
             assert session_factory is not None
             assert settings is not None
-            try:
-                async with session_factory() as coupon_session:
-                    offer_row = await coupon_session.get(Offer, pending.offer_id)
-                    if offer_row is not None:
-                        candidates = await get_candidate_coupons_for_offer(
-                            coupon_session,
-                            offer_id=pending.offer_id,
-                            store_id=outcome.store_id,
-                        )
-                        applied_coupon = best_applicable_coupon(
-                            offer_row, candidates, pending.amount, pending.currency
-                        )
-            except Exception:
-                # Falha na etapa de cupom (infraestrutura/integração) NUNCA
-                # derruba o processamento normal da oferta -- segue com o
-                # preço original, como se nenhum cupom tivesse sido
-                # encontrado. Distinto de "consulta válida com zero
-                # candidatos" (que não cai aqui, só devolve `None` de
-                # `best_applicable_coupon` normalmente).
-                logger.warning(
-                    "coupon_evaluation_failed",
-                    extra={"offer_id": str(pending.offer_id)},
-                    exc_info=True,
-                )
-                applied_coupon = None
+            if settings.coupons_enabled:
+                try:
+                    async with session_factory() as coupon_session:
+                        offer_row = await coupon_session.get(Offer, pending.offer_id)
+                        if offer_row is not None:
+                            candidates = await get_candidate_coupons_for_offer(
+                                coupon_session,
+                                offer_id=pending.offer_id,
+                                store_id=outcome.store_id,
+                            )
+                            applied_coupon = best_applicable_coupon(
+                                offer_row, candidates, pending.amount, pending.currency
+                            )
+                except Exception:
+                    # Falha na etapa de cupom (infraestrutura/integração) NUNCA
+                    # derruba o processamento normal da oferta -- segue com o
+                    # preço original, como se nenhum cupom tivesse sido
+                    # encontrado. Distinto de "consulta válida com zero
+                    # candidatos" (que não cai aqui, só devolve `None` de
+                    # `best_applicable_coupon` normalmente).
+                    logger.warning(
+                        "coupon_evaluation_failed",
+                        extra={"offer_id": str(pending.offer_id)},
+                        exc_info=True,
+                    )
+                    applied_coupon = None
             evaluation_amount = (
                 applied_coupon.final_amount if applied_coupon is not None else pending.amount
             )

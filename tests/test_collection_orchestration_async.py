@@ -1404,6 +1404,11 @@ def test_run_phase_b_feeds_f2_gate_with_coupon_final_amount(monkeypatch) -> None
         market_assessment_lease_seconds=300,
         market_assessment_failure_backoff_minutes=15,
         market_assessment_failure_backoff_max_minutes=360,
+        # FASE G: este teste é sobre a fiação cupom -> F2, não sobre F1 --
+        # F1 fica desligada (comportamento default) e mockada de qualquer
+        # forma; cupons precisa estar ligada para exercitar o caminho.
+        historical_bootstrap_enabled=False,
+        coupons_enabled=True,
     )
 
     outcomes = asyncio.run(
@@ -1421,6 +1426,82 @@ def test_run_phase_b_feeds_f2_gate_with_coupon_final_amount(monkeypatch) -> None
     assert trigger.call_args.kwargs["current_amount"] == Decimal("270.00")
     assert outcomes[0].applied_coupon is not None
     assert outcomes[0].applied_coupon.final_amount == Decimal("270.00")
+
+
+def test_run_phase_b_flags_off_never_touches_coupons_or_historical_bootstrap(
+    monkeypatch,
+) -> None:
+    """FASE G: prova de paridade com o fluxo anterior -- `coupons_enabled`
+    e `historical_bootstrap_enabled` desligadas (default de produção) não
+    consultam cupom nem rodam o bootstrap histórico; F2 recebe o preço
+    original, exatamente como antes de F1/cupons existirem."""
+    offer_id, product_id, store_id = uuid4(), uuid4(), uuid4()
+    pending = _PendingOffer(
+        offer_id=offer_id,
+        product_id=product_id,
+        observation_id=uuid4(),
+        amount=Decimal("300.00"),
+        currency="BRL",
+        availability=Availability.AVAILABLE,
+        observed_at=NOW,
+        raw_title="Título bruto",
+        needs_relevance=False,
+        needs_display_name=False,
+        observation_created=True,
+        alert_comparison=PriceObservationComparison.FIRST_OBSERVATION,
+        previous_observation_id=None,
+        previous_amount=None,
+        previous_currency=None,
+        previous_availability=None,
+        previous_observed_at=None,
+        forced_relevance=OfferRelevance.MATCH,
+    )
+    outcome = _PhaseAOutcome(
+        run_id=uuid4(),
+        mission_id=uuid4(),
+        store_id=store_id,
+        mission_search_query="GPU",
+        target_amount=None,
+        target_currency=None,
+        completed_at=NOW,
+        offers=(pending,),
+    )
+    session = _mock_async_session()
+    coupon_query = AsyncMock(side_effect=AssertionError("não deveria consultar cupons"))
+    monkeypatch.setattr(
+        "app.collection.orchestration.get_candidate_coupons_for_offer", coupon_query
+    )
+    bootstrap = AsyncMock(side_effect=AssertionError("não deveria rodar o bootstrap"))
+    monkeypatch.setattr("app.collection.orchestration.run_historical_bootstrap", bootstrap)
+    trigger = AsyncMock(return_value=None)
+    monkeypatch.setattr(
+        "app.collection.orchestration.evaluate_trigger_and_maybe_research", trigger
+    )
+    settings = SimpleNamespace(
+        historical_bootstrap_revalidation_days=90,
+        market_assessment_lease_seconds=300,
+        market_assessment_failure_backoff_minutes=15,
+        market_assessment_failure_backoff_max_minutes=360,
+        historical_bootstrap_enabled=False,
+        coupons_enabled=False,
+    )
+
+    outcomes = asyncio.run(
+        _run_phase_b(
+            outcome,
+            _StubAIManager(),
+            UserRole.ADMIN,
+            session_factory=_session_factory(session),
+            firecrawl=None,
+            settings=settings,
+        )
+    )
+
+    coupon_query.assert_not_called()
+    bootstrap.assert_not_called()
+    trigger.assert_awaited_once()
+    assert trigger.call_args.kwargs["current_amount"] == Decimal("300.00")
+    assert outcomes[0].applied_coupon is None
 
 
 def test_persist_phase_c_reused_observation_skips_evaluator_and_run_succeeds(

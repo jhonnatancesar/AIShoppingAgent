@@ -1,5 +1,240 @@
 # Decision Log
 
+## DEC-116 — FASE G: fechamento operacional de F1/F2/F3/cupons — feature flags, validação integrada, lacuna do OmniRoute registrada
+
+- **Data:** 2026-09-06/07.
+- **Classificação:** Fechamento operacional (sem redesenho de F1/F2/F3/
+  cupons/arquitetura) — escopo definido explicitamente pelo usuário nesta
+  sessão, já que nenhuma TASK/DEC/roadmap documentava a "FASE G" antes
+  disso (só uma menção verbal anterior, "fechamento Docker/config/docs/
+  E2E final", sem entregáveis quebrados).
+- **Contexto:** F1 (`DEC-113`), F2/F3 (`DEC-114`) e o consumo de cupons
+  (`DEC-115`) chegaram ao fim desta sessão implementados e testados, mas
+  sem nenhum interruptor de ativação — tudo já rodava incondicionalmente
+  assim que `session_factory`/`settings` estavam disponíveis. Faltava:
+  (1) uma forma seguray de ligar/desligar cada capacidade nova
+  independentemente em produção; (2) uma prova única, integrada, do
+  fluxo coleta → F1 → F2 → F3 → cupom → avaliação → alerta (as provas
+  anteriores eram todas por peça, com as demais mockadas); (3) registrar
+  a lacuna já conhecida do OmniRoute (Gemini/Groq/OpenRouter nunca
+  configurados como provider real nele — só o catálogo nativo gratuito
+  foi validado, achado de sessão anterior).
+- **Decisão — feature flags:** reaproveitado o padrão já usado em
+  TASK-118F/G/H (campo `bool` em `Settings`, `AISHOPPING_<NOME>_ENABLED`,
+  default `False`) — nenhum sistema de flags novo. Três flags, todas
+  default `False` (estado seguro, equivalente ao fluxo anterior a esta
+  iniciativa inteira):
+  - `historical_bootstrap_enabled` (F1) — gate único em `_run_phase_b`
+    (`app/collection/orchestration.py`) antes de chamar
+    `run_historical_bootstrap`.
+  - `market_research_external_reference_enabled` (F3) — gate único em
+    `run_market_research` (`app/market_research/service.py`) antes de
+    consultar `ExternalPriceReference`; desligada, o comportamento é
+    IDÊNTICO ao original da TASK-113 (histórico sempre buscado ao vivo).
+  - `coupons_enabled` (cupons) — gate único em `_run_phase_b` (cálculo
+    de `applied_coupon` na coleta) e em `get_user_offer`
+    (`app/webapp/offers_router.py`, site). O Telegram nunca precisa de
+    flag própria: só lê o snapshot que existe no payload do evento
+    quando a flag esteve ligada NO MOMENTO da decisão (retrocompatível
+    por construção, `DEC-115`).
+  - F2 (`should_trigger_market_research`, TASK-113) deliberadamente NÃO
+    ganhou flag própria — é reaproveitamento integral, já em produção
+    sem flag antes desta sessão; colocar uma flag default-`False` nele
+    seria uma REGRESSÃO, não um rollout seguro.
+- **Achado corrigido durante o fechamento:** o comentário de
+  `Settings.historical_bootstrap_revalidation_days` ainda descrevia a
+  lógica de "pular fontes já conhecidas na revalidação" que foi removida
+  por estar errada (revalidar ≠ excluir fonte antiga, correção já
+  registrada no fechamento de F1/F3) — comentário corrigido nesta rodada
+  para não induzir a mesma leitura errada de novo; nenhuma lógica mudou.
+- **Prova integrada (item obrigatório desta fase):**
+  `tests/integration/test_market_research.py::
+  test_phase_g_integrated_flow_flags_on_coupon_f1_f3_and_alert_snapshot`
+  (flags ligadas: 1 mission real, coleta real via `collect_monitoring_
+  item_store`, `ExternalPriceReference` pré-existente reaproveitada pela
+  F3 — só 1 busca de mercado, história dispensada —, cupom `store_wide`
+  aplicado ao preço antes de alimentar F2, evento `PRICE_TARGET_REACHED_
+  V1` publicado com `current_total` e snapshot de cupom consistentes
+  entre si, `_coupon_snapshot_from_payload` reconstruindo o mesmo cupom
+  sem nenhuma consulta nova) e a companheira `..._flags_off_preserves_
+  legacy_behavior` (mesmo cenário, as 3 flags desligadas — preço
+  original sem cupom, F3 busca histórico ao vivo, exatamente como antes
+  desta iniciativa).
+- **OmniRoute — lacuna registrada, não corrigida nesta TASK:**
+  Gemini/Groq/OpenRouter nunca foram configurados como provider real no
+  OmniRoute (achado de sessão anterior) — distinto de qualquer target
+  lógico/config de roteamento já existente lá. Registrado em
+  `docs/installation/cesar-core.md` como pré-requisito ainda pendente
+  para quem for validar qualidade de IA em PROD via César Core; nenhum
+  provider/fallback foi inventado ou configurado nesta TASK.
+- **Docker/configuração:** `collection_worker` (native Windows, TASK-109)
+  e o Coupon Worker (native Windows, DEC-105/106) nunca rodaram em
+  container — as 3 flags novas precisam ser propagadas na configuração
+  NATIVA (`.env` lido por `Settings`), nunca em `compose.yaml` para esses
+  dois processos. `compose.yaml`/`.env.example` (raiz e `backend/`)
+  documentam as 3 flags com o default seguro; nenhuma topologia nova foi
+  criada (nenhum serviço Docker novo, nenhum wiring de César Core em
+  `compose.yaml` — que já não existe hoje e continua fora de escopo,
+  `docs/installation/cesar-core.md` linha "não é caminho integrado até
+  existir wiring versionado específico").
+- **Validação:** suíte não-integração completa sem regressão nova
+  (mesmas 5 falhas/67 erros pré-existentes de sempre); suíte de
+  integração completa (`test_market_research`/`test_historical_
+  bootstrap`/`test_shared_collection`/`test_coupons`) 73/73.
+- **Estado:** implementado e validado; commit/push/migrations/deploy
+  pendentes de revisão explícita do usuário (nenhum realizado nesta
+  rodada da TASK G).
+
+## DEC-115 — Consumo de cupons pelo GG Oferta: schema compartilhado com o Coupon Worker, aplicabilidade determinística e snapshot imutável no alerta
+
+- **Data:** 2026-09-06.
+- **Classificação:** Nova capacidade (integração de dois repositórios),
+  com uma correção de consistência arquitetural na mesma sessão.
+- **Contexto:** o Coupon Worker (repositório separado, DEC-105/106) só
+  persistia em SQLite local; o GG não tinha nenhuma tabela de cupom nem
+  lógica de aplicabilidade/preço. Decisão de arquitetura do usuário:
+  worker e GG na mesma máquina, mesmo PostgreSQL, sem sync/API
+  intermediária.
+- **Decisão — schema e persistência:** tabelas `coupons` (espelha os
+  campos reais do worker, cru, sem parsing) e `coupon_offer_links`
+  (associação N:N separada, `offer_id` `ondelete=CASCADE` — apagar uma
+  Offer nunca pode ficar bloqueado por ter cupom associado —, `coupon_id`
+  `ondelete=RESTRICT`). `PostgresCouponStore` (repositório do worker)
+  grava direto nessa tabela quando `COUPONS_POSTGRES_DSN` está
+  configurada; falha de conexão aborta o worker de forma explícita,
+  nunca cai para SQLite em silêncio. Ciclo de vida reaproveita
+  `active`/`expired` (worker) sem estado novo — inclusive para "esgotado"
+  detectado por texto, escopado só a fontes confiáveis por card/produto.
+- **Decisão — consumo (aplicabilidade/dedup/preço), `app/coupons/
+  pricing.py`:** `scope_kind="store_wide"` aplica a qualquer Offer da
+  Store; `scope_kind="product"` só com URL normalizada EXATAMENTE igual
+  (normalização conservadora — protocolo/host/fragmento/barra final/
+  lista fechada de tracking params, nunca fuzzy); `scope_kind=None`/
+  `"category"` nunca aplicados automaticamente. Fluxo de dedup CORRIGIDO
+  nesta sessão (ver achado abaixo). IA nunca calcula desconto — `app.
+  coupons.pricing` é determinístico, sem nenhuma chamada de IA.
+- **Achado corrigido nesta sessão — consistência do alerta:** F2/F3/o
+  evaluator decidiam com um `AppliedCoupon` específico, mas o Telegram
+  fazia uma busca INDEPENDENTE (`best_applicable_coupon` contra o preço
+  original) na hora de montar a mensagem — cupom expirar/ser atualizado/
+  um "melhor" aparecer entre a decisão e o envio (assíncrono) podia fazer
+  o alerta anunciar um preço com desconto sem explicação, ou números
+  divergentes. Corrigido preservando um SNAPSHOT imutável do cupom no
+  próprio evento: `AppliedCouponPayload` (`app/events/catalog.py`, campo
+  opcional retrocompatível em `PriceDecreasedPayload`/
+  `PriceTargetReachedPayload`, validação cruzada obrigando `coupon.
+  final_amount == current_total`) — o Telegram reconstrói o cupom só a
+  partir do payload (`_coupon_snapshot_from_payload`), nunca mais
+  consulta o banco na hora de enviar.
+- **Achado corrigido nesta sessão — deduplicação lógica:** a ordem
+  (aplicabilidade antes de dedup) estava certa, mas o dedup rodava ANTES
+  do cálculo de preço, descartando por recência (`last_seen_at`) uma
+  evidência aplicável e mais vantajosa. Corrigido: preço de TODAS as
+  evidências aplicáveis primeiro, dedup pelo MENOR preço final depois
+  (recência só desempata resultado economicamente idêntico).
+- **Integração F2/F3:** substituição de VALOR, nunca lógica paralela —
+  `evaluation_amount = applied_coupon.final_amount if aplicável else
+  pending.amount` alimenta tanto o gatilho (F2) quanto a decisão de
+  alerta; o `PriceObservation` persistido na Fase A nunca é sobrescrito.
+- **Site:** continua recalculando em tempo real a cada requisição
+  (`get_user_offer`) — nunca reaproveita snapshot nem persiste vínculo
+  `coupon_offer_links` nesta fase (cálculo em tempo real, decisão
+  explícita do usuário).
+- **Validação:** `tests/test_coupons_pricing.py` (27), `tests/
+  integration/test_coupons.py` (10, Postgres real), testes de evaluator/
+  catálogo/orquestração/Telegram/API listados em `project-context.md`.
+  Nenhuma regressão na suíte completa.
+- **Estado:** implementado e testado; ativação em produção agora sob a
+  flag `coupons_enabled` (`DEC-116`, default `False`).
+
+## DEC-114 — FASE F2/F3: gatilho de oportunidade reaproveitado integralmente da TASK-113; avaliação de mercado passa a reaproveitar o histórico externo da F1
+
+- **Data:** 2026-09-06.
+- **Classificação:** F2 — encerramento por reaproveitamento integral
+  (zero código novo). F3 — extensão da avaliação de mercado já existente
+  (TASK-113), com uma correção de interpretação na mesma sessão.
+- **Contexto:** o plano desta iniciativa (F1–G) presumia que F2
+  ("gatilho determinístico de oportunidade, sem IA") precisaria de
+  implementação nova. Auditoria confirmou que ele já existe em produção
+  desde a TASK-113: `should_trigger_market_research`
+  (`app/market_research/service.py`), `get_internal_historical_best`
+  (`app/alerts/internal_history.py`), `is_material_improvement`
+  (`app/alerts/material_improvement.py`) — nenhuma lógica de
+  "oportunidade" nova foi criada; usar isso como base era literalmente
+  usar o próprio código já aprovado.
+- **Decisão — F2:** encerrada por reaproveitamento. Nenhuma mudança de
+  código; documentado o mapeamento completo em `project-context.md`.
+- **Decisão — F3:** `run_market_research` passa a consultar
+  `get_external_price_reference_evidence` (dado coletado pela F1) ANTES
+  de decidir se faz busca de histórico ao vivo — quando há referência
+  utilizável, a busca de histórico é DISPENSADA (só a de mercado atual
+  roda); quando não há, comportamento idêntico ao anterior à F3.
+- **Achado corrigido nesta sessão:** a primeira implementação criou um
+  conceito de "expiração" de 90 dias para a referência externa (config
+  `historical_reference_max_age_days`) — interpretação ERRADA do pedido
+  do usuário. Revalidar (F1, `DEC-113`) ≠ excluir/expirar um preço
+  histórico já coletado (é um fato que não deixa de ser verdadeiro com o
+  tempo). Removido por completo — `ExternalPriceReference` é reaproveitada
+  pela F3 independente da idade (`collected_at`); só o valor de
+  `historical_bootstrap_revalidation_days` (F1) decide quando COLETAR
+  evidência adicional, nunca quando descartar a existente.
+- **Validação:** `tests/integration/test_market_research.py`
+  (`test_external_reference_skips_history_search_and_is_reused`,
+  `test_external_reference_is_reused_regardless_of_age`).
+- **Estado:** implementado e testado; ativação em produção agora sob a
+  flag `market_research_external_reference_enabled` (`DEC-116`, default
+  `False`) — F2 continua sempre ativo, sem flag.
+
+## DEC-113 — FASE F1: bootstrap histórico externo one-shot por produto, com retry/backoff/lease reaproveitados de `MarketPriceAssessment`
+
+- **Data:** 2026-09-05/06.
+- **Classificação:** Nova capacidade, com uma correção estrutural
+  (crash de dependência eager) e uma correção de resiliência (retry sem
+  backoff) na mesma sessão.
+- **Contexto:** próximo passo do plano F1–G ("F1 — bootstrap + histórico
+  de preço, sem IA") depois do encerramento da FASE E (César Core
+  obrigatório para AI/Search/grounding). Objetivo: coletar, uma vez por
+  produto/condição/moeda, referências de preço histórico externas
+  (`ExternalPriceReference`) via Search/Firecrawl+IA, sem repetir o
+  trabalho a cada ciclo de coleta.
+- **Decisão:** `HistoricalBootstrap`/`ExternalPriceReference`
+  (`app/historical_bootstrap/`), `run_historical_bootstrap` chamado pela
+  Fase B da coleta (`app/collection/orchestration.py`) quando a oferta é
+  `MATCH`. `historical_bootstrap_revalidation_days` (default 90, mesmo
+  padrão de config já usado por `MarketPriceAssessment`) controla quando
+  o bootstrap pode rodar de novo para buscar evidência ADICIONAL —
+  nunca para descartar a já coletada (ver `DEC-114` para o erro
+  relacionado, encontrado e corrigido na F3).
+- **Achado corrigido — crash estrutural:** a chamada `search=
+  build_web_search_manager(settings)` era avaliada ANTECIPADAMENTE
+  (eager), derrubando o fan-out inteiro da coleta quando as credenciais
+  de Search estavam ausentes — mesmo para ofertas que nunca chegariam a
+  precisar de busca. Corrigido tornando `search` uma FÁBRICA (`search=
+  lambda: build_web_search_manager(settings)`), invocada só dentro do
+  try/except que `run_historical_bootstrap` já tinha — nunca uma
+  dependência antecipada de toda a coleta, só da funcionalidade que
+  realmente a usa. Rejeitado explicitamente pelo usuário um band-aid de
+  try/except no ponto de chamada ("esconderia a ausência de credencial
+  sem corrigir a causa arquitetural").
+- **Achado corrigido — resiliência de falha:** falha sem referências
+  existentes apagava a linha (retry a cada ciclo, sem backoff); falha
+  COM referências existentes marcava `completed_at=now` (fingia
+  sucesso, atrasando a próxima tentativa real por 90 dias). Corrigido
+  reaproveitando EXATAMENTE o padrão já aprovado de `MarketPriceAssessment`
+  (TASK-113): `status=FAILED`, `retry_after`+`failure_count` (backoff
+  exponencial, 15min→360min, mesmos valores de config já existentes,
+  nenhum novo criado), `lease_until` (recuperação de crash). Também
+  corrigido: exceção na persistência final não deixava mais o registro
+  preso em `PROCESSING` para sempre (try/except adicional, mesma
+  disciplina).
+- **Validação:** `tests/integration/test_historical_bootstrap.py` (15
+  casos, incluindo os 7 novos de retry/backoff/lease/recuperação de
+  crash), `tests/integration/test_shared_collection.py::
+  test_shared_fan_out_reuses_single_assessment_across_ten_missions`
+  (prova de que o crash estrutural foi mesmo corrigido).
+- **Estado:** implementado e testado; ativação em produção agora sob a
+  flag `historical_bootstrap_enabled` (`DEC-116`, default `False`).
+
 ## DEC-112 — FASE E.3: hardening contra vazamento de dados na URL de Fetch/Enrichment
 
 - **Data:** 2026-09-05.

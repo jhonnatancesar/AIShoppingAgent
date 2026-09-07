@@ -338,6 +338,46 @@ class Settings(BaseSettings):
     # REARM (§33.8): subida percentual acima de `last_notified_amount`
     # que rearma o checkpoint para permitir um futuro re-alert.
     rearm_rise_percent: float = Field(default=0.05, gt=0, le=1)
+    # FASE F1/F3, decisão explícita do usuário (2026-09-06): depois de
+    # `historical_bootstrap_revalidation_days`, o bootstrap histórico
+    # (`run_historical_bootstrap`) pode rodar de novo para o mesmo
+    # produto/condição/moeda -- NUNCA para descartar/expirar uma
+    # `ExternalPriceReference` já coletada (um preço histórico é um fato
+    # que não deixa de ser verdadeiro com o tempo), só para buscar
+    # evidência ADICIONAL (preço ainda menor, fonte nova). Revalidar NUNCA
+    # significa excluir/pular uma fonte já conhecida -- a mesma fonte pode
+    # ser reconsiderada de novo (correção 2026-09-06, DEC pendente da
+    # FASE G: a redação anterior deste comentário descrevia uma lógica de
+    # blacklist que foi removida por estar errada).
+    historical_bootstrap_revalidation_days: int = Field(default=90, ge=1, le=3650)
+    # FASE G (2026-09-06): feature flags que controlam a ativação das
+    # fases F1/F3/cupons -- mesmo padrão já usado em TASK-118F/G/H
+    # (`AISHOPPING_<NOME>_ENABLED`, `bool`, default `False`), nenhum
+    # sistema de flags novo. Com todas em `False`, o comportamento é
+    # idêntico ao fluxo anterior a esta iniciativa inteira (F2 -- o
+    # gatilho de oportunidade de `TASK-113`, `should_trigger_market_
+    # research` -- é reaproveitado sem nenhuma mudança e continua sempre
+    # ativo, nunca atrás de flag; só as capacidades NOVAS construídas em
+    # cima dele são flageadas).
+    historical_bootstrap_enabled: bool = Field(default=False)
+    """F1 -- liga `run_historical_bootstrap` (histórico externo one-shot
+    por produto). `False`: a chamada nem acontece -- zero dependência de
+    Search/IA introduzida por F1, zero linha nova em `historical_
+    bootstraps`/`external_price_references`."""
+    market_research_external_reference_enabled: bool = Field(default=False)
+    """F3 -- liga o uso de `ExternalPriceReference` (coletada pela F1)
+    dentro de `evaluate_trigger_and_maybe_research`/`run_market_research`.
+    `False`: a avaliação de mercado volta a se comportar exatamente como
+    antes da F3 (TASK-113 original -- só histórico interno e pesquisa ao
+    vivo quando necessário, nunca consulta as referências externas)."""
+    coupons_enabled: bool = Field(default=False)
+    """Consumo de cupons -- liga o cálculo de aplicabilidade/preço com
+    cupom na coleta (`_classify`, Fase B) e na página do usuário
+    (`get_user_offer`). `False`: nenhuma consulta a `coupons`/`coupon_
+    offer_links` acontece nesses dois pontos, preço/alerta/pré-lista
+    seguem exatamente como antes de cupons existir. O Telegram nunca
+    precisa da flag diretamente -- ele só lê um snapshot que só existe no
+    payload quando esta flag esteve ligada no momento da decisão."""
 
     @field_validator("edge_cdp_url")
     @classmethod

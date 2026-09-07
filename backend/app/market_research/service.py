@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from enum import StrEnum
@@ -44,6 +44,7 @@ from app.alerts.material_improvement import is_material_improvement
 from app.alerts.models import MissionProductAlertState
 from app.collection.cadence import CadenceConfig, resolve_product_market_mode
 from app.core.config import Settings
+from app.historical_bootstrap.service import get_external_price_reference_evidence
 from app.market_research.models import (
     AssessmentConfidence,
     MarketAssessmentStatus,
@@ -900,6 +901,20 @@ async def run_market_research(
         return None
 
     try:
+        # FASE G (2026-09-06): flag `market_research_external_reference_
+        # enabled` -- desligada, `external_reference` fica sempre `None` e
+        # o restante desta função volta a se comportar exatamente como a
+        # TASK-113 original (histórico sempre buscado ao vivo, nenhuma
+        # consulta a `ExternalPriceReference`).
+        external_reference = None
+        if settings.market_research_external_reference_enabled:
+            async with session_factory() as reference_session:
+                external_reference = await get_external_price_reference_evidence(
+                    reference_session,
+                    product_id=product.id,
+                    currency=reference_currency,
+                )
+
         search_manager = build_web_search_manager(settings)
         market_evidence = await _search_with_enrichment(
             search_manager,
@@ -908,12 +923,19 @@ async def run_market_research(
             product=product,
             min_items=settings.market_assessment_min_market_sources,
         )
-        history_evidence = await _search_with_enrichment(
-            search_manager,
-            enrichment=firecrawl,
-            query=build_history_query(product),
-            product=product,
-            min_items=1,
+        # FASE F3: referência externa já coletada pela FASE F1 dispensa
+        # repetir a busca de histórico -- só busca de novo quando a F1
+        # não tem nada utilizável (insuficiente/antiga/moeda diferente).
+        history_evidence = (
+            ()
+            if external_reference is not None
+            else await _search_with_enrichment(
+                search_manager,
+                enrichment=firecrawl,
+                query=build_history_query(product),
+                product=product,
+                min_items=1,
+            )
         )
         payload = await _interpret_evidence(
             ai_manager,
@@ -931,6 +953,24 @@ async def run_market_research(
             history_evidence=history_evidence,
             settings=settings,
         )
+        if external_reference is not None and outcome.historical_low_external is None:
+            # A IA nunca decide o histórico externo quando a F1 já
+            # forneceu evidência verificada -- `history_evidence` vazio
+            # (acima) já impede a IA de reivindicar uma fonte, esta
+            # atribuição só preenche o valor confiável que a F1 coletou.
+            evidence = dict(outcome.evidence)
+            evidence["historical_low_reference"] = {
+                "method": "f1_bootstrap_reuse",
+                "reference_id": str(external_reference.id),
+                "quality": external_reference.quality,
+            }
+            outcome = replace(
+                outcome,
+                historical_low_external=external_reference.amount,
+                historical_low_source=external_reference.safe_url,
+                historical_low_observed_at=external_reference.historical_date,
+                evidence=evidence,
+            )
     except Exception as error:  # noqa: BLE001 -- nunca derruba a coleta (§33.20)
         logger.warning("market_research_failed", exc_info=True)
         await mark_assessment_failed(

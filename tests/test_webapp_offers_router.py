@@ -14,6 +14,7 @@ from app.collection.contracts import (
 )
 from app.collection.models import OfferInstallmentOption, PriceObservation
 from app.collection.normalization import Availability
+from app.core.config import Settings, get_settings
 from app.core.errors import register_api_error_handler
 from app.coupons.models import Coupon
 from app.database.dependency import get_web_async_session
@@ -114,6 +115,25 @@ def client(session: MagicMock, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     return TestClient(app)
 
 
+@pytest.fixture
+def client_with_coupons_enabled(
+    session: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> TestClient:
+    """FASE G (2026-09-06): mesmo client de sempre, só com a flag
+    `coupons_enabled` ligada -- a `client` normal acima usa o default de
+    produção (`False`), que é exatamente o que as demais provam."""
+    app = FastAPI()
+    register_api_error_handler(app)
+    app.include_router(router)
+    app.dependency_overrides[get_web_async_session] = lambda: session
+    app.dependency_overrides[get_settings] = lambda: Settings(coupons_enabled=True)
+    owner = _user()
+    monkeypatch.setattr(
+        "app.webapp.dependency.get_web_session_user", lambda *a, **k: owner
+    )
+    return TestClient(app)
+
+
 def _cookies() -> dict[str, str]:
     return {WEB_SESSION_COOKIE_NAME: "task095-web-session"}
 
@@ -188,8 +208,9 @@ def test_offer_with_canonical_and_different_own_image_exposes_both(
 
 
 def test_offer_with_applicable_coupon_shows_final_price(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch
+    client_with_coupons_enabled: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    client = client_with_coupons_enabled
     """Consumo de cupons (2026-09-06): a API re-consulta cupons NA HORA
     (nunca reaproveita um vínculo antigo persistido) e devolve o preço
     final calculado -- o preço original (`latest_observation.amount`)
@@ -231,8 +252,9 @@ def test_offer_with_applicable_coupon_shows_final_price(
 
 
 def test_offer_coupon_lookup_failure_never_breaks_offer_display(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch
+    client_with_coupons_enabled: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    client = client_with_coupons_enabled
     detail = _detail()
     monkeypatch.setattr(
         "app.webapp.offers_router.get_offer_detail_for_user",
@@ -249,6 +271,27 @@ def test_offer_coupon_lookup_failure_never_breaks_offer_display(
     body = response.json()
     assert body["applied_coupon"] is None
     assert body["latest_observation"]["amount"] == "4599.00"
+
+
+def test_offer_never_queries_coupons_when_flag_is_off(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """FASE G: `coupons_enabled=False` (default de produção, `client`
+    normal) -- comportamento idêntico ao existente antes de cupons: nem
+    tenta consultar, `applied_coupon` sempre `None`."""
+    detail = _detail()
+    monkeypatch.setattr(
+        "app.webapp.offers_router.get_offer_detail_for_user",
+        AsyncMock(return_value=detail),
+    )
+    query = AsyncMock(side_effect=AssertionError("não deveria consultar cupons"))
+    monkeypatch.setattr("app.webapp.offers_router.get_candidate_coupons_for_offer", query)
+
+    response = client.get(f"/api/v1/offers/{detail.offer.id}", cookies=_cookies())
+
+    assert response.status_code == 200
+    assert response.json()["applied_coupon"] is None
+    query.assert_not_called()
 
 
 def test_other_user_cannot_access_offer(

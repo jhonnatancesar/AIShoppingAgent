@@ -99,6 +99,28 @@ Lidas de verdade por `api` e `collection_worker`; não aparecem em
     [Runbook de operação](../operations/runbook.md) antes de alterar esses
     dois valores em produção.
 
+## Feature flags — histórico externo, cupons (FASE G, 2026-09-06)
+
+Reaproveitam o mesmo padrão de flag já usado em TASK-118F/G/H (`bool`,
+`AISHOPPING_<NOME>_ENABLED`, default seguro `false` — comportamento
+idêntico ao fluxo anterior a cada capacidade). `AISHOPPING_HISTORICAL_
+BOOTSTRAP_ENABLED`/`AISHOPPING_MARKET_RESEARCH_EXTERNAL_REFERENCE_
+ENABLED` só têm efeito no `collection_worker` (nativo, TASK-109) --
+configure em `backend/.env`. `AISHOPPING_COUPONS_ENABLED` tem efeito no
+`collection_worker` E no `api` (site) -- configure nos dois lugares
+(`backend/.env` e `.env`/`compose.yaml`) para o mesmo estado, senão o
+site e a coleta real podem divergir sobre se cupons estão ativos.
+
+| Variável | Finalidade | Default |
+| --- | --- | --- |
+| `AISHOPPING_HISTORICAL_BOOTSTRAP_ENABLED` | Liga o bootstrap histórico externo one-shot (F1) na coleta | `false` |
+| `AISHOPPING_MARKET_RESEARCH_EXTERNAL_REFERENCE_ENABLED` | Liga o reaproveitamento da referência externa da F1 na avaliação de mercado (F3) | `false` |
+| `AISHOPPING_COUPONS_ENABLED` | Liga o cálculo de aplicabilidade/preço com cupom (coleta + site) | `false` |
+
+O gatilho de oportunidade em si (F2, `should_trigger_market_research`,
+TASK-113) não tem flag própria -- já está em produção sem uma, e colocar
+uma default-`false` seria regressão, não rollout seguro.
+
 ## César Core (IA e Web Search)
 
 Integração obrigatória com o gateway privado César Core (repositório próprio,

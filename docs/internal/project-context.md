@@ -2332,6 +2332,407 @@ bloqueia a conclusão da fase, é operacional): o risco de concorrência de
 `_MAX_FETCHES` em cadeias de falha lenta, registrado acima para decisão
 futura caso vire problema real.
 
+# FASE F2 — encerrada por reaproveitamento integral da TASK-113 (2026-09-06)
+
+Pedido do usuário: gatilho determinístico de oportunidade, sem IA, que
+decide se um candidato justifica a próxima etapa (avaliação com IA/
+evidência externa). Auditoria (sem escrever código) encontrou que essa
+lógica **já existe inteira em produção**, implementada pela TASK-113 --
+nenhuma fórmula nova foi criada, nenhuma duplicata de
+`is_material_improvement`, nenhum gatilho paralelo.
+
+Mapeamento explícito F2 → implementação real:
+
+| Conceito pedido para a F2 | Implementação existente (TASK-113) |
+|---|---|
+| `previous_price` | `app/market_research/service.py:112` (`TriggerSignals.previous_amount`), comparado em `should_trigger_market_research` |
+| `historical_best` do histórico próprio | `app/alerts/internal_history.py` (`get_internal_historical_best` -- só `condition=NEW`+`AVAILABLE`+mesma moeda) |
+| `best_notified`/`last_notified_best` | `app/alerts/models.py` (`MissionProductAlertState.best_notified_amount`/`last_notified_amount`) |
+| Fórmula de melhoria material | `app/alerts/material_improvement.py` (`is_material_improvement`) -- único ponto, reusado tanto pelo gatilho quanto pelo `app/alerts/evaluator.py` |
+| Gatilho determinístico (5 sinais, IA nunca decide) | `app/market_research/service.py:121-171` (`should_trigger_market_research`) |
+| "Candidato aprovado → próxima etapa" | `app/market_research/service.py:976-1050` (`evaluate_trigger_and_maybe_research`) -- só chama a etapa de IA/evidência quando o gatilho aprova |
+| Ligação real no pipeline (não é código morto) | `app/collection/orchestration.py:2250` |
+
+Fluxo confirmado, já rodando em produção: `novo preço →
+should_trigger_market_research (F2) → candidato aprovado →
+run_market_research/MarketPriceAssessment (F3) → decisão final de
+alerta`. Nenhuma alteração de código foi necessária para fechar a F2 --
+só este registro documental.
+
+# FASE F3 — reaproveita `external_price_references` da F1 em vez de nova busca (2026-09-06)
+
+Achado antes da F3: `run_market_research` fazia sua PRÓPRIA busca ao
+vivo por histórico (`build_history_query`) toda vez que o gatilho da F2
+aprovava um candidato, mesmo quando a FASE F1 já tinha coletado e
+persistido uma referência histórica verificada para o mesmo `product_id`
+-- duplicação real de trabalho (duas buscas Firecrawl/SearXNG
+independentes pelo mesmo dado), nunca de fórmula/régua.
+
+**Mudança mínima aplicada** (nenhum avaliador novo, `MarketPriceAssessment`/
+`run_market_research` continuam sendo a única etapa de avaliação):
+
+1. Nova função `get_external_price_reference_evidence`
+   (`app/historical_bootstrap/service.py`) -- devolve a
+   `ExternalPriceReference` de menor `amount` para `(product_id,
+   currency)`; `None` só quando nunca houve nenhuma referência coletada
+   para este par (nunca inventa). **`collected_at` nunca é usado para
+   descartar uma referência** -- um preço histórico é um FATO ("este
+   produto foi encontrado por este valor naquele momento"), que não
+   deixa de ser verdadeiro depois de X dias; `collected_at` continua
+   existindo só como metadado de QUANDO a referência foi obtida.
+2. ~~Config de idade máxima~~ -- **removido** (ver "Correção" logo
+   abaixo). Não existe, e não deve ser reintroduzido sem uma decisão
+   explícita nova do usuário.
+3. `run_market_research` (`app/market_research/service.py`) consulta essa
+   referência ANTES de decidir se busca histórico ao vivo:
+   - referência utilizável encontrada → `history_evidence = ()` (pula a
+     busca `build_history_query` inteira, nunca chama Firecrawl/Search
+     para isso); `historical_low_external`/`historical_low_source`/
+     `historical_low_observed_at` são preenchidos DIRETO com o valor já
+     verificado pela F1, sem IA decidir nada aqui (o `history_evidence`
+     vazio já impede a IA de reivindicar uma fonte, por causa da
+     validação existente `source in history_urls`);
+   - nenhuma referência utilizável → comportamento IDÊNTICO a antes da
+     F3 (busca `build_history_query` ao vivo + IA extrai o valor).
+   - `evidence` persistido ganha a chave `historical_low_reference`
+     (`{"method": "f1_bootstrap_reuse", "reference_id": ..., "quality":
+     ...}`) só quando o valor veio da F1 -- auditável, nunca misturado
+     sem essa metadata.
+4. **Nunca mistura `PriceObservation` (histórico interno) com
+   `external_price_references` (evidência externa)** -- `internal_
+   historical_best` (F2) continua vindo só de `PriceObservation`; a F3
+   só usa `external_price_references` para `historical_low_external`,
+   exatamente como já acontecia com a busca ao vivo que ela substitui
+   condicionalmente.
+5. A avaliação de MERCADO ATUAL (`market_low`/`market_high`/
+   `classification`, IA) é **inalterada** -- continua sempre fazendo sua
+   própria busca + interpretação por IA; a F1 não tem esse dado, só
+   histórico.
+
+IA continua entrando exatamente onde entrava antes (depois do gatilho da
+F2, dentro de `run_market_research`) -- a F3 não adianta nem atrasa esse
+ponto, só evita uma busca redundante quando a F1 já resolveu a mesma
+pergunta. Arquitetura GG → César Core → OmniRoute preservada (nenhuma
+chamada nova a provider direto; a função nova é só uma consulta ao
+Postgres local).
+
+**Correção -- regra de idade arbitrária removida (2026-09-06, mesma
+continuação):** a versão inicial desta rodada introduziu um config novo,
+`historical_reference_max_age_days` (padrão 90 dias), que descartava uma
+`ExternalPriceReference` só por ser "velha demais" e caía na busca ao
+vivo. **Essa decisão foi tomada sem TASK, ADR, regra de negócio,
+documentação ou benchmark que a sustentasse** -- violação direta da
+disciplina já vigente no projeto (mesmo princípio do §33.10 da TASK-113,
+"não fixar uma regra arbitrária sem auditar/decidir com o usuário").
+Corrigido a pedido explícito do usuário: **removido por completo**, sem
+substituir por outro número. Não existe mais nenhum filtro por idade em
+`get_external_price_reference_evidence`; `collected_at` continua
+existindo só como metadado informativo (quando a referência foi obtida),
+nunca como prazo de validade.
+
+Três conceitos que este achado deixou claros, para nunca confundir de
+novo:
+
+- **Persistência** (F1): `ExternalPriceReference` grava um fato histórico
+  verificado, append-only, indefinidamente.
+- **Uso** (F3, agora): qualquer referência existente para
+  `(product_id, currency)` pode ser usada como `historical_low_external`,
+  **independente de idade**.
+- **Revalidação/refresh** (F1, decisão explícita do usuário logo em
+  seguida -- ver bloco abaixo): buscar de novo, depois de um tempo, para
+  verificar se apareceu um preço ainda menor ou uma fonte nova enriquece
+  o histórico -- isso NUNCA significa que o dado antigo estava errado ou
+  deveria ter sido descartado antes da revalidação.
+
+Testes atualizados para provar a distinção "uso não expira":
+`test_external_reference_is_reused_regardless_of_age`
+(`tests/integration/test_market_research.py`) seeda uma referência de
+200 dias e confirma que ela É reaproveitada (antes, a versão com o
+config removido esperava o oposto).
+
+## FASE F1 — revalidação de 90 dias (decisão explícita do usuário, 2026-09-06)
+
+Diferente da regra removida acima (que EXPIRARIA o uso de uma
+referência), esta é uma decisão nova e distinta: o usuário pediu
+explicitamente para `run_historical_bootstrap` poder rodar de novo
+depois de um tempo, **só para buscar evidência ADICIONAL** -- nunca para
+descartar o que já existe. Diferença central: a regra removida decidia
+"esse dado ainda pode ser USADO?" (F3) -- a revalidação decide "vale a
+pena tentar COLETAR mais um dado?" (F1). São perguntas diferentes;
+`get_external_price_reference_evidence` (F3) continua sem filtro de
+idade, inalterada por este bloco.
+
+**Implementação** (`app/historical_bootstrap/service.py`):
+- Novo config `historical_bootstrap_revalidation_days` (padrão **90
+  dias**, valor dado pelo usuário, não escolhido por mim -- `app/core/
+  config.py`).
+- O claim de `run_historical_bootstrap` deixou de ser `ON CONFLICT DO
+  NOTHING` (travava para sempre) e virou `ON CONFLICT DO UPDATE ...
+  WHERE completed_at < stale_before` -- só reclama um bootstrap já
+  CONCLUÍDO há mais de 90 dias; nunca um `PROCESSING` de outro worker
+  (`completed_at IS NULL` nunca satisfaz a comparação), mesmo espírito
+  de single-flight já usado por `MarketPriceAssessment` (TASK-113,
+  §33.3).
+- **Correção de interpretação (mesma sessão)**: a primeira versão desta
+  revalidação fez `_collect_candidates` PULAR qualquer resultado cuja
+  fonte já fosse conhecida (`known_sources`) -- o usuário corrigiu
+  explicitamente: **fonte já conhecida NUNCA vira blacklist**. O pedido
+  real era só "não ficar preso à fonte já cadastrada", nunca "excluir a
+  fonte já cadastrada". Removido: `_collect_candidates` voltou a não
+  filtrar nada por fonte -- uma fonte antiga pode reaparecer na busca e
+  ser considerada normalmente, ao lado de fontes novas.
+- **Deduplicação fica só no ponto de persistência, nunca na coleta**:
+  como a mesma fonte pode legitimamente reaparecer com evidência
+  IDÊNTICA à já persistida (mesmo preço, mesma data, mesma URL) ou com
+  evidência NOVA (preço/data diferentes, ou uma URL/fonte
+  inteiramente nova), a inserção de `ExternalPriceReference` passou de
+  `session.add(...)` (ORM) para `INSERT ... ON CONFLICT DO NOTHING`
+  usando a constraint que **já existia** no modelo desde a FASE F1
+  (`uq_external_price_references_evidence` --
+  `bootstrap_id`+`source`+`safe_url`+`amount`+`historical_date`): evidência
+  idêntica não duplica; evidência genuinamente nova (mesma fonte ou
+  fonte nova) sempre gera uma linha adicional, nunca substitui a
+  anterior. Nenhuma policy nova de dedup/prioridade de fonte foi
+  inventada -- só usado o que já estava no schema.
+- **Nunca apaga fato histórico, mesmo em falha**: como o `bootstrap_id`
+  é reaproveitado entre tentativas (mesma linha, mesma chave
+  `(product_id, condition, currency)`), uma revalidação que FALHA
+  (exceção durante `_collect_candidates`) precisou de tratamento
+  diferente do fluxo original -- se já existem referências
+  (`has_existing_references`), a falha só reverte o `status`/
+  `completed_at` da linha (permite nova tentativa futura), NUNCA
+  `DELETE` (que violaria a FK `RESTRICT` de `ExternalPriceReference` e,
+  mais importante, apagaria dado real). Só quando não há nenhuma
+  referência ainda (primeira tentativa, ou revalidação de um bootstrap
+  que nunca achou nada) o `DELETE` original continua seguro.
+- Status final corrigido para refletir o total cumulativo
+  (`candidates` novos + referências já existentes), nunca regredindo
+  para `COMPLETED_WITHOUT_REFERENCES` só porque uma revalidação não
+  achou nada de NOVO além do que já tinha.
+
+**Teste corrigido**:
+`test_revalidation_after_window_reconsiders_old_source_and_adds_new_one`
+(`tests/integration/test_historical_bootstrap.py`) -- primeira coleta
+persiste 1 referência (hardware_barato, R$4999,90); 91 dias depois, uma
+nova busca devolve a MESMA fonte com preço/data NOVOS (R$4699,90) + uma
+fonte inteiramente nova (R$4799,90); confirma as 3 linhas persistidas
+(original intacta + fonte antiga reconsiderada + fonte nova), nunca uma
+blacklist de fonte, e que a busca rodou de verdade (não foi um "já
+bootstrapado" silencioso).
+
+**Validação**: 23/23 testes de `test_market_research.py` +
+`test_historical_bootstrap.py` passando. `ruff check` limpo (os 6 erros
+pré-existentes de `orchestration.py`, linhas 1150-1400, anotação de tipo
+entre aspas, seguem sem relação com este trabalho).
+
+**Regressão da F1 encontrada durante a F3, corrigida estruturalmente
+(2026-09-06, mesma continuação):** a integração da F1 na Fase B do
+pipeline compartilhado (`app/collection/orchestration.py:2233-2241`,
+commit `7697940`) construía `search=build_web_search_manager(settings)`
+como argumento posicional -- se as credenciais de Search não estivessem
+configuradas, essa chamada lançava `WebSearchError` ANTES de
+`run_historical_bootstrap` sequer começar, fora do `try/except` que a
+própria função tem por dentro, derrubando o fan-out inteiro da claim
+(todas as Missions daquela claim falhavam, não só o bootstrap).
+Reproduzido de forma determinística pelo teste já existente da TASK-113
+`test_shared_fan_out_reuses_single_assessment_across_ten_missions`
+(`tests/integration/test_market_research.py`) rodando sob credenciais
+ausentes -- confirmado por `git log` como pré-existente ao trabalho desta
+sessão de F2/F3 (a linha é do commit `7697940`).
+
+**Causa raiz real**: `search` era um `WebSearchManager` JÁ CONSTRUÍDO,
+avaliado eager pelo chamador antes mesmo de `run_historical_bootstrap`
+rodar qualquer uma de suas checagens de early-return (produto ausente,
+`identity_key` ausente, histórico interno já suficiente, bootstrap já
+realizado) -- Search virava dependência obrigatória de TODA coleta com
+relevância MATCH, mesmo nos (muitos) casos em que o bootstrap nem
+chegaria a precisar pesquisar nada.
+
+**Correção estrutural aplicada (rejeitada explicitamente a alternativa de
+try/except no ponto de chamada, por só esconder a ausência de
+credencial sem corrigir a causa):** `run_historical_bootstrap` passou a
+receber `search: Callable[[], WebSearchManager]` -- uma FÁBRICA, nunca
+uma instância pronta. A fábrica só é invocada (`search()`) no ponto onde
+`_collect_candidates` já seria chamado, DEPOIS de todas as checagens de
+early-return e DENTRO do `try/except` que já existia para cobrir falhas
+de `_collect_candidates` -- nenhum mecanismo de tratamento de erro novo,
+a falha de construção (`WebSearchError` por falta de credencial) agora
+cai no mesmo caminho que já deletava a linha `HistoricalBootstrap` e
+retornava `None`. `app/collection/orchestration.py` passou a fornecer
+`search=lambda: build_web_search_manager(settings)` em vez do valor já
+construído. `_collect_candidates` não mudou (continua recebendo um
+`WebSearchManager` de verdade, só quem o entrega mudou). Os 8 pontos de
+chamada diretos em `tests/integration/test_historical_bootstrap.py`
+foram ajustados para `search=lambda: WebSearchManager(search)`. Nenhuma
+alteração em F2 (`should_trigger_market_research`/gatilho) nem
+redesenho da F3 (reaproveitamento de `external_price_references`
+preservado exatamente como estava).
+
+**Validação:** `python scripts/run_integration_tests.py
+tests/integration/test_market_research.py
+tests/integration/test_historical_bootstrap.py` -- **22/22 passando**,
+incluindo `test_shared_fan_out_reuses_single_assessment_across_ten_
+missions` (antes falhava, agora passa) e os 2 testes novos da F3. `ruff
+check` limpo nos arquivos tocados (os 6 erros pré-existentes de
+`orchestration.py`, linhas 1158-1397, são de anotação de tipo entre
+aspas sem relação com esta correção, não tocados).
+
+FASE F2 e FASE F3 consideradas fechadas para revisão do usuário.
+
+# FASE F1 — retry/backoff de falha + lease de recuperação (2026-09-06)
+
+Auditoria pedida pelo usuário sobre "quando exatamente uma revalidação
+que falha pode ser tentada de novo" encontrou **dois comportamentos
+incorretos** no mecanismo de revalidação de 90 dias implementado antes
+deste bloco, mais uma **falha estrutural de resiliência** (exceções sem
+proteção podendo derrubar o fan-out inteiro ou travar `PROCESSING` para
+sempre). Este bloco fecha os três achados de uma vez, reaproveitando
+INTEGRALMENTE o padrão já aprovado de `MarketPriceAssessment` (TASK-113)
+-- nenhuma política nova foi inventada.
+
+## Os três conceitos, agora explicitamente separados
+
+`HistoricalBootstrap` passou a distinguir, sem nunca confundir:
+
+- **`completed_at` (90 dias) = quando uma execução CONCLUÍDA (sucesso)
+  pode ser revalidada.** Só o caminho de sucesso escreve aqui. Falha
+  NUNCA toca este campo -- nem para zerar, nem para atualizar como se
+  fosse sucesso.
+- **`retry_after`/`failure_count` (15–360 min) = quando uma execução que
+  FALHOU pode ser tentada de novo.** Backoff exponencial capado, só o
+  caminho de falha escreve aqui. Sucesso sempre zera `failure_count` e
+  `retry_after` de volta.
+- **`lease_until` = recuperação de um `PROCESSING` ABANDONADO** (crash,
+  kill do processo, exceção verdadeiramente não tratada que nem chegou a
+  gravar `FAILED`). Nenhum dos dois conceitos acima resolve isso sozinho
+  -- sem lease, essa linha ficaria presa para sempre.
+
+## Os dois erros encontrados e corrigidos
+
+1. **Falha sem nenhuma referência apagava a linha** (`DELETE`) e
+   liberava retry em QUALQUER coleta seguinte, sem nenhum backoff --
+   nunca decidido, um efeito colateral do desenho anterior.
+2. **Falha com referências existentes gravava `completed_at=now`** como
+   se a falha fosse um sucesso, adiando a próxima revalidação por mais
+   90 dias inteiros -- exatamente o oposto do que deveria acontecer
+   (revalidação de sucesso e retry de falha são conceitos diferentes).
+
+Ambos removidos. Não existe mais nenhum `DELETE` de `HistoricalBootstrap`
+por falha, e falha nunca mais escreve `completed_at`.
+
+## Reaproveitamento do padrão de `MarketPriceAssessment` (TASK-113)
+
+Migration `20260906_0001_add_historical_bootstrap_retry.py` adiciona ao
+modelo (`app/historical_bootstrap/models.py`) exatamente os mesmos
+campos que `MarketPriceAssessment` já tinha: `status=FAILED` (novo valor
+do enum, via `ALTER TYPE ... ADD VALUE` em `autocommit_block()`, mesmo
+padrão de `20260808_0009_add_limits_and_resilience.py`),
+`lease_until`/`retry_after`/`failure_count`/`last_error`, `CheckConstraint
+failure_count >= 0` e índice parcial em `lease_until` (`status =
+'processing'`) -- linha por linha equivalentes aos de
+`market_price_assessments`.
+
+**Nenhum config novo foi criado** -- reaproveitados diretamente (mesmos
+valores, mesmos campos de `Settings`, chamados a partir de
+`app/collection/orchestration.py`):
+
+- `settings.market_assessment_lease_seconds` (300s) → `lease_seconds`.
+- `settings.market_assessment_failure_backoff_minutes` (15) →
+  `failure_backoff_minutes`.
+- `settings.market_assessment_failure_backoff_max_minutes` (360) →
+  `failure_backoff_max_minutes`.
+
+O claim (`app/historical_bootstrap/service.py`, `_run_historical_
+bootstrap`) virou um `ON CONFLICT DO UPDATE` com TRÊS condições de
+reclaim, nunca confundidas entre si (`WHERE` com `or_`/`and_`):
+1. `PROCESSING` com `lease_until < now` (abandonado);
+2. `FAILED` com `retry_after IS NULL OR retry_after <= now` (backoff);
+3. `COMPLETED_*` com `completed_at < now - revalidation_days` (sucesso
+   antigo, revalidação periódica).
+
+O claim NUNCA toca `completed_at`/`retry_after`/`failure_count` --
+exatamente como o claim de `MarketPriceAssessment` nunca toca
+`expires_at`; só a finalização (sucesso ou falha) os escreve. **Bug
+real encontrado durante os testes desta correção**: a primeira versão
+desta função zerava `completed_at` no próprio claim (pensando em
+"preparar" a linha para a nova tentativa) -- se a tentativa então
+falhasse, a prova do último sucesso era perdida (virava `NULL`) mesmo a
+`ExternalPriceReference` continuando intacta. Corrigido removendo esse
+campo do `set_` do claim -- só a finalização de sucesso escreve
+`completed_at`, nunca o claim.
+
+`_mark_bootstrap_failed` (nova função) reaproveita literalmente a
+fórmula de `mark_assessment_failed`: lê `failure_count` da própria
+linha (`with_for_update=True`), incrementa, calcula `min(inicial *
+2^(failure_count-1), máximo)`, redige o erro com
+`redact_sensitive_query_values` (mesma disciplina de segurança da FASE
+E.3) antes de gravar em `last_error`.
+
+## Tratamento dos três pontos de exceção sem proteção (achado crítico)
+
+- **Claim/transação inicial**: sem alteração estrutural necessária --
+  uma exceção aqui faz a transação inteira reverter (nunca deixa nada
+  pela metade), mas ela ainda propagaria pro chamador se nada mais
+  fizesse nada. Coberta pela rede de segurança abaixo.
+- **Search/Fetch/IA** (`_collect_candidates`): `except Exception` já
+  existia, agora chama `_mark_bootstrap_failed` em vez de deletar/mentir
+  sucesso.
+- **Persistência final + status final**: **agora também protegida** por
+  `try/except` (não estava antes) -- se a gravação das
+  `ExternalPriceReference`/atualização final falhar, `_mark_bootstrap_
+  failed` é chamado igual; a evidência coletada NESTA tentativa
+  específica é perdida (rollback), mas a linha nunca fica presa em
+  `PROCESSING`, e referências de rodadas ANTERIORES nunca são afetadas
+  (transação isolada).
+- **Rede de segurança final**: `run_historical_bootstrap` (função
+  pública) virou um wrapper fino que chama `_run_historical_bootstrap`
+  dentro de um `try/except Exception` que NUNCA propaga -- mesmo se a
+  própria tentativa de gravar `FAILED` falhar (ex.: banco indisponível
+  no momento exato), a função só loga e retorna `None`, nunca finge
+  sucesso. Nesse cenário extremo, a linha fica exatamente como estava
+  (o `lease_until` já gravado no claim garante que ela não fica presa
+  para sempre -- a PRÓXIMA tentativa, quando o banco voltar, reclama
+  pelo lease vencido). `app/collection/orchestration.py` não precisou de
+  nenhum `try/except` novo no ponto de chamada -- o contrato "nunca
+  propaga" agora é da própria função.
+
+## Testes novos (`tests/integration/test_historical_bootstrap.py`)
+
+- `test_failure_without_references_does_not_retry_every_cycle` -- achado
+  1 corrigido: falha não libera retry em toda coleta, só depois de
+  `retry_after`.
+- `test_retry_only_after_retry_after_elapses` -- confirma o limite exato
+  (bloqueado 1 minuto antes, libera exatamente no vencimento).
+- `test_backoff_grows_exponentially_and_caps_at_360_minutes` -- 7
+  falhas consecutivas: 15/30/60/120/240/360/360 (capado nas duas
+  últimas).
+- `test_failure_with_existing_references_never_deletes_history` --
+  achado 2 corrigido: referência antiga intacta, `completed_at` nunca
+  reescrito pela falha.
+- `test_processing_with_expired_lease_can_be_reclaimed` -- linha
+  `PROCESSING` com lease vencido, seedada diretamente, é reclamada e
+  concluída normalmente.
+- `test_collect_candidates_failure_returns_none_never_raises` -- o
+  contrato que `orchestration.py` depende para nunca derrubar o fan-out.
+- `test_persistence_failure_does_not_leave_processing_forever` -- achado
+  crítico corrigido: falha simulada só na persistência final (via
+  monkeypatch seletivo do `insert` do módulo, nunca afeta o claim)
+  termina em `FAILED`, nunca presa em `PROCESSING`.
+
+**Validação**: `python scripts/run_integration_tests.py
+tests/integration/test_market_research.py
+tests/integration/test_historical_bootstrap.py` -- **30/30 passando**
+(15 + 15, incluindo os 7 testes novos de retry/lease e todos os testes
+de F1/F3 anteriores intactos). Migration `20260906_0001` validada
+automaticamente pelo estágio `alembic_upgrade_and_check` do próprio
+runner (upgrade → downgrade -1 → upgrade → `alembic check`), sem
+Postgres descartável manual. `ruff check` limpo nos arquivos tocados.
+
+Preservado sem alteração: F2, F3, regra de revalidação de 90 dias
+(critério em si, só a implementação do claim foi corrigida), fontes
+nunca viram blacklist, `MarketPriceAssessment` (só lido para reaproveitar
+config, nenhuma linha sua alterada).
+
 # Consumo de cupons — schema, persistência e leitura básica (2026-09-06)
 
 Auditoria prévia (pedida explicitamente antes de qualquer código) achou
@@ -2847,3 +3248,41 @@ precificados).
 **Gap de verificação ainda aberto** (mesmo desde a etapa anterior, não
 fechado nesta rodada): checagem visual ao vivo do frontend continua
 pendente -- esta correção não toca o site.
+
+# FASE G — fechamento operacional de F1/F2/F3/cupons (2026-09-06/07)
+
+Escopo definido explicitamente pelo usuário nesta sessão (nenhuma
+TASK/DEC/roadmap tinha o escopo antes). Detalhamento completo,
+achado-por-achado, em `docs/internal/decision-log.md`:
+`DEC-116` (fechamento/flags/prova integrada/OmniRoute), `DEC-115`
+(consumo de cupons), `DEC-114` (F2/F3), `DEC-113` (F1) -- não duplicado
+aqui.
+
+Resumo: três feature flags novas em `Settings`
+(`historical_bootstrap_enabled`, `market_research_external_reference_
+enabled`, `coupons_enabled`; padrão já usado em TASK-118F/G/H, default
+`False` em todas), cada uma com um único ponto de gate no código
+(`_run_phase_b` para F1/cupom, `run_market_research` para F3,
+`get_user_offer` para cupom no site). F2 (`should_trigger_market_
+research`, TASK-113) permanece sempre ativo, sem flag -- já estava em
+produção antes desta iniciativa. `compose.yaml`/`.env.example` (raiz e
+`backend/`)/`docs/installation/configuration.md` documentam as flags
+com o default seguro; `docs/installation/cesar-core.md` registra a
+lacuna do OmniRoute (Gemini/Groq/OpenRouter nunca configurados como
+provider real nele). Prova integrada dedicada (coleta real → F1 → F2 →
+F3 → cupom → avaliação → alerta, com snapshot consistente) em
+`tests/integration/test_market_research.py::
+test_phase_g_integrated_flow_flags_on_coupon_f1_f3_and_alert_snapshot`
+e a companheira `..._flags_off_preserves_legacy_behavior`.
+
+Suíte de integração completa: **262/262 passando**. Suíte não-integração
+completa: **1782 passando**, mesmas 5 falhas/67 erros pré-existentes de
+sempre (não relacionados). Nenhum commit/push/migration/deploy realizado
+nesta rodada -- pendente de revisão explícita do usuário.
+
+**Pendências explicitamente fora do escopo desta fase** (não pedido):
+corrigir a lacuna do OmniRoute em si (só foi registrada); backfill de
+`AGENTS.md`/`docs/installation/configuration.md` para o histórico de
+config de TASK-113/F1 anterior a esta sessão (gap pré-existente,
+descoberto mas não coberto por esta TASK); checagem visual ao vivo do
+frontend (mesmo gap das etapas anteriores).

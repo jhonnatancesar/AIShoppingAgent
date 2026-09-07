@@ -94,6 +94,52 @@ class AI:
         )
 
 
+class FailingSearch:
+    """Levanta sempre -- diferente de `Search(fail=...)` (não existe
+    nesta suíte) e diferente de `FailingFetch` (que é uma falha
+    PONTUAL de uma URL, já tratada dentro de `_collect_candidates`).
+    Esta simula uma exceção verdadeiramente não tratada escapando de
+    `_collect_candidates` inteiro -- o cenário que o mecanismo de
+    FAILED/retry_after/lease precisa cobrir."""
+
+    def __init__(self):
+        self.calls = 0
+
+    async def search(self, query, *, limit, correlation_id):
+        self.calls += 1
+        raise RuntimeError("simulated search failure")
+
+
+def _run(
+    sessions_factory,
+    product_id,
+    *,
+    search,
+    fetch=None,
+    ai=None,
+    now,
+    revalidation_days=90,
+    lease_seconds=300,
+    failure_backoff_minutes=15,
+    failure_backoff_max_minutes=360,
+):
+    return asyncio.run(
+        run_historical_bootstrap(
+            sessions_factory,
+            product_id=product_id,
+            search=search,
+            fetch=fetch if fetch is not None else Fetch(None),
+            ai=ai if ai is not None else NoAI(),
+            profile=UserRole.ADMIN,
+            now=now,
+            revalidation_days=revalidation_days,
+            lease_seconds=lease_seconds,
+            failure_backoff_minutes=failure_backoff_minutes,
+            failure_backoff_max_minutes=failure_backoff_max_minutes,
+        )
+    )
+
+
 def product(database):
     variant = resolve_product_variant("NVIDIA GeForce RTX 5070 Ti")
     assert variant is not None
@@ -141,11 +187,15 @@ def test_valid_reference_is_separate_and_second_run_has_zero_upstream(
         run_historical_bootstrap(
             integration_database.async_sessions,
             product_id=product_id,
-            search=WebSearchManager(search),
+            search=lambda: WebSearchManager(search),
             fetch=fetch,
             ai=ai,
             profile=UserRole.ADMIN,
             now=NOW,
+            revalidation_days=90,
+            lease_seconds=300,
+            failure_backoff_minutes=15,
+            failure_backoff_max_minutes=360,
         )
     )
     assert first is HistoricalBootstrapStatus.COMPLETED_WITH_REFERENCES
@@ -154,11 +204,15 @@ def test_valid_reference_is_separate_and_second_run_has_zero_upstream(
         run_historical_bootstrap(
             integration_database.async_sessions,
             product_id=product_id,
-            search=WebSearchManager(search),
+            search=lambda: WebSearchManager(search),
             fetch=fetch,
             ai=ai,
             profile=UserRole.ADMIN,
             now=NOW,
+            revalidation_days=90,
+            lease_seconds=300,
+            failure_backoff_minutes=15,
+            failure_backoff_max_minutes=360,
         )
     )
     assert second is HistoricalBootstrapStatus.COMPLETED_WITH_REFERENCES
@@ -176,6 +230,375 @@ def test_valid_reference_is_separate_and_second_run_has_zero_upstream(
         assert "fragment" not in ref.safe_url and "access_token" not in ref.safe_url
 
 
+def test_revalidation_after_window_reconsiders_old_source_and_adds_new_one(
+    integration_database,
+):
+    """Depois de `revalidation_days`, o bootstrap pode rodar de novo --
+    NUNCA para descartar a referência antiga, e a fonte já conhecida
+    NÃO vira blacklist: ela pode reaparecer na busca e ser considerada
+    normalmente (evidência nova dela é aceita), e uma fonte
+    inteiramente nova também pode ser adicionada na mesma rodada
+    (decisão explícita do usuário, 2026-09-06 -- corrige uma versão
+    anterior que pulava fontes já conhecidas, o que não foi pedido)."""
+    product_id = product(integration_database)
+    old_url = "https://www.hardwarebarato.com/produtos/placas-de-video/rtx-5070-ti"
+    first_result = WebSearchResult(
+        "NVIDIA GeForce RTX 5070 Ti histórico", old_url, "Histórico", 1
+    )
+    first = asyncio.run(
+        run_historical_bootstrap(
+            integration_database.async_sessions,
+            product_id=product_id,
+            search=lambda: WebSearchManager(Search((first_result,))),
+            fetch=Fetch(
+                CesarCoreFetchResult(
+                    old_url,
+                    first_result.title,
+                    "NVIDIA GeForce RTX 5070 Ti 01/08/2026 R$ 4.999,90",
+                )
+            ),
+            ai=NoAI(),
+            profile=UserRole.ADMIN,
+            now=NOW,
+            revalidation_days=90,
+            lease_seconds=300,
+            failure_backoff_minutes=15,
+            failure_backoff_max_minutes=360,
+        )
+    )
+    assert first is HistoricalBootstrapStatus.COMPLETED_WITH_REFERENCES
+
+    later = NOW + timedelta(days=91)
+    # Mesma fonte/URL de antes, mas com preço e data NOVOS (site
+    # atualizado) -- precisa ser aceita como evidência adicional, nunca
+    # descartada só porque a fonte já é conhecida.
+    old_source_again = WebSearchResult(
+        "NVIDIA GeForce RTX 5070 Ti histórico",
+        old_url,
+        "NVIDIA GeForce RTX 5070 Ti 20/08/2026 R$ 4.699,90 direto na fonte já conhecida.",
+        1,
+    )
+    new_source = WebSearchResult(
+        "NVIDIA GeForce RTX 5070 Ti histórico de preço",
+        "https://www.example-comparador2.com.br/rtx-5070-ti-historico",
+        "NVIDIA GeForce RTX 5070 Ti 15/08/2026 R$ 4.799,90 no menor preço já registrado.",
+        1,
+    )
+    second_search = Search((old_source_again, new_source))
+    second_fetch = Fetch(None)
+    second = asyncio.run(
+        run_historical_bootstrap(
+            integration_database.async_sessions,
+            product_id=product_id,
+            search=lambda: WebSearchManager(second_search),
+            fetch=second_fetch,
+            ai=NoAI(),
+            profile=UserRole.ADMIN,
+            now=later,
+            revalidation_days=90,
+            lease_seconds=300,
+            failure_backoff_minutes=15,
+            failure_backoff_max_minutes=360,
+        )
+    )
+    assert second is HistoricalBootstrapStatus.COMPLETED_WITH_REFERENCES
+    # Revalidação de verdade rodou -- não foi um "já bootstrapado, nunca
+    # mais" silencioso.
+    assert second_search.calls > 0
+    # Os dois snippets já trazem preço+data -- nenhum Fetch necessário.
+    assert second_fetch.calls == 0
+
+    with integration_database.sessions() as session:
+        refs = session.scalars(
+            select(ExternalPriceReference).order_by(ExternalPriceReference.amount)
+        ).all()
+        # 3 linhas: a original (intacta) + a fonte antiga reconsiderada
+        # com preço novo + a fonte inteiramente nova. A fonte já
+        # conhecida NUNCA foi tratada como blacklist.
+        assert len(refs) == 3
+        by_amount = {ref.amount: ref for ref in refs}
+        assert set(by_amount) == {
+            Decimal("4999.9000"),
+            Decimal("4699.9000"),
+            Decimal("4799.9000"),
+        }
+        original = by_amount[Decimal("4999.9000")]
+        assert original.source == "hardware_barato"
+        assert original.historical_date.isoformat() == "2026-08-01"  # nunca alterada
+        reconsidered = by_amount[Decimal("4699.9000")]
+        assert reconsidered.source == "hardware_barato"
+        assert reconsidered.historical_date.isoformat() == "2026-08-20"
+        new_ref = by_amount[Decimal("4799.9000")]
+        assert new_ref.source == "example-comparador2.com.br"
+        assert (
+            session.scalar(select(func.count()).select_from(HistoricalBootstrap)) == 1
+        )
+
+
+# ---------------------------------------------------------------------------
+# Retry/backoff de FALHA (reaproveita o padrão já aprovado de
+# `MarketPriceAssessment`, TASK-113) -- nunca confundido com a
+# revalidação de 90 dias, que é exclusiva do caminho de SUCESSO.
+# ---------------------------------------------------------------------------
+
+
+def test_failure_without_references_does_not_retry_every_cycle(integration_database):
+    """Achado da auditoria, corrigido: falha sem nenhuma referência
+    existente NÃO pode liberar retry em toda coleta seguinte -- só depois
+    de `retry_after` vencer (backoff de erro), nunca antes."""
+    product_id = product(integration_database)
+    search = FailingSearch()
+    first = _run(
+        integration_database.async_sessions,
+        product_id,
+        search=lambda: WebSearchManager(search),
+        now=NOW,
+    )
+    assert first is None  # nunca propaga exceção ao chamador
+    with integration_database.sessions() as session:
+        row = session.scalar(select(HistoricalBootstrap))
+        assert row.status is HistoricalBootstrapStatus.FAILED
+        assert row.failure_count == 1
+        assert row.retry_after == NOW + timedelta(minutes=15)
+        assert row.completed_at is None  # nunca gravado como se fosse sucesso
+        assert row.lease_until is None
+        assert (
+            session.scalar(select(func.count()).select_from(ExternalPriceReference))
+            == 0
+        )
+
+    # "Toda coleta seguinte" de verdade -- minutos depois, ANTES de
+    # `retry_after` vencer. Não pode tentar de novo.
+    second = _run(
+        integration_database.async_sessions,
+        product_id,
+        search=lambda: WebSearchManager(search),
+        now=NOW + timedelta(minutes=5),
+    )
+    assert second is HistoricalBootstrapStatus.FAILED
+    assert search.calls == 1  # nenhuma chamada nova
+
+
+def test_retry_only_after_retry_after_elapses(integration_database):
+    product_id = product(integration_database)
+    search = FailingSearch()
+    _run(
+        integration_database.async_sessions,
+        product_id,
+        search=lambda: WebSearchManager(search),
+        now=NOW,
+    )
+    blocked = _run(
+        integration_database.async_sessions,
+        product_id,
+        search=lambda: WebSearchManager(search),
+        now=NOW + timedelta(minutes=14),  # 1 minuto antes de vencer
+    )
+    assert blocked is HistoricalBootstrapStatus.FAILED
+    assert search.calls == 1
+
+    working_search = Search(
+        (
+            WebSearchResult(
+                "NVIDIA GeForce RTX 5070 Ti histórico de preço",
+                "https://www.example-retry.com.br/rtx-5070-ti",
+                "NVIDIA GeForce RTX 5070 Ti 01/09/2026 R$ 4.599,90 no menor preço já registrado.",
+                1,
+            ),
+        )
+    )
+    result = _run(
+        integration_database.async_sessions,
+        product_id,
+        search=lambda: WebSearchManager(working_search),
+        now=NOW + timedelta(minutes=15),  # exatamente no vencimento
+    )
+    assert result is HistoricalBootstrapStatus.COMPLETED_WITH_REFERENCES
+    assert working_search.calls > 0
+    with integration_database.sessions() as session:
+        row = session.scalar(select(HistoricalBootstrap))
+        assert row.status is HistoricalBootstrapStatus.COMPLETED_WITH_REFERENCES
+        assert row.failure_count == 0  # resetado no sucesso
+        assert row.retry_after is None
+        assert row.completed_at == NOW + timedelta(minutes=15)
+
+
+def test_backoff_grows_exponentially_and_caps_at_360_minutes(integration_database):
+    product_id = product(integration_database)
+    search = FailingSearch()
+    now = NOW
+    expected = [15, 30, 60, 120, 240, 360, 360]  # último e penúltimo capados
+    cumulative = timedelta()
+    for attempt, expected_minutes in enumerate(expected, start=1):
+        result = _run(
+            integration_database.async_sessions,
+            product_id,
+            search=lambda: WebSearchManager(search),
+            now=now,
+        )
+        assert result is None
+        with integration_database.sessions() as session:
+            row = session.scalar(select(HistoricalBootstrap))
+            assert row.failure_count == attempt
+            cumulative += timedelta(minutes=expected_minutes)
+            assert row.retry_after == NOW + cumulative
+        now = NOW + cumulative  # próxima tentativa exatamente no vencimento
+
+
+def test_failure_with_existing_references_never_deletes_history(integration_database):
+    """Achado da auditoria, corrigido: falha numa revalidação NUNCA apaga
+    `ExternalPriceReference` já persistida, e NUNCA atualiza
+    `completed_at` como se a falha fosse um sucesso."""
+    product_id = product(integration_database)
+    first_result = WebSearchResult(
+        "NVIDIA GeForce RTX 5070 Ti histórico de preço",
+        "https://www.example-existing.com.br/rtx-5070-ti",
+        "NVIDIA GeForce RTX 5070 Ti 01/08/2026 R$ 4.999,90 no menor preço já registrado.",
+        1,
+    )
+    first = _run(
+        integration_database.async_sessions,
+        product_id,
+        search=lambda: WebSearchManager(Search((first_result,))),
+        now=NOW,
+    )
+    assert first is HistoricalBootstrapStatus.COMPLETED_WITH_REFERENCES
+    with integration_database.sessions() as session:
+        original_completed_at = session.scalar(
+            select(HistoricalBootstrap.completed_at)
+        )
+
+    later = NOW + timedelta(days=91)  # elegível para revalidação de sucesso
+    failing_search = FailingSearch()
+    second = _run(
+        integration_database.async_sessions,
+        product_id,
+        search=lambda: WebSearchManager(failing_search),
+        now=later,
+    )
+    assert second is None
+    with integration_database.sessions() as session:
+        row = session.scalar(select(HistoricalBootstrap))
+        assert row.status is HistoricalBootstrapStatus.FAILED
+        assert row.failure_count == 1
+        assert row.retry_after == later + timedelta(minutes=15)
+        # NUNCA reescrito como se a falha fosse sucesso -- continua com o
+        # valor da execução bem-sucedida original.
+        assert row.completed_at == original_completed_at
+        refs = session.scalars(select(ExternalPriceReference)).all()
+        assert len(refs) == 1
+        assert refs[0].amount == Decimal("4999.9000")
+
+
+def test_processing_with_expired_lease_can_be_reclaimed(integration_database):
+    """Achado da auditoria, corrigido: sem `lease_until`, um `PROCESSING`
+    abandonado (crash/kill/exceção verdadeiramente não tratada) ficaria
+    preso para sempre. Com lease, uma tentativa nova pode reclamá-lo
+    assim que o lease vence."""
+    product_id = product(integration_database)
+    with integration_database.sessions.begin() as session:
+        session.add(
+            HistoricalBootstrap(
+                id=uuid4(),
+                product_id=product_id,
+                condition="new",
+                currency="BRL",
+                status=HistoricalBootstrapStatus.PROCESSING,
+                started_at=NOW - timedelta(minutes=10),
+                lease_until=NOW - timedelta(minutes=1),  # vencido
+            )
+        )
+    working_search = Search(
+        (
+            WebSearchResult(
+                "NVIDIA GeForce RTX 5070 Ti histórico de preço",
+                "https://www.example-lease.com.br/rtx-5070-ti",
+                "NVIDIA GeForce RTX 5070 Ti 01/08/2026 R$ 4.399,90 no menor preço já registrado.",
+                1,
+            ),
+        )
+    )
+    result = _run(
+        integration_database.async_sessions,
+        product_id,
+        search=lambda: WebSearchManager(working_search),
+        now=NOW,
+    )
+    assert result is HistoricalBootstrapStatus.COMPLETED_WITH_REFERENCES
+    assert working_search.calls > 0
+    with integration_database.sessions() as session:
+        assert (
+            session.scalar(select(func.count()).select_from(HistoricalBootstrap)) == 1
+        )
+        row = session.scalar(select(HistoricalBootstrap))
+        assert row.lease_until is None
+
+
+def test_collect_candidates_failure_returns_none_never_raises(integration_database):
+    """Contrato do qual `app.collection.orchestration` depende para nunca
+    derrubar o fan-out inteiro da coleta (achado crítico da auditoria):
+    `run_historical_bootstrap` NUNCA propaga exceção pro chamador, mesmo
+    quando Search falha de verdade -- Missions/ofertas sem relação com
+    este produto continuam sendo processadas normalmente pelo resto do
+    pipeline, porque `asyncio.gather` nunca vê uma exceção vinda daqui."""
+    product_id = product(integration_database)
+    result = _run(
+        integration_database.async_sessions,
+        product_id,
+        search=lambda: WebSearchManager(FailingSearch()),
+        now=NOW,
+    )
+    assert result is None
+
+
+def test_persistence_failure_does_not_leave_processing_forever(
+    integration_database, monkeypatch
+):
+    """Achado crítico da auditoria, corrigido: uma falha na persistência
+    FINAL das referências (depois de Search/Fetch/IA já terem rodado com
+    sucesso) precisa terminar em `FAILED` com `retry_after`, nunca presa
+    em `PROCESSING` para sempre -- mesmo que a evidência já coletada
+    nesta tentativa específica seja perdida."""
+    product_id = product(integration_database)
+    search = Search(
+        (
+            WebSearchResult(
+                "NVIDIA GeForce RTX 5070 Ti histórico de preço",
+                "https://www.example-persist-fail.com.br/rtx-5070-ti",
+                "NVIDIA GeForce RTX 5070 Ti 01/08/2026 R$ 4.299,90 no menor preço já registrado.",
+                1,
+            ),
+        )
+    )
+
+    from sqlalchemy.dialects.postgresql import insert as real_insert
+
+    def broken_insert(table):
+        if table is ExternalPriceReference:
+            raise RuntimeError("simulated persistence failure")
+        return real_insert(table)
+
+    monkeypatch.setattr("app.historical_bootstrap.service.insert", broken_insert)
+
+    result = _run(
+        integration_database.async_sessions,
+        product_id,
+        search=lambda: WebSearchManager(search),
+        now=NOW,
+    )
+    assert result is None
+    with integration_database.sessions() as session:
+        row = session.scalar(select(HistoricalBootstrap))
+        assert row.status is HistoricalBootstrapStatus.FAILED
+        assert row.failure_count == 1
+        assert row.retry_after == NOW + timedelta(minutes=15)
+        assert row.completed_at is None
+        assert (
+            session.scalar(select(func.count()).select_from(ExternalPriceReference))
+            == 0
+        )
+
+
 def test_empty_bootstrap_is_terminal(integration_database):
     product_id = product(integration_database)
     search, fetch, ai = Search(), Fetch(None), NoAI()
@@ -183,11 +606,15 @@ def test_empty_bootstrap_is_terminal(integration_database):
         run_historical_bootstrap(
             integration_database.async_sessions,
             product_id=product_id,
-            search=WebSearchManager(search),
+            search=lambda: WebSearchManager(search),
             fetch=fetch,
             ai=ai,
             profile=UserRole.ADMIN,
             now=NOW,
+            revalidation_days=90,
+            lease_seconds=300,
+            failure_backoff_minutes=15,
+            failure_backoff_max_minutes=360,
         )
     )
     assert first is HistoricalBootstrapStatus.COMPLETED_WITHOUT_REFERENCES
@@ -196,11 +623,15 @@ def test_empty_bootstrap_is_terminal(integration_database):
         run_historical_bootstrap(
             integration_database.async_sessions,
             product_id=product_id,
-            search=WebSearchManager(search),
+            search=lambda: WebSearchManager(search),
             fetch=fetch,
             ai=ai,
             profile=UserRole.ADMIN,
             now=NOW,
+            revalidation_days=90,
+            lease_seconds=300,
+            failure_backoff_minutes=15,
+            failure_backoff_max_minutes=360,
         )
     )
     assert second is HistoricalBootstrapStatus.COMPLETED_WITHOUT_REFERENCES
@@ -282,11 +713,15 @@ def test_sufficient_internal_history_skips_bootstrap_entirely(integration_databa
         run_historical_bootstrap(
             integration_database.async_sessions,
             product_id=product_id,
-            search=WebSearchManager(search),
+            search=lambda: WebSearchManager(search),
             fetch=fetch,
             ai=ai,
             profile=UserRole.ADMIN,
             now=NOW,
+            revalidation_days=90,
+            lease_seconds=300,
+            failure_backoff_minutes=15,
+            failure_backoff_max_minutes=360,
         )
     )
     assert result is None
@@ -312,11 +747,15 @@ def test_search_snippet_alone_is_sufficient_zero_fetch_zero_ai(integration_datab
         run_historical_bootstrap(
             integration_database.async_sessions,
             product_id=product_id,
-            search=WebSearchManager(search),
+            search=lambda: WebSearchManager(search),
             fetch=fetch,
             ai=ai,
             profile=UserRole.ADMIN,
             now=NOW,
+            revalidation_days=90,
+            lease_seconds=300,
+            failure_backoff_minutes=15,
+            failure_backoff_max_minutes=360,
         )
     )
     assert status is HistoricalBootstrapStatus.COMPLETED_WITH_REFERENCES
@@ -357,11 +796,15 @@ def test_different_manufacturer_matches_generic_mission_and_is_preserved(
         run_historical_bootstrap(
             integration_database.async_sessions,
             product_id=product_id,
-            search=WebSearchManager(search),
+            search=lambda: WebSearchManager(search),
             fetch=fetch,
             ai=ai,
             profile=UserRole.ADMIN,
             now=NOW,
+            revalidation_days=90,
+            lease_seconds=300,
+            failure_backoff_minutes=15,
+            failure_backoff_max_minutes=360,
         )
     )
     assert status is HistoricalBootstrapStatus.COMPLETED_WITH_REFERENCES
@@ -406,11 +849,15 @@ def test_ambiguous_identity_after_fetch_uses_ai_as_last_layer(integration_databa
         run_historical_bootstrap(
             integration_database.async_sessions,
             product_id=product_id,
-            search=WebSearchManager(search),
+            search=lambda: WebSearchManager(search),
             fetch=fetch,
             ai=ai,
             profile=UserRole.ADMIN,
             now=NOW,
+            revalidation_days=90,
+            lease_seconds=300,
+            failure_backoff_minutes=15,
+            failure_backoff_max_minutes=360,
         )
     )
     assert status is HistoricalBootstrapStatus.COMPLETED_WITH_REFERENCES
@@ -448,11 +895,15 @@ def test_fetch_unavailable_never_invents_a_fact(integration_database):
         run_historical_bootstrap(
             integration_database.async_sessions,
             product_id=product_id,
-            search=WebSearchManager(search),
+            search=lambda: WebSearchManager(search),
             fetch=fetch,
             ai=ai,
             profile=UserRole.ADMIN,
             now=NOW,
+            revalidation_days=90,
+            lease_seconds=300,
+            failure_backoff_minutes=15,
+            failure_backoff_max_minutes=360,
         )
     )
     assert status is HistoricalBootstrapStatus.COMPLETED_WITHOUT_REFERENCES
