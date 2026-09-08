@@ -1,5 +1,139 @@
 # Decision Log
 
+## DEC-129 — Listagem de ofertas nunca calculava `applied_coupon`; Coupon Worker nunca era avisado de HIGH_ACTIVITY
+
+- **Data:** 2026-09-08.
+- **Classificação:** Correção de bug real (pós-deploy `v1.3.8`) +
+  infraestrutura nova opt-in.
+- **Achado 1 (bug real, causa dos 214 cupons ativos em PROD nunca
+  aparecerem no site):** `FASE G`/`DEC-115` só ligou o cálculo de
+  `applied_coupon` (`best_applicable_coupon`) no endpoint de UMA Offer
+  (`get_user_offer`, `GET /api/v1/offers/{id}`) -- `list_offers`
+  (`GET /api/v1/offers`, a listagem que o usuário vê primeiro) nunca
+  chamava `get_candidate_coupons_for_offer` nem `best_applicable_coupon`,
+  e `OfferSummaryOut`/`OfferSummary` (frontend) nem tinham o campo
+  `applied_coupon` no schema. Não era o cenário hipoteticamente suspeito
+  ("só busca cupons vinculados, ignora unlinked") -- `coupon_offer_links`
+  está vazio na prática (nenhum `.py` real cria essa linha, só o model
+  existe) e `get_candidate_coupons_for_offer` já unia linked+unlinked
+  corretamente; o gap era a listagem nunca ter sido ligada a NENHUM dos
+  dois.
+- **Correção:** nova `get_active_coupons_by_store` (`app/coupons/
+  service.py`) -- uma query em lote por `Store` (nunca N+1 por Offer),
+  usada só por `list_offers`; `OfferSummaryOut`/`OfferSummary`
+  (frontend)/`OfferCard` ganham `applied_coupon`/`coupon`. Mesma
+  disciplina de sempre: nunca crítica (falha na consulta em lote não
+  derruba a listagem), nunca calcula sem `PriceObservation` real.
+- **Evidência:** 7 testes novos em `tests/test_webapp_offers_router.py`
+  (mostra quando elegível, omite com flag off, sobrevive a falha de
+  consulta, omite sem observação) + suíte de pricing/integração
+  existente (32 + 10 testes) confirmada sem regressão.
+- **Achado 2 (gap de integração, não um bug -- nunca existiu):** nada no
+  GG jamais chamava o `POST /control/promo` do Coupon Worker
+  (`AIShoppingAgent-cupom`) -- o worker sempre operou em cadência
+  `normal` (1h), mesmo quando o GG já detecta atividade real de loja
+  (`HIGH_ACTIVITY`, `app.collection.cadence`, TASK-116). Pedido do
+  usuário: reaproveitar esse sinal já existente para acelerar o worker
+  pra 30min durante HIGH_ACTIVITY -- nunca uma segunda regra de
+  "promoção".
+- **Entregue nesta rodada:** `app/coupons/worker_control.py`
+  (`notify_coupon_worker_high_activity`, best-effort, opt-in via
+  `Settings.coupon_worker_control_url`/`_token_file`, `None` por
+  padrão -- desligado) + 5 testes unitários isolados, todos passando.
+  **NÃO fiado no scheduler de produção nesta rodada** -- `claim_due_work`
+  (`CollectionOrchestrator`, único caminho real de produção) e as 3
+  chamadas de `resolve_collection_cadence` que dependeriam dele
+  (`orchestration.py` x2, `shared_claim.py` x1) não têm `settings` em
+  nenhum ponto da cadeia hoje; threading isso através de código de
+  scheduling crítico (TASK-116, múltiplas rodadas de correção já
+  documentadas) sem tempo para verificação exaustiva era um risco de
+  regressão real demais para esta janela. Módulo pronto e testado,
+  ponto de integração exato já identificado -- falta só o "fiar",
+  proposto como próxima TASK dedicada.
+- **Achado 3 (não corrigido, documentado para priorização):** Edge/CDP
+  do `collection_worker` nativo não fecha quando o processo pai é morto
+  abruptamente (`Stop-ScheduledTask`/`Stop-Process`, sem sinal
+  capturável no Windows) -- `EdgeCdpSupervisor` já tem cleanup cuidadoso
+  (`_terminate_launcher`, idle-timeout como rede de segurança), mas essa
+  lógica roda DENTRO do processo supervisionado; um kill abrupto do pai
+  mata o supervisor junto, sem ninguém sobrando para eventualmente
+  fechar o Edge órfão. Achado ao vivo em PROD nesta sessão (27
+  `msedge.exe` + 6 `msedgewebview2.exe` acumulados após múltiplos
+  reinícios de flag). Correção correta é um Windows Job Object
+  (`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`) amarrando o ciclo de vida do
+  Edge ao do processo pai no nível do SO -- não implementado nesta
+  rodada (fora do escopo original, risco de implementação apressada sem
+  tempo de teste adequado). Recomendado como próxima TASK prioritária.
+
+## DEC-127 — Vazamento de variável de Máquina (worker nativo) para o `docker compose` do container `api`
+
+- **Data:** 2026-09-08.
+- **Classificação:** Correção de bug real, achado ao vivo durante o
+  deploy PROD `v1.3.8`.
+- **Achado:** `scripts/manage_collection_worker_config.ps1` (DEC-104/122)
+  grava `AISHOPPING_CESAR_CORE_BASE_URL=http://127.0.0.1:8100` como
+  variável de **Máquina** do Windows -- correta para o `collection_worker`
+  nativo, mas herdada por QUALQUER processo novo no mesmo host,
+  inclusive o `docker compose` que sobe o container `api`. Como
+  `compose.yaml` interpolava
+  `${AISHOPPING_CESAR_CORE_BASE_URL:-http://host.docker.internal:8100}`
+  (mesmo nome), o valor da Máquina sobrescrevia o default do container
+  silenciosamente -- reintroduzindo o bug do `DEC-121` sem nenhuma
+  mudança de código, só por causa da ordem/local de onde o operador
+  rodava `docker compose up`.
+- **Correção:** os 5 defaults `AISHOPPING_CESAR_CORE_*` do serviço `api`
+  em `compose.yaml` passam a usar um prefixo próprio
+  (`${GG_API_CESAR_CORE_*:-default}`), nunca reutilizado por nenhuma
+  variável de Máquina/processo nativo -- fecha a colisão na raiz, sem
+  depender de `unset` manual disciplinado antes de cada `docker compose
+  up`. `.env.example` da raiz (rotulado "processo nativo DEV") não
+  precisou mudar -- já não alimenta mais essa interpolação.
+
+## DEC-128 — Reaproveitamento explícito do `firecrawl_api_key` legado para a connection `firecrawl` do OmniRoute (sobrescreve `DEC-126`)
+
+- **Data:** 2026-09-08.
+- **Classificação:** Decisão operacional do usuário (executada em PROD
+  durante o deploy `v1.3.8`, documentada retroativamente aqui a pedido
+  explícito).
+- **Contexto:** `DEC-126` instruía gerar uma API key **nova** para a
+  connection `firecrawl` do OmniRoute, por dois motivos: (1) o secret
+  `firecrawl_api_key`/seu único consumidor (`app/search/firecrawl.py`)
+  foram removidos do repositório GG Oferta na FASE E.1 (confirmado por
+  auditoria de código -- `grep` no código-fonte atual não encontra
+  nenhum `.py` real referenciando `firecrawl_api_key`/`FIRECRAWL_API_KEY`,
+  só `.pyc` obsoletos em `__pycache__`); (2) o arquivo
+  `.secrets\firecrawl_api_key` do GG, datado de 15/ago/2026, é anterior a
+  toda a integração César Core (iniciada em 07/09).
+- **Decisão real do usuário:** reaproveitar esse mesmo valor legado para
+  a connection `firecrawl`, em vez de gerar um novo. Justificativa
+  explícita do usuário: o fato de o secret ser anterior ao César Core
+  não é motivo suficiente para rotacionar a credencial -- o serviço
+  externo (Firecrawl Cloud) é o mesmo de antes, a chave continua sendo a
+  mesma conta/plano.
+- **Verificação feita antes de reaproveitar** (não foi uma reutilização
+  às cegas):
+  1. Arquivo existe e não está vazio (`.secrets\firecrawl_api_key`, 35
+     bytes).
+  2. Chave autentica com sucesso contra a API real do Firecrawl
+     (`POST https://api.firecrawl.dev/v1/scrape` retornou `200` com
+     conteúdo real de `https://example.com`) -- prova de que não foi
+     revogada/expirada.
+  3. Nenhum consumidor antigo ativo no código atual (auditoria de
+     código, ponto 1 acima) -- reaproveitar o valor não reativa nenhum
+     caminho de código legado, só alimenta a connection nova do
+     OmniRoute.
+  4. Mesmo valor materializado em
+     `deploy/prod/cesar-core/.secrets/firecrawl-api-key` (caminho novo,
+     esperado pelo bootstrap `DEC-126`) -- arquivo legado do GG
+     preservado intacto, nunca alterado/apagado.
+- **Resultado:** connection `firecrawl` provisionada com esse valor,
+  `POST /v1/fetch` via César Core confirmado `HTTP 200`,
+  `provider: "firecrawl"`, conteúdo real retornado.
+- **Vigência:** `DEC-126` continua correta como *default* geral (gerar
+  chave nova é o caminho recomendado para qualquer ambiente futuro sem
+  um secret legado equivalente) -- esta decisão é uma exceção pontual e
+  documentada para PROD desta rodada, não uma revogação do default.
+
 ## DEC-126 — Connections `searxng-search`/`firecrawl` nunca provisionadas em PROD (blocker do deploy PROD, `v1.3.7`)
 
 - **Data:** 2026-09-08.

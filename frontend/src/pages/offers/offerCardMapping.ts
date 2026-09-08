@@ -15,5 +15,6 @@ export function offerSummaryToCardData(offer: OfferSummary) {
     condition: offer.latest_observation?.condition ?? null,
     seller: offer.seller,
     rating: offer.rating ? { average: offer.rating.average, reviewCount: offer.rating.review_count } : null,
+    coupon: offer.applied_coupon,
   }
 }

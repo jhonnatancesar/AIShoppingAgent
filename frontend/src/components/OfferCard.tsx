@@ -1,7 +1,7 @@
 import { motion, useReducedMotion } from 'motion/react'
-import { ArrowRight, ExternalLink, MousePointerClick, ShoppingBag } from 'lucide-react'
+import { ArrowRight, ExternalLink, MousePointerClick, ShoppingBag, Tag } from 'lucide-react'
 import { Link } from 'react-router-dom'
-import type { OfferCondition } from '@/api/types'
+import type { AppliedCoupon, OfferCondition } from '@/api/types'
 import { ConditionBadge } from '@/components/ConditionBadge'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -25,6 +25,11 @@ export interface OfferCardData {
   condition: OfferCondition | null
   seller?: { name: string } | null
   rating?: { average: string; reviewCount: number } | null
+  /** Mesmo dado de `OfferDetail`/`OfferSummary.applied_coupon` -- só
+   * presente quando o backend calculou um cupom realmente aplicável
+   * (`app.coupons.pricing.best_applicable_coupon`), nunca porque um
+   * cupom qualquer existe no banco. */
+  coupon?: AppliedCoupon | null
 }
 
 export type OfferCardAction = { label: string } & ({ href: string } | { to: string })
@@ -83,11 +88,22 @@ export function OfferCard({
           <CardTitle className="line-clamp-2 text-base leading-snug">{offer.title}</CardTitle>
           {offer.price ? (
             <>
-              <p className="text-2xl font-bold tracking-[-0.035em] text-opportunity">{money(offer.price.amount, offer.price.currency)}</p>
+              {offer.coupon ? (
+                <p className="text-sm text-muted-foreground line-through">{money(offer.price.amount, offer.price.currency)}</p>
+              ) : null}
+              <p className="text-2xl font-bold tracking-[-0.035em] text-opportunity">
+                {money(offer.coupon ? offer.coupon.final_amount : offer.price.amount, offer.price.currency)}
+              </p>
               <CardDescription className="flex items-center gap-1.5">
                 Total {money(offer.price.totalAmount, offer.price.currency)}
                 {offer.condition ? <>{' · '}<ConditionBadge condition={offer.condition} /></> : null}
               </CardDescription>
+              {offer.coupon ? (
+                <p className="flex items-center gap-1 text-xs font-medium text-primary">
+                  <Tag className="size-3" />
+                  {offer.coupon.code ? `Cupom ${offer.coupon.code}` : 'Cupom aplicado automaticamente'}
+                </p>
+              ) : null}
             </>
           ) : (
             <CardDescription>Preço ainda não coletado.</CardDescription>
