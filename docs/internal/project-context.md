@@ -3870,3 +3870,68 @@ publicada como **`v1.3.8`** -- ver hash real no próprio commit/tag em
 `origin`.
 
 **Nenhum deploy foi executado nesta rodada.**
+
+## Fechamento de dois achados do pós-deploy `v1.3.9`: HIGH_ACTIVITY no scheduler real e lifecycle do Edge (2026-09-08)
+
+Com `v1.3.9` implantada e aprovada em PROD (correção de visibilidade de
+cupons + os 3 workarounds operacionais, `DEC-127`/`DEC-128`/`DEC-129`),
+esta rodada fechou os dois achados que `DEC-129` tinha deixado
+registrados como pendentes -- tratados como **duas correções isoladas**,
+sem misturar uma com a outra.
+
+**HIGH_ACTIVITY -- ligado no scheduler real (`DEC-130`):**
+`app/coupons/worker_control.py` (notificação HTTP para o Coupon Worker)
+já existia da rodada anterior, mas nunca era chamado por nenhum caminho
+de produção. Cadeia real rastreada e usada, sem inventar nada novo:
+`claim_due_work` (scheduler unificado, único caminho de produção) ganhou
+`settings: Settings | None = None`, propagado para os dois sub-caminhos
+que já chamava -- `_claim_legacy_source_attempt` (legado) e
+`_claim_shared_collection_in_session` -> `_advance_monitoring_item_store`
+(compartilhado, `shared_claim.py`). A notificação dispara logo após
+`resolve_collection_cadence` já ter decidido `HIGH_ACTIVITY`, no mesmo
+ponto que já calculava a decisão -- nenhuma segunda regra de claim,
+nenhum scheduler paralelo, nenhuma leitura de `.env` dentro de função de
+domínio. `settings=None` continua sendo o default (todo chamador
+pré-existente preserva o comportamento exato de antes). Timeout do
+`POST /control/promo` reduzido de 5s para 2s nesta integração -- a
+chamada roda dentro da mesma transação que já segura o lock de claim
+(`FOR UPDATE`), então um timeout longo prenderia esse lock mais tempo
+que o necessário se o Coupon Worker estiver fora do ar.
+
+**Edge órfão -- lifecycle amarrado a um Windows Job Object (`DEC-131`):**
+ver `docs/architecture/windows-collection-worker.md`, seção "Lifecycle
+garantido por Windows Job Object", para o mecanismo completo. Resumo: o
+Windows não tem `SIGKILL` capturável, então um kill abrupto do processo
+do worker deixava a árvore do Edge órfã, já que o cleanup normal
+(`_terminate_launcher`) mora dentro do processo supervisionado.
+`EdgeLifecycleJob` (`app/collection/providers/job_object.py`, `ctypes`
+puro contra `kernel32.dll`, sem depender de `pywin32`) amarra o Edge a
+um Job Object com `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` -- o próprio
+Windows mata a árvore inteira quando o processo do worker termina, por
+qualquer motivo, mesmo sem nenhum código de cleanup chegar a rodar.
+
+**Nota de diagnóstico corrigida:** a investigação original (`DEC-129`,
+achado 3) contou 27 `msedge.exe` órfãos. Reinvestigação nesta rodada
+(árvore de processos real via `Get-CimInstance Win32_Process`) achou só
+2 processos RAIZ legítimos (um do `collection_worker`, outro do Coupon
+Worker), cada um com ~12-13 filhos normais do Chromium
+(GPU/renderer/utility/crashpad) -- zero órfãos reais naquele momento
+específico. A contagem estava errada, mas o gap arquitetural (nenhuma
+garantia de kernel amarrando o lifecycle) era real -- não muda a decisão
+de implementar o Job Object.
+
+**Testes:** 147 unit + 22 integration (Postgres real via
+`scripts/run_integration_tests.py`) para o caminho `HIGH_ACTIVITY`; 6
+testes com processos reais (`tests/test_job_object.py`) + 8 testes de
+integração do supervisor (`tests/test_edge_cdp_supervisor.py`,
+processo real do Edge lançado de verdade) para o Job Object -- nenhum
+mock de API Win32.
+
+**Coupon Worker:** documentação própria
+(`AIShoppingAgentCupom`/README e runbook) atualizada para descrever que
+`POST /control/promo` agora também é chamado automaticamente pelo
+scheduler do GG Oferta durante `HIGH_ACTIVITY`, além do uso manual já
+documentado -- ver patch própria do repositório do Coupon Worker.
+
+**Nenhuma alteração em cupons/site/Telegram (`v1.3.9`) nesta rodada.**
+**Nenhum deploy foi executado nesta rodada.**

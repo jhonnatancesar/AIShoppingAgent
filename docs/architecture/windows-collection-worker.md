@@ -101,6 +101,40 @@ Sem `AISHOPPING_EDGE_CDP_URL` configurada, todos os seis Store Providers
 falham explícito (`EdgeCdpTransportError`) -- nunca abrem Chromium
 gerenciado como fallback (ver `docs/architecture/playwright.md`).
 
+### Lifecycle garantido por Windows Job Object (`DEC-131`)
+
+O Windows não tem equivalente a `SIGKILL` capturável -- um
+`Stop-ScheduledTask`/`Stop-Process -Force`/crash do processo do worker
+mata o processo Python sem dar chance de nenhum cleanup rodar. Como o
+cleanup normal do Edge (`_terminate_launcher`, acima) mora **dentro**
+do processo supervisionado, ele morre junto -- deixando a árvore de
+processos do Edge (GPU/renderer/utility/crashpad, ~10-15 processos OS
+por uma única janela lógica) órfã.
+
+`EdgeLifecycleJob` (`app/collection/providers/job_object.py`) fecha essa
+lacuna com um mecanismo de kernel, não de aplicação: ao lançar o Edge
+com sucesso, `_ensure_running` cria um Windows Job Object
+(`CreateJobObjectW`, só `ctypes` puro contra `kernel32.dll`, sem
+depender de `pywin32`) com a flag
+`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` e atribui o PID raiz do Edge a ele
+(`AssignProcessToJobObject`) -- o Windows propaga a atribuição
+automaticamente para toda a árvore de filhos que esse processo spawnar
+depois, sem precisar atribuir cada um manualmente.
+
+**Garantia:** quando o processo Python do worker termina, por qualquer
+motivo (encerramento normal, exceção, timeout, `kill -Force`, crash), o
+próprio Windows fecha o handle do job (nenhum código precisa rodar) e
+mata sozinho toda a árvore do Edge ainda viva atribuída a ele.
+`_terminate_launcher` (caminho normal) também fecha o job explicitamente
+depois do `terminate()`/`kill()` de sempre -- rede de segurança
+redundante, não o mecanismo principal.
+
+**Isolamento:** cada `EdgeLifecycleJob` é um objeto de kernel próprio.
+Fechar um nunca mata processos atribuídos a outro job nem qualquer Edge
+externo/de outro usuário -- não é `taskkill /IM msedge.exe /F` (nunca
+usado neste projeto), é kill escopado ao PID raiz que este supervisor
+lançou e à árvore que ele mesmo criou.
+
 ## Task Scheduler: `AIShoppingAgent-CollectionWorker`
 
 O worker roda como uma tarefa agendada, não como Windows Service: rodar
