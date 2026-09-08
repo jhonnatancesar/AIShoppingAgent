@@ -55,6 +55,16 @@ class Settings(BaseSettings):
     cesar_core_service_class: Literal["economy", "standard", "quality"] = "economy"
     cesar_core_max_tokens: int = Field(default=1024, ge=1, le=4096)
     cesar_core_timeout_seconds: float = Field(default=90, gt=0, le=300)
+    # Achado real (2026-09-08): o Coupon Worker (repositório separado,
+    # mesma máquina) já sabe acelerar sua própria varredura para 30 em 30
+    # minutos durante uma janela promocional (`cadence.py`/`/control/promo`
+    # dele) -- só que nada no GG jamais avisava essa janela. O GG já
+    # detecta atividade real de loja (HIGH_ACTIVITY, `app.collection.
+    # cadence`); isto só propaga esse MESMO sinal para o worker, nunca uma
+    # segunda regra de "promoção". `None` (padrão) desliga o aviso --
+    # otimização de cadência, nunca dependência crítica da coleta.
+    coupon_worker_control_url: str | None = None
+    coupon_worker_control_token_file: Path | None = None
     telegram_bot_token: SecretStr | None = None
     telegram_bot_token_file: Path | None = None
     telegram_webhook_secret: SecretStr | None = None

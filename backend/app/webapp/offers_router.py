@@ -25,7 +25,7 @@ from app.collection.normalization import Availability
 from app.core.config import Settings, get_settings
 from app.core.errors import ApiError
 from app.coupons.pricing import AppliedCoupon, best_applicable_coupon
-from app.coupons.service import get_candidate_coupons_for_offer
+from app.coupons.service import get_active_coupons_by_store, get_candidate_coupons_for_offer
 from app.database.dependency import get_web_async_session
 from app.offers.presentation import (
     resolve_offer_display_title,
@@ -131,6 +131,7 @@ class OfferSummaryOut(BaseModel):
     store: StoreOut
     seller: SellerOut | None
     rating: OfferRatingOut | None
+    applied_coupon: AppliedCouponOut | None = None
     latest_observation: OfferSummaryObservationOut | None
 
 
@@ -214,6 +215,19 @@ async def _deny_offer_unavailable(
     raise AssertionError("unreachable")
 
 
+def _as_applied_coupon_out(applied_coupon: AppliedCoupon | None) -> AppliedCouponOut | None:
+    if applied_coupon is None:
+        return None
+    return AppliedCouponOut(
+        code=applied_coupon.code or None,
+        discount_kind=applied_coupon.discount_kind,
+        original_amount=applied_coupon.original_amount,
+        discount_amount=applied_coupon.discount_amount,
+        final_amount=applied_coupon.final_amount,
+        currency=applied_coupon.currency,
+    )
+
+
 def _as_response(
     detail: UserOfferDetail, applied_coupon: AppliedCoupon | None = None
 ) -> OfferDetailResponse:
@@ -268,22 +282,13 @@ def _as_response(
             if observation is not None
             else None
         ),
-        applied_coupon=(
-            AppliedCouponOut(
-                code=applied_coupon.code or None,
-                discount_kind=applied_coupon.discount_kind,
-                original_amount=applied_coupon.original_amount,
-                discount_amount=applied_coupon.discount_amount,
-                final_amount=applied_coupon.final_amount,
-                currency=applied_coupon.currency,
-            )
-            if applied_coupon is not None
-            else None
-        ),
+        applied_coupon=_as_applied_coupon_out(applied_coupon),
     )
 
 
-def _as_summary(detail: UserOfferSummary) -> OfferSummaryOut:
+def _as_summary(
+    detail: UserOfferSummary, applied_coupon: AppliedCoupon | None = None
+) -> OfferSummaryOut:
     observation = detail.observation
     image_url, image_fallback_url = resolve_offer_image_chain(
         detail.offer, detail.product
@@ -319,6 +324,7 @@ def _as_summary(detail: UserOfferSummary) -> OfferSummaryOut:
             if observation is not None
             else None
         ),
+        applied_coupon=_as_applied_coupon_out(applied_coupon),
     )
 
 
@@ -404,6 +410,7 @@ async def list_offers(
     offset: Annotated[int, Query(ge=0)] = 0,
     user: User = Depends(require_web_session),
     session: AsyncSession = Depends(get_web_async_session),
+    settings: Settings = Depends(get_settings),
 ) -> OfferListResponse:
     try:
         authorize(session, user, Permission.MISSION_READ)
@@ -425,8 +432,36 @@ async def list_offers(
         limit=limit,
         offset=offset,
     )
+    # FASE G (achado real, 2026-09-08): `list_offers` nunca calculava
+    # `applied_coupon` -- só `get_user_offer` (detalhe de UMA Offer)
+    # fazia isso. A listagem é a primeira superfície que o usuário vê;
+    # sem isso, 214 cupons reais persistidos em PROD nunca apareciam no
+    # site. Uma consulta em lote por Store (nunca N+1); nunca crítica --
+    # falha aqui não pode impedir a listagem normal de aparecer.
+    coupons_by_offer_id: dict[UUID, AppliedCoupon] = {}
+    if settings.coupons_enabled and items:
+        try:
+            coupons_by_store = await get_active_coupons_by_store(
+                session, store_ids=(item.offer.store_id for item in items)
+            )
+            for item in items:
+                if item.observation is None:
+                    continue
+                applied = best_applicable_coupon(
+                    item.offer,
+                    coupons_by_store.get(item.offer.store_id, ()),
+                    item.observation.amount,
+                    item.observation.currency,
+                )
+                if applied is not None:
+                    coupons_by_offer_id[item.offer.id] = applied
+        except Exception:
+            logger.warning("coupon_list_lookup_failed", exc_info=True)
     return OfferListResponse(
-        items=[_as_summary(item) for item in items],
+        items=[
+            _as_summary(item, applied_coupon=coupons_by_offer_id.get(item.offer.id))
+            for item in items
+        ],
         limit=limit,
         offset=offset,
         total=total,

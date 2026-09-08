@@ -27,6 +27,7 @@ from app.offers.query import (
     UserComparisonOffer,
     UserOfferComparison,
     UserOfferDetail,
+    UserOfferSummary,
     _fetch_daily_low_points,
     _resolve_current_amount,
     _resolve_reference_currency,
@@ -92,6 +93,15 @@ def _detail() -> UserOfferDetail:
         is_highlighted=True,
     )
     return UserOfferDetail(offer, product, store, seller, observation, (installment,))
+
+
+def _summary() -> UserOfferSummary:
+    """Mesmos dados de `_detail()`, sem `installments` -- é exatamente o
+    que `UserOfferSummary` carrega (a listagem nunca teve parcelas)."""
+    detail = _detail()
+    return UserOfferSummary(
+        detail.offer, detail.product, detail.store, detail.seller, detail.observation
+    )
 
 
 @pytest.fixture
@@ -292,6 +302,124 @@ def test_offer_never_queries_coupons_when_flag_is_off(
     assert response.status_code == 200
     assert response.json()["applied_coupon"] is None
     query.assert_not_called()
+
+
+def test_list_offers_shows_applied_coupon_when_eligible(
+    client_with_coupons_enabled: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Achado real (2026-09-08): `list_offers` nunca calculava cupom
+    nenhum -- só o detalhe de UMA Offer (`get_user_offer`) fazia isso.
+    214 cupons reais persistidos em PROD nunca apareciam na listagem, a
+    primeira superfície que o usuário vê. Mesmo cenário de
+    `test_offer_with_applicable_coupon_shows_final_price`, agora pela
+    listagem."""
+    client = client_with_coupons_enabled
+    summary = _summary()
+    coupon = Coupon(
+        id=uuid4(),
+        store_id=summary.offer.store_id,
+        code="SITE15",
+        discount_kind="fixed_amount",
+        discount_value=Decimal("100.00"),
+        scope_kind="store_wide",
+        evidence="ev",
+        status="active",
+        last_seen_at=NOW,
+    )
+    monkeypatch.setattr(
+        "app.webapp.offers_router.list_user_offers",
+        AsyncMock(return_value=((summary,), 1)),
+    )
+    batch = AsyncMock(return_value={summary.offer.store_id: (coupon,)})
+    monkeypatch.setattr("app.webapp.offers_router.get_active_coupons_by_store", batch)
+
+    response = client.get("/api/v1/offers", cookies=_cookies())
+
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["items"]) == 1
+    assert body["items"][0]["latest_observation"]["amount"] == "4599.00"  # original intocado
+    assert body["items"][0]["applied_coupon"] == {
+        "code": "SITE15",
+        "discount_kind": "fixed_amount",
+        "original_amount": "4599.00",
+        "discount_amount": "100.00",
+        "final_amount": "4499.00",
+        "currency": "BRL",
+    }
+    batch.assert_awaited_once()
+
+
+def test_list_offers_never_queries_coupons_when_flag_is_off(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """FASE G: `coupons_enabled=False` (default de produção) -- a
+    listagem nem tenta consultar cupons, `applied_coupon` sempre
+    `None`, sem regressão no comportamento anterior a esta correção."""
+    summary = _summary()
+    monkeypatch.setattr(
+        "app.webapp.offers_router.list_user_offers",
+        AsyncMock(return_value=((summary,), 1)),
+    )
+    batch = AsyncMock(side_effect=AssertionError("não deveria consultar cupons"))
+    monkeypatch.setattr("app.webapp.offers_router.get_active_coupons_by_store", batch)
+
+    response = client.get("/api/v1/offers", cookies=_cookies())
+
+    assert response.status_code == 200
+    assert response.json()["items"][0]["applied_coupon"] is None
+    batch.assert_not_called()
+
+
+def test_list_offers_coupon_lookup_failure_never_breaks_listing(
+    client_with_coupons_enabled: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mesma disciplina do detalhe (`test_offer_coupon_lookup_failure_
+    never_breaks_offer_display`): consumo de cupons é derivado, nunca
+    crítico -- falha na consulta em lote não pode derrubar a listagem
+    inteira."""
+    client = client_with_coupons_enabled
+    summary = _summary()
+    monkeypatch.setattr(
+        "app.webapp.offers_router.list_user_offers",
+        AsyncMock(return_value=((summary,), 1)),
+    )
+    monkeypatch.setattr(
+        "app.webapp.offers_router.get_active_coupons_by_store",
+        AsyncMock(side_effect=RuntimeError("conexão perdida")),
+    )
+
+    response = client.get("/api/v1/offers", cookies=_cookies())
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["items"][0]["applied_coupon"] is None
+    assert body["items"][0]["latest_observation"]["amount"] == "4599.00"
+
+
+def test_list_offers_omits_coupon_for_offer_without_observation(
+    client_with_coupons_enabled: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Sem `PriceObservation` não há `reference_amount` pra calcular
+    desconto -- nunca inventa um preço final sem observação real."""
+    client = client_with_coupons_enabled
+    summary = _summary()
+    summary_no_price = UserOfferSummary(
+        summary.offer, summary.product, summary.store, summary.seller, None
+    )
+    monkeypatch.setattr(
+        "app.webapp.offers_router.list_user_offers",
+        AsyncMock(return_value=((summary_no_price,), 1)),
+    )
+    batch = AsyncMock(return_value={})
+    monkeypatch.setattr("app.webapp.offers_router.get_active_coupons_by_store", batch)
+
+    response = client.get("/api/v1/offers", cookies=_cookies())
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["items"][0]["applied_coupon"] is None
+    assert body["items"][0]["latest_observation"] is None
 
 
 def test_other_user_cannot_access_offer(

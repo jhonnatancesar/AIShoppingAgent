@@ -90,12 +90,24 @@ services:
       # `collection_worker` nativo continua usando `127.0.0.1:8100`
       # (backend/.env.example) -- diferença de transporte por ambiente de
       # execução, não mudança da arquitetura lógica.
-      AISHOPPING_CESAR_CORE_BASE_URL: ${AISHOPPING_CESAR_CORE_BASE_URL:-http://host.docker.internal:8100}
+      # DEC-127 (achado real de deploy): estes 5 defaults usavam
+      # `${AISHOPPING_CESAR_CORE_*:-default}` -- o MESMO nome da variável
+      # de Máquina do Windows que `scripts/manage_collection_worker_
+      # config.ps1` grava para o `collection_worker` nativo (DEC-104/122).
+      # Variável de Máquina é herdada por QUALQUER processo novo no host,
+      # inclusive o `docker compose` que sobe este `api` -- sem querer,
+      # `http://127.0.0.1:8100` (valor correto só para o processo nativo)
+      # sobrescrevia o default certo do container (`host.docker.internal`),
+      # reintroduzindo o bug do DEC-121 sem nenhuma mudança de código.
+      # Prefixo `GG_API_` própio deste serviço -- nunca usado por nenhum
+      # outro processo/variável de Máquina -- fecha a colisão de raiz, sem
+      # depender de `unset` manual antes de `docker compose up`.
+      AISHOPPING_CESAR_CORE_BASE_URL: ${GG_API_CESAR_CORE_BASE_URL:-http://host.docker.internal:8100}
       AISHOPPING_CESAR_CORE_API_KEY_FILE: /run/secrets/cesar_core_api_key
-      AISHOPPING_CESAR_CORE_SERVICE: ${AISHOPPING_CESAR_CORE_SERVICE:-backend}
-      AISHOPPING_CESAR_CORE_SERVICE_CLASS: ${AISHOPPING_CESAR_CORE_SERVICE_CLASS:-economy}
-      AISHOPPING_CESAR_CORE_MAX_TOKENS: ${AISHOPPING_CESAR_CORE_MAX_TOKENS:-1024}
-      AISHOPPING_CESAR_CORE_TIMEOUT_SECONDS: ${AISHOPPING_CESAR_CORE_TIMEOUT_SECONDS:-90}
+      AISHOPPING_CESAR_CORE_SERVICE: ${GG_API_CESAR_CORE_SERVICE:-backend}
+      AISHOPPING_CESAR_CORE_SERVICE_CLASS: ${GG_API_CESAR_CORE_SERVICE_CLASS:-economy}
+      AISHOPPING_CESAR_CORE_MAX_TOKENS: ${GG_API_CESAR_CORE_MAX_TOKENS:-1024}
+      AISHOPPING_CESAR_CORE_TIMEOUT_SECONDS: ${GG_API_CESAR_CORE_TIMEOUT_SECONDS:-90}
     ports:
       - "${API_BIND_ADDRESS:-127.0.0.1}:${API_PORT:-8000}:8000"
     secrets:

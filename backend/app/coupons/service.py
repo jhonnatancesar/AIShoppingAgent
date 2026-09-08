@@ -2,6 +2,7 @@
 Telegram ou frontend ainda. Só consulta o que o Coupon Worker já persistiu
 diretamente no mesmo PostgreSQL."""
 
+from collections.abc import Iterable
 from uuid import UUID
 
 from sqlalchemy import select
@@ -38,6 +39,30 @@ async def get_candidate_coupons_for_offer(
     linked = await get_coupons_for_offer(session, offer_id=offer_id)
     unlinked = await get_unlinked_coupons_for_store(session, store_id=store_id)
     return linked + unlinked
+
+
+async def get_active_coupons_by_store(
+    session: AsyncSession, *, store_ids: Iterable[UUID]
+) -> dict[UUID, tuple[Coupon, ...]]:
+    """Mesmo candidato completo de `get_candidate_coupons_for_offer`
+    (vinculado ou não -- `CouponOfferLink` não decide aplicabilidade,
+    só agrupamento de apresentação), em lote por `Store` para evitar
+    N+1 ao montar uma LISTA de ofertas (achado real: `list_offers`
+    nunca calculava cupom nenhum, só o detalhe de uma Offer calculava --
+    a listagem é a superfície que o usuário vê primeiro). Uma única
+    query por chamada; `pricing.is_coupon_applicable` continua sendo
+    quem decide, por Offer, quais desses candidatos realmente se
+    aplicam."""
+    ids = tuple(dict.fromkeys(store_ids))
+    if not ids:
+        return {}
+    grouped: dict[UUID, list[Coupon]] = {store_id: [] for store_id in ids}
+    rows = await session.scalars(
+        select(Coupon).where(Coupon.store_id.in_(ids), Coupon.status == _ACTIVE)
+    )
+    for coupon in rows:
+        grouped[coupon.store_id].append(coupon)
+    return {store_id: tuple(coupons) for store_id, coupons in grouped.items()}
 
 
 async def get_unlinked_coupons_for_store(

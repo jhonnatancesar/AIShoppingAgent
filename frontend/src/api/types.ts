@@ -271,6 +271,9 @@ export interface OfferSummary {
     availability: OfferAvailability
     observed_at: string
   } | null
+  /** Mesma semântica de `OfferDetail.applied_coupon` -- só presente
+   * quando o backend calculou um cupom realmente aplicável. */
+  applied_coupon: AppliedCoupon | null
 }
 
 export interface OfferListResponse {
