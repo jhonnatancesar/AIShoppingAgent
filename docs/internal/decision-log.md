@@ -1,5 +1,100 @@
 # Decision Log
 
+## DEC-131 — Windows Job Object amarra o lifecycle do Edge ao processo pai (Achado 3 do `DEC-129`, agora corrigido)
+
+- **Data:** 2026-09-08.
+- **Classificação:** Correção de bug real, achado ao vivo em PROD (mesma
+  rodada do `DEC-129`).
+- **Contexto:** Windows não tem equivalente a `SIGKILL` capturável -- um
+  `Stop-ScheduledTask`/`Stop-Process -Force`/crash do processo do
+  `collection_worker` nativo mata o processo sem nenhuma chance de
+  `EdgeCdpSupervisor._terminate_launcher` rodar, deixando o Edge (e sua
+  árvore de processos GPU/renderer/utility) órfão. `EdgeCdpSupervisor` já
+  tinha cleanup cuidadoso (`_terminate_launcher`, idle-timeout como rede
+  de segurança) -- mas essa lógica mora DENTRO do processo supervisionado
+  (Python), então morre junto com ele.
+- **Nota de diagnóstico corrigida:** a investigação original (`DEC-129`,
+  achado 3) contou 27 `msedge.exe` + 6 `msedgewebview2.exe` como órfãos.
+  Reinvestigação nesta rodada, com a árvore de processos real
+  (`Get-CimInstance Win32_Process`, `ParentProcessId`): eram só 2
+  processos RAIZ (`--remote-debugging-address=...`), cada um com ~12-13
+  filhos normais do Chromium (GPU/renderer/utility/crashpad-handler) --
+  ambos legítimos (um do `collection_worker`, outro do Coupon Worker),
+  zero órfãos reais naquele momento específico. O gap arquitetural
+  continua real (nenhuma garantia de kernel amarrando o lifecycle), só a
+  contagem de sintoma estava errada -- corrigido aqui por precisão, não
+  muda a decisão de implementar a correção.
+- **Decisão:** `app/collection/providers/job_object.py`
+  (`EdgeLifecycleJob`) -- Windows Job Object com
+  `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, só `ctypes` contra `kernel32.dll`
+  (`CreateJobObjectW`/`SetInformationJobObject`/`AssignProcessToJobObject`),
+  sem depender de `pywin32` (não é dependência do projeto). Um job novo é
+  criado e o PID raiz do Edge é atribuído a ele logo após
+  `asyncio.create_subprocess_exec` ter sucesso, em `EdgeCdpSupervisor.
+  _ensure_running`. O Windows propaga a atribuição automaticamente para
+  toda a árvore que o processo raiz spawnar depois -- não precisa
+  atribuir cada filho manualmente.
+- **Garantia real:** quando o processo Python do worker termina, por
+  QUALQUER motivo (graceful, crash, kill -Force), o Windows fecha
+  sozinho o handle do job (nenhum código precisa rodar) e mata toda a
+  árvore ainda viva atribuída a ele. `_terminate_launcher` (caminho
+  normal/gracioso) também fecha o job explicitamente, DEPOIS do
+  `terminate()`/`kill()` de sempre -- rede de segurança redundante para
+  qualquer filho que `TerminateProcess` no PID raiz não tenha limpo.
+- **Nunca afeta processo de fora do job** -- cada `EdgeLifecycleJob` é um
+  objeto de kernel próprio; fechar um nunca mata processos atribuídos a
+  outro job nem processos soltos.
+- **Testes (processos reais, não mocks Win32):**
+  `tests/test_job_object.py` -- mecanismo puro (fechar mata o atribuído;
+  nunca mata processo não atribuído; processo já morto falha limpo;
+  `close()` duplo é inofensivo; jobs são independentes entre si; **o
+  cenário real** -- processo pai morto abruptamente, SEM `close()`
+  nenhum chamado, filho morre sozinho mesmo assim).
+  `tests/test_edge_cdp_supervisor.py` -- integração real com
+  `_ensure_running`/`_terminate_launcher` (processo real lançado, só
+  `wait_until_ready` trocado por dublê). Achado de bug no processo de
+  teste, corrigido: `timeout.exe` exige console interativo e morre
+  sozinho com stdin redirecionado -- trocado por `ping`, que funciona
+  igual redirecionado ou não.
+- **Próxima ação:** nenhuma -- correção completa, testada, não fiada em
+  nenhum outro trabalho pendente.
+
+## DEC-130 — HIGH_ACTIVITY ligado no scheduler real de produção (Achado 2 do `DEC-129`, agora corrigido)
+
+- **Data:** 2026-09-08.
+- **Classificação:** Fechamento de infraestrutura já projetada (mesma
+  rodada do `DEC-129`, que criou `app/coupons/worker_control.py` mas não
+  chegou a fiar no scheduler real).
+- **Cadeia real rastreada e usada** (nada novo inventado): `claim_due_
+  work` (scheduler unificado, único caminho de produção,
+  `CollectionOrchestrator` já tinha `self._settings` desde sempre) ganha
+  `settings: Settings | None = None`, propagado pros dois sub-caminhos
+  que já chamava -- `_claim_legacy_source_attempt` (legado) e `_claim_
+  shared_collection_in_session` -> `_advance_monitoring_item_store`
+  (compartilhado, `shared_claim.py`). Notificação disparada logo após
+  `resolve_collection_cadence` já ter decidido `HIGH_ACTIVITY`, no MESMO
+  ponto que já calculava a decisão -- nunca uma segunda regra de claim,
+  nunca um scheduler paralelo, nunca leitura de `.env` dentro de função
+  de domínio (settings sempre chega pronto via parâmetro).
+- **`settings=None`** (default, todos os scripts/testes/chamadores
+  existentes que já chamavam sem esse parâmetro) preserva o
+  comportamento exato de antes -- nenhuma mudança de assinatura
+  observável, nenhuma chamada de rede nova por padrão.
+- **Ajuste de segurança real desta integração:** timeout do `POST
+  /control/promo` reduzido de 5s pra 2s -- a chamada roda DENTRO da
+  transação de claim (lock de linha `MissionSource`/`MonitoringItemStore
+  FOR UPDATE` ainda aberto); um timeout longo prenderia esse lock mais
+  tempo que o necessário caso o Coupon Worker esteja fora do ar.
+- **Testes (Postgres real, `scripts/run_integration_tests.py`):**
+  caminho legado (`tests/integration/test_legacy_source_level_cadence.py`)
+  e caminho compartilhado (`tests/integration/test_unified_fair_queue.py`,
+  via `claim_due_work` direto) -- cada um com dois casos: notifica quando
+  `settings` configurado + `HIGH_ACTIVITY` ativo (com o `now` exato
+  esperado); nunca notifica sem `settings`, claim idêntico nos dois
+  casos. Suítes completas de cadência/orquestração/fair-queue (147 unit +
+  36 integration) confirmadas sem regressão.
+- **Próxima ação:** nenhuma -- correção completa, testada.
+
 ## DEC-129 — Listagem de ofertas nunca calculava `applied_coupon`; Coupon Worker nunca era avisado de HIGH_ACTIVITY
 
 - **Data:** 2026-09-08.
