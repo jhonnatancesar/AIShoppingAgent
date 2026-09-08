@@ -21,6 +21,7 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from threading import Barrier
+from unittest.mock import AsyncMock
 from uuid import UUID
 
 import pytest
@@ -278,6 +279,101 @@ def test_high_activity_store_alone_never_drags_others(integration_database) -> N
     assert amazon_provider.calls == 2
     assert kabum_provider.calls == 1  # intocada
     assert pichau_provider.calls == 1  # intocada
+
+
+# ---------------------------------------------------------------------------
+# DEC-129: notificação best-effort ao Coupon Worker quando o scheduler REAL
+# de produção (claim_due_work, via CollectionOrchestrator.run_batch) decide
+# HIGH_ACTIVITY -- mesmo sinal do teste acima, agora provando que o aviso
+# dispara (e que, sem `settings`, continua desligado -- comportamento
+# idêntico a todos os outros testes deste arquivo, que nunca passam
+# `settings`).
+# ---------------------------------------------------------------------------
+
+
+def test_high_activity_notifies_coupon_worker_when_settings_configured(
+    integration_database, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.core.config import Settings
+
+    amazon_id = _store_id(integration_database, "amazon")
+    user_id = _seed_user(integration_database.sessions, "casonotify")
+    mission_id = _seed_mission(
+        integration_database, user_id, label="casonotify", sources={amazon_id: NOW}
+    )
+    with integration_database.sessions.begin() as session:
+        session.add(
+            StoreActivityState(
+                store_id=amazon_id,
+                scope_id=mission_id,
+                high_activity_until=NOW + timedelta(hours=2),
+            )
+        )
+
+    calls: list[datetime] = []
+
+    async def fake_notify(settings, *, now):
+        calls.append(now)
+
+    monkeypatch.setattr(
+        "app.collection.orchestration.notify_coupon_worker_high_activity", fake_notify
+    )
+
+    provider = _CountingProvider("amazon")
+    orchestrator = CollectionOrchestrator(
+        integration_database.async_sessions,
+        CollectionAdapter(providers=[provider]),
+        ai_manager=_StubAIManager(),
+        cadence_config=_DETERMINISTIC_CADENCE,
+        store_min_interval_seconds=0.0,
+        user_cooldown_min_seconds=0.0,
+        user_cooldown_max_seconds=0.0,
+        max_concurrent_user_batches=5,
+        settings=Settings(
+            coupon_worker_control_url="http://127.0.0.1:8090",
+            coupon_worker_control_token_file=None,
+        ),
+    )
+
+    _run(orchestrator.run_batch(now=NOW))
+
+    assert provider.calls == 1  # claim real aconteceu normalmente
+    assert calls == [NOW]  # avisou exatamente uma vez, com o `now` certo
+
+
+def test_high_activity_never_notifies_without_settings(
+    integration_database, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mesmo cenário acima, sem `settings` -- comportamento padrão
+    (`CollectionOrchestrator(settings=None)`, como todos os outros testes
+    deste arquivo já fazem): claim continua idêntico, aviso nunca é
+    sequer tentado."""
+    amazon_id = _store_id(integration_database, "amazon")
+    user_id = _seed_user(integration_database.sessions, "casonotifyoff")
+    mission_id = _seed_mission(
+        integration_database, user_id, label="casonotifyoff", sources={amazon_id: NOW}
+    )
+    with integration_database.sessions.begin() as session:
+        session.add(
+            StoreActivityState(
+                store_id=amazon_id,
+                scope_id=mission_id,
+                high_activity_until=NOW + timedelta(hours=2),
+            )
+        )
+
+    notify = AsyncMock()
+    monkeypatch.setattr(
+        "app.collection.orchestration.notify_coupon_worker_high_activity", notify
+    )
+
+    provider = _CountingProvider("amazon")
+    orchestrator = _make_orchestrator(integration_database, provider)
+
+    _run(orchestrator.run_batch(now=NOW))
+
+    assert provider.calls == 1
+    notify.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

@@ -13,13 +13,14 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from threading import Barrier
+from unittest.mock import AsyncMock
 from uuid import UUID
 
 import pytest
 from app.collection.adapter import CollectionAdapter
 from app.collection.cadence import CadenceConfig
 from app.collection.contracts import CollectionRequest, CollectionResult, RawCollectedOffer
-from app.collection.models import CollectionRun, UserCollectionQueueState
+from app.collection.models import CollectionRun, StoreActivityState, UserCollectionQueueState
 from app.collection.fairness import _reserve_fairness_owners
 from app.collection.orchestration import (
     CollectionOrchestrator,
@@ -236,6 +237,99 @@ def test_linked_mission_excluded_from_legacy_selector(integration_database) -> N
 
     legacy_claims = _run(run_legacy())
     assert legacy_claims == ()
+
+
+# ---------------------------------------------------------------------------
+# DEC-129: notificação best-effort ao Coupon Worker quando `claim_due_work`
+# (scheduler REAL de produção) decide HIGH_ACTIVITY no caminho
+# COMPARTILHADO (`_advance_monitoring_item_store`, `shared_claim.py`) --
+# mesmo sinal do teste equivalente no caminho legado
+# (`test_legacy_source_level_cadence.py`).
+# ---------------------------------------------------------------------------
+
+
+def test_shared_high_activity_notifies_coupon_worker_when_settings_configured(
+    integration_database, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.core.config import Settings
+
+    user_id = _seed_user(integration_database.sessions, "sharednotify")
+    mission = _make_shared_mission(integration_database, user_id, search_query="RTX 5070 Ti")
+    item_id = _monitoring_item_id_for(integration_database.sessions, mission.id)
+    assert item_id is not None
+    amazon_id = _store_id(integration_database, "amazon")
+    with integration_database.sessions.begin() as session:
+        session.add(
+            StoreActivityState(
+                store_id=amazon_id,
+                scope_id=item_id,
+                high_activity_until=NOW + timedelta(hours=2),
+            )
+        )
+
+    calls: list[datetime] = []
+
+    async def fake_notify(settings, *, now):
+        calls.append(now)
+
+    monkeypatch.setattr(
+        "app.collection.shared_claim.notify_coupon_worker_high_activity", fake_notify
+    )
+
+    async def run():
+        async with integration_database.async_sessions() as session:
+            batch = await claim_due_work(
+                session,
+                now=NOW,
+                limit=25,
+                max_users=5,
+                cadence_config=_DETERMINISTIC_CADENCE,
+                settings=Settings(
+                    coupon_worker_control_url="http://127.0.0.1:8090",
+                    coupon_worker_control_token_file=None,
+                ),
+            )
+            await session.commit()
+            return batch
+
+    batch = _run(run())
+    assert len(batch.shared) == 1
+    assert calls == [NOW]
+
+
+def test_shared_high_activity_never_notifies_without_settings(
+    integration_database, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    user_id = _seed_user(integration_database.sessions, "sharednotifyoff")
+    mission = _make_shared_mission(integration_database, user_id, search_query="RTX 5070 Ti")
+    item_id = _monitoring_item_id_for(integration_database.sessions, mission.id)
+    assert item_id is not None
+    amazon_id = _store_id(integration_database, "amazon")
+    with integration_database.sessions.begin() as session:
+        session.add(
+            StoreActivityState(
+                store_id=amazon_id,
+                scope_id=item_id,
+                high_activity_until=NOW + timedelta(hours=2),
+            )
+        )
+
+    notify = AsyncMock()
+    monkeypatch.setattr(
+        "app.collection.shared_claim.notify_coupon_worker_high_activity", notify
+    )
+
+    async def run():
+        async with integration_database.async_sessions() as session:
+            batch = await claim_due_work(
+                session, now=NOW, limit=25, max_users=5, cadence_config=_DETERMINISTIC_CADENCE
+            )
+            await session.commit()
+            return batch
+
+    batch = _run(run())
+    assert len(batch.shared) == 1
+    notify.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

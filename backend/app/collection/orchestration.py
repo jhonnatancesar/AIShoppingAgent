@@ -35,6 +35,7 @@ from app.alerts.evaluator import (
 from app.alerts.models import MissionProductAlertState
 from app.collection.adapter import CollectionAdapter
 from app.collection.cadence import (
+    _MODE_HIGH_ACTIVITY,
     CadenceConfig,
     resolve_collection_cadence,
     sample_next_run_at,
@@ -113,6 +114,7 @@ from app.events import (
 )
 from app.coupons.pricing import AppliedCoupon, best_applicable_coupon
 from app.coupons.service import get_candidate_coupons_for_offer
+from app.coupons.worker_control import notify_coupon_worker_high_activity
 from app.events.service import publish_event_async
 from app.historical_bootstrap.service import run_historical_bootstrap
 from app.market_research.service import (
@@ -965,6 +967,7 @@ async def _claim_legacy_source_attempt(
     effective_now: datetime,
     store_min_interval_seconds: float,
     cadence_config: CadenceConfig,
+    settings: Settings | None = None,
 ) -> ClaimedCollection | None:
     """Mesmo template de `_claim_shared_collection_in_session`
     (`shared_claim.py`): 1. LOCK real da linha específica já escolhida
@@ -1007,6 +1010,13 @@ async def _claim_legacy_source_attempt(
         now=effective_now,
         config=cadence_config,
     )
+    if decision.mode == _MODE_HIGH_ACTIVITY and settings is not None:
+        # DEC-129: mesmo sinal de sempre (cadence.py decide HIGH_ACTIVITY
+        # por conta própria, nunca uma segunda regra) -- só propaga pro
+        # Coupon Worker acelerar a varredura dele também. Best-effort
+        # (notify_coupon_worker_high_activity nunca levanta), fora da
+        # decisão de cadência em si -- nunca pode atrasar/bloquear o claim.
+        await notify_coupon_worker_high_activity(settings, now=effective_now)
     source.last_run_at = effective_now
     source.next_run_at = sample_next_run_at(effective_now, decision)
     await _advance_store_throttle(
@@ -1037,6 +1047,7 @@ async def claim_due_work(
     store_min_interval_seconds: float = 2.0,
     cadence_config: CadenceConfig | None = None,
     candidate_scan_limit: int = 1000,
+    settings: Settings | None = None,
 ) -> _ClaimedBatch:
     """Scheduler unificado (TASK-112 fase 3B) -- único caminho usado pelo
     `CollectionOrchestrator` de produção. Ver o bloco de comentário acima
@@ -1077,6 +1088,7 @@ async def claim_due_work(
                 effective_now=effective_now,
                 store_min_interval_seconds=store_min_interval_seconds,
                 cadence_config=effective_cadence_config,
+                settings=settings,
             )
             if resource_claim is not None:
                 old_claims.append(resource_claim)
@@ -1091,6 +1103,7 @@ async def claim_due_work(
                 cadence_config=effective_cadence_config,
                 store_min_interval_seconds=store_min_interval_seconds,
                 fairness_owner_user_id=attempt.owner_user_id,
+                settings=settings,
             )
             if resource_claim is not None:
                 shared_claims.append(resource_claim)
@@ -1310,6 +1323,7 @@ class CollectionOrchestrator:
                 store_min_interval_seconds=queue_config.store_min_interval_seconds,
                 cadence_config=self._cadence_config,
                 candidate_scan_limit=self._candidate_scan_limit,
+                settings=self._settings,
             )
         # Transação da Fase A já fechada neste ponto (fim do `async with`
         # acima) -- a Fase B (TASK-083) roda inteiramente fora dela.
