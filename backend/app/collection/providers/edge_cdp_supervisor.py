@@ -37,9 +37,12 @@ from playwright.async_api import async_playwright
 
 from app.collection.edge_discovery import (
     EdgeExecutableNotFoundError,
+)
+from app.collection.edge_discovery import (
     discover_edge_executable as _discover_edge_executable,
 )
 from app.collection.providers.edge_cdp_endpoint import validate_loopback_cdp_endpoint
+from app.collection.providers.job_object import EdgeLifecycleJob, JobObjectError
 
 logger = logging.getLogger("app.collection.edge_cdp_supervisor")
 
@@ -114,6 +117,7 @@ class EdgeCdpSupervisor:
         self._idle_timeout_seconds = idle_timeout_seconds
         self._extra_args = tuple(extra_args)
         self._process: asyncio.subprocess.Process | None = None
+        self._job: EdgeLifecycleJob | None = None
         self._monitor_task: asyncio.Task[None] | None = None
         self._idle_timer_task: asyncio.Task[None] | None = None
         self._lifecycle_lock = asyncio.Lock()
@@ -332,6 +336,23 @@ class EdgeCdpSupervisor:
         except OSError as error:
             raise EdgeCdpSupervisorError("could not start dedicated Edge") from error
         self._started_process = True
+        # Achado real (2026-09-08): sem isto, o Edge sobrevive a um kill
+        # abrupto do worker (Stop-ScheduledTask/Stop-Process -Force/crash
+        # -- nenhum sinal capturável no Windows, `_terminate_launcher`
+        # nunca roda). Job Object com KILL_ON_JOB_CLOSE resolve no kernel:
+        # o Windows fecha o handle sozinho quando ESTE processo Python
+        # termina, por qualquer motivo, e mata a árvore inteira do Edge
+        # (herança automática pros filhos GPU/renderer/utility que ele
+        # spawnar depois -- não precisa atribuir cada um). Falha aqui
+        # nunca impede o Edge de funcionar -- só fica sem a proteção
+        # extra, mesmo comportamento de antes desta mudança.
+        try:
+            job = EdgeLifecycleJob()
+            job.assign(self._process.pid)
+        except JobObjectError:
+            logger.warning("edge_job_object_setup_failed", exc_info=True)
+        else:
+            self._job = job
         try:
             await self.wait_until_ready()
         except Exception:
@@ -342,14 +363,27 @@ class EdgeCdpSupervisor:
     async def _terminate_launcher(self) -> None:
         process = self._process
         self._process = None
-        if process is None or process.returncode is not None:
-            return
-        process.terminate()
+        job = self._job
+        self._job = None
         try:
-            await asyncio.wait_for(process.wait(), timeout=5)
-        except TimeoutError:
-            process.kill()
-            await process.wait()
+            if process is not None and process.returncode is None:
+                process.terminate()
+                try:
+                    await asyncio.wait_for(process.wait(), timeout=5)
+                except TimeoutError:
+                    process.kill()
+                    await process.wait()
+        finally:
+            if job is not None:
+                # Rede de segurança redundante: `process.kill()` (Windows
+                # TerminateProcess) só garante a morte do processo raiz --
+                # filhos GPU/renderer/utility podem sobreviver a ele em
+                # alguns cenários. Fechar o job aqui, DEPOIS do
+                # encerramento normal já ter sido tentado, mata qualquer
+                # remanescente da árvore sem afetar processos de fora
+                # dela. Idempotente: se já estiver tudo morto, é um
+                # CloseHandle sem efeito nenhum.
+                job.close()
 
     async def _close_dedicated_browser(self) -> None:
         if not await self._cdp_ready():

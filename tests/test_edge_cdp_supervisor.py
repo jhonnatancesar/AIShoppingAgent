@@ -12,8 +12,8 @@ import shutil
 import tempfile
 from pathlib import Path
 
+import psutil
 import pytest
-
 from app.collection.providers.edge_cdp_supervisor import EdgeCdpSupervisor
 
 
@@ -190,5 +190,92 @@ def test_edge_killed_during_active_lease_recovers(tmp_path, monkeypatch) -> None
             assert calls["ensure_running"] >= 2
 
         await supervisor._stop_monitor()
+
+    asyncio.run(scenario())
+
+
+def _build_supervisor_with_real_decoy_process(tmp_path: Path) -> EdgeCdpSupervisor:
+    """DEC-129: diferente de `_build_supervisor` (arquivo de 0 bytes,
+    nunca executado -- `_ensure_running` é sempre trocado por dublê nos
+    testes acima), este decoy é um `.bat` real que o Windows sabe
+    executar via `CreateProcess` (delegação nativa pra `cmd.exe`) e que
+    IGNORA quaisquer argumentos (`--remote-debugging-address=...` etc.)
+    -- fica vivo (`ping` interno) até ser morto. Usado só pelos testes
+    abaixo, que exercitam `_ensure_running`/`_terminate_launcher` DE
+    VERDADE (nunca mockados), especificamente para provar a integração
+    real com `EdgeLifecycleJob`."""
+    decoy = tmp_path / "fake-edge.bat"
+    decoy.write_text("@echo off\r\nping -n 30 127.0.0.1 >nul\r\n", encoding="utf-8")
+    # Achado real: porta 19223 (nunca a 9223 real de produção) -- este
+    # servidor pode ter um `collection_worker` nativo de verdade rodando
+    # em paralelo, com Edge real escutando em 127.0.0.1:9223; usar a
+    # mesma porta faria `_cdp_ready()` enxergar o Edge ALHEIO como se
+    # fosse o decoy já pronto, pulando o `_ensure_running` real por
+    # engano.
+    return EdgeCdpSupervisor(
+        "http://127.0.0.1:19223",
+        executable=decoy,
+        profile_dir=tmp_path / "profile",
+        probe_interval_seconds=0.02,
+    )
+
+
+def test_ensure_running_creates_and_assigns_a_real_job_object(tmp_path, monkeypatch) -> None:
+    """`_ensure_running` real (processo real lançado), só `wait_until_
+    ready` trocado por dublê (evita depender de um CDP de verdade --
+    responsabilidade de outro teste). Prova que o job é criado, o
+    processo real fica vivo, e o job realmente controla o lifecycle dele
+    (fechar o job mata o processo, mesmo sem `_terminate_launcher`)."""
+    supervisor = _build_supervisor_with_real_decoy_process(tmp_path)
+
+    async def fake_wait_until_ready(*, timeout_seconds=None) -> None:
+        return None
+
+    monkeypatch.setattr(supervisor, "wait_until_ready", fake_wait_until_ready)
+
+    async def scenario() -> None:
+        await supervisor._ensure_running()
+        assert supervisor._job is not None
+        assert supervisor.process_id is not None
+        assert psutil.pid_exists(supervisor.process_id)
+
+        # Fecha o job DIRETO (sem passar por `_terminate_launcher`) --
+        # prova que é o JOB, não outra coisa, controlando o processo.
+        pid = supervisor.process_id
+        supervisor._job.close()
+        deadline = asyncio.get_event_loop().time() + 5
+        while psutil.pid_exists(pid) and asyncio.get_event_loop().time() < deadline:
+            await asyncio.sleep(0.1)
+        assert not psutil.pid_exists(pid)
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        if supervisor.process_id is not None and psutil.pid_exists(supervisor.process_id):
+            psutil.Process(supervisor.process_id).kill()
+
+
+def test_terminate_launcher_closes_job_and_kills_real_process(tmp_path, monkeypatch) -> None:
+    """`_terminate_launcher` real -- prova que o cleanup normal (não o
+    cenário de kill abrupto, coberto em `test_job_object.py`) também
+    limpa o job corretamente, sem deixar handle vazando nem processo
+    remanescente."""
+    supervisor = _build_supervisor_with_real_decoy_process(tmp_path)
+
+    async def fake_wait_until_ready(*, timeout_seconds=None) -> None:
+        return None
+
+    monkeypatch.setattr(supervisor, "wait_until_ready", fake_wait_until_ready)
+
+    async def scenario() -> None:
+        await supervisor._ensure_running()
+        pid = supervisor.process_id
+        assert psutil.pid_exists(pid)
+
+        await supervisor._terminate_launcher()
+
+        assert supervisor._job is None
+        assert supervisor._process is None
+        assert not psutil.pid_exists(pid)
 
     asyncio.run(scenario())
