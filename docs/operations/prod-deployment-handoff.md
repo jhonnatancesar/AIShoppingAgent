@@ -46,7 +46,7 @@ uma foto de um instante, não uma garantia de que nada mudou depois):
 
 | Componente | Tag | Commit | Observação |
 |---|---|---|---|
-| GG Oferta | **`v1.3.7`** | `200a1f1` (`main`) | Substitui `v1.3.6` (dois blockers reais encontrados no deploy: `cost_policy` fixo em `free_only` bloqueava `admin_dev` com `403 ai_policy_denied` -- `DEC-124`; secrets `omniroute_ai`/`_search`/`_fetch` ilegíveis pelo UID de runtime do `cesar-core`, causando `503` sem o Core sequer chamar o OmniRoute -- `DEC-125`) |
+| GG Oferta | **`v1.3.8`** | `e0bf582` (`main`) | Substitui `v1.3.7` (blocker estrutural: connections `searxng-search`/`firecrawl` nunca provisionadas no OmniRoute, `503`/`502` em `/v1/search`/`/v1/fetch` -- `DEC-126`. Handoff/runbook deixam de tratar essas connections como "já vêm prontas", seção 5.3 nova) |
 | César Core | **`v1.2.1`** | `a5ba084` | Política real de providers AI (`ai_profile`, 4 connections, 2 combos) + saneamento documental. **Imagem já publicada e verificada no GHCR:** `ghcr.io/jhonnatancesar/cesar-core:1.2.1` (também `:1.2`, `:1`, `:latest`). **PROD não usa esta tag/repositório diretamente — só a imagem, via `deploy/prod/cesar-core.compose.yaml`.** |
 | Coupon Worker | **`v1.0.0`** | `5f502e1` (`master`) | Primeira release — coleta real de cupons com persistência no Postgres do GG |
 
@@ -66,11 +66,11 @@ Histórico relevante anterior a estas tags, para contexto:
   refinamento de esgotamento).
 
 **Para o deploy em si:** faça checkout das tags acima nos dois
-repositórios que existem em PROD (`git checkout v1.3.7` — confirme que é
+repositórios que existem em PROD (`git checkout v1.3.8` — confirme que é
 essa a mais recente com `git tag --sort=-creatordate` antes — no GG
 Oferta, `v1.0.0` no Coupon Worker). O César Core **não tem repositório
 em PROD**: use `deploy/prod/cesar-core.compose.yaml` (deste próprio
-checkout do GG Oferta, já em `v1.3.7`), que já referencia `ghcr.io/
+checkout do GG Oferta, já em `v1.3.8`), que já referencia `ghcr.io/
 jhonnatancesar/cesar-core:1.2.1` como imagem padrão — nenhum `docker
 build`, nenhum clone do repositório `cesar-core`.
 
