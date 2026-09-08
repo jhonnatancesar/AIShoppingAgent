@@ -97,6 +97,9 @@ from app.collection.shared_claim import (
     _SharedClaim,
 )
 from app.core.config import Settings
+from app.coupons.pricing import AppliedCoupon, best_applicable_coupon
+from app.coupons.service import get_candidate_coupons_for_offer
+from app.coupons.worker_control import notify_coupon_worker_high_activity
 from app.database.time import utc_now
 from app.events import (
     AggregateType,
@@ -112,9 +115,6 @@ from app.events import (
     PrelistOfferPayload,
     ProductVariantOptionPayload,
 )
-from app.coupons.pricing import AppliedCoupon, best_applicable_coupon
-from app.coupons.service import get_candidate_coupons_for_offer
-from app.coupons.worker_control import notify_coupon_worker_high_activity
 from app.events.service import publish_event_async
 from app.historical_bootstrap.service import run_historical_bootstrap
 from app.market_research.service import (

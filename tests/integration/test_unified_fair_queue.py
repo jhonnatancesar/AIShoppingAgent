@@ -19,9 +19,17 @@ from uuid import UUID
 import pytest
 from app.collection.adapter import CollectionAdapter
 from app.collection.cadence import CadenceConfig
-from app.collection.contracts import CollectionRequest, CollectionResult, RawCollectedOffer
-from app.collection.models import CollectionRun, StoreActivityState, UserCollectionQueueState
+from app.collection.contracts import (
+    CollectionRequest,
+    CollectionResult,
+    RawCollectedOffer,
+)
 from app.collection.fairness import _reserve_fairness_owners
+from app.collection.models import (
+    CollectionRun,
+    StoreActivityState,
+    UserCollectionQueueState,
+)
 from app.collection.orchestration import (
     CollectionOrchestrator,
     _select_due_work_for_batch,

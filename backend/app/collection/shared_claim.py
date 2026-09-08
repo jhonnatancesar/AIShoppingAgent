@@ -33,7 +33,11 @@ from app.collection.models import StoreThrottleState
 from app.collection.persistence import start_collection_run
 from app.core.config import Settings
 from app.coupons.worker_control import notify_coupon_worker_high_activity
-from app.missions.models import MissionMonitoringItem, MonitoringItem, MonitoringItemStore
+from app.missions.models import (
+    MissionMonitoringItem,
+    MonitoringItem,
+    MonitoringItemStore,
+)
 from app.missions.schedule import next_source_backoff
 from app.products.identity import CollectionCriteria, canonical_collection_criteria
 from app.stores.models import Store
