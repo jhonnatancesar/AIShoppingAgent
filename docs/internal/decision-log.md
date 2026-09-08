@@ -1,5 +1,174 @@
 # Decision Log
 
+## DEC-125 — Secrets Core → OmniRoute ilegíveis pelo UID de runtime do `cesar-core` (blocker do deploy PROD, `v1.3.6`)
+
+- **Data:** 2026-09-08.
+- **Classificação:** Corrigir agora (segundo de dois blockers encontrados no
+  mesmo deploy PROD, depois do `401 invalid_credential` já corrigido
+  removendo BOM UTF-8 dos dois arquivos da identidade GG↔Core e do `403
+  ai_policy_denied` de `max_tokens` já resolvido com
+  `CESAR_CORE_AI_MODEL_ENFORCES_MAX_TOKENS=true`).
+- **Sintoma em PROD:** `USER` via Core retornava `503
+  ai_upstream_unavailable`, mas o combo `user-cascade` testado direto no
+  OmniRoute (sem passar pelo Core) funcionou normalmente, incluindo o
+  fallback real `Gemini → 429 → oc/mimo-v2.5-free → HTTP 200`. O
+  trace/correlação mostrou que o Core **nem chegava a enviar a request**
+  para o OmniRoute.
+- **Causa confirmada** (log real do Core em PROD):
+  `PermissionError: [Errno 13] Permission denied: '/run/secrets/omniroute_ai'`
+  -- e o mesmo para `omniroute_search`/`omniroute_fetch`. O adapter
+  captura `OSError` e converte em `503` genérico (comportamento correto de
+  não vazar detalhe interno, mas escondia a causa real). O `cesar-core`
+  roda como `UID 10001:10001` (`USER 10001:10001` no Dockerfile do
+  `cesar-core`, `groupadd --gid 10001 core && useradd --uid 10001 --gid
+  10001 ... core`). Os 3 arquivos foram materializados em PROD como
+  `owner 1000:1000, mode 0600` -- escritos por
+  `bootstrap-omniroute-keys.js` (`DEC-120`) rodando **dentro do container
+  OmniRoute** (UID daquele container, não relacionado ao UID do
+  `cesar-core`) com `fs.writeFileSync(outPath, value, { mode: 0o600 })`
+  explícito no próprio script. `mode 0600` restringe a leitura só ao
+  dono -- UID 10001 não é o dono, então nunca teve acesso.
+- **Por que não foi pego em DEV antes:** confirmado ao vivo nesta sessão
+  que o Docker Desktop desta máquina (bind mount de caminho Windows,
+  `C:\cesar-core\.secrets\...`) **achata toda permissão para
+  `-rwxrwxrwx root:root`**, independente do que o processo que escreveu o
+  arquivo definiu -- então o mesmo bug nunca se manifesta em DEV com
+  secrets vivendo diretamente num caminho Windows montado por bind mount.
+  Reproduzido meio a mesma sessão, isolado do ambiente: um arquivo escrito
+  dentro de um **volume Docker nomeado** (não um bind mount de caminho
+  Windows) com `owner 1000:1000, mode 0600` é, de fato, ilegível por
+  `UID 10001` neste mesmo host -- confirma que o mecanismo de bug é real
+  e que a divergência DEV/PROD é sobre onde/como o secret é armazenado,
+  não sobre o SO.
+- **Descartado antes de implementar** (auditado, não presumido): os
+  campos `uid`/`gid`/`mode` da sintaxe longa de `secrets:` do Compose só
+  têm efeito sob **Docker Swarm** -- nunca sob `docker compose up` puro,
+  que é o único jeito que este bundle usa (confirmado por leitura da
+  documentação do Compose e pelo próprio `deploy/prod/cesar-core.compose.yaml`,
+  que nunca teve `deploy:`/Swarm). Definir esses campos aqui não teria
+  efeito algum no ownership real dentro do container -- não foi tentado.
+- **Correção:** novo serviço `cesar-core-secrets-fix` no bundle
+  (`deploy/prod/cesar-core.compose.yaml`), reaproveitando a própria
+  imagem já pinada do `cesar-core` (nenhuma imagem nova introduzida),
+  rodando **uma única vez, como root** (`user: "0:0"`, só neste container
+  efêmero), **antes** do `cesar-core` (`depends_on: condition:
+  service_completed_successfully` -- Compose recusa iniciar o `cesar-core`
+  se este passo falhar). O script
+  `deploy/prod/cesar-core/fix-omniroute-secret-permissions.py` lê cada um
+  dos 3 secrets originais (root sempre pode ler qualquer arquivo,
+  independente do dono) e grava uma **cópia** num volume Docker interno
+  novo (`omniroute-secrets-fixed`) com `chown 10001:10001` +
+  `chmod 0400` explícitos -- mais restritivo que o original (`0600` vira
+  `0400`, nem o próprio dono pode escrever mais). Os 3 arquivos originais
+  do bootstrap nunca são alterados/tocados -- só lidos. O `cesar-core`
+  passa a ler `CESAR_CORE_OMNIROUTE_AI_API_KEY_FILE`/`_SEARCH_API_KEY_FILE`/
+  `_FETCH_API_KEY_FILE` de `/run/secrets-fixed/...` (o volume corrigido),
+  não mais de `/run/secrets/...` (o secret Compose bruto) -- que saiu da
+  lista `secrets:` do próprio `cesar-core` (só `application`, o Bearer
+  GG↔Core, continua vindo do secret Compose padrão; esse nunca teve o
+  problema, foi criado nativamente no Windows via PowerShell, não dentro
+  de um container Linux).
+- **Descartado deliberadamente** (pedido explícito do usuário, e
+  confirmado como desnecessário pela causa real): `chmod 777`/`chmod 644`
+  indiscriminado, qualquer relaxamento para "world-readable", e alterar a
+  imagem do `cesar-core` para rodar como root ou mudar seu `USER`. Nenhum
+  desses foi feito.
+- **Testes** (ambiente descartável, projeto Compose isolado
+  `cesar-core-test-fix`, nunca o projeto real de DEV nem PROD; secrets
+  100% fictícios, removidos ao final): `cesar-core-secrets-fix` copia os
+  3 arquivos com `uid=10001 gid=10001 mode=400` (confirmado via `stat`
+  dentro do volume); um container rodando como `UID 10001` lê o conteúdo
+  copiado com sucesso; um container rodando como `UID 1000` (não
+  autorizado) recebe `Permission denied`; reexecução do mesmo serviço é
+  idempotente (roda de novo sem erro, sobrescreve com o mesmo resultado);
+  secret original ausente faz o próprio Docker recusar subir o container
+  (bind mount inexistente, falha antes até do script rodar); secret
+  original presente mas vazio faz o script falhar explicitamente
+  (`FIX_SECRET_PERMISSIONS_FAILED`, exit 1) -- e por causa do
+  `depends_on`, o `cesar-core` nunca chega a subir nesse cenário
+  (confirmado: Compose recusa com `service "cesar-core-secrets-fix"
+  didn't complete successfully: exit 1`); com os 3 secrets corrigidos, o
+  `cesar-core` sobe e responde `/health`/`/ready` com `status: ok`, sem
+  nenhum `PermissionError`/traceback nos logs. Nenhum conteúdo de secret
+  apareceu em stdout/log/Git em nenhum momento.
+- **Release:** `v1.3.6` não foi movida (tags imutáveis). Esta correção
+  foi publicada como **`v1.3.7`** junto com o `DEC-124` (cost_policy) --
+  ver hash real no commit/tag em `origin`.
+- **Não incluído nesta rodada:** nenhum deploy real foi executado (fora
+  do escopo, por instrução explícita do usuário) -- só o bundle, o script
+  e a documentação foram corrigidos e validados em ambiente descartável.
+  Se os secrets `omniroute_ai`/`_search`/`_fetch` forem algum dia
+  regenerados/rotacionados, o `omniroute-secrets-fixed` precisa ser
+  atualizado -- basta rodar de novo
+  `docker compose -f deploy/prod/cesar-core.compose.yaml up cesar-core-secrets-fix`
+  (idempotente) antes de reiniciar o `cesar-core`.
+
+## DEC-124 — `cost_policy` do adapter de IA era fixo em `free_only`, ignorando `ai_profile` (blocker do deploy PROD, `v1.3.6`)
+
+- **Data:** 2026-09-08.
+- **Classificação:** Corrigir agora (primeiro de dois blockers encontrados
+  no mesmo deploy PROD, depois de `401 invalid_credential` corrigido por
+  BOM UTF-8 nos secrets e `403 ai_policy_denied` de `max_tokens` corrigido
+  com `CESAR_CORE_AI_MODEL_ENFORCES_MAX_TOKENS=true`).
+- **Sintoma em PROD:** `ai_profile=admin_dev` retornava `403
+  ai_policy_denied`: `"Configured AI target is paid but request is
+  free_only"`, mesmo com as 4 connections/2 combos corretos já
+  provisionados no OmniRoute.
+- **Causa confirmada, por leitura do código-fonte real do César Core**
+  (`C:\cesar-core\src\cesar_core\ai\policy.py`, `AIPolicy.resolve`):
+  `ai_profile` seleciona o **alvo** (via `AIModelTarget`, que carrega
+  `paid: bool`) -- `admin-dev-cascade` é montado com `paid=True` (alcança
+  Groq/OpenRouter, pagos); `cost_policy` é um **gate de autorização
+  independente**, aplicado depois: `if cost_policy is FREE_ONLY and
+  target.paid: raise AICostPolicyDeniedError(...)`. O GG Oferta
+  (`backend/app/ai_provider/cesar_core.py`) enviava
+  `"cost_policy": "free_only"` **fixo**, para os dois perfis -- correto
+  para `user` (não deve alcançar provider pago), incorreto para
+  `admin_dev` (o próprio alvo que o perfil escolhe é pago).
+- **Correção:** `CesarCoreAIProvider.__init__` agora deriva
+  `self._cost_policy` do `ai_profile` já recebido -- `"free_only"` se
+  `user`, `"paid_allowed"` se `admin_dev` -- e o payload enviado ao Core
+  usa esse valor em vez do literal fixo. Nenhum enum novo (reaproveita os
+  3 valores que o Core já expõe -- `free_only`/`free_preferred`/
+  `paid_allowed`, `cesar_core/policy/cost_policy.py`); `service_class`
+  não foi tocado (`economy`/`standard`/`quality`, dimensão ortogonal,
+  nunca reinterpretada como role); nenhum combo/provider/prioridade
+  alterado.
+- **Auditoria de Search/Fetch** (`backend/app/search/cesar_core.py`,
+  `backend/app/search/cesar_core_fetch.py`), pedida explicitamente antes
+  de qualquer mudança: **nenhuma alteração feita**, por decisão
+  deliberada, não por omissão. Os dois clientes não têm `ai_profile`/role
+  algum no construtor nem em nenhum chamador -- são usados exclusivamente
+  pelo `collection_worker` nativo (nunca pelo `api` containerizado,
+  `DEC-121`), sempre no mesmo contexto de execução, sem distinção
+  USER/ADMIN_DEV. Confirmado no código-fonte do Core
+  (`C:\cesar-core\src\cesar_core\search\config.py`,
+  `.../fetch/config.py`) que `provider_is_paid` (o campo que alimenta
+  `SearchProviderTarget.paid`/`FetchProviderTarget.paid`) tem **default
+  `False`** e não está setado em `deploy/prod/cesar-core.compose.yaml`
+  para nenhum dos dois -- ou seja, os alvos reais de Search
+  (`searxng-search`) e Fetch (`firecrawl`) desta implantação **não são
+  pagos**, então `cost_policy=free_only` nunca bloqueia nada neles hoje.
+  `free_only` fixo em Search/Fetch é intencional e correto para esta
+  topologia, não um bug -- não há contrato que exija diferenciar por
+  perfil aqui.
+- **Testes:** novo `test_cost_policy_is_derived_only_from_ai_profile`
+  (parametrizado `user`→`free_only`, `admin_dev`→`paid_allowed`) em
+  `tests/test_cesar_core_ai_provider.py`, confirmando também que
+  `ai_profile` no payload continua correto nos dois casos; teste
+  pré-existente que fixava `cost_policy: "free_only"` no payload
+  ADMIN/DEV corrigido para `"paid_allowed"` (o fixture default é
+  `ai_profile="admin_dev"`). Suíte completa (exceto `tests/integration`/
+  `tests/e2e`, convenção já estabelecida) sem regressão: 1868 passaram,
+  as mesmas 5 falhas pré-existentes e não relacionadas (autenticação/
+  contrato de tabela `products`/`users`) continuam isoladas deste
+  código.
+- **Release:** `v1.3.6` não foi movida (tags imutáveis). Esta correção
+  foi publicada junto com o `DEC-125` (permissão de secrets) como
+  **`v1.3.7`** -- ver hash real no commit/tag em `origin`.
+- **Não incluído nesta rodada:** nenhum deploy real foi executado (fora
+  do escopo, por instrução explícita do usuário).
+
 ## DEC-123 — Checagem de ACL de `manage_collection_worker_config.ps1` dependia do idioma do Windows (blocker do mesmo deploy, `v1.3.5`)
 
 - **Data:** 2026-09-07.

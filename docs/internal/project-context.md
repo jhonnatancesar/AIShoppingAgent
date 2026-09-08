@@ -3765,3 +3765,57 @@ foi publicada como **`v1.3.6`** -- ver hash real no próprio commit/tag
 em `origin`.
 
 **Nenhum deploy foi executado nesta rodada.**
+
+## Dois blockers reais do deploy PROD: cost_policy e permissão dos secrets Core → OmniRoute (2026-09-08)
+
+Com `v1.3.6` já em PROD, banco em `20260906_0002`, backup validado,
+César Core/OmniRoute/Redis/SearXNG já saudáveis, e dois blockers
+anteriores já resolvidos ao vivo em PROD nessa mesma janela de deploy
+(`401 invalid_credential` por BOM UTF-8 nos dois arquivos da identidade
+GG↔Core, corrigido removendo só os 3 bytes `EF BB BF`; `403
+ai_policy_denied` de `max_tokens`, corrigido com
+`CESAR_CORE_AI_MODEL_ENFORCES_MAX_TOKENS=true`) -- o deploy foi
+interrompido antes de subir o GG por mais dois problemas independentes.
+Ver `DEC-124` e `DEC-125` em `decision-log.md` para o registro completo
+de cada um.
+
+**Blocker 1 -- `cost_policy` fixo:** `ai_profile=admin_dev` retornava
+`403 ai_policy_denied` ("target pago, request free_only"). O adapter de
+IA do GG (`backend/app/ai_provider/cesar_core.py`) enviava
+`cost_policy=free_only` fixo para os dois perfis -- correto para
+`user`, incorreto para `admin_dev` (cujo alvo real, `admin-dev-cascade`,
+é classificado `paid=True` no César Core). Corrigido derivando
+`cost_policy` do mesmo `ai_profile` já recebido: `free_only` para
+`user`, `paid_allowed` para `admin_dev`. Search/Fetch auditados e **não
+alterados** -- não têm profile/role equivalente (usados só pelo
+`collection_worker` nativo, sempre no mesmo contexto) e seus alvos reais
+(SearXNG, Firecrawl) não são classificados pagos nesta implantação, então
+`free_only` fixo neles é intencional e inofensivo, não um bug.
+
+**Blocker 2 -- secrets Core → OmniRoute ilegíveis:** `USER` via Core
+retornava `503 ai_upstream_unavailable`, mas o mesmo combo direto no
+OmniRoute funcionava -- o Core nem chegava a enviar a request. Causa
+real: `PermissionError` lendo `/run/secrets/omniroute_ai` (e
+`_search`/`_fetch`) -- esses 3 arquivos foram escritos pelo bootstrap
+(`DEC-120`) como `owner 1000:1000, mode 0600`, e o `cesar-core` roda
+como `UID 10001:10001` -- nunca teve acesso. Confirmado que os campos
+`uid`/`gid`/`mode` da sintaxe longa de `secrets:` do Compose só valem
+sob Docker Swarm (nunca sob `docker compose up` puro, o único usado
+aqui) -- não seria uma correção real. Corrigido com um novo serviço de
+init no bundle (`cesar-core-secrets-fix`, reaproveita a própria imagem
+do `cesar-core`, roda uma vez como root antes do `cesar-core` subir) que
+copia os 3 secrets para um volume Docker interno com `chown 10001:10001`
++ `chmod 0400` -- mais restritivo que o original, nunca world-readable,
+nenhum `chmod 777`/`644` indiscriminado, nenhuma mudança na imagem do
+Core. Bug reproduzido e a correção validada empiricamente em ambiente
+descartável nesta sessão (não em PROD).
+
+**Nova release do GG Oferta:** `v1.3.6` não foi movida. Esta correção
+foi publicada como **`v1.3.7`** -- ver hash real no próprio commit/tag
+em `origin`.
+
+**Nenhum deploy foi executado nesta rodada** -- PROD permanece no estado
+descrito no handoff (César Core/OmniRoute/Redis/SearXNG no ar; GG ainda
+não rebuildado/subido; Coupon Worker e collection worker nativo ainda
+pendentes de finalização) até a próxima rodada explicitamente autorizada
+de deploy.

@@ -110,7 +110,10 @@ def test_messages_preserved_and_response_normalized(tmp_path, caplog):
             "messages": [
                 {"role": m.role.value, "content": m.content} for m in original.messages
             ],
-            "requirements": {"service_class": "economy", "cost_policy": "free_only"},
+            "requirements": {
+                "service_class": "economy",
+                "cost_policy": "paid_allowed",
+            },
             "max_tokens": 512,
         }
     ]
@@ -241,6 +244,39 @@ def test_ai_profile_is_derived_from_the_manager_profile_never_from_service_class
     config = Settings(_env_file=None, cesar_core_api_key_file=tmp_path / "key")
     manager = _build_cesar_core_manager(config, profile)
     assert manager._provider._ai_profile == expected_ai_profile
+
+
+@pytest.mark.parametrize(
+    ("ai_profile", "expected_cost_policy"),
+    [("user", "free_only"), ("admin_dev", "paid_allowed")],
+)
+def test_cost_policy_is_derived_only_from_ai_profile(
+    tmp_path, ai_profile, expected_cost_policy
+) -> None:
+    original = request(UserRole.USER if ai_profile == "user" else UserRole.ADMIN)
+    wire = []
+
+    def handler(req):
+        wire.append(json.loads(req.content))
+        return httpx.Response(
+            200,
+            json={
+                "request_id": "core-id",
+                "correlation_id": str(original.request_id),
+                "provider_gateway": "omniroute",
+                "model": "resolved",
+                "content": "answer",
+                "usage": {"completion_tokens": 1},
+            },
+        )
+
+    configured = provider(tmp_path, handler, ai_profile=ai_profile)
+    asyncio.run(configured.generate(original))
+    assert wire[0]["ai_profile"] == ai_profile
+    assert wire[0]["requirements"] == {
+        "service_class": "economy",
+        "cost_policy": expected_cost_policy,
+    }
 
 
 def test_public_ai_package_exposes_no_direct_provider_factory() -> None:

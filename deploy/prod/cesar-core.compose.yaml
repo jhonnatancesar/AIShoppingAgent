@@ -19,6 +19,39 @@
 # comando `docker compose` é chamado).
 name: cesar-core
 services:
+  # DEC-125: os secrets Compose (file-provider, sem Swarm) são bind mounts
+  # do arquivo do HOST -- os campos uid/gid/mode da sintaxe longa de
+  # `secrets:` abaixo só têm efeito sob Docker Swarm, nunca sob
+  # `docker compose up` puro (o único jeito que este bundle usa; validado
+  # neste bundle: setá-los aqui não mudaria o ownership real dentro do
+  # container). Os 3 arquivos `omniroute_ai`/`_search`/`_fetch` são
+  # escritos por `bootstrap-omniroute-keys.js` (seção 5.1 etapa A do
+  # handoff) rodando DENTRO do container OmniRoute -- ficam com o UID
+  # daquele container e `mode 0600`, um UID sem relação nenhuma com o UID
+  # de runtime do `cesar-core` (10001:10001, `USER 10001:10001` no
+  # Dockerfile do `cesar-core`), que por isso não consegue ler esses 3
+  # arquivos diretamente. Este serviço roda uma única vez, como root,
+  # antes do `cesar-core`: lê cada secret original (root sempre pode) e
+  # grava uma cópia num volume interno já com o UID/GID/modo corretos
+  # para o consumidor real -- os arquivos originais do bootstrap nunca são
+  # tocados. Reaproveita a própria imagem do `cesar-core` (já
+  # pinada/aprovada neste bundle, nenhuma imagem nova introduzida).
+  cesar-core-secrets-fix:
+    image: ${CESAR_CORE_IMAGE:-ghcr.io/jhonnatancesar/cesar-core:1.2.1}
+    platform: linux/amd64
+    user: "0:0"
+    entrypoint:
+      [python, /fix-secrets/fix-omniroute-secret-permissions.py]
+    environment:
+      TARGET_UID: ${CESAR_CORE_RUNTIME_UID:-10001}
+      TARGET_GID: ${CESAR_CORE_RUNTIME_GID:-10001}
+      SECRET_COPY_PAIRS: "/run/secrets/omniroute_ai:/fixed/omniroute_ai,/run/secrets/omniroute_search:/fixed/omniroute_search,/run/secrets/omniroute_fetch:/fixed/omniroute_fetch"
+    secrets: [omniroute_ai, omniroute_search, omniroute_fetch]
+    volumes:
+      - omniroute-secrets-fixed:/fixed
+      - ./cesar-core/fix-omniroute-secret-permissions.py:/fix-secrets/fix-omniroute-secret-permissions.py:ro
+    restart: "no"
+
   cesar-core:
     image: ${CESAR_CORE_IMAGE:-ghcr.io/jhonnatancesar/cesar-core:1.2.1}
     platform: linux/amd64
@@ -31,14 +64,22 @@ services:
     stop_grace_period: 40s
     ports: ["127.0.0.1:${CESAR_CORE_PUBLISHED_PORT:-8100}:8100"]
     networks: [backend, ingress]
+    depends_on:
+      cesar-core-secrets-fix:
+        condition: service_completed_successfully
+    volumes:
+      - control-plane-data:/var/lib/cesar-core
+      - omniroute-secrets-fixed:/run/secrets-fixed:ro
     environment:
       CESAR_CORE_OMNIROUTE_BASE_URL: http://omniroute:20128
       # Precisa exceder FIRECRAWL_TIMEOUT_MS (serviço omniroute, abaixo) --
       # os dois formam uma cadeia (Core -> OmniRoute -> Firecrawl).
       CESAR_CORE_OMNIROUTE_TIMEOUT_SECONDS: ${CESAR_CORE_OMNIROUTE_TIMEOUT_SECONDS:-150}
-      CESAR_CORE_OMNIROUTE_AI_API_KEY_FILE: /run/secrets/omniroute_ai
-      CESAR_CORE_OMNIROUTE_SEARCH_API_KEY_FILE: /run/secrets/omniroute_search
-      CESAR_CORE_OMNIROUTE_FETCH_API_KEY_FILE: /run/secrets/omniroute_fetch
+      # Lidos do volume interno já corrigido acima (cesar-core-secrets-fix),
+      # nunca diretamente de /run/secrets/omniroute_* -- ver DEC-125.
+      CESAR_CORE_OMNIROUTE_AI_API_KEY_FILE: /run/secrets-fixed/omniroute_ai
+      CESAR_CORE_OMNIROUTE_SEARCH_API_KEY_FILE: /run/secrets-fixed/omniroute_search
+      CESAR_CORE_OMNIROUTE_FETCH_API_KEY_FILE: /run/secrets-fixed/omniroute_fetch
       CESAR_CORE_SECURITY_GG_OFERTA_API_KEY_FILE: /run/secrets/application
       CESAR_CORE_SECURITY_QUOTA_REDIS_URL: redis://redis:6379/0
       CESAR_CORE_SECURITY_QUOTA_NAMESPACE: ${CESAR_CORE_SECURITY_QUOTA_NAMESPACE:-cesar-core:quota:v1}
@@ -62,8 +103,13 @@ services:
       CESAR_CORE_SEARCH_MAX_RESULTS_LIMIT: ${CESAR_CORE_SEARCH_MAX_RESULTS_LIMIT:-20}
       CESAR_CORE_FETCH_ENABLED: ${CESAR_CORE_FETCH_ENABLED:-false}
       CESAR_CORE_FETCH_DEFAULT_PROVIDER: firecrawl
-    secrets: [application, omniroute_ai, omniroute_search, omniroute_fetch]
-    volumes: [control-plane-data:/var/lib/cesar-core]
+    # `omniroute_ai`/`_search`/`_fetch` saíram daqui -- o `cesar-core` não
+    # lê mais o secret bruto do bootstrap diretamente (DEC-125, ver
+    # comentário do serviço `cesar-core-secrets-fix` acima). Só
+    # `application` (Bearer GG→Core) continua vindo do secret Compose
+    # padrão -- esse nunca teve o problema de permissão (criado
+    # nativamente no Windows, não dentro de um container Linux).
+    secrets: [application]
     # A topologia aprovada não define healthcheck de Compose para este
     # serviço (só redis/omniroute/searxng abaixo têm) -- verificação real
     # é externa, via `curl http://127.0.0.1:8100/health` e `/ready`
@@ -153,6 +199,11 @@ volumes:
   quota-data: {}
   omniroute-data: {}
   control-plane-data: {}
+  # DEC-125: cópias dos 3 secrets Core -> OmniRoute com UID/GID/modo
+  # corrigidos para o consumidor real (10001:10001) -- nunca os arquivos
+  # originais do bootstrap, só uma cópia interna gerada pelo serviço
+  # `cesar-core-secrets-fix`.
+  omniroute-secrets-fixed: {}
 secrets:
   application:
     file: ${CESAR_CORE_SECURITY_GG_OFERTA_API_KEY_FILE:-./cesar-core/.secrets/ggoferta-core-client}

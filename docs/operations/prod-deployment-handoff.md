@@ -210,7 +210,7 @@ pasta de `cesar-core.compose.yaml`, não é o `.env` de nenhum repositório
 | `CESAR_CORE_AI_USER_MODEL` | Nome do combo OmniRoute para `ai_profile=user` — **`user-cascade`** |
 | `CESAR_CORE_AI_ADMIN_DEV_MODEL` | Nome do combo OmniRoute para `ai_profile=admin_dev` — **`admin-dev-cascade`** |
 | `CESAR_CORE_SECURITY_GG_OFERTA_API_KEY_FILE` | Caminho do arquivo de secret `application` (par do `AISHOPPING_CESAR_CORE_API_KEY_FILE` do GG) — default já aponta para `./cesar-core/.secrets/ggoferta-core-client`, só sobrescreva se usar outro caminho |
-| `CESAR_CORE_OMNIROUTE_AI_API_KEY_FILE` / `_SEARCH_API_KEY_FILE` / `_FETCH_API_KEY_FILE` | Idem, para os secrets `omniroute_ai`/`omniroute_search`/`omniroute_fetch` (consumidor Core → OmniRoute, diferentes das 4 connections AI da seção 5.2) |
+| `CESAR_CORE_OMNIROUTE_AI_API_KEY_FILE` / `_SEARCH_API_KEY_FILE` / `_FETCH_API_KEY_FILE` | Só controlam o caminho HOST dos secrets originais `omniroute_ai`/`omniroute_search`/`omniroute_fetch` (consumidor Core → OmniRoute, diferentes das 4 connections AI da seção 5.2) — o `cesar-core` em si lê as cópias corrigidas em `/run/secrets-fixed/...`, não esse caminho direto (`DEC-125`, ver seção 5.1) |
 | `CESAR_CORE_SEARXNG_SECRET_FILE` | Idem, para o secret `searxng` |
 | `CESAR_CORE_PUBLISHED_PORT` | Porta publicada em `127.0.0.1` — default `8100` |
 
@@ -234,11 +234,17 @@ desligados (estado inicial esperado, seção 7 passo 6).
   `ggoferta-fetch`) — **emitidas automaticamente pelo próprio
   OmniRoute** e gravadas direto nos arquivos de secret pelo script
   `bootstrap-omniroute-keys.ps1` (seção 5.1, etapa A). Procedimento
-  fechado nesta rodada (antes era um gap documentado, "pare e
+  fechado numa rodada anterior (antes era um gap documentado, "pare e
   reporte"): determinístico, idempotente, sem decisão manual, nenhum
   valor passa por log/output/Git — ver seção 5.1 para o comando e
   [`deploy/prod/cesar-core/bootstrap-omniroute-keys.js`](../../deploy/prod/cesar-core/bootstrap-omniroute-keys.js)
-  para o mecanismo interno.
+  para o mecanismo interno. **`DEC-125`:** os 3 arquivos ficam com o UID
+  do container OmniRoute e `mode 0600` — ilegíveis pelo UID de runtime
+  do `cesar-core` (10001:10001). O serviço `cesar-core-secrets-fix`
+  (mesmo bundle, roda automaticamente antes do `cesar-core` via
+  `depends_on`) corrige isso copiando os 3 arquivos para um volume
+  interno com o dono/permissão certos — não precisa de nenhum passo
+  manual extra, só `docker compose up -d` normal (etapa B abaixo).
 - 1 credencial compartilhada GG↔Core (`ggoferta-core-client`) — mesmo
   valor usado em `AISHOPPING_CESAR_CORE_API_KEY_FILE` do lado do GG
   Oferta (decisão sua, gere um valor forte para os dois lados; não tem
@@ -434,6 +440,26 @@ curl http://127.0.0.1:8100/ready
 
 Nenhum `docker build`, nenhum clone do repositório `cesar-core` — só
 `docker compose pull`/`up` sobre a imagem já publicada e verificada.
+
+**`DEC-125` (2026-09-08):** o `docker compose up -d` acima também sobe
+automaticamente o serviço `cesar-core-secrets-fix` **antes** do
+`cesar-core` (o Compose respeita a dependência sozinho, `depends_on:
+condition: service_completed_successfully` — nenhum comando extra é
+necessário). Esse serviço roda uma única vez, como root, e corrige um
+problema real de permissão: os 3 arquivos que a etapa A gerou ficam com
+o UID do container OmniRoute e `mode 0600`, ilegíveis pelo UID de
+runtime do `cesar-core` (10001:10001) — sem essa correção, o `cesar-core`
+sobe e responde `/health`, mas qualquer chamada de AI/Search/Fetch que
+precise falar com o OmniRoute falha com `503 ai_upstream_unavailable`
+(o Core nem chega a enviar a request — `PermissionError` interno,
+convertido em `503` genérico pelo adapter). Se `cesar-core-secrets-fix`
+falhar, o Compose recusa subir o `cesar-core` (`service
+"cesar-core-secrets-fix" didn't complete successfully`) — confirme com
+`docker compose -f deploy\prod\cesar-core.compose.yaml logs
+cesar-core-secrets-fix` antes de investigar mais. Se os 3 secrets da
+etapa A forem regenerados/rotacionados no futuro, rode de novo (comando
+idempotente): `docker compose -f deploy\prod\cesar-core.compose.yaml up
+cesar-core-secrets-fix`.
 
 ### 5.2. Provisionar as 4 connections e os 2 combos de AI
 
@@ -773,6 +799,24 @@ com todas as 4 connections ativas e nenhum fallback forçado:
   `AISHOPPING_CESAR_CORE_API_KEY_FILE` do worker aponta para o MESMO
   arquivo (`.secrets\cesar_core_api_key`) que o secret do container
   `api`, nunca uma cópia própria.
+- Não corrigir o `503`/`PermissionError` do Core lendo
+  `omniroute_ai`/`_search`/`_fetch` com `chmod 777`, `chmod 644`
+  indiscriminado, ou qualquer "world-readable" -- `DEC-125`: use o
+  serviço `cesar-core-secrets-fix` do bundle (já sobe sozinho via
+  `depends_on`), nunca relaxe a permissão do arquivo original do
+  bootstrap.
+- Não setar `uid`/`gid`/`mode` na sintaxe longa de `secrets:` do Compose
+  esperando corrigir ownership de secret -- `DEC-125`: esses campos só
+  têm efeito sob Docker Swarm, nunca sob `docker compose up` puro (o
+  único jeito que este bundle usa). Não têm efeito nenhum aqui.
+- Não altere a imagem/`USER` do `cesar-core` para "resolver" permissão
+  de secret -- a correção fica inteira no bundle de deploy (novo
+  serviço + volume), nunca no repositório/imagem do César Core.
+- Não envie `cost_policy=free_only` para `ai_profile=admin_dev` (nem
+  vice-versa) -- `DEC-124`: `user` sempre `free_only`, `admin_dev`
+  sempre `paid_allowed`, é o próprio `ai_profile` que já determina isso
+  no código (`backend/app/ai_provider/cesar_core.py`), nunca decida isso
+  manualmente numa chamada de teste.
 
 ## 13. Referências (mesma arquitetura, sem redesenho)
 
@@ -786,6 +830,10 @@ com todas as 4 connections ativas e nenhum fallback forçado:
   (wrapper) e
   [`deploy/prod/cesar-core/bootstrap-omniroute-keys.js`](../../deploy/prod/cesar-core/bootstrap-omniroute-keys.js)
   (mecanismo interno).
+- Correção de permissão dos mesmos 3 secrets para o UID de runtime do
+  `cesar-core` (`DEC-125`, sobe automaticamente via `depends_on`, seção
+  5.1 etapa B):
+  [`deploy/prod/cesar-core/fix-omniroute-secret-permissions.py`](../../deploy/prod/cesar-core/fix-omniroute-secret-permissions.py).
 - Arquitetura canônica GG ↔ Core (background/racional -- não é
   operacionalmente necessário para executar este deploy, os dois itens
   acima já bastam): `docs/architecture/gg-oferta-core.md` no
