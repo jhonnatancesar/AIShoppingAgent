@@ -3819,3 +3819,54 @@ descrito no handoff (César Core/OmniRoute/Redis/SearXNG no ar; GG ainda
 não rebuildado/subido; Coupon Worker e collection worker nativo ainda
 pendentes de finalização) até a próxima rodada explicitamente autorizada
 de deploy.
+
+## Blocker estrutural: connections Search/Fetch nunca provisionadas no OmniRoute de PROD (2026-09-08)
+
+Com `DEC-124`/`DEC-125` já confirmados corrigidos ao vivo em PROD
+(Core/OmniRoute/Redis/SearXNG saudáveis, AI USER e ADMIN_DEV
+respondendo `HTTP 200`), o deploy parou de novo: `/v1/search` e
+`/v1/fetch` respondiam `503`/`502` porque o OmniRoute de PROD só tinha
+as 4 connections de AI -- **`searxng-search`/`firecrawl` nunca foram
+criadas**. O handoff nunca tratava essas duas connections como algo a
+provisionar (só a seção de AI existia), dando a entender por omissão que
+"já vinham prontas". Ver `DEC-126` em `decision-log.md` para o registro
+completo.
+
+Schema real auditado direto no OmniRoute DEV (que já tem as duas
+funcionando, sem copiar UUID/secret nenhum): `searxng-search` não usa
+`apiKey` (provider sem autenticação), só
+`providerSpecificData.baseUrl=http://searxng:8080/search` (o
+`localhost:8888` que apareceu no relatório de PROD é só placeholder de
+UI do OmniRoute, nunca persistido); `firecrawl` precisa de uma `apiKey`
+real. Auditado também, por pedido explícito antes de decidir: o secret
+legado `firecrawl_api_key` do GG Oferta **foi removido do repositório**
+na FASE E.1 junto com seu único consumidor, confirmado sem consumidor
+restante -- não existe nada a reaproveitar; a API key do Firecrawl para
+esta connection é um valor novo, fornecido pelo operador, exatamente
+como as 4 chaves de provider AI.
+
+Corrigido com um novo script determinístico e idempotente
+(`bootstrap-omniroute-search-fetch.{js,ps1}`, mesmo padrão do bootstrap
+de credenciais consumidoras da `DEC-120`, adaptado para o recurso
+`/api/providers`): cria as duas connections só se ausentes, nunca
+duplica, para com erro explícito se uma connection existente tiver
+configuração incompatível (nunca corrige sozinho), nunca imprime
+secret. Validado com um ciclo completo em ambiente descartável (OmniRoute
+de DEV real, connections de teste criadas e removidas ao final, prioridades
+originais restauradas): criação, idempotência, e as duas falhas
+explícitas (configuração incompatível; secret ausente) confirmadas;
+prova real via César Core de `/v1/search`/`/v1/fetch` retornando `HTTP
+200` com resultados/conteúdo reais. As 4 connections/2 combos de AI já
+funcionando não foram tocados.
+
+Handoff e runbook de provisionamento atualizados para deixar de tratar
+Search/Fetch como algo que "já vem pronto" -- agora documentam
+explicitamente as 4 categorias de recurso que o OmniRoute precisa em
+qualquer ambiente novo: 4 connections de AI, 2 combos de AI, 1 connection
+Search, 1 connection Fetch.
+
+**Nova release do GG Oferta:** `v1.3.7` não foi movida. Esta correção foi
+publicada como **`v1.3.8`** -- ver hash real no próprio commit/tag em
+`origin`.
+
+**Nenhum deploy foi executado nesta rodada.**

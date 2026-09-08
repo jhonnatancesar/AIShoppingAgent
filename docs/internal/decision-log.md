@@ -1,5 +1,110 @@
 # Decision Log
 
+## DEC-126 — Connections `searxng-search`/`firecrawl` nunca provisionadas em PROD (blocker do deploy PROD, `v1.3.7`)
+
+- **Data:** 2026-09-08.
+- **Classificação:** Corrigir agora (blocker estrutural encontrado no
+  mesmo deploy PROD, depois de `DEC-124`/`DEC-125` confirmados corrigidos
+  ao vivo -- Core/OmniRoute/Redis/SearXNG saudáveis, AI USER e ADMIN_DEV
+  respondendo `HTTP 200`).
+- **Sintoma em PROD:** `/v1/search` retornava `503
+  search_upstream_unavailable` (OmniRoute: `"No credentials for
+  searxng-search"`), `/v1/fetch` retornava `502 fetch_upstream_error`
+  (OmniRoute: `"No credentials for firecrawl"`).
+- **Causa confirmada:** o OmniRoute de PROD só tinha as 4 connections de
+  AI (Gemini USER/ADMIN_DEV, Groq, OpenRouter) -- **nenhuma connection
+  `searxng-search` nem `firecrawl` jamais foi criada**. A mensagem
+  genérica `"No credentials for provider: X"` (emitida por várias rotas
+  do OmniRoute quando não existe NENHUMA connection ativa daquele
+  `provider`) confirma ausência total do recurso, não um problema de
+  campo/secret dentro de uma connection já existente. O handoff nunca
+  mencionava essas duas connections como algo a provisionar -- só a
+  seção de AI (4 connections + 2 combos) existia, dando a entender por
+  omissão que Search/Fetch "já vinham prontos".
+- **Auditoria do schema real** (OmniRoute DEV, que já tem as duas
+  funcionando -- `GET /api/providers`, e `createProviderSchema` em
+  `C:\omniroute\src\shared\validation\schemas\provider.ts`): nenhum
+  UUID/secret copiado de DEV, só a estrutura.
+  - `searxng-search`: **sem** `apiKey` (provider sem autenticação --
+    `providerAllowsOptionalApiKey` inclui `"searxng-search"`
+    explicitamente); precisa de `providerSpecificData.baseUrl` apontando
+    para o SearXNG real do bundle (`http://searxng:8080/search`). O
+    default `http://localhost:8888/search` que o relatório de PROD viu é
+    só um placeholder de UI (`providerPageHelpers.ts`), nunca persistido
+    -- não é um bug em nenhum valor default de runtime, é a AUSÊNCIA da
+    connection.
+  - `firecrawl`: `apiKey` também é schema-opcional (mesma lista), mas
+    operacionalmente necessária para o Firecrawl Cloud responder de
+    verdade. Sem `providerSpecificData`.
+  - Nenhum campo "capability" persistido em nenhuma das duas -- implícito
+    no valor de `provider`.
+- **Origem da credencial Firecrawl, auditada antes de decidir (pedido
+  explícito do usuário -- não presumir reaproveitamento):** o GG Oferta
+  tinha um secret legado `firecrawl_api_key(_file)` e um cliente direto
+  (`firecrawl.py`) -- confirmado em
+  `docs/architecture/cesar-core-integration.md`: **"foram removidos do
+  GG Oferta depois de confirmado que não havia mais consumidor"** (FASE
+  E.1). Não existe, portanto, nenhum secret canônico a reaproveitar --
+  a API key da connection `firecrawl` é um valor **novo**, fornecido
+  pelo operador no momento do provisionamento, exatamente como as 4
+  chaves de provider AI (nunca armazenadas em nenhum repositório). Não
+  foi gerada nem inventada nenhuma credencial nova nesta correção -- só
+  o mecanismo para o operador fornecer a dele.
+- **Correção:** novo script determinístico e idempotente,
+  `deploy/prod/cesar-core/bootstrap-omniroute-search-fetch.{js,ps1}`,
+  mesmo padrão/estilo de `bootstrap-omniroute-keys.{js,ps1}` (`DEC-120`)
+  mas para o recurso `/api/providers` (connections) em vez de
+  `/api/keys`. Contrato:
+  - connection já existe **e** configuração bate com o esperado → pula
+    (idempotente), não pede nem usa a API key do Firecrawl.
+  - connection já existe **mas** diverge (`baseUrl` errado,
+    `isActive=false`, `firecrawl` sem `apiKey`) → **para com erro
+    explícito**, nunca corrige sozinho -- pode ser customização
+    deliberada do operador.
+  - connection não existe → cria com o valor exato documentado; a
+    criação de `firecrawl` exige a API key (parâmetro `-FirecrawlApiKey`
+    como `SecureString`, ou arquivo opcional
+    `.secrets\firecrawl-api-key`) -- sem ela, falha explícito em vez de
+    criar sem credencial.
+  - nunca imprime nenhum valor de secret (nem a senha administrativa,
+    nem a API key do Firecrawl).
+  - Nenhuma mudança nas 4 connections/2 combos de AI já funcionando
+    (Gemini USER/ADMIN_DEV, Groq, OpenRouter, `user-cascade`,
+    `admin-dev-cascade`) -- escopo desta correção é só Search/Fetch.
+- **Testes** (OmniRoute de DEV real, connections de teste criadas e
+  **removidas ao final**, prioridades das connections reais restauradas
+  -- `GET /api/providers` confirmou as 6 connections originais intactas
+  ao término): primeira criação de `searxng-search` (sem chave) e
+  `firecrawl` (com chave de teste fictícia) confirmadas; reexecução
+  idempotente confirmada para as duas (segunda chamada não pede/usa a
+  API key do Firecrawl); connection existente com `baseUrl` corrompido
+  (`http://localhost:8888/search`) rejeitada com erro explícito;
+  connection existente com `isActive=false` rejeitada com erro explícito;
+  ausência de `FIRECRAWL_API_KEY` sem connection existente rejeitada com
+  erro explícito; nenhum valor de secret apareceu em nenhum output. Prova
+  real via César Core (`/v1/search`/`/v1/fetch`, não direto no
+  OmniRoute): `HTTP 200` nos dois, com resultados reais (KaBuM/Mercado
+  Livre para Search; conteúdo real de `example.com` via Firecrawl para
+  Fetch) -- confirmado tanto pela connection de teste recém-criada
+  (Search) quanto pela connection já existente e nunca tocada nesta
+  correção (Fetch, prova que o mecanismo geral Core→OmniRoute→Firecrawl
+  continua íntegro).
+- **Handoff/runbook atualizados:** `docs/operations/prod-deployment-handoff.md`
+  ganhou a seção 5.3 (nova) e deixou de tratar só AI na seção de
+  provisionamento do OmniRoute (seção 4 e ordem de deploy, seção 7,
+  agora citam as 4 categorias -- 4 connections AI, 2 combos AI, 1
+  connection Search, 1 connection Fetch -- como recursos que **todos**
+  precisam de provisionamento explícito, nenhum "já vem pronto");
+  `deploy/prod/omniroute-provisioning.md` ganhou a seção 7 (Search/
+  Fetch, sem equivalente no runbook original do `cesar-core`).
+- **Release:** `v1.3.7` não foi movida (tags imutáveis). Esta correção
+  foi publicada como **`v1.3.8`** -- ver hash real no commit/tag em
+  `origin`.
+- **Não incluído nesta rodada:** nenhum deploy real foi executado (fora
+  do escopo, por instrução explícita do usuário) -- só o script, o
+  runbook e o handoff foram corrigidos e validados em ambiente
+  descartável. As 4 connections/2 combos de AI não foram tocados.
+
 ## DEC-125 — Secrets Core → OmniRoute ilegíveis pelo UID de runtime do `cesar-core` (blocker do deploy PROD, `v1.3.6`)
 
 - **Data:** 2026-09-08.

@@ -1,20 +1,24 @@
-# Provisionamento determinístico: providers AI no OmniRoute (`user-cascade` / `admin-dev-cascade`)
+# Provisionamento determinístico: providers AI, Search e Fetch no OmniRoute
 
-Cópia mantida em sincronia manual do runbook original
+Cópia mantida em sincronia manual do runbook original de AI
 (`C:\cesar-core\docs\operations\omniroute-ai-provider-provisioning.md`,
 repositório `cesar-core`) -- duplicada aqui deliberadamente para que o
 deploy em PROD não precise clonar/acessar aquele repositório. Se os dois
 arquivos divergirem no futuro, o deste repositório (GG Oferta) é quem
 importa para o deploy; o do `cesar-core` continua sendo a referência para
-quem desenvolve o Core em si.
+quem desenvolve o Core em si. A seção 7 (Search/Fetch, `DEC-126`) não tem
+equivalente no runbook original do `cesar-core` -- foi auditada e escrita
+direto neste arquivo, a partir do schema real das duas connections já
+funcionando no OmniRoute de DEV.
 
 Desired state necessário para reproduzir a política de providers AI descrita
 em `docs/architecture/gg-oferta-core.md` (repositório `cesar-core`, "Política
-de providers AI") em qualquer ambiente (PROD incluído), sem depender do
-volume/banco de um OmniRoute DEV específico. Nenhum id (connection ou combo)
-é canônico -- cada ambiente gera os seus próprios ao criar os recursos
-abaixo; **nunca copie um UUID de outro ambiente para um combo step**, sempre
-use o id retornado pela própria criação da connection naquele ambiente.
+de providers AI"), **e** as capabilities Search/Fetch (seção 7), em qualquer
+ambiente (PROD incluído), sem depender do volume/banco de um OmniRoute DEV
+específico. Nenhum id (connection ou combo) é canônico -- cada ambiente gera
+os seus próprios ao criar os recursos abaixo; **nunca copie um UUID de outro
+ambiente para um combo step**, sempre use o id retornado pela própria
+criação da connection naquele ambiente.
 
 Pré-requisito: OmniRoute 3.8.50 rodando e acessível (ver
 `deploy/prod/cesar-core.compose.yaml` neste mesmo repositório), com uma
@@ -159,3 +163,108 @@ tratar como **blocker operacional** e não prosseguir com a ativação em
 PROD sem investigar — não é mais o cenário aceito nesta rodada. Não
 altere fila, prioridade, combo, fallback ou arquitetura para tentar
 forçar sucesso.
+
+## 7. Connections de Search (`searxng-search`) e Fetch (`firecrawl`) (`DEC-126`)
+
+**Blocker real que motivou esta seção:** essas duas connections não vêm
+com o bundle -- sem elas, `POST /v1/search`/`POST /v1/fetch` no César
+Core respondem `503 search_upstream_unavailable`
+(`"No credentials for searxng-search"`) e `502 fetch_upstream_error`
+(`"No credentials for firecrawl"`), mesmo com
+`CESAR_CORE_SEARCH_ENABLED`/`CESAR_CORE_FETCH_ENABLED` ligados e o resto
+do stack saudável. Diferente das connections de AI (seções 1-3 acima),
+não usam combo -- o César Core resolve `searxng-search`/`firecrawl`
+direto pelo nome do `provider`
+(`CESAR_CORE_SEARCH_DEFAULT_PROVIDER`/`CESAR_CORE_FETCH_DEFAULT_PROVIDER`,
+`deploy/prod/cesar-core.compose.yaml`), sem passar por
+`user-cascade`/`admin-dev-cascade`.
+
+**Schema real das duas connections** (auditado direto no OmniRoute DEV
+que já as tem funcionando -- `GET /api/providers`, e
+`createProviderSchema` em
+`C:\omniroute\src\shared\validation\schemas\provider.ts`): não existe
+campo "capability" persistido em nenhuma das duas -- é implícito no
+valor de `provider`.
+
+```jsonc
+// searxng-search -- SEM apiKey (provider sem autenticação;
+// providerAllowsOptionalApiKey inclui "searxng-search" explicitamente).
+// baseUrl é obrigatório e tem que ser exatamente este -- NUNCA o
+// default de UI "http://localhost:8888/search" (só existe como
+// placeholder em providerPageHelpers.ts, nunca persistido).
+{
+  "provider": "searxng-search",
+  "name": "searxng-search",
+  "priority": 1,
+  "providerSpecificData": { "baseUrl": "http://searxng:8080/search" }
+}
+
+// firecrawl -- apiKey é schema-opcional (mesma lista
+// providerAllowsOptionalApiKey), mas operacionalmente obrigatório para
+// o Firecrawl Cloud responder de verdade. Sem providerSpecificData.
+{
+  "provider": "firecrawl",
+  "name": "firecrawl",
+  "apiKey": "<firecrawl_api_key>",
+  "priority": 1
+}
+```
+
+**Origem da credencial `firecrawl_api_key` desta tabela:** **não existe
+secret canônico no GG Oferta para reaproveitar.** O antigo
+`firecrawl_api_key(_file)` e seu único consumidor (`firecrawl.py`,
+cliente direto) foram removidos do repositório GG Oferta na FASE E.1,
+depois de confirmado que não havia mais nenhum consumidor
+(`docs/architecture/cesar-core-integration.md`). É um valor **novo**,
+fornecido pelo operador no momento do provisionamento -- exatamente como
+as 4 chaves de provider AI da seção 1 (nunca um arquivo de secret no
+repositório).
+
+**Provisionamento -- script determinístico e idempotente** (preferível a
+repetir os passos manuais abaixo à mão):
+
+```powershell
+.\deploy\prod\cesar-core\bootstrap-omniroute-search-fetch.ps1 `
+    -FirecrawlApiKey (Read-Host -AsSecureString "Firecrawl API key")
+```
+
+Comportamento (mesmo contrato de idempotência de
+`bootstrap-omniroute-keys.ps1`, adaptado a connections em vez de keys de
+consumidor):
+
+- connection já existe **e** configuração bate com o esperado (`baseUrl`
+  correto para `searxng-search`; `isActive`+`apiKey` presentes para
+  `firecrawl`) → pula, idempotente, não pede nem usa
+  `-FirecrawlApiKey`.
+- connection já existe **mas** diverge (`baseUrl` errado,
+  `isActive=false`, ou `firecrawl` sem `apiKey`) → **para com erro
+  explícito**, nunca corrige sozinho -- revise manualmente.
+- connection não existe → cria com o valor exato acima; `firecrawl`
+  exige `-FirecrawlApiKey` (ou `.secrets\firecrawl-api-key` já gravado)
+  para a criação -- sem isso, falha explícito em vez de criar sem
+  credencial.
+- nunca imprime nenhum valor de secret.
+
+Mecanismo interno:
+[`deploy/prod/cesar-core/bootstrap-omniroute-search-fetch.js`](cesar-core/bootstrap-omniroute-search-fetch.js)
+(container descartável reaproveitando a própria imagem do OmniRoute,
+mesma rede Docker do bundle -- mesmo padrão de
+`bootstrap-omniroute-keys.js`).
+
+**Se preferir os passos manuais** (auditoria/depuração, sem o script):
+`POST /api/providers` com os dois corpos JSON acima, um de cada vez,
+autenticado com a senha administrativa do OmniRoute. Antes de criar,
+confira idempotência com `GET /api/providers?provider=searxng-search`
+e `GET /api/providers?provider=firecrawl` -- se já existir uma
+connection com o nome exato e a configuração esperada, não crie outra.
+
+**Verificação final desta seção** (real, não simulada, via César Core --
+não direto no OmniRoute):
+
+```
+POST /v1/search   {"query": "teste", "max_results": 1, "requirements": {"service_class": "economy", "cost_policy": "free_only"}}
+POST /v1/fetch     {"url": "https://example.com", "requirements": {"service_class": "economy", "cost_policy": "free_only"}}
+```
+
+Ambas devem responder `HTTP 200` com `provider_gateway: "omniroute"` e
+`provider: "searxng-search"` / `"firecrawl"` respectivamente.

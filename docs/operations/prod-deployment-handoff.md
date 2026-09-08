@@ -249,9 +249,23 @@ desligados (estado inicial esperado, seção 7 passo 6).
   valor usado em `AISHOPPING_CESAR_CORE_API_KEY_FILE` do lado do GG
   Oferta (decisão sua, gere um valor forte para os dois lados; não tem
   procedimento automático, ao contrário das 3 credenciais acima).
+- 1 chave Firecrawl para a connection `firecrawl` (seção 5.3, `DEC-126`)
+  — **não existe secret canônico a reaproveitar** (o antigo
+  `firecrawl_api_key` do GG Oferta e seu único consumidor foram
+  removidos do repositório na FASE E.1); é um valor novo, fornecido pelo
+  operador na hora do provisionamento, igual às 4 chaves de provider AI
+  acima.
 
-Nomes de secret, procedimento completo e corpo de requisição exatos
-para as 4 connections/2 combos de provider: seção 5.2 deste documento e
+**Provisionamento completo esperado do OmniRoute, nesta ordem** (nenhuma
+das quatro categorias abaixo "já vem pronta" com o bundle — todas
+precisam ser criadas do zero em cada ambiente novo, PROD incluído):
+1. 4 connections de AI (seção 5.2);
+2. 2 combos de AI (`user-cascade`/`admin-dev-cascade`, seção 5.2);
+3. 1 connection de Search (`searxng-search`, seção 5.3);
+4. 1 connection de Fetch (`firecrawl`, seção 5.3).
+
+Nomes de secret, procedimento completo e corpo de requisição exatos:
+seções 5.2/5.3 deste documento e
 [`deploy/prod/omniroute-provisioning.md`](../../deploy/prod/omniroute-provisioning.md)
 (neste mesmo repositório — não precisa do repositório `cesar-core`).
 
@@ -523,6 +537,89 @@ passo `oc/mimo-v2.5-free` pode ocasionalmente exceder 15–20s de
 latência (característica operacional conhecida do fallback gratuito,
 não falha de configuração) — repita o teste antes de investigar mais.
 
+### 5.3. Provisionar as connections de Search e Fetch (`DEC-126`)
+
+**Estas duas connections NÃO vêm prontas com o bundle** — são recursos
+do banco/volume do OmniRoute, exatamente como as 4 connections de AI da
+seção 5.2, e **também precisam ser provisionadas do zero em cada
+ambiente novo**, PROD incluído. O blocker real que motivou esta seção:
+sem elas, `/v1/search`/`/v1/fetch` respondem `503 search_upstream_unavailable`
+(`"No credentials for searxng-search"`) e `502 fetch_upstream_error`
+(`"No credentials for firecrawl"`) mesmo com `CESAR_CORE_SEARCH_ENABLED`/
+`CESAR_CORE_FETCH_ENABLED` ligados e o resto do stack saudável.
+
+**2 connections a garantir que existam** (nomes exatos, schema auditado
+direto no OmniRoute DEV que já as tem funcionando):
+
+| Nome/`provider` | Precisa de `apiKey`? | `providerSpecificData` |
+|---|---|---|
+| `searxng-search` | Não (provider sem autenticação) | `{"baseUrl": "http://searxng:8080/search"}` — **nunca** o default de UI `http://localhost:8888/search` |
+| `firecrawl` | Sim — ver "Origem da credencial Firecrawl" abaixo | Nenhum |
+
+Não existe campo "capability" separado em nenhuma das duas — é
+implícito no valor de `provider` (resolvido internamente pelo
+OmniRoute).
+
+**Origem da credencial Firecrawl:** o GG Oferta **não tem mais** um
+secret `firecrawl_api_key` canônico para reaproveitar — esse secret e
+seu único consumidor (`firecrawl.py`, cliente direto) foram **removidos
+do repositório** depois de confirmado que não havia mais nenhum
+consumidor (FASE E.1,
+[`docs/architecture/cesar-core-integration.md`](../architecture/cesar-core-integration.md)).
+A API key desta connection é, portanto, um valor **novo, fornecido pelo
+operador no momento do provisionamento** — exatamente como as 4 chaves
+de provider AI da seção 5.2 (nunca armazenadas em nenhum repositório,
+só digitadas/coladas na hora de criar a connection). Não gere nem
+reaproveite nenhum valor antigo.
+
+**Provisionamento determinístico e idempotente** — script versionado,
+mesmo padrão do bootstrap de credenciais consumidoras da seção 5.1:
+
+```powershell
+.\deploy\prod\cesar-core\bootstrap-omniroute-search-fetch.ps1 `
+    -FirecrawlApiKey (Read-Host -AsSecureString "Firecrawl API key")
+```
+
+Só é preciso fornecer `-FirecrawlApiKey` na primeira execução (quando a
+connection `firecrawl` ainda não existe) — reexecuções com as duas
+connections já provisionadas corretamente não pedem nem usam o valor.
+Comportamento do script (validado em DEV nesta rodada, ambiente
+descartável — connections de teste criadas e removidas ao final):
+
+- connection já existe **e** configuração bate com o esperado (`baseUrl`
+  correto para `searxng-search`; `isActive` e `apiKey` presentes para
+  `firecrawl`) → pula, idempotente.
+- connection já existe **mas** configuração diverge (`baseUrl` errado,
+  `isActive=false`, ou `firecrawl` sem `apiKey`) → **para com erro
+  explícito**, nunca corrige sozinho (pode ser customização deliberada
+  do operador) — revise manualmente no painel do OmniRoute.
+- connection não existe → cria com o valor exato documentado acima;
+  `firecrawl` exige `-FirecrawlApiKey` (ou `.secrets\firecrawl-api-key`
+  já gravado) para a criação — sem isso, falha explícito em vez de
+  criar sem credencial.
+- nunca imprime nenhum valor de secret (nem a senha administrativa, nem
+  a API key do Firecrawl) — só nomes de connection e status.
+
+Mecanismo interno (container descartável reaproveitando a própria
+imagem do OmniRoute, mesma rede Docker do bundle):
+[`deploy/prod/cesar-core/bootstrap-omniroute-search-fetch.js`](../../deploy/prod/cesar-core/bootstrap-omniroute-search-fetch.js).
+Procedimento completo com corpo de requisição JSON exato (para
+referência/auditoria manual, se necessário):
+[`deploy/prod/omniroute-provisioning.md`](../../deploy/prod/omniroute-provisioning.md)
+seção 4.
+
+**Verificação final desta seção** (real, não simulada):
+
+```
+POST /v1/search   {"query": "teste", "max_results": 1, "requirements": {"service_class": "economy", "cost_policy": "free_only"}}
+POST /v1/fetch     {"url": "https://example.com", "requirements": {"service_class": "economy", "cost_policy": "free_only"}}
+```
+
+Ambas via o César Core (`http://127.0.0.1:8100/v1/search` /
+`/v1/fetch`, Bearer `application`), não direto no OmniRoute — devem
+responder `HTTP 200` com `provider_gateway: "omniroute"` e
+`provider: "searxng-search"` / `"firecrawl"` respectivamente.
+
 ## 6. Feature flags
 
 | Flag | Onde | Default | OFF (comportamento) | ON (comportamento) |
@@ -577,7 +674,14 @@ ative uma de cada vez, prove antes de ativar a próxima):
    obrigatória (fail-closed) de AI/Search/enrichment. Confirmar `GET
    /health` e `GET /ready` antes de prosseguir. **Nenhum clone/build do
    repositório `cesar-core`.**
-7. **GG Oferta — container `api` + `telegram_notifier`** (`docker
+7. **Provisionar OmniRoute** — 4 connections + 2 combos de AI (seção
+   5.2) **e** as connections de Search (`searxng-search`) e Fetch
+   (`firecrawl`) (seção 5.3, `DEC-126`) — nenhuma das quatro categorias
+   "já vem pronta" com o bundle, todas exigem provisionamento do zero
+   neste ambiente. Rode a verificação real de cada subseção
+   (`POST /api/combos/test` para os 2 combos; `POST /v1/search`/
+   `POST /v1/fetch` reais para Search/Fetch) antes de prosseguir.
+8. **GG Oferta — container `api` + `telegram_notifier`** (`docker
    compose up -d`) — com todas as flags da seção 6 **ainda OFF** neste
    ponto. Confirmar `GET /health` e `GET /ready`. Confirmar também
    (`DEC-121`, blocker real do preflight anterior): dentro do container
@@ -590,7 +694,7 @@ ative uma de cada vez, prove antes de ativar a próxima):
 
    **GG Oferta — worker nativo (`AIShoppingAgent-CollectionWorker`,
    Scheduled Task) — ordem obrigatória, `DEC-122`, blocker real
-   encontrado num preflight posterior a este mesmo passo 7:**
+   encontrado num preflight posterior a este mesmo passo 8:**
    1. Identidade GG→Core já provisionada no passo 5 acima
       (`.secrets\cesar_core_api_key` existe com o valor real).
    2. Confirmar de novo que `C:\App\AIShoppingAgent\.secrets\cesar_core_api_key`
@@ -609,22 +713,22 @@ ative uma de cada vez, prove antes de ativar a próxima):
       `AIShoppingAgent-CollectionWorker` (`manage_collection_worker_task.ps1`)
       — ela lê as variáveis de Máquina frescas a cada disparo, sem
       precisar de reboot.
-8. **Coupon Worker — primeira instalação em PROD** (seção 9) — diretório,
+9. **Coupon Worker — primeira instalação em PROD** (seção 9) — diretório,
    `.env` (`AUTH_TOKEN` + `COUPONS_POSTGRES_DSN` apontando para o
    Postgres de PROD), instalar o agendamento (Windows Scheduled Task).
    Pode subir a qualquer momento depois do passo 4; não depende do
    César Core.
-9. **Health/readiness dos três** — confirmar antes de tocar em
-   qualquer flag (tabela na seção 8 abaixo).
-10. **Flags OFF, prova básica** — com tudo no ar e flags ainda
+10. **Health/readiness dos três** — confirmar antes de tocar em
+    qualquer flag (tabela na seção 8 abaixo).
+11. **Flags OFF, prova básica** — com tudo no ar e flags ainda
     desligadas, confirmar que o comportamento é idêntico ao anterior a
     este deploy inteiro (nenhuma regressão visível com tudo desligado).
-11. **Ativação gradual** — seguir a ordem da seção 6, uma flag por vez,
+12. **Ativação gradual** — seguir a ordem da seção 6, uma flag por vez,
     com prova real entre cada uma.
-12. **Gate Gemini** (seção 11) — antes especificamente da política de
+13. **Gate Gemini** (seção 11) — antes especificamente da política de
     providers AI valer para tráfego real, não só para as flags de
     F1/F3/cupons.
-13. **Prova funcional final** — um ciclo completo real: criar/observar
+14. **Prova funcional final** — um ciclo completo real: criar/observar
     uma missão, ver um cupom sendo considerado numa oferta elegível,
     confirmar quota USER=5/ADMIN_DEV=50 na prática, confirmar que o
     Telegram responde claramente quando a quota está cheia.
@@ -817,6 +921,22 @@ com todas as 4 connections ativas e nenhum fallback forçado:
   sempre `paid_allowed`, é o próprio `ai_profile` que já determina isso
   no código (`backend/app/ai_provider/cesar_core.py`), nunca decida isso
   manualmente numa chamada de teste.
+- Não assuma que as connections `searxng-search`/`firecrawl` "já vêm
+  configuradas" com o bundle -- `DEC-126`: são recursos do banco do
+  OmniRoute, exatamente como as 4 connections de AI, e precisam de
+  provisionamento explícito (seção 5.3) em cada ambiente novo.
+- Não use `http://localhost:8888/search` na connection `searxng-search`
+  -- é só um placeholder de UI do OmniRoute, nunca persistido; o valor
+  correto e obrigatório é `http://searxng:8080/search` (`DEC-126`).
+- Não reaproveite nenhum valor antigo de `firecrawl_api_key` do GG
+  Oferta para a connection `firecrawl` do OmniRoute -- esse secret e seu
+  único consumidor foram removidos do repositório na FASE E.1
+  (confirmado, sem consumidor restante); a API key da connection é um
+  valor novo, fornecido pelo operador (`DEC-126`).
+- Não corrija uma connection `searxng-search`/`firecrawl` existente mas
+  com configuração incompatível rodando o bootstrap de novo esperando
+  que ele conserte sozinho -- `DEC-126`: o script para com erro
+  explícito de propósito; revise manualmente no painel do OmniRoute.
 
 ## 13. Referências (mesma arquitetura, sem redesenho)
 
@@ -834,6 +954,12 @@ com todas as 4 connections ativas e nenhum fallback forçado:
   `cesar-core` (`DEC-125`, sobe automaticamente via `depends_on`, seção
   5.1 etapa B):
   [`deploy/prod/cesar-core/fix-omniroute-secret-permissions.py`](../../deploy/prod/cesar-core/fix-omniroute-secret-permissions.py).
+- Bootstrap determinístico das connections `searxng-search`/`firecrawl`
+  (`DEC-126`, seção 5.3):
+  [`deploy/prod/cesar-core/bootstrap-omniroute-search-fetch.ps1`](../../deploy/prod/cesar-core/bootstrap-omniroute-search-fetch.ps1)
+  (wrapper) e
+  [`deploy/prod/cesar-core/bootstrap-omniroute-search-fetch.js`](../../deploy/prod/cesar-core/bootstrap-omniroute-search-fetch.js)
+  (mecanismo interno).
 - Arquitetura canônica GG ↔ Core (background/racional -- não é
   operacionalmente necessário para executar este deploy, os dois itens
   acima já bastam): `docs/architecture/gg-oferta-core.md` no
