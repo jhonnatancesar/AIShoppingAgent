@@ -1,5 +1,10 @@
 # Tarefas
 
+**TASK-121 (2026-09-09, planejada, não iniciada):** ligar a aba
+"Cupons" a dados reais — hoje `CouponsPage.tsx` só mostra 6 cards de
+modelo hardcoded, nunca integrados ao Coupon Worker. Achado durante o
+pós-deploy `v1.3.9`/fechamento de `DEC-129`. Ver `TASK-121.md`.
+
 **Estado real em 2026-09-07 (saneamento de documentação) — o que faltava
 desde a última atualização deste arquivo (TASK-118H):**
 
