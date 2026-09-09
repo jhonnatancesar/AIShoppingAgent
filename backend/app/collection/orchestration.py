@@ -902,6 +902,10 @@ class _ClaimAttempt:
 class _ClaimedBatch:
     old_path: tuple[ClaimedCollection, ...]
     shared: tuple[_SharedClaim, ...]
+    # DEC-132: só o FATO "algum claim deste batch decidiu HIGH_ACTIVITY"
+    # -- nunca se o Coupon Worker foi avisado (isso é decisão do
+    # chamador, depois do commit, e depende de `settings`).
+    high_activity_detected: bool = False
 
 
 async def _build_claim_attempts(
@@ -967,7 +971,7 @@ async def _claim_legacy_source_attempt(
     effective_now: datetime,
     store_min_interval_seconds: float,
     cadence_config: CadenceConfig,
-    settings: Settings | None = None,
+    high_activity_notify: list[bool] | None = None,
 ) -> ClaimedCollection | None:
     """Mesmo template de `_claim_shared_collection_in_session`
     (`shared_claim.py`): 1. LOCK real da linha específica já escolhida
@@ -1010,13 +1014,13 @@ async def _claim_legacy_source_attempt(
         now=effective_now,
         config=cadence_config,
     )
-    if decision.mode == _MODE_HIGH_ACTIVITY and settings is not None:
-        # DEC-129: mesmo sinal de sempre (cadence.py decide HIGH_ACTIVITY
-        # por conta própria, nunca uma segunda regra) -- só propaga pro
-        # Coupon Worker acelerar a varredura dele também. Best-effort
-        # (notify_coupon_worker_high_activity nunca levanta), fora da
-        # decisão de cadência em si -- nunca pode atrasar/bloquear o claim.
-        await notify_coupon_worker_high_activity(settings, now=effective_now)
+    if decision.mode == _MODE_HIGH_ACTIVITY and high_activity_notify is not None:
+        # DEC-132: só sinaliza que este claim decidiu HIGH_ACTIVITY -- a
+        # chamada de rede real (`notify_coupon_worker_high_activity`)
+        # acontece em `run_batch`, DEPOIS que a transação desta função
+        # (que ainda segura o lock `FOR UPDATE` de `source`) já commitou.
+        # Nunca I/O externo dentro da região transacional do claim.
+        high_activity_notify.append(True)
     source.last_run_at = effective_now
     source.next_run_at = sample_next_run_at(effective_now, decision)
     await _advance_store_throttle(
@@ -1057,6 +1061,13 @@ async def claim_due_work(
     effective_now = now or utc_now()
     effective_cadence_config = cadence_config or CadenceConfig()
     turn_id = uuid4()
+    # DEC-132: mesmo gate de sempre (`settings is not None`), só decidido
+    # ANTES do loop em vez de em cada attempt -- se ninguém quer aviso,
+    # nem cria o coletor; se quer, os dois caminhos (legado/compartilhado)
+    # só acumulam o FATO aqui dentro (nunca chamam rede). `run_batch` (o
+    # único chamador de produção) decide, DEPOIS do commit, se de fato
+    # avisa o Coupon Worker.
+    high_activity_notify: list[bool] | None = [] if settings is not None else None
 
     selected = await _select_due_work_for_batch(
         session,
@@ -1088,7 +1099,7 @@ async def claim_due_work(
                 effective_now=effective_now,
                 store_min_interval_seconds=store_min_interval_seconds,
                 cadence_config=effective_cadence_config,
-                settings=settings,
+                high_activity_notify=high_activity_notify,
             )
             if resource_claim is not None:
                 old_claims.append(resource_claim)
@@ -1103,7 +1114,7 @@ async def claim_due_work(
                 cadence_config=effective_cadence_config,
                 store_min_interval_seconds=store_min_interval_seconds,
                 fairness_owner_user_id=attempt.owner_user_id,
-                settings=settings,
+                high_activity_notify=high_activity_notify,
             )
             if resource_claim is not None:
                 shared_claims.append(resource_claim)
@@ -1131,7 +1142,11 @@ async def claim_due_work(
         )
 
     await session.flush()
-    return _ClaimedBatch(old_path=tuple(old_claims), shared=tuple(shared_claims))
+    return _ClaimedBatch(
+        old_path=tuple(old_claims),
+        shared=tuple(shared_claims),
+        high_activity_detected=bool(high_activity_notify),
+    )
 
 
 class CollectionOrchestrator:
@@ -1331,6 +1346,28 @@ class CollectionOrchestrator:
             logger.info(
                 "collection_schedules_created", extra={"schedule_count": schedules}
             )
+        if batch.high_activity_detected and self._settings is not None:
+            # DEC-132: correção do DEC-130 -- a notificação ao Coupon
+            # Worker é I/O de rede e NUNCA pode rodar dentro da transação
+            # de claim (que segura `FOR UPDATE` em `MissionSource`/
+            # `MonitoringItemStore`). `claim_due_work` só sinalizou o
+            # FATO (`batch.high_activity_detected`); o claim já está
+            # commitado neste ponto -- o aviso é estritamente posterior,
+            # nunca pode desfazer nem alterar o que já foi persistido.
+            # `try/except` aqui é redundância deliberada sobre o
+            # best-effort já embutido em `notify_coupon_worker_high_
+            # activity` (nunca levanta na prática) -- garante que nenhum
+            # erro inesperado nesta chamada jamais vaze para fora de
+            # `run_batch` e derrube o worker por causa de uma notificação
+            # de cadência, que é sempre opcional.
+            try:
+                await notify_coupon_worker_high_activity(
+                    self._settings, now=effective_now
+                )
+            except Exception:
+                logger.warning(
+                    "coupon_worker_promo_notify_failed", exc_info=True
+                )
         old_claims = await self._resolve_identities(batch.old_path)
         old_outcomes, shared_outcomes = await asyncio.gather(
             asyncio.gather(*(self._process(claim) for claim in old_claims)),

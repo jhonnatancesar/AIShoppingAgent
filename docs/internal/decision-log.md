@@ -1,5 +1,81 @@
 # Decision Log
 
+## DEC-132 — Notificação HIGH_ACTIVITY ao Coupon Worker sai de dentro da transação de claim
+
+- **Data:** 2026-09-09.
+- **Classificação:** Correção isolada sobre `DEC-130`, pedida explicitamente
+  depois da revisão da v1.3.10 -- Job Object (`DEC-131`) não foi tocado
+  nesta rodada.
+- **Problema:** `notify_coupon_worker_high_activity` (POST HTTP real ao
+  Coupon Worker) era chamada de dentro de `_claim_legacy_source_attempt`/
+  `_advance_monitoring_item_store`, ainda dentro da transação de claim
+  que segura `SELECT ... FOR UPDATE` em `MissionSource`/
+  `MonitoringItemStore`. I/O de rede nunca deveria rodar sob esse lock --
+  um Coupon Worker lento prendia a linha claimada mais tempo que o
+  necessário, e `shared_claim.py` já se declara, na própria docstring do
+  módulo, "nunca chamada de rede/IA" (a chamada violava esse contrato já
+  documentado).
+- **Correção:** a regra de decisão (`resolve_collection_cadence`) e o
+  gate `settings is not None` continuam exatamente onde estavam --
+  nenhuma regra de cadência mudou. O que mudou é só ONDE o aviso
+  realmente é disparado:
+  1. Dentro da transação, `_claim_legacy_source_attempt`/`_advance_
+     monitoring_item_store` só **sinalizam** o fato (`decision.mode ==
+     _MODE_HIGH_ACTIVITY`) num coletor (`list[bool]`) que `claim_due_
+     work` passa explicitamente pra baixo -- nunca um global, nunca um
+     segundo scheduler, só o mesmo padrão de injeção que `settings` já
+     usava, substituindo-o exatamente onde ele só servia pra decidir
+     "vale a pena notificar" (`shared_claim.py` perdeu os imports de
+     `Settings`/`notify_coupon_worker_high_activity` por completo --
+     não precisa mais deles).
+  2. `claim_due_work` devolve o fato agregado em `_ClaimedBatch.
+     high_activity_detected` (novo campo, default `False` -- não quebra
+     nenhum chamador existente).
+  3. `CollectionOrchestrator.run_batch` -- o único chamador de produção
+     -- só chama `notify_coupon_worker_high_activity` DEPOIS que o
+     `async with session.begin()` da Fase A já fechou (claim já
+     commitado), envolto num `try/except Exception` redundante sobre o
+     best-effort que a própria função já garante (defesa em profundidade:
+     nenhum erro aqui nunca pode propagar e derrubar `run_batch`).
+- **Por que o claim nunca é afetado por falha/timeout do aviso:** a
+  chamada é estritamente POSTERIOR ao commit -- não existe mais nenhum
+  caminho onde a notificação possa desfazer ou alterar o que já foi
+  persistido, com ou sem `try/except`. O `try/except` existe para
+  proteger `run_batch` de propagar uma exceção inesperada, não para
+  proteger o dado (que já está seguro pelo commit).
+- **Deduplicação:** antes, cada `attempt` que decidisse HIGH_ACTIVITY
+  chamava a notificação por conta própria -- um batch com 2+ stores em
+  HIGH_ACTIVITY gerava 2+ POSTs redundantes. Agora só um coletor
+  agregado por `claim_due_work`/`run_batch` chamada -- no máximo UM POST
+  por batch, mesmo com múltiplos attempts (legado e/ou compartilhado)
+  decidindo HIGH_ACTIVITY ao mesmo tempo.
+- **Testes:** `tests/integration/test_legacy_source_level_cadence.py`
+  (+4: NORMAL com `settings` configurado nunca notifica; aviso só chega
+  depois do claim já visível numa sessão/conexão NOVA -- prova real de
+  ordem via READ COMMITTED, não só posição de código; `fake_notify` que
+  levanta não derruba `run_batch` nem desfaz o `next_run_at` já
+  persistido; duas stores HIGH_ACTIVITY na mesma Mission/batch notificam
+  uma única vez) e `tests/integration/test_unified_fair_queue.py`
+  (caminho compartilhado reescrito para provar o `high_activity_detected`
+  no nível de `claim_due_work` E o disparo real pós-commit via
+  `run_batch`, + 1 novo teste cruzando os dois caminhos -- legado E
+  compartilhado decidindo HIGH_ACTIVITY no MESMO batch -- só um aviso).
+  36/36 testes de integração da dupla de arquivos aprovados contra
+  PostgreSQL real (29 collected -- 14 + 15, alguns testes reescritos, não
+  só adicionados). Suítes correlatas (`test_collection_orchestration_
+  async.py`, 79 testes) aprovadas sem regressão -- `_ClaimedBatch` ganhou
+  um campo com default, nenhum mock/comparação existente quebrou.
+- **Achado à parte, não desta correção:** uma bateria de 16 falhas em
+  `tests/test_webapp_offers_router.py` (`DatabaseConfigurationError`) foi
+  investigada e confirmada **pré-existente** via comparação A/B por
+  `git stash` (idêntica com e sem esta correção aplicada) -- fragilidade
+  de isolamento de teste já documentada nesta mesma rodada de trabalho,
+  não uma regressão desta patch.
+- **Job Object (`DEC-131`):** não tocado nesta correção, por instrução
+  explícita.
+- **Nenhuma alteração em cupons/site/Telegram (`v1.3.9`) nesta rodada.
+  Nenhum deploy foi executado.**
+
 ## DEC-131 — Windows Job Object amarra o lifecycle do Edge ao processo pai (Achado 3 do `DEC-129`, agora corrigido)
 
 - **Data:** 2026-09-08.

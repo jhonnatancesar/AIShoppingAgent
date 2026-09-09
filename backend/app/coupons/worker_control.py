@@ -47,14 +47,15 @@ async def notify_coupon_worker_high_activity(
     )
     endpoint = settings.coupon_worker_control_url.rstrip("/") + "/control/promo"
     try:
-        # Timeout curto de propósito (achado de integração, 2026-09-08):
-        # esta chamada roda DENTRO da transação de claim de coleta
-        # (`_claim_legacy_source_attempt`/`_advance_monitoring_item_
-        # store`) enquanto uma HIGH_ACTIVITY está ativa -- um timeout
-        # longo aqui prende lock de linha (`MissionSource`/
-        # `MonitoringItemStore FOR UPDATE`) por mais tempo que o
-        # necessário. 2s é generoso pra um POST localhost real,
-        # insuficiente pra travar claims concorrentes de forma sensível.
+        # Timeout curto de propósito. Até DEC-132 esta chamada rodava
+        # DENTRO da transação de claim (segurando lock `FOR UPDATE` de
+        # `MissionSource`/`MonitoringItemStore`) -- corrigido: agora só é
+        # chamada por `orchestration.run_batch`, DEPOIS do commit da
+        # transação de claim, nunca mais sob lock nenhum. O timeout curto
+        # continua por mérito próprio: best-effort de verdade -- 2s é
+        # generoso pra um POST localhost real, insuficiente pra segurar o
+        # loop do worker por muito tempo se o Coupon Worker estiver fora
+        # do ar.
         async with client_factory(timeout=2, trust_env=False) as client:
             response = await client.post(
                 endpoint,

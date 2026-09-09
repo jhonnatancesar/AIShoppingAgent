@@ -48,6 +48,7 @@ from app.missions.models import (
     MissionSchedule,
     MissionSource,
     MissionStatus,
+    MonitoringItemStore,
 )
 from app.missions.service import create_mission_from_criteria_async
 from app.stores.models import Store
@@ -256,12 +257,17 @@ def test_linked_mission_excluded_from_legacy_selector(integration_database) -> N
 # ---------------------------------------------------------------------------
 
 
-def test_shared_high_activity_notifies_coupon_worker_when_settings_configured(
-    integration_database, monkeypatch: pytest.MonkeyPatch
+def test_shared_high_activity_signals_batch_flag_via_claim_due_work(
+    integration_database,
 ) -> None:
+    """DEC-132: `claim_due_work` no caminho compartilhado só sinaliza o
+    FATO (`batch.high_activity_detected`) -- nunca chama rede (o próprio
+    `shared_claim.py` se declara "módulo neutro", sem I/O externo). A
+    chamada real ao Coupon Worker, depois do commit, é provada nos testes
+    abaixo, via `CollectionOrchestrator.run_batch`."""
     from app.core.config import Settings
 
-    user_id = _seed_user(integration_database.sessions, "sharednotify")
+    user_id = _seed_user(integration_database.sessions, "sharedflag")
     mission = _make_shared_mission(integration_database, user_id, search_query="RTX 5070 Ti")
     item_id = _monitoring_item_id_for(integration_database.sessions, mission.id)
     assert item_id is not None
@@ -274,15 +280,6 @@ def test_shared_high_activity_notifies_coupon_worker_when_settings_configured(
                 high_activity_until=NOW + timedelta(hours=2),
             )
         )
-
-    calls: list[datetime] = []
-
-    async def fake_notify(settings, *, now):
-        calls.append(now)
-
-    monkeypatch.setattr(
-        "app.collection.shared_claim.notify_coupon_worker_high_activity", fake_notify
-    )
 
     async def run():
         async with integration_database.async_sessions() as session:
@@ -302,6 +299,99 @@ def test_shared_high_activity_notifies_coupon_worker_when_settings_configured(
 
     batch = _run(run())
     assert len(batch.shared) == 1
+    assert batch.high_activity_detected is True
+
+
+def test_shared_high_activity_never_signals_without_settings(integration_database) -> None:
+    """Mesmo cenário, sem `settings` -- `claim_due_work` nem cria o
+    coletor (`high_activity_notify=None`), então `high_activity_detected`
+    fica `False` mesmo com a cadência tendo decidido HIGH_ACTIVITY."""
+    user_id = _seed_user(integration_database.sessions, "sharedflagoff")
+    mission = _make_shared_mission(integration_database, user_id, search_query="RTX 5070 Ti")
+    item_id = _monitoring_item_id_for(integration_database.sessions, mission.id)
+    assert item_id is not None
+    amazon_id = _store_id(integration_database, "amazon")
+    with integration_database.sessions.begin() as session:
+        session.add(
+            StoreActivityState(
+                store_id=amazon_id,
+                scope_id=item_id,
+                high_activity_until=NOW + timedelta(hours=2),
+            )
+        )
+
+    async def run():
+        async with integration_database.async_sessions() as session:
+            batch = await claim_due_work(
+                session, now=NOW, limit=25, max_users=5, cadence_config=_DETERMINISTIC_CADENCE
+            )
+            await session.commit()
+            return batch
+
+    batch = _run(run())
+    assert len(batch.shared) == 1
+    assert batch.high_activity_detected is False
+
+
+def test_shared_high_activity_notifies_coupon_worker_after_commit_via_run_batch(
+    integration_database, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """DEC-132: end-to-end pelo único caminho real de produção
+    (`CollectionOrchestrator.run_batch`) -- prova que o caminho
+    COMPARTILHADO também dispara o aviso, e só depois do commit (mesmo
+    padrão de `test_high_activity_notify_commits_before_calling` no
+    arquivo legado: a sessão usada dentro de `fake_notify` é NOVA,
+    própria, e só enxergaria o estado já commitado)."""
+    from app.core.config import Settings
+
+    user_id = _seed_user(integration_database.sessions, "sharednotify")
+    mission = _make_shared_mission(integration_database, user_id, search_query="RTX 5070 Ti")
+    item_id = _monitoring_item_id_for(integration_database.sessions, mission.id)
+    assert item_id is not None
+    amazon_id = _store_id(integration_database, "amazon")
+    with integration_database.sessions.begin() as session:
+        session.add(
+            StoreActivityState(
+                store_id=amazon_id,
+                scope_id=item_id,
+                high_activity_until=NOW + timedelta(hours=2),
+            )
+        )
+
+    calls: list[datetime] = []
+
+    async def fake_notify(settings, *, now):
+        with integration_database.sessions() as session:
+            item_store = session.get(MonitoringItemStore, (item_id, amazon_id))
+            assert item_store.next_run_at is not None  # já commitado
+        calls.append(now)
+
+    monkeypatch.setattr(
+        "app.collection.orchestration.notify_coupon_worker_high_activity", fake_notify
+    )
+
+    engine = create_collection_async_database_engine(integration_database.settings)
+    session_factory = create_async_session_factory(engine)
+
+    async def run():
+        orchestrator = CollectionOrchestrator(
+            session_factory,
+            _adapter(_CountingGpuProvider()),
+            ai_manager=_StubAIManager(),
+            max_concurrent_user_batches=5,
+            cadence_config=_DETERMINISTIC_CADENCE,
+            settings=Settings(
+                coupon_worker_control_url="http://127.0.0.1:8090",
+                coupon_worker_control_token_file=None,
+            ),
+        )
+        try:
+            return await orchestrator.run_batch(now=NOW, limit=25)
+        finally:
+            await engine.dispose()
+
+    result = _run(run())
+    assert result.shared_claimed == 1
     assert calls == [NOW]
 
 
@@ -324,20 +414,94 @@ def test_shared_high_activity_never_notifies_without_settings(
 
     notify = AsyncMock()
     monkeypatch.setattr(
-        "app.collection.shared_claim.notify_coupon_worker_high_activity", notify
+        "app.collection.orchestration.notify_coupon_worker_high_activity", notify
     )
 
-    async def run():
-        async with integration_database.async_sessions() as session:
-            batch = await claim_due_work(
-                session, now=NOW, limit=25, max_users=5, cadence_config=_DETERMINISTIC_CADENCE
-            )
-            await session.commit()
-            return batch
+    engine = create_collection_async_database_engine(integration_database.settings)
+    session_factory = create_async_session_factory(engine)
 
-    batch = _run(run())
-    assert len(batch.shared) == 1
+    async def run():
+        orchestrator = CollectionOrchestrator(
+            session_factory,
+            _adapter(_CountingGpuProvider()),
+            ai_manager=_StubAIManager(),
+            max_concurrent_user_batches=5,
+            cadence_config=_DETERMINISTIC_CADENCE,
+        )
+        try:
+            return await orchestrator.run_batch(now=NOW, limit=25)
+        finally:
+            await engine.dispose()
+
+    result = _run(run())
+    assert result.shared_claimed == 1
     notify.assert_not_called()
+
+
+def test_high_activity_notify_not_duplicated_across_legacy_and_shared_same_batch(
+    integration_database, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Requisito 6 (nenhum processamento duplicado), cenário que só este
+    arquivo pode cobrir: um batch com um claim LEGADO e um claim
+    COMPARTILHADO, os dois decidindo HIGH_ACTIVITY ao mesmo tempo --
+    `run_batch` ainda assim avisa o Coupon Worker no máximo uma vez."""
+    from app.core.config import Settings
+
+    shared_user = _seed_user(integration_database.sessions, "dedup-shared")
+    mission = _make_shared_mission(integration_database, shared_user, search_query="RTX 5070 Ti")
+    item_id = _monitoring_item_id_for(integration_database.sessions, mission.id)
+    assert item_id is not None
+    amazon_id = _store_id(integration_database, "amazon")
+
+    legacy_user = _seed_user(integration_database.sessions, "dedup-legacy")
+    pichau_id = _store_id(integration_database, "pichau")
+    legacy_mission = _make_legacy_mission(
+        integration_database, legacy_user, due_at=NOW, store_id=pichau_id, label="dedup"
+    )
+
+    with integration_database.sessions.begin() as session:
+        session.add(
+            StoreActivityState(
+                store_id=amazon_id, scope_id=item_id, high_activity_until=NOW + timedelta(hours=2)
+            )
+        )
+        session.add(
+            StoreActivityState(
+                store_id=pichau_id,
+                scope_id=legacy_mission.id,
+                high_activity_until=NOW + timedelta(hours=2),
+            )
+        )
+
+    notify = AsyncMock()
+    monkeypatch.setattr(
+        "app.collection.orchestration.notify_coupon_worker_high_activity", notify
+    )
+
+    engine = create_collection_async_database_engine(integration_database.settings)
+    session_factory = create_async_session_factory(engine)
+
+    async def run():
+        orchestrator = CollectionOrchestrator(
+            session_factory,
+            _adapter(_CountingGpuProvider(), _EmptyPichauProvider()),
+            ai_manager=_StubAIManager(),
+            max_concurrent_user_batches=5,
+            cadence_config=_DETERMINISTIC_CADENCE,
+            settings=Settings(
+                coupon_worker_control_url="http://127.0.0.1:8090",
+                coupon_worker_control_token_file=None,
+            ),
+        )
+        try:
+            return await orchestrator.run_batch(now=NOW, limit=25)
+        finally:
+            await engine.dispose()
+
+    result = _run(run())
+    assert result.shared_claimed == 1
+    assert result.legacy_claimed == 1
+    notify.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------

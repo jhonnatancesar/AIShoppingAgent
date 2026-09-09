@@ -31,8 +31,6 @@ from app.collection.cadence import (
 from app.collection.fairness import _advance_store_throttle
 from app.collection.models import StoreThrottleState
 from app.collection.persistence import start_collection_run
-from app.core.config import Settings
-from app.coupons.worker_control import notify_coupon_worker_high_activity
 from app.missions.models import (
     MissionMonitoringItem,
     MonitoringItem,
@@ -70,7 +68,7 @@ async def _advance_monitoring_item_store(
     *,
     started_at: datetime,
     cadence_config: CadenceConfig,
-    settings: Settings | None = None,
+    high_activity_notify: list[bool] | None = None,
 ) -> None:
     """TASK-112 fase 3B: cadência determinística por política
     (`app.collection.cadence`), nunca mais um intervalo fixo. Sempre
@@ -96,11 +94,13 @@ async def _advance_monitoring_item_store(
         now=started_at,
         config=cadence_config,
     )
-    if decision.mode == _MODE_HIGH_ACTIVITY and settings is not None:
-        # DEC-129: mesmo sinal do caminho legado (`_claim_legacy_source_
-        # attempt`) -- reaproveita HIGH_ACTIVITY já decidido acima, nunca
-        # uma segunda regra. Best-effort, nunca levanta.
-        await notify_coupon_worker_high_activity(settings, now=started_at)
+    if decision.mode == _MODE_HIGH_ACTIVITY and high_activity_notify is not None:
+        # DEC-132: só sinaliza -- este módulo é deliberadamente "neutro"
+        # (ver docstring do arquivo, "nunca chamada de rede/IA"). Quem
+        # decide se/quando avisar o Coupon Worker é `claim_due_work`
+        # (`orchestration.py`), DEPOIS que a transação de claim já
+        # commitou -- nunca aqui, nunca sob o lock desta linha.
+        high_activity_notify.append(True)
     item_store.last_run_at = started_at
     item_store.next_run_at = sample_next_run_at(started_at, decision)
     item_store.updated_at = started_at
@@ -160,7 +160,7 @@ async def _claim_shared_collection_in_session(
     cadence_config: CadenceConfig,
     store_min_interval_seconds: float,
     fairness_owner_user_id: UUID | None = None,
-    settings: Settings | None = None,
+    high_activity_notify: list[bool] | None = None,
 ) -> _SharedClaim | None:
     """Núcleo do claim -- opera na `session` que o CHAMADOR já abriu, sem
     gerenciar transação própria. Usada por `claim_due_work`
@@ -239,7 +239,7 @@ async def _claim_shared_collection_in_session(
         item_store,
         started_at=now,
         cadence_config=cadence_config,
-        settings=settings,
+        high_activity_notify=high_activity_notify,
     )
     await _advance_store_throttle(
         session, store_id=store_id, claimed_at=now,

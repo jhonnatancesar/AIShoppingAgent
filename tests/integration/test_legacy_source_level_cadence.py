@@ -384,6 +384,214 @@ def test_high_activity_never_notifies_without_settings(
     notify.assert_not_called()
 
 
+def test_normal_mode_never_notifies_even_with_settings_configured(
+    integration_database, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Isola a variável MODO (vs. `test_high_activity_never_notifies_
+    without_settings`, que isola a variável `settings`): `settings`
+    configurado, mas nenhuma `StoreActivityState` semeada -- cadência cai
+    em NORMAL (determinístico, 60min) e o aviso nunca é sequer tentado."""
+    from app.core.config import Settings
+
+    amazon_id = _store_id(integration_database, "amazon")
+    user_id = _seed_user(integration_database.sessions, "caso-normal-notify")
+    _seed_mission(
+        integration_database, user_id, label="caso-normal-notify", sources={amazon_id: NOW}
+    )
+
+    notify = AsyncMock()
+    monkeypatch.setattr(
+        "app.collection.orchestration.notify_coupon_worker_high_activity", notify
+    )
+
+    provider = _CountingProvider("amazon")
+    orchestrator = CollectionOrchestrator(
+        integration_database.async_sessions,
+        CollectionAdapter(providers=[provider]),
+        ai_manager=_StubAIManager(),
+        cadence_config=_DETERMINISTIC_CADENCE,
+        store_min_interval_seconds=0.0,
+        user_cooldown_min_seconds=0.0,
+        user_cooldown_max_seconds=0.0,
+        max_concurrent_user_batches=5,
+        settings=Settings(
+            coupon_worker_control_url="http://127.0.0.1:8090",
+            coupon_worker_control_token_file=None,
+        ),
+    )
+
+    _run(orchestrator.run_batch(now=NOW))
+
+    assert provider.calls == 1
+    notify.assert_not_called()
+
+
+def test_high_activity_notify_commits_before_calling(
+    integration_database, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """DEC-132: prova de ORDEM real via visibilidade entre conexões, não
+    só posição de código -- se o aviso ainda rodasse dentro da transação
+    de claim, uma sessão NOVA (conexão separada) não veria o `next_run_at`
+    já avançado no momento em que `fake_notify` é chamado (READ COMMITTED
+    nunca enxerga uma transação alheia ainda aberta)."""
+    from app.core.config import Settings
+
+    amazon_id = _store_id(integration_database, "amazon")
+    user_id = _seed_user(integration_database.sessions, "caso-commit-antes")
+    mission_id = _seed_mission(
+        integration_database, user_id, label="caso-commit-antes", sources={amazon_id: NOW}
+    )
+    with integration_database.sessions.begin() as session:
+        session.add(
+            StoreActivityState(
+                store_id=amazon_id, scope_id=mission_id, high_activity_until=NOW + timedelta(hours=2)
+            )
+        )
+
+    seen_next_run_at: list[datetime | None] = []
+
+    async def fake_notify(settings, *, now):
+        # Sessão NOVA, própria -- nunca a mesma conexão/transação do claim.
+        source = _mission_source(integration_database.sessions, mission_id, amazon_id)
+        seen_next_run_at.append(source.next_run_at)
+
+    monkeypatch.setattr(
+        "app.collection.orchestration.notify_coupon_worker_high_activity", fake_notify
+    )
+
+    provider = _CountingProvider("amazon")
+    orchestrator = CollectionOrchestrator(
+        integration_database.async_sessions,
+        CollectionAdapter(providers=[provider]),
+        ai_manager=_StubAIManager(),
+        cadence_config=_DETERMINISTIC_CADENCE,
+        store_min_interval_seconds=0.0,
+        user_cooldown_min_seconds=0.0,
+        user_cooldown_max_seconds=0.0,
+        max_concurrent_user_batches=5,
+        settings=Settings(
+            coupon_worker_control_url="http://127.0.0.1:8090",
+            coupon_worker_control_token_file=None,
+        ),
+    )
+
+    _run(orchestrator.run_batch(now=NOW))
+
+    assert seen_next_run_at == [NOW + timedelta(minutes=30)]  # já commitado
+
+
+def test_high_activity_notify_failure_never_alters_claim(
+    integration_database, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Requisito 4: falha/timeout do aviso nunca desfaz nem altera o claim
+    já persistido -- aqui simulado da forma mais dura possível
+    (`fake_notify` levanta), provando que `run_batch` nem propaga a
+    exceção (best-effort real) nem perde o claim já commitado."""
+    from app.core.config import Settings
+
+    amazon_id = _store_id(integration_database, "amazon")
+    user_id = _seed_user(integration_database.sessions, "caso-falha-notify")
+    mission_id = _seed_mission(
+        integration_database, user_id, label="caso-falha-notify", sources={amazon_id: NOW}
+    )
+    with integration_database.sessions.begin() as session:
+        session.add(
+            StoreActivityState(
+                store_id=amazon_id, scope_id=mission_id, high_activity_until=NOW + timedelta(hours=2)
+            )
+        )
+
+    async def failing_notify(settings, *, now):
+        raise RuntimeError("Coupon Worker indisponivel (simulado)")
+
+    monkeypatch.setattr(
+        "app.collection.orchestration.notify_coupon_worker_high_activity", failing_notify
+    )
+
+    provider = _CountingProvider("amazon")
+    orchestrator = CollectionOrchestrator(
+        integration_database.async_sessions,
+        CollectionAdapter(providers=[provider]),
+        ai_manager=_StubAIManager(),
+        cadence_config=_DETERMINISTIC_CADENCE,
+        store_min_interval_seconds=0.0,
+        user_cooldown_min_seconds=0.0,
+        user_cooldown_max_seconds=0.0,
+        max_concurrent_user_batches=5,
+        settings=Settings(
+            coupon_worker_control_url="http://127.0.0.1:8090",
+            coupon_worker_control_token_file=None,
+        ),
+    )
+
+    result = _run(orchestrator.run_batch(now=NOW))  # nunca levanta
+
+    assert result.legacy_claimed == 1
+    assert provider.calls == 1  # claim/coleta seguiram normalmente
+    amazon_source = _mission_source(integration_database.sessions, mission_id, amazon_id)
+    assert amazon_source.next_run_at == NOW + timedelta(minutes=30)  # persistido, intocado
+
+
+def test_high_activity_notify_not_duplicated_across_attempts_same_batch(
+    integration_database, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Requisito 6: duas stores da mesma Mission decidindo HIGH_ACTIVITY
+    no MESMO batch -- antes da correção, cada attempt chamava o aviso por
+    conta própria (2 chamadas redundantes); agora `claim_due_work` só
+    sinaliza o FATO e `run_batch` avisa no máximo uma vez por batch."""
+    from app.core.config import Settings
+
+    amazon_id = _store_id(integration_database, "amazon")
+    kabum_id = _store_id(integration_database, "kabum")
+    user_id = _seed_user(integration_database.sessions, "caso-dedup-notify")
+    mission_id = _seed_mission(
+        integration_database,
+        user_id,
+        label="caso-dedup-notify",
+        sources={amazon_id: NOW, kabum_id: NOW},
+    )
+    with integration_database.sessions.begin() as session:
+        session.add(
+            StoreActivityState(
+                store_id=amazon_id, scope_id=mission_id, high_activity_until=NOW + timedelta(hours=2)
+            )
+        )
+        session.add(
+            StoreActivityState(
+                store_id=kabum_id, scope_id=mission_id, high_activity_until=NOW + timedelta(hours=2)
+            )
+        )
+
+    notify = AsyncMock()
+    monkeypatch.setattr(
+        "app.collection.orchestration.notify_coupon_worker_high_activity", notify
+    )
+
+    settings_obj = Settings(
+        coupon_worker_control_url="http://127.0.0.1:8090",
+        coupon_worker_control_token_file=None,
+    )
+    amazon_provider = _CountingProvider("amazon")
+    kabum_provider = _CountingProvider("kabum")
+    orchestrator = CollectionOrchestrator(
+        integration_database.async_sessions,
+        CollectionAdapter(providers=[amazon_provider, kabum_provider]),
+        ai_manager=_StubAIManager(),
+        cadence_config=_DETERMINISTIC_CADENCE,
+        store_min_interval_seconds=0.0,
+        user_cooldown_min_seconds=0.0,
+        user_cooldown_max_seconds=0.0,
+        max_concurrent_user_batches=5,
+        settings=settings_obj,
+    )
+
+    _run(orchestrator.run_batch(now=NOW))
+
+    assert amazon_provider.calls == 1
+    assert kabum_provider.calls == 1
+    notify.assert_awaited_once_with(settings_obj, now=NOW)
+
+
 # ---------------------------------------------------------------------------
 # Caso 3: backoff (DEC-046) isolado por store -- não afeta outra store da
 # mesma Mission.
