@@ -283,6 +283,28 @@ export interface OfferListResponse {
   total: number
 }
 
+// TASK-121: listagem geral de cupons ativos (aba "Cupons") -- propósito
+// diferente de `AppliedCoupon` acima (que só existe quando um cupom REALMENTE
+// se aplica a uma Offer específica que o usuário já rastreia).
+export interface CouponStoreRef {
+  code: string
+  name: string
+}
+
+export interface Coupon {
+  id: string
+  store: CouponStoreRef
+  code: string | null
+  discount_kind: string | null
+  discount_value: string | null
+  minimum_purchase_amount: string | null
+  raw_rule_text: string | null
+  /** Texto cru do backend -- nunca uma data estruturada, não formatar
+   * como data. */
+  valid_until: string | null
+  scope_kind: string | null
+}
+
 export interface ProductSearchOffer {
   offer_id: string
   product_id: string

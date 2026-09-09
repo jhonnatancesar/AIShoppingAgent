@@ -1,30 +1,56 @@
+import { useEffect, useState } from 'react'
+import { ApiError } from '@/api/client'
+import { couponsApi } from '@/api/coupons'
+import type { Coupon } from '@/api/types'
+import { CouponCollection } from '@/components/CouponCard'
 import { PageHeader } from '@/components/PageHeader'
-import { CouponCollection, type CouponCardData } from '@/components/CouponCard'
+import { EmptyState, ErrorState, LoadingState } from '@/components/StatePanel'
+import { resolveCouponsPageState } from './couponCardMapping'
 
-const COUPON_TEMPLATES: CouponCardData[] = [
-  { id: 'amazon-template', storeCode: 'amazon', title: 'Espaço pronto para o próximo cupom', description: 'Código, benefício e validade aparecem aqui quando houver uma oferta ativa.', expiresLabel: 'Modelo visual · nenhum cupom ativo' },
-  { id: 'kabum-template', storeCode: 'kabum', title: 'Espaço pronto para o próximo cupom', description: 'Código, benefício e validade aparecem aqui quando houver uma oferta ativa.', expiresLabel: 'Modelo visual · nenhum cupom ativo' },
-  { id: 'magalu-template', storeCode: 'magalu', title: 'Espaço pronto para o próximo cupom', description: 'Código, benefício e validade aparecem aqui quando houver uma oferta ativa.', expiresLabel: 'Modelo visual · nenhum cupom ativo' },
-  { id: 'mercadolivre-template', storeCode: 'mercadolivre', title: 'Espaço pronto para o próximo cupom', description: 'Código, benefício e validade aparecem aqui quando houver uma oferta ativa.', expiresLabel: 'Modelo visual · nenhum cupom ativo' },
-  { id: 'pichau-template', storeCode: 'pichau', title: 'Espaço pronto para o próximo cupom', description: 'Código, benefício e validade aparecem aqui quando houver uma oferta ativa.', expiresLabel: 'Modelo visual · nenhum cupom ativo' },
-  { id: 'terabyte-template', storeCode: 'terabyte', title: 'Espaço pronto para o próximo cupom', description: 'Código, benefício e validade aparecem aqui quando houver uma oferta ativa.', expiresLabel: 'Modelo visual · nenhum cupom ativo' },
-]
-
-/** Subtask 11: só a área "Cupons" dentro do shell autenticado -- sem
- * backend, sem integração com o Coupon Collector (repositório separado).
- * Estado vazio honesto, nunca dado artificial apresentado como real. */
+/** TASK-121: aba "Cupons" ligada a dados reais -- cupons ativos que o
+ * Coupon Worker coletou, listados livremente (sem depender de o usuário
+ * já rastrear aquele produto). Propósito diferente do badge de oferta
+ * (`applied_coupon`, `DEC-129`), que só aparece quando um cupom REALMENTE
+ * se aplica a uma Offer específica. */
 export function CouponsPage() {
+  const [coupons, setCoupons] = useState<Coupon[] | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [retryToken, setRetryToken] = useState(0)
+
+  useEffect(() => {
+    let cancelled = false
+    couponsApi.list().then(
+      (response) => {
+        if (cancelled) return
+        setCoupons(response ?? [])
+        setError(null)
+      },
+      (loadError) => {
+        if (cancelled) return
+        setError(loadError instanceof ApiError ? loadError.message : 'Não foi possível carregar os cupons.')
+      },
+    )
+    return () => { cancelled = true }
+  }, [retryToken])
+
+  const state = resolveCouponsPageState(coupons, error)
+
   return (
     <section>
       <PageHeader
-        eyebrow="Modelos por loja"
+        eyebrow="Coletados automaticamente"
         title="Cupons"
-        description="Cada loja já tem um cartão com sua cor e sua marca. Com um cupom, o layout ganha destaque; com vários, vira uma grade responsiva."
+        description="Cupons ativos encontrados pelo Coupon Worker nas lojas parceiras, disponíveis pra qualquer produto -- não só pros que você já está acompanhando."
       />
-      <div className="mb-5 rounded-xl border border-primary/20 bg-primary/5 px-4 py-3 text-sm text-muted-foreground">
-        Estes são modelos de apresentação, não cupons ativos. Quando houver dados reais, o código e o botão de copiar entram automaticamente.
-      </div>
-      <CouponCollection coupons={COUPON_TEMPLATES} />
+      {state.kind === 'error' ? (
+        <ErrorState title="Cupons indisponíveis" description={state.message} onRetry={() => setRetryToken((token) => token + 1)} />
+      ) : state.kind === 'loading' ? (
+        <LoadingState label="Carregando cupons…" />
+      ) : state.kind === 'empty' ? (
+        <EmptyState title="Nenhum cupom ativo no momento" description="Assim que o Coupon Worker encontrar um cupom válido nas lojas parceiras, ele aparece aqui automaticamente." />
+      ) : (
+        <CouponCollection coupons={state.cards} />
+      )}
     </section>
   )
 }

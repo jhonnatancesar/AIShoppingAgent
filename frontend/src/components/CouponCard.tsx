@@ -1,14 +1,18 @@
-import { Check, Copy, Ticket } from 'lucide-react'
+import { Check, Copy, Store as StoreIcon, Ticket } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { StoreMark } from '@/components/StoreMark'
-import { getStoreVisual, type StoreCode } from '@/components/storeVisuals'
-
-export type CouponStoreCode = StoreCode
+import { getStoreVisual } from '@/components/storeVisuals'
 
 export interface CouponCardData {
   id: string
-  storeCode: CouponStoreCode
+  /** Código cru da loja (`Store.code` do backend) -- nunca restrito ao
+   * catálogo visual hardcoded (`storeVisuals.ts`); um cupom de loja ainda
+   * não mapeada visualmente continua chegando aqui, nunca é descartado. */
+  storeCode: string
+  /** `Store.name` real do backend -- nome visível quando a loja não tem
+   * identidade visual própria ainda. */
+  storeName: string
   title: string
   description?: string | null
   code?: string | null
@@ -17,14 +21,30 @@ export interface CouponCardData {
 
 /** Visual único para cupom destacado ou para uma coleção. O componente é
  * propositalmente só apresentacional: nenhum código, validade ou benefício é
- * inventado; tudo precisa chegar do futuro contrato real de cupons. */
+ * inventado; tudo precisa chegar do futuro contrato real de cupons.
+ *
+ * TASK-121: uma loja fora do catálogo visual hardcoded (`storeVisuals.ts`,
+ * hoje só as 6 lojas da V1) NUNCA faz o cupom sumir -- cai num visual
+ * neutro já existente no design system (`bg-muted`/`text-muted-foreground`,
+ * ícone genérico), com o nome/código REAIS da loja. Nenhuma cor, logo ou
+ * identidade de marca é inventada para ela. */
 export function CouponCard({ coupon, featured = false, copied = false, onCopy }: { coupon: CouponCardData; featured?: boolean; copied?: boolean; onCopy?: () => void }) {
-  const store = getStoreVisual(coupon.storeCode)!
+  const visual = getStoreVisual(coupon.storeCode)
+  const displayName = coupon.storeName || coupon.storeCode
   return (
     <article className={cn('relative overflow-hidden rounded-2xl border border-border bg-card shadow-card', featured && 'sm:grid sm:grid-cols-[11rem_1fr]')}>
-      <div className={cn('flex items-center gap-3 border-b border-border/70 p-5 sm:border-b-0', featured && 'sm:flex-col sm:items-start sm:justify-between sm:border-r sm:p-6')} style={{ background: `color-mix(in srgb, ${store.background} 11%, var(--card))` }}>
-        <StoreMark store={coupon.storeCode} className="size-11 rounded-xl text-base" />
-        <div><p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">Cupom</p><p className="font-bold" style={{ color: store.accent }}>{store.name}</p></div>
+      <div
+        className={cn('flex items-center gap-3 border-b border-border/70 p-5 sm:border-b-0', featured && 'sm:flex-col sm:items-start sm:justify-between sm:border-r sm:p-6')}
+        style={{ background: visual ? `color-mix(in srgb, ${visual.background} 11%, var(--card))` : 'var(--muted)' }}
+      >
+        {visual ? (
+          <StoreMark store={coupon.storeCode} className="size-11 rounded-xl text-base" />
+        ) : (
+          <span aria-hidden="true" className="grid size-11 shrink-0 place-items-center rounded-xl bg-muted text-muted-foreground ring-1 ring-border">
+            <StoreIcon className="size-5" />
+          </span>
+        )}
+        <div><p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">Cupom</p><p className="font-bold" style={visual ? { color: visual.accent } : undefined}>{displayName}</p></div>
       </div>
       <div className="flex min-w-0 flex-col gap-4 p-5 sm:p-6">
         <div className="min-w-0 flex-1">

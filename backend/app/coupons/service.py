@@ -9,8 +9,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.coupons.models import Coupon, CouponOfferLink
+from app.stores.models import Store
 
 _ACTIVE = "active"
+_LIST_ACTIVE_COUPONS_LIMIT = 200
 
 
 async def get_coupons_for_offer(
@@ -82,3 +84,28 @@ async def get_unlinked_coupons_for_store(
         )
     )
     return tuple(rows)
+
+
+async def list_active_coupons(
+    session: AsyncSession, *, limit: int = _LIST_ACTIVE_COUPONS_LIMIT
+) -> tuple[tuple[Coupon, Store], ...]:
+    """TASK-121: listagem geral de cupons ativos pra aba "Cupons" --
+    propósito diferente de `get_active_coupons_by_store`/
+    `get_candidate_coupons_for_offer` (que existem pra alimentar a
+    avaliação de aplicabilidade cupom<->Offer, `app.coupons.pricing`).
+    Aqui não há Offer nem missão nenhuma envolvida -- só "o que o Coupon
+    Worker coletou e ainda está ativo", pra navegação livre do usuário.
+
+    `Coupon` não tem `relationship()` pra `Store` (só a FK crua) -- join
+    explícito numa única query evita lazy-load implícito (que quebraria
+    de qualquer forma em sessão async fora de um contexto síncrono) e
+    N+1 (uma query por cupom pra buscar o nome da loja). `limit` é um
+    teto defensivo, não paginação -- nenhum cursor/offset é exposto."""
+    rows = await session.execute(
+        select(Coupon, Store)
+        .join(Store, Store.id == Coupon.store_id)
+        .where(Coupon.status == _ACTIVE)
+        .order_by(Coupon.last_seen_at.desc())
+        .limit(limit)
+    )
+    return tuple(rows.all())

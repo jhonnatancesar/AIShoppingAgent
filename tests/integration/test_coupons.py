@@ -3,23 +3,26 @@ aplicabilidade, F2/F3, alerta, Telegram ou frontend (decisão de
 arquitetura de 2026-09-06)."""
 
 import asyncio
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from uuid import uuid4
 
 import pytest
+from app.core.config import Settings
 from app.coupons.models import Coupon, CouponOfferLink
 from app.coupons.pricing import best_applicable_coupon
 from app.coupons.service import (
     get_candidate_coupons_for_offer,
     get_coupons_for_offer,
     get_unlinked_coupons_for_store,
+    list_active_coupons,
 )
 from app.offers.models import Offer
 from app.products.identity import IDENTITY_VERSION, resolve_product_variant
 from app.products.models import Product
 from app.stores.models import Store
-from sqlalchemy import func, select
+from app.webapp.coupons_router import list_coupons
+from sqlalchemy import event, func, select
 from sqlalchemy.exc import IntegrityError
 
 pytestmark = pytest.mark.integration
@@ -75,18 +78,27 @@ def _coupon(
     status: str = "active",
     scope_kind: str | None = None,
     scope_reference: str | None = None,
+    discount_kind: str | None = "fixed_amount",
+    discount_value: Decimal | None = Decimal("20.00"),
+    minimum_purchase_amount: Decimal | None = None,
+    raw_rule_text: str | None = None,
+    valid_until: str | None = None,
+    last_seen_at: datetime | None = None,
 ) -> Coupon:
     with sessions.begin() as session:
         coupon = Coupon(
             store_id=store_id,
             code=code,
-            discount_kind="fixed_amount",
-            discount_value=Decimal("20.00"),
+            discount_kind=discount_kind,
+            discount_value=discount_value,
+            minimum_purchase_amount=minimum_purchase_amount,
+            raw_rule_text=raw_rule_text,
+            valid_until=valid_until,
             evidence=evidence,
             status=status,
             scope_kind=scope_kind,
             scope_reference=scope_reference,
-            last_seen_at=NOW,
+            last_seen_at=last_seen_at or NOW,
         )
         session.add(coupon)
         session.flush()
@@ -353,3 +365,240 @@ def test_best_applicable_coupon_end_to_end_product_scope_requires_exact_url(
     # Mesma Store, mesmo Product, URL DIFERENTE -- nunca aplica por
     # semelhança de nome/path, só igualdade exata pós-normalização.
     assert asyncio.run(_fetch(other_offer.id)) is None
+
+
+# ---------------------------------------------------------------------------
+# TASK-121: listagem geral de cupons ativos (aba "Cupons") -- propósito
+# diferente de tudo acima (aplicabilidade cupom<->Offer). `list_active_
+# coupons` (service) e `list_coupons` (endpoint) contra PostgreSQL real.
+# ---------------------------------------------------------------------------
+
+
+def test_list_active_coupons_only_returns_active(integration_database) -> None:
+    store = _store(integration_database.sessions, code="kabum")
+    active = _coupon(integration_database.sessions, store_id=store.id, code="ATIVO1")
+    _coupon(integration_database.sessions, store_id=store.id, code="EXPIRADO1", status="expired")
+
+    async def _fetch():
+        async with integration_database.async_sessions() as session:
+            return await list_active_coupons(session)
+
+    result = asyncio.run(_fetch())
+    ids = {coupon.id for coupon, _store_row in result}
+    assert active.id in ids
+    assert not any(coupon.code == "EXPIRADO1" for coupon, _store_row in result)
+
+
+def test_list_active_coupons_orders_by_last_seen_at_desc(integration_database) -> None:
+    store = _store(integration_database.sessions, code="amazon")
+    older = _coupon(
+        integration_database.sessions,
+        store_id=store.id,
+        code="MAIS_ANTIGO",
+        last_seen_at=NOW - timedelta(hours=2),
+    )
+    newer = _coupon(
+        integration_database.sessions,
+        store_id=store.id,
+        code="MAIS_RECENTE",
+        last_seen_at=NOW,
+    )
+
+    async def _fetch():
+        async with integration_database.async_sessions() as session:
+            return await list_active_coupons(session)
+
+    result = asyncio.run(_fetch())
+    ids_in_order = [coupon.id for coupon, _store_row in result]
+    assert ids_in_order.index(newer.id) < ids_in_order.index(older.id)
+
+
+def test_list_active_coupons_respects_defensive_limit(integration_database) -> None:
+    store = _store(integration_database.sessions, code="magalu")
+    for i in range(5):
+        _coupon(
+            integration_database.sessions,
+            store_id=store.id,
+            code=f"LIMITE{i}",
+            evidence=f"Evidência única {i}",
+            last_seen_at=NOW - timedelta(minutes=i),
+        )
+
+    async def _fetch():
+        async with integration_database.async_sessions() as session:
+            return await list_active_coupons(session, limit=3)
+
+    result = asyncio.run(_fetch())
+    assert len(result) == 3
+    # Respeitando a ordenação -- os 3 mais recentes, nunca os 3 primeiros
+    # inseridos por acaso.
+    codes_returned = [coupon.code for coupon, _store_row in result]
+    assert codes_returned == ["LIMITE0", "LIMITE1", "LIMITE2"]
+
+
+def test_list_active_coupons_single_query_no_n_plus_one(integration_database) -> None:
+    """`Coupon` não tem `relationship()` pra `Store` -- join explícito
+    numa única query. Prova real via contagem de SELECTs executados, não
+    só leitura de código."""
+    store = _store(integration_database.sessions, code="pichau")
+    for i in range(4):
+        _coupon(
+            integration_database.sessions,
+            store_id=store.id,
+            code=f"NPLUS1_{i}",
+            evidence=f"Evidência N+1 {i}",
+        )
+
+    counter = {"n": 0}
+
+    def before_cursor_execute(*_args, **_kwargs):
+        counter["n"] += 1
+
+    engine = integration_database.async_engine.sync_engine
+    event.listen(engine, "before_cursor_execute", before_cursor_execute)
+    try:
+        async def _fetch():
+            async with integration_database.async_sessions() as session:
+                return await list_active_coupons(session)
+
+        result = asyncio.run(_fetch())
+    finally:
+        event.remove(engine, "before_cursor_execute", before_cursor_execute)
+
+    assert len(result) == 4
+    assert counter["n"] == 1  # uma única query, nunca uma por cupom
+
+
+def test_list_active_coupons_preserves_absent_fields_as_none(integration_database) -> None:
+    """Nenhum campo opcional ausente é inventado -- `None` chega como
+    `None` até o fim, nunca um valor default fabricado."""
+    store = _store(integration_database.sessions, code="terabyte")
+    coupon = _coupon(
+        integration_database.sessions,
+        store_id=store.id,
+        code="SEM_DESCONTO_ESTRUTURADO",
+        discount_kind=None,
+        discount_value=None,
+        minimum_purchase_amount=None,
+        raw_rule_text=None,
+        valid_until=None,
+        scope_kind=None,
+    )
+
+    async def _fetch():
+        async with integration_database.async_sessions() as session:
+            return await list_active_coupons(session)
+
+    result = asyncio.run(_fetch())
+    match = next(c for c, _store_row in result if c.id == coupon.id)
+    assert match.discount_kind is None
+    assert match.discount_value is None
+    assert match.minimum_purchase_amount is None
+    assert match.raw_rule_text is None
+    assert match.valid_until is None
+    assert match.scope_kind is None
+
+
+def test_list_active_coupons_returns_store_explicitly(integration_database) -> None:
+    store = _store(integration_database.sessions, code="mercadolivre")
+    coupon = _coupon(integration_database.sessions, store_id=store.id, code="LOJA_EXPLICITA")
+
+    async def _fetch():
+        async with integration_database.async_sessions() as session:
+            return await list_active_coupons(session)
+
+    result = asyncio.run(_fetch())
+    match = next((c, s) for c, s in result if c.id == coupon.id)
+    _matched_coupon, matched_store = match
+    assert matched_store.id == store.id
+    assert matched_store.code == "mercadolivre"
+    assert matched_store.name == store.name
+
+
+# ---------------------------------------------------------------------------
+# Endpoint (`webapp.coupons_router.list_coupons`) chamado diretamente como
+# função async real -- os parâmetros `Depends(...)` são só defaults do
+# FastAPI, nunca impedem a chamada direta com valores explícitos. `user`
+# não é usado no corpo da função (só gate de autenticação via
+# `require_web_session`, já testado em outro lugar) -- passar `None` é
+# seguro e não mascara nenhum comportamento real do endpoint.
+# ---------------------------------------------------------------------------
+
+
+def test_list_coupons_endpoint_returns_active_with_real_fields(integration_database) -> None:
+    store = _store(integration_database.sessions, code="kabum")
+    coupon = _coupon(
+        integration_database.sessions,
+        store_id=store.id,
+        code="ENDPOINT_REAL",
+        discount_kind="percentage",
+        discount_value=Decimal("10.00"),
+        minimum_purchase_amount=Decimal("50.00"),
+        raw_rule_text="10% OFF em toda a loja",
+        valid_until="31/12/2026",
+        scope_kind="store_wide",
+    )
+    _coupon(
+        integration_database.sessions, store_id=store.id, code="ENDPOINT_EXPIRADO", status="expired"
+    )
+
+    async def _fetch():
+        async with integration_database.async_sessions() as session:
+            return await list_coupons(
+                user=None,  # type: ignore[arg-type]
+                session=session,
+                settings=Settings(coupons_enabled=True),
+            )
+
+    result = asyncio.run(_fetch())
+    ids = {out.id for out in result}
+    assert coupon.id in ids
+    assert not any(out.code == "ENDPOINT_EXPIRADO" for out in result)
+
+    match = next(out for out in result if out.id == coupon.id)
+    assert match.store.code == "kabum"
+    assert match.store.name == store.name
+    assert match.code == "ENDPOINT_REAL"
+    assert match.discount_kind == "percentage"
+    assert match.discount_value == Decimal("10.00")
+    assert match.minimum_purchase_amount == Decimal("50.00")
+    assert match.raw_rule_text == "10% OFF em toda a loja"
+    assert match.valid_until == "31/12/2026"  # texto cru, nunca parseado
+    assert match.scope_kind == "store_wide"
+
+
+def test_list_coupons_endpoint_returns_empty_code_as_none(integration_database) -> None:
+    """`Coupon.code` é `""` (nunca `NULL`) quando não há código próprio --
+    o endpoint normaliza pra `None`, nunca expõe string vazia."""
+    store = _store(integration_database.sessions, code="amazon")
+    coupon = _coupon(integration_database.sessions, store_id=store.id, code="")
+
+    async def _fetch():
+        async with integration_database.async_sessions() as session:
+            return await list_coupons(
+                user=None,  # type: ignore[arg-type]
+                session=session,
+                settings=Settings(coupons_enabled=True),
+            )
+
+    result = asyncio.run(_fetch())
+    match = next(out for out in result if out.id == coupon.id)
+    assert match.code is None
+
+
+def test_list_coupons_endpoint_flag_disabled_returns_empty_even_with_data(
+    integration_database,
+) -> None:
+    store = _store(integration_database.sessions, code="magalu")
+    _coupon(integration_database.sessions, store_id=store.id, code="FLAG_DESLIGADA")
+
+    async def _fetch():
+        async with integration_database.async_sessions() as session:
+            return await list_coupons(
+                user=None,  # type: ignore[arg-type]
+                session=session,
+                settings=Settings(coupons_enabled=False),
+            )
+
+    result = asyncio.run(_fetch())
+    assert result == []

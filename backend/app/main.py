@@ -16,6 +16,7 @@ from .telegram.router import router as telegram_router
 from .webapp.account_router import router as webapp_account_router
 from .webapp.admin_router import router as webapp_admin_router
 from .webapp.auth_router import router as webapp_auth_router
+from .webapp.coupons_router import router as webapp_coupons_router
 from .webapp.feedback_router import router as webapp_feedback_router
 from .webapp.missions_router import router as webapp_missions_router
 from .webapp.offers_router import router as webapp_offers_router
@@ -49,6 +50,7 @@ app.include_router(webapp_router)
 app.include_router(webapp_account_router)
 app.include_router(webapp_admin_router)
 app.include_router(webapp_auth_router)
+app.include_router(webapp_coupons_router)
 app.include_router(webapp_feedback_router)
 app.include_router(webapp_missions_router)
 app.include_router(webapp_offers_router)
