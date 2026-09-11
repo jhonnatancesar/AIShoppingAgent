@@ -1,5 +1,55 @@
 # Decision Log
 
+## DEC-133 — Login do Mercado Livre nunca foi feito na instalação real de PROD do Coupon Worker
+
+- **Data:** 2026-09-10.
+- **Classificação:** Lacuna operacional real, achada numa rodada de
+  auditoria/correção do sistema de cupons (mesma rodada de `DEC-106` no
+  repositório do Coupon Worker) -- confirmada com dado real do Postgres
+  de PROD, não suposição.
+- **Contexto**: `DEC-106` (`docs/internal/decision-log.md`, sessão de
+  2026-08-30, repositório `AIShoppingAgent-cupom`) já documentava que a
+  área `/cupons` do Mercado Livre (`div.coupon-card`, ~73 cards reais)
+  exige sessão autenticada, e que `login_manual.py` foi usado numa
+  investigação em DEV com uma conta de pesquisa dedicada (nunca a
+  pessoal) pra estabelecer essa sessão. O handoff de deploy de PROD
+  (`docs/operations/prod-deployment-handoff.md`, seção 9, "Coupon
+  Worker -- primeira instalação em PROD") **nunca incluiu esse passo**
+  -- os 8 passos documentados cobriam diretório, repo/tag, instalação,
+  `.env`/`COUPONS_POSTGRES_DSN`, validação do `CouponStore`, agendamento
+  e start/stop/health, mas nenhum deles mandava rodar `login_manual.py`
+  na máquina de PROD antes de agendar a tarefa.
+- **Achado real (verificação direta no Postgres de PROD, 2026-09-10)**:
+  ```sql
+  SELECT count(*) FROM coupons c JOIN stores s ON s.id = c.store_id
+  WHERE s.code='mercadolivre' AND c.source_url LIKE '%/cupons%';
+  -- 0 linhas, desde sempre
+  ```
+  Ao mesmo tempo, as fontes que NÃO exigem login (carrossel da home,
+  banner `campanha-liquida`, aprofundamento de produto) funcionam
+  normalmente em PROD -- 454 cupons reais do Mercado Livre persistidos,
+  7 ativos no momento da checagem, todos com `last_seen_at` do próprio
+  dia. Ou seja: o worker de PROD está saudável e coletando Mercado Livre
+  de verdade, só a área `/cupons` (que precisa de login) nunca foi
+  alcançada, porque o perfil dedicado do Edge em PROD nunca recebeu o
+  login manual.
+- **Correção**: `docs/operations/prod-deployment-handoff.md` seção 9
+  ganhou um novo passo 6 (antes do agendamento) documentando
+  explicitamente `login_manual.py` + conta de pesquisa dedicada, com a
+  mesma ressalva de segurança do `DEC-106` (nunca a conta pessoal) e um
+  aviso pra nunca abrir um segundo Edge contra o mesmo perfil enquanto a
+  tarefa agendada estiver rodando (risco de corromper o lock do
+  perfil).
+- **Ação pendente, depende do usuário**: o login em si ainda não foi
+  feito na máquina de PROD nesta sessão -- precisa parar a tarefa
+  agendada (`manage_coupon_worker_task.ps1 -Action Stop`), rodar
+  `login_manual.py` na instalação real (`C:\App\AIShoppingAgentCupom`)
+  pra o usuário logar manualmente com a conta de pesquisa, confirmar a
+  sessão, e reiniciar a tarefa (`-Action Start`). Não executado
+  unilateralmente por ser uma ação que para um serviço de produção e
+  exige a credencial da própria pessoa -- nunca uma ação que este
+  assistente faça sozinho sem autorização explícita passo a passo.
+
 ## DEC-132 — Notificação HIGH_ACTIVITY ao Coupon Worker sai de dentro da transação de claim
 
 - **Data:** 2026-09-09.

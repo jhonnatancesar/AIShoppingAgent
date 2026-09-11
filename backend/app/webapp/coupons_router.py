@@ -6,6 +6,7 @@ missão nenhuma envolvida, é a aba "Cupons" navegável livremente, com o
 que o Coupon Worker coletou e ainda está ativo. Nenhuma regra de
 aplicabilidade cupom<->Offer é avaliada neste endpoint."""
 
+from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
 
@@ -39,6 +40,13 @@ class CouponOut(BaseModel):
     """Texto cru do worker -- nunca parseado em data (ver
     `app.coupons.models.Coupon.valid_until`)."""
     scope_kind: str | None
+    source_url: str | None
+    """URL real de onde o worker coletou a evidência -- repassada crua;
+    validação de esquema (http/https) e decisão de virar link ficam
+    inteiramente no frontend (TASK-121, achado da revisão de cupons)."""
+    last_seen_at: datetime
+    """Só prova que o worker viu este cupom recentemente -- nunca prova
+    validade (ver `valid_until`, texto separado, informado pela loja)."""
 
 
 @router.get(
@@ -65,6 +73,8 @@ async def list_coupons(
             raw_rule_text=coupon.raw_rule_text,
             valid_until=coupon.valid_until,
             scope_kind=coupon.scope_kind,
+            source_url=coupon.source_url or None,
+            last_seen_at=coupon.last_seen_at,
         )
         for coupon, store in rows
     ]

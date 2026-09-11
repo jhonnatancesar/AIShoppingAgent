@@ -769,13 +769,40 @@ critério de quem está executando — siga exatamente estes passos.
    "Coupon store: SqliteCouponStore — TUDO local", **pare**:
    `COUPONS_POSTGRES_DSN` não foi lida corretamente, não prossiga para o
    agendamento com esse estado.
-6. **Agendar**: `.\manage_coupon_worker_task.ps1 -Action Install -TaskUser "DOMINIO\Usuario"`
+6. **Login manual do Mercado Livre — OBRIGATÓRIO antes de agendar, passo
+   que faltava neste handoff** (achado real, 2026-09-10: a área `/cupons`
+   do Mercado Livre exige sessão autenticada — sem ela, redireciona pro
+   login e o worker nunca extrai nada de lá; confirmado que isso
+   aconteceu na instalação real de PROD, `coupons` no Postgres tinha
+   zero linhas com `source_url` contendo `/cupons`, mesmo com o carrossel
+   da home/banner de campanha/aprofundamento de produto funcionando
+   normalmente — essas fontes NÃO exigem login, só a área `/cupons`
+   exige). Rode **antes** do passo 7 (agendar), com a tarefa agendada
+   ainda **não** criada (ou parada, se já existir — nunca abra um
+   segundo Edge contra o mesmo perfil enquanto o worker estiver rodando,
+   arrisca corromper o lock do perfil):
+   1. No mesmo diretório da instalação: `python login_manual.py` (abre
+      o Edge real no perfil dedicado do worker, numa aba do Mercado
+      Livre).
+   2. Logue manualmente com uma **conta de pesquisa dedicada — nunca a
+      conta pessoal do usuário** (decisão já tomada e registrada em
+      `DEC-106`, `docs/internal/decision-log.md`, mesmo repositório do
+      Coupon Worker). Este script nunca digita nenhuma credencial — só
+      abre a janela, quem loga é a pessoa executando o deploy.
+   3. Confirme visualmente que a sessão ficou logada, feche a janela. A
+      sessão (cookies) fica salva no perfil em disco
+      (`coupons/edge_transport.py:default_edge_profile_dir()` —
+      `%TEMP%\aishopping-coupon-edge-profile` do usuário que executa o
+      worker) e é reaproveitada automaticamente por toda rodada futura
+      — não precisa repetir isso a cada execução, só numa instalação
+      nova ou se a sessão expirar/for revogada.
+7. **Agendar**: `.\manage_coupon_worker_task.ps1 -Action Install -TaskUser "DOMINIO\Usuario"`
    (cria a tarefa agendada do Windows; precisa de uma sessão com
    autologon, mesma exigência do `collection_worker` nativo do GG
    Oferta).
-7. **Start/stop/status**:
+8. **Start/stop/status**:
    `.\manage_coupon_worker_task.ps1 -Action Start|Stop|Status`.
-8. **Health/logs**: endpoint de controle local (`config.json`,
+9. **Health/logs**: endpoint de controle local (`config.json`,
    autenticado por `AUTH_TOKEN`) para status; logs em texto no diretório
    de instalação (`worker.py` loga cada rodada, incluindo qual
    `CouponStore` está ativo — reconfirme isso periodicamente, não só na

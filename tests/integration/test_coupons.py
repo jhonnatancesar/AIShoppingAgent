@@ -84,6 +84,7 @@ def _coupon(
     raw_rule_text: str | None = None,
     valid_until: str | None = None,
     last_seen_at: datetime | None = None,
+    source_url: str | None = None,
 ) -> Coupon:
     with sessions.begin() as session:
         coupon = Coupon(
@@ -99,6 +100,7 @@ def _coupon(
             scope_kind=scope_kind,
             scope_reference=scope_reference,
             last_seen_at=last_seen_at or NOW,
+            source_url=source_url,
         )
         session.add(coupon)
         session.flush()
@@ -537,6 +539,7 @@ def test_list_coupons_endpoint_returns_active_with_real_fields(integration_datab
         raw_rule_text="10% OFF em toda a loja",
         valid_until="31/12/2026",
         scope_kind="store_wide",
+        source_url="https://www.kabum.com.br/cupons",
     )
     _coupon(
         integration_database.sessions, store_id=store.id, code="ENDPOINT_EXPIRADO", status="expired"
@@ -565,6 +568,8 @@ def test_list_coupons_endpoint_returns_active_with_real_fields(integration_datab
     assert match.raw_rule_text == "10% OFF em toda a loja"
     assert match.valid_until == "31/12/2026"  # texto cru, nunca parseado
     assert match.scope_kind == "store_wide"
+    assert match.source_url == "https://www.kabum.com.br/cupons"
+    assert match.last_seen_at is not None
 
 
 def test_list_coupons_endpoint_returns_empty_code_as_none(integration_database) -> None:
@@ -584,6 +589,25 @@ def test_list_coupons_endpoint_returns_empty_code_as_none(integration_database) 
     result = asyncio.run(_fetch())
     match = next(out for out in result if out.id == coupon.id)
     assert match.code is None
+
+
+def test_list_coupons_endpoint_source_url_absent_stays_none(integration_database) -> None:
+    """Sem `source_url` capturado, o campo chega `None` na API -- nunca
+    uma URL fabricada a partir do nome da loja/código/slug."""
+    store = _store(integration_database.sessions, code="magalu")
+    coupon = _coupon(integration_database.sessions, store_id=store.id, code="", source_url=None)
+
+    async def _fetch():
+        async with integration_database.async_sessions() as session:
+            return await list_coupons(
+                user=None,  # type: ignore[arg-type]
+                session=session,
+                settings=Settings(coupons_enabled=True),
+            )
+
+    result = asyncio.run(_fetch())
+    match = next(out for out in result if out.id == coupon.id)
+    assert match.source_url is None
 
 
 def test_list_coupons_endpoint_flag_disabled_returns_empty_even_with_data(

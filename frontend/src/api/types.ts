@@ -303,6 +303,8 @@ export interface Coupon {
    * como data. */
   valid_until: string | null
   scope_kind: string | null
+  source_url: string | null
+  last_seen_at: string
 }
 
 export interface ProductSearchOffer {
