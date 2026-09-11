@@ -28,6 +28,22 @@ logger = logging.getLogger("app.webapp")
 # carregamento da casca até o clique em "Entrar" -- não é a sessão em si.
 _CSRF_ANONYMOUS_MAX_AGE_SECONDS = 3600
 
+_HASHED_ASSET_CACHE_HEADERS = {
+    # Achado real (2026-09-11): o deploy da v1.3.13 ficou de pé no
+    # servidor, mas usuarios com uma visita anterior continuaram vendo a
+    # casca antiga -- FileResponse nao manda Cache-Control nenhum, entao
+    # o navegador aplica heuristica propria (RFC 7234) e reaproveita o
+    # index.html velho sem revalidar. Só `/assets/*` (nome com hash de
+    # conteudo, gerado pelo Vite -- ex. `index-D0IK8e0t.js`) pode cachear
+    # longo, porque cada build muda o nome do arquivo. `index.html` (essa
+    # casca aponta pro hash certo) e os estaticos SEM hash copiados de
+    # `frontend/public/` (favicon, logos, `store-logos/`) nunca podem
+    # levar `immutable`, senao reproduzem o mesmo bug pra eles.
+    "Cache-Control": "public, max-age=31536000, immutable",
+}
+_UNHASHED_STATIC_CACHE_HEADERS = {"Cache-Control": "no-cache"}
+_INDEX_CACHE_HEADERS = {"Cache-Control": "no-cache"}
+
 _SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
@@ -127,7 +143,15 @@ def register_spa(app: FastAPI, settings: Settings) -> None:
             # Arquivo real do build (`/assets/*.js`, `/favicon.svg`, ...) --
             # não é uma "rota" da SPA, é um asset estático; servido
             # independente da whitelist de rotas abaixo.
-            return FileResponse(candidate, headers=_SECURITY_HEADERS)
+            is_hashed_asset = full_path.startswith("assets/")
+            cache_headers = (
+                _HASHED_ASSET_CACHE_HEADERS
+                if is_hashed_asset
+                else _UNHASHED_STATIC_CACHE_HEADERS
+            )
+            return FileResponse(
+                candidate, headers={**_SECURITY_HEADERS, **cache_headers}
+            )
         if not _is_spa_owned_path(full_path):
             # Nenhuma rota real de backend bateu (routers de API são
             # registrados antes deste catch-all e sempre têm prioridade) e
@@ -139,7 +163,9 @@ def register_spa(app: FastAPI, settings: Settings) -> None:
             response = RedirectResponse("/login", headers=_SECURITY_HEADERS)
             _ensure_csrf_cookie(request, response, settings=settings)
             return response
-        response = FileResponse(index_file, headers=_SECURITY_HEADERS)
+        response = FileResponse(
+            index_file, headers={**_SECURITY_HEADERS, **_INDEX_CACHE_HEADERS}
+        )
         _ensure_csrf_cookie(request, response, settings=settings)
         return response
 
