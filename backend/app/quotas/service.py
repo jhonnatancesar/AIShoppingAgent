@@ -288,12 +288,26 @@ async def check_mission_activation_quota_async(
 
 
 async def check_and_reserve_search_quota_async(
-    session: AsyncSession, *, user: User, settings: Settings, now: datetime
-) -> None:
+    session: AsyncSession,
+    *,
+    user: User,
+    settings: Settings,
+    now: datetime,
+    query_text: str,
+) -> SearchReceipt:
     """Só reserva (grava `SearchReceipt`) depois de confirmar que a
-    pesquisa cabe na cota do dia -- pesquisa recusada nunca é contada."""
+    pesquisa cabe na cota do dia -- pesquisa recusada nunca é contada.
+
+    `query_text` (Frente 5, 2026-09-12): grava o texto real pesquisado --
+    é a fonte de verdade de "pesquisa efetivamente realizada" que a
+    view DEV consome. Devolve o `SearchReceipt` criado (com `.id` já
+    disponível após o `flush`) para o chamador ligar os produtos
+    reconhecidos que a pesquisa retornou (`SearchReceiptProduct`)."""
     limits = resolve_quota_limits(user, settings)
     usage = await get_quota_usage_async(session, user.id, now=now)
     if usage.daily_searches + 1 > limits.max_daily_searches:
         raise _daily_searches_error(usage, limits)
-    session.add(SearchReceipt(user_id=user.id))
+    receipt = SearchReceipt(user_id=user.id, query_text=query_text)
+    session.add(receipt)
+    await session.flush()
+    return receipt

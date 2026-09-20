@@ -36,6 +36,11 @@ class Permission(StrEnum):
     ADMIN_PANEL_ACCESS = "admin_panel.access"
     """TASK-091 (item 1 da V1.2): acesso à área `/admin` da aplicação web
     -- DEV/ADMIN exclusivo, nunca USER (`DEC-073`)."""
+    DEV_PANEL_ACCESS = "dev_panel.access"
+    """Acesso a áreas exclusivas de DEV (ex.: `/app/dev/*`, fora da árvore
+    `/admin`) -- diferente de `ADMIN_PANEL_ACCESS`, que ADMIN também tem;
+    esta é só do papel DEV. Usada pelos históricos de pesquisas;
+    "Todas as pesquisas" permite consultar registros de todos os usuários."""
     FEEDBACK_SUBMIT = "feedback.submit"
     """Enviar bug/suporte/sugestão de loja, de qualquer usuário
     autenticado (subtask 7 da auditoria GG Oferta). Listar/mudar status é
@@ -88,7 +93,10 @@ _ADMIN_PERMISSIONS = _USER_PERMISSIONS | {
     Permission.AI_PROFILE_ADMIN,
     Permission.ADMIN_PANEL_ACCESS,
 }
-_DEV_PERMISSIONS = _ADMIN_PERMISSIONS | {Permission.AI_PROFILE_DEV}
+_DEV_PERMISSIONS = _ADMIN_PERMISSIONS | {
+    Permission.AI_PROFILE_DEV,
+    Permission.DEV_PANEL_ACCESS,
+}
 
 ROLE_PERMISSIONS: dict[UserRole, frozenset[Permission]] = {
     UserRole.USER: _USER_PERMISSIONS,

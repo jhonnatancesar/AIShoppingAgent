@@ -225,14 +225,26 @@ def test_check_and_reserve_search_quota_async_reserves_when_under_limit() -> Non
     session = MagicMock()
     session.scalar = AsyncMock(side_effect=[0, 0, 10])  # 10/30 pesquisas hoje
     session.add = MagicMock()
+    session.flush = AsyncMock()
 
-    asyncio.run(
+    receipt = asyncio.run(
         check_and_reserve_search_quota_async(
-            session, user=_user(), settings=_settings(), now=NOW
+            session, user=_user(), settings=_settings(), now=NOW, query_text="rtx 4060"
         )
     )
 
     session.add.assert_called_once()
+    added = session.add.call_args.args[0]
+    assert added.query_text == "rtx 4060", (
+        "o texto real pesquisado precisa ser gravado no SearchReceipt -- "
+        "é a fonte de verdade de 'pesquisa efetivamente realizada' que a "
+        "view DEV consome"
+    )
+    session.flush.assert_awaited_once()
+    assert receipt is added, (
+        "a função precisa devolver o SearchReceipt criado, para o "
+        "chamador ligar os produtos reconhecidos que a pesquisa retornou"
+    )
 
 
 def test_check_and_reserve_search_quota_async_rejects_and_does_not_reserve() -> None:
@@ -243,7 +255,11 @@ def test_check_and_reserve_search_quota_async_rejects_and_does_not_reserve() -> 
     with pytest.raises(QuotaExceededError) as excinfo:
         asyncio.run(
             check_and_reserve_search_quota_async(
-                session, user=_user(), settings=_settings(), now=NOW
+                session,
+                user=_user(),
+                settings=_settings(),
+                now=NOW,
+                query_text="rtx 4060",
             )
         )
 

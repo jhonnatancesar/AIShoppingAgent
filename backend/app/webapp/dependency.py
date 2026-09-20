@@ -91,3 +91,23 @@ def require_admin_web_session(
             message="Você não tem acesso a esta área.",
         ) from error
     return user
+
+
+def require_dev_web_session(
+    user: User = Depends(require_web_session),
+    session: Session = Depends(get_session),
+) -> User:
+    """Exige `Permission.DEV_PANEL_ACCESS` -- exclusivo do papel DEV,
+    diferente de `require_admin_web_session` (que ADMIN também passa).
+    Mesma composição sessão -> CSRF -> autorização de
+    `require_admin_web_session`, só trocando a permissão verificada."""
+    try:
+        authorize(session, user, Permission.DEV_PANEL_ACCESS)
+    except AuthorizationDenied as error:
+        session.commit()
+        raise ApiError(
+            status_code=403,
+            code="dev_access_denied",
+            message="Você não tem acesso a esta área.",
+        ) from error
+    return user

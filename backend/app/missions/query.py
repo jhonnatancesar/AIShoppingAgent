@@ -212,6 +212,16 @@ async def count_missions_for_user_by_status(
     return await session.scalar(statement) or 0
 
 
+# Frente 5 (correção de escopo, 2026-09-12): as funções de "pesquisas em
+# alta"/"todas as pesquisas" que viviam aqui foram REMOVIDAS -- agregar
+# `MissionCriteria.search_query` de missões `ACTIVE` não representava
+# pesquisas de fato (perdia toda pesquisa em `/app/search` que nunca
+# virou missão, e expunha texto livre sem filtro de conteúdo sensível).
+# A fonte de verdade agora é `SearchReceipt`/`SearchReceiptProduct`
+# (`app.quotas.query`), ligada aos produtos RECONHECIDOS que cada
+# pesquisa de fato retornou -- ver `app.webapp.search_router`.
+
+
 @dataclass(frozen=True, slots=True)
 class MissionListExtras:
     """Dados adicionais da Lista de Missões da web (Subtask 14) --
@@ -362,21 +372,21 @@ async def get_mission_detail_for_user(
     if criteria is not None and criteria.requested_family_key is not None:
         variants_statement = (
             select(Product)
-                .join(Offer, Offer.product_id == Product.id)
-                .join(
-                    MissionOfferRelevance,
-                    MissionOfferRelevance.offer_id == Offer.id,
-                )
-                .where(
-                    MissionOfferRelevance.mission_id == mission_id,
-                    MissionOfferRelevance.classification.in_(
-                        {OfferRelevance.MATCH, OfferRelevance.POSSIBLE_MATCH}
-                    ),
-                    Product.family_key == criteria.requested_family_key,
-                    Product.identity_key.is_not(None),
-                )
-                .distinct()
-                .order_by(Product.display_name, Product.name, Product.id)
+            .join(Offer, Offer.product_id == Product.id)
+            .join(
+                MissionOfferRelevance,
+                MissionOfferRelevance.offer_id == Offer.id,
+            )
+            .where(
+                MissionOfferRelevance.mission_id == mission_id,
+                MissionOfferRelevance.classification.in_(
+                    {OfferRelevance.MATCH, OfferRelevance.POSSIBLE_MATCH}
+                ),
+                Product.family_key == criteria.requested_family_key,
+                Product.identity_key.is_not(None),
+            )
+            .distinct()
+            .order_by(Product.display_name, Product.name, Product.id)
         )
         if criteria.requested_variant is not None:
             variants_statement = variants_statement.where(
