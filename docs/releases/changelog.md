@@ -1,5 +1,28 @@
 # Changelog
 
+## `v1.3.24` — TASK-123: permite `max_tokens` maior por chamada (causa raiz real do lote em PROD)
+
+Depois da correção de mensagem (`v1.3.23`) não resolver -- uma quinta
+tentativa em PROD mostrou o modelo de fallback gratuito narrando o
+próprio raciocínio e sendo cortado no meio da frase, nunca emitindo o
+JSON -- o usuário questionou minha suposição de "infraestrutura
+indisponível" e apontou a causa real: `Settings.cesar_core_max_tokens`
+(default 1024, teto 4096) é um valor único aplicado a TODA chamada de
+IA do app, sem exceção por tarefa. Um modelo de "reasoning" gratuito
+gasta tokens narrando antes de responder -- 1024 basta pra 1 item, não
+pra narrar + produzir um array de 8. Essa causa explica as três falhas
+anteriores sob uma única teoria coerente.
+
+`AIRequest` ganhou `max_tokens: int | None = None` (validado, mesmo
+teto de 4096) -- `None` preserva o comportamento de todo chamador
+existente; `CesarCoreAIProvider` usa o valor por-chamada quando
+informado. O modo em lote de identidade passa `max_tokens=4096` (o
+teto já permitido globalmente, nunca mais) só para si. Mudança de
+contrato compartilhado, verificados os 6 chamadores de `AIRequest` no
+app -- só o lote de identidade passa o novo campo. Suíte completa de
+contrato de IA + identidade passando. Validação real em PROD ainda
+pendente.
+
 ## `v1.3.23` — TASK-123: ancora a mensagem do lote em linguagem natural (achado do usuário, não do dev)
 
 Duas tentativas seguidas do mesmo lote de 8 títulos em PROD (sob

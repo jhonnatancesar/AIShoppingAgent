@@ -556,6 +556,17 @@ async def extract_product_identities_via_ai_batch(
             AIMessage(AIMessageRole.USER, user_message),
         ),
         requested_at=moment,
+        # Achado real em PROD (2026-09-20, causa raiz apontada pelo
+        # usuário): `Settings.cesar_core_max_tokens` (default 1024) é
+        # fixo pra TODA chamada de IA do app -- reproduzido em PROD com
+        # um modelo de "reasoning" gratuito (fallback da cascata)
+        # estourando esse teto narrando o raciocínio antes de emitir o
+        # array JSON de 8 itens, nunca completando a resposta. O modo
+        # de item único cabe tranquilo em 1024; o modo lote pede o teto
+        # máximo já permitido globalmente pelo app (4096, mesmo limite
+        # de `Settings.cesar_core_max_tokens`) -- nunca mais do que
+        # isso, só usa o espaço que o app já autoriza.
+        max_tokens=4096,
     )
     try:
         response = await manager.generate(request)

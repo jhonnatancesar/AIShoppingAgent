@@ -100,6 +100,18 @@ class AIRequest:
     Provider que não suportar a capability levanta
     `AIProviderCapabilityUnsupported` -- nunca finge suporte nem faz
     fallback silencioso por conta própria."""
+    max_tokens: int | None = None
+    """Achado real em PROD (2026-09-20): `CesarCoreAIProvider` usava um
+    único `max_tokens` fixo (`Settings.cesar_core_max_tokens`, default
+    1024) para TODA chamada, sem exceção por propósito -- um modelo de
+    "reasoning" gratuito (fallback da cascata) estourava esse teto
+    narrando o raciocínio antes de emitir um array JSON de vários itens
+    (TASK-123, extração em lote), nunca chegando a completar a resposta.
+    `None` (padrão, TODA chamada existente continua idêntica) usa o
+    `max_tokens` configurado do provider; um valor explícito aqui pede
+    mais espaço só para ESTA chamada -- nunca ultrapassa 4096 (mesmo
+    teto de `Settings.cesar_core_max_tokens`, `ge=1, le=4096`), então
+    nunca pede mais do que o próprio app já permite globalmente."""
 
     def __post_init__(self) -> None:
         if not isinstance(self.request_id, UUID):
@@ -117,6 +129,12 @@ class AIRequest:
         _require_aware(self.requested_at, "requested_at")
         if not isinstance(self.require_search_grounding, bool):
             raise AIRequestError("require_search_grounding must be a bool")
+        if self.max_tokens is not None and not (
+            isinstance(self.max_tokens, int)
+            and not isinstance(self.max_tokens, bool)
+            and 1 <= self.max_tokens <= 4096
+        ):
+            raise AIRequestError("max_tokens must be an int in [1, 4096] or None")
 
 
 @dataclass(frozen=True, slots=True)

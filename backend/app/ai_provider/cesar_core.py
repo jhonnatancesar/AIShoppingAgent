@@ -69,6 +69,14 @@ class CesarCoreAIProvider:
             ) from None
         if not token:
             raise AIProviderError("cesar_core_credential_unavailable", retryable=False)
+        # `request.max_tokens` (achado real em PROD, 2026-09-20) permite a
+        # UMA chamada específica pedir mais espaço que o padrão configurado
+        # do provider -- nunca mais que 4096, já garantido pela validação
+        # de `AIRequest.__post_init__`. `None` (a grande maioria das
+        # chamadas) preserva o comportamento de sempre.
+        effective_max_tokens = (
+            request.max_tokens if request.max_tokens is not None else self._max_tokens
+        )
         payload = {
             "ai_profile": self._ai_profile,
             "messages": [
@@ -79,7 +87,7 @@ class CesarCoreAIProvider:
                 "service_class": self._service_class,
                 "cost_policy": self._cost_policy,
             },
-            "max_tokens": self._max_tokens,
+            "max_tokens": effective_max_tokens,
         }
         if request.require_search_grounding:
             payload["require_search_grounding"] = True
@@ -127,7 +135,7 @@ class CesarCoreAIProvider:
                 or not isinstance(body["content"], str)
                 or not body["content"].strip()
                 or type(completion) is not int
-                or not 0 <= completion <= self._max_tokens
+                or not 0 <= completion <= effective_max_tokens
                 or not isinstance(grounding_requested, bool)
                 or not isinstance(grounding_performed, bool)
                 or not isinstance(grounding_sources, list)

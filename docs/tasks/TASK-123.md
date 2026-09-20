@@ -151,11 +151,55 @@ prompt engineering já validada implicitamente pelo modo de item único
 (os fakes de IA agora extraem o array a partir do primeiro `[`, não
 fazem mais `json.loads` da mensagem inteira), suíte completa passando.
 
+**Quinta rodada em PROD sob `v1.3.23`**: falha DIFERENTE de novo --
+`stage="parse"`, `error="JSONDecodeError: Expecting value: line 1
+column 1 (char 0)"`, `raw_content_preview` mostrando o modelo narrando
+o próprio raciocínio em texto corrido ("We need to produce JSON array
+with 8 objects...") e sendo **cortado no meio da frase**, nunca
+chegando a emitir o JSON. A correção de mensagem não resolveu -- só
+trocou o sintoma.
+
+**Causa raiz real, nº 2 (achado do usuário de novo, ao questionar minha
+suposição de "infraestrutura indisponível"):**
+`Settings.cesar_core_max_tokens` (`backend/app/core/config.py:56`,
+default **1024**, teto 4096) é um valor ÚNICO e FIXO aplicado a TODA
+chamada de IA do app inteiro (`CesarCoreAIProvider.__init__`,
+`manager.py:85`) -- sem exceção por propósito/tamanho de tarefa. Um
+modelo de "reasoning" gratuito (fallback da cascata, alcançado porque
+Gemini/Groq não estão respondendo) narra o raciocínio ANTES de
+responder -- 1024 tokens bastam pra 1 item, mas não pra narrar +
+produzir um array de 8 objetos estruturados, cortando a resposta no
+meio. Essa causa explica plausivelmente as TRÊS falhas observadas sob
+uma única teoria coerente (502 à parte, que é transporte, não
+geração): tanto o `"User Safety: safe"` (possível cabeçalho de
+segurança emitido antes do corte) quanto o raciocínio cortado batem
+com "a resposta terminou antes da hora por falta de espaço".
+
+**Corrigido em `v1.3.24`**: `AIRequest` ganhou `max_tokens: int | None
+= None` (validado `1 <= max_tokens <= 4096` quando informado, mesmo
+teto de `Settings.cesar_core_max_tokens`) -- `None` (todo chamador
+existente, sem exceção) preserva o comportamento de sempre;
+`CesarCoreAIProvider.generate` usa
+`request.max_tokens or self._max_tokens` tanto no payload enviado
+quanto na validação de `completion_tokens` da resposta.
+`extract_product_identities_via_ai_batch` passa `max_tokens=4096`
+(o teto já permitido globalmente pelo app, nunca mais que isso) só
+para a chamada em lote. Mudança de contrato compartilhado
+(`app/ai_provider/contracts.py`/`cesar_core.py`) -- verificados os 6
+chamadores de `AIRequest` no app inteiro; só `identity_ai.py` passa
+`max_tokens` explícito, os outros 5 continuam com `None` (idênticos a
+antes). 54 testes de contrato de IA + 24 de `identity_ai` + 20 de
+integração de identidade, todos passando (a suíte de contrato de IA só
+roda localmente com `--basetemp` por causa do bloqueio de ACL do
+diretório temp do Windows já documentado -- não é regressão).
+
 Decisão de rodar `--apply` contra PROD de verdade segue pendente de
 autorização explícita do usuário. Antes disso, falta validar que a
-correção de `v1.3.23` realmente resolve o problema -- só confirmável
+correção de `v1.3.24` realmente resolve o problema -- só confirmável
 com uma nova chamada real de IA em PROD (não reproduzível localmente
-sem acesso às mesmas condições/credenciais reais).
+sem acesso às mesmas condições/credenciais reais). Esta é a causa mais
+bem fundamentada até agora (explica as 3 falhas anteriores sob uma
+teoria só), mas ainda não confirmada por uma chamada real bem-sucedida.
 
 **Item 2 (flag ao vivo) não iniciado** -- depende do item 1 estar
 validado contra dado real primeiro, conforme sequência já registrada
