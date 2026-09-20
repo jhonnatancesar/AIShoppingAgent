@@ -20,8 +20,13 @@ informado. O modo em lote de identidade passa `max_tokens=4096` (o
 teto já permitido globalmente, nunca mais) só para si. Mudança de
 contrato compartilhado, verificados os 6 chamadores de `AIRequest` no
 app -- só o lote de identidade passa o novo campo. Suíte completa de
-contrato de IA + identidade passando. Validação real em PROD ainda
-pendente.
+contrato de IA + identidade passando.
+
+**Validado em PROD no mesmo dia**: `--dry-run --limit 10` completou
+sem falha, cascata alcançou `openai/gpt-oss-120b` (Groq) com
+`max_tokens=4096`, 7 extrações reais de placas-mãe plausíveis contra
+os títulos reais. Causa raiz confirmada -- backfill tecnicamente
+pronto para `--apply` real, pendente de autorização do usuário.
 
 ## `v1.3.23` — TASK-123: ancora a mensagem do lote em linguagem natural (achado do usuário, não do dev)
 

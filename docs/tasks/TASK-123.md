@@ -193,13 +193,24 @@ integração de identidade, todos passando (a suíte de contrato de IA só
 roda localmente com `--basetemp` por causa do bloqueio de ACL do
 diretório temp do Windows já documentado -- não é regressão).
 
-Decisão de rodar `--apply` contra PROD de verdade segue pendente de
-autorização explícita do usuário. Antes disso, falta validar que a
-correção de `v1.3.24` realmente resolve o problema -- só confirmável
-com uma nova chamada real de IA em PROD (não reproduzível localmente
-sem acesso às mesmas condições/credenciais reais). Esta é a causa mais
-bem fundamentada até agora (explica as 3 falhas anteriores sob uma
-teoria só), mas ainda não confirmada por uma chamada real bem-sucedida.
+**Sexta rodada em PROD sob `v1.3.24` -- SUCESSO, causa raiz confirmada
+de verdade:** `--dry-run --limit 10`, mesmo lote de sempre, sem
+`product_identity_ai_batch_extraction_failed`. A cascata alcançou
+`openai/gpt-oss-120b` (Groq, não mais o fallback de reasoning
+gratuito) e completou normalmente com `max_tokens=4096`. 9 de 10
+candidatos resolvidos (2 por reaproveitamento sem custo de IA + 7
+extrações reais, todas placas-mãe X870E de marcas/variantes
+diferentes, plausíveis contra os títulos reais -- `MSI`/`NZXT`/
+`ASRock`/`ASUS`, wifi/preto/branca corretos por item). O único não
+resolvido (uma memória RAM) não teve falha de lote -- caiu no caminho
+normal de "não passou grounding/foi para revisão humana", comportamento
+esperado, não bug.
+
+**Item 1 (backfill) tecnicamente pronto para `--apply` real em PROD**
+-- mecanismo de lote validado ponta a ponta com dado real. Decisão de
+rodar `--apply` de verdade (backlog de ~372, em rodadas de `--limit
+100`) e de ligar `product_identity_learning_enabled` (item 2) seguem
+pendentes de autorização explícita do usuário, conforme sempre.
 
 **Item 2 (flag ao vivo) não iniciado** -- depende do item 1 estar
 validado contra dado real primeiro, conforme sequência já registrada
