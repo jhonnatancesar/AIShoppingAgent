@@ -1,13 +1,16 @@
-# TASK-123 — Backfill de identidade de produtos existentes via IA (placa-mãe é o caso concreto, mecanismo é genérico)
+# TASK-123 — Identidade de produtos via IA: backfill do backlog + cobertura de itens novos
 
-Status: **Registrada, não iniciada.** Revisão de escopo em 2026-09-20
-(decisão do usuário, mesmo dia do registro original): a correção certa
-não é um parser determinístico novo por categoria de produto -- é ligar
-a máquina de aprendizado assistido por IA que **já existe e já foi
+Status: **Registrada, não iniciada.** Duas revisões de escopo em
+2026-09-20, mesmo dia do registro original: (1) a correção certa não é
+um parser determinístico novo por categoria de produto -- é ligar a
+máquina de aprendizado assistido por IA que **já existe e já foi
 testada** nos checkpoints 3-11 (`v1.3.15`), mas nunca foi conectada a
-nada que a acione de verdade contra o backlog de produtos já
-coletados. Versão anterior desta TASK (parser `_motherboard` por
-regex) descartada nesta revisão -- ver "Objetivo" abaixo para o porquê.
+nada que a acione de verdade; (2) o usuário confirmou explicitamente
+que quer os **dois lados** cobertos -- o backlog já coletado (placas-mãe
+achadas originalmente) **e** os itens novos que continuam chegando sem
+identidade a cada coleta, não só um ou outro. Versão anterior desta
+TASK (parser `_motherboard` por regex) descartada -- ver "Objetivo"
+abaixo para o porquê.
 
 ## Preflight (confirmado no código, não suposição)
 
@@ -60,6 +63,17 @@ fonte, gabinete teriam cada uma seu próprio extractor regex --, e a IA
 já resolve isso de forma genérica, sem esse custo de manutenção). Em
 vez disso:
 
+Os dois itens abaixo **fazem parte do escopo obrigatório desta TASK**
+(confirmado pelo usuário -- "eu preciso vincular os itens novos
+também", não só o backlog). Ordem sugerida, por controle de risco/custo
+(decisão de sequência cabe a quem for implementar, mas a razão fica
+registrada aqui): validar o item 1 primeiro (execução em lote,
+controlada, `--dry-run` antes de qualquer `--apply`, teto de `limit`
+por rodada) antes de ligar o item 2 (que passa a chamar IA
+automaticamente, sem teto, a cada oferta não resolvida de cada coleta,
+dali em diante -- exposição de custo bem maior e menos controlada que
+uma rodada de backfill em lote).
+
 1. **Script de backfill** (`backend/scripts/reprocess_unresolved_product_identity.py`,
    mesmo padrão `--dry-run`/`--apply`/paginação por `limit` de
    `scripts/repair_cpu_identity_misclassification.py`) que chama
@@ -70,44 +84,58 @@ vez disso:
    **não depende de ligar `product_identity_learning_enabled` em
    produção**, já que `reprocess_unresolved_products` recebe o
    `ai_manager` como parâmetro explícito, nunca lê a flag internamente.
-   Isso resolve o backlog atual (placas-mãe incluídas, e qualquer outra
-   categoria sem extractor) sem precisar decidir sobre o caminho de
-   coleta ao vivo.
-2. **Decisão separada, não bloqueia o item 1:** se/quando ligar
-   `product_identity_learning_enabled` para o caminho de coleta ao
-   vivo (cobre produtos novos dali em diante, sem precisar de backfill
-   manual repetido) -- decisão de produto/custo do usuário, registrada
-   aqui só como opção complementar, não como parte obrigatória desta
-   TASK.
+   Resolve o backlog atual (placas-mãe incluídas, e qualquer outra
+   categoria sem extractor) de uma vez.
+2. **Ligar `product_identity_learning_enabled` para o caminho de
+   coleta ao vivo** (`orchestration.py:2433-2443`) -- cobre produtos
+   NOVOS dali em diante, sem precisar de backfill manual repetido a
+   cada rodada. Sem isso, mesmo depois do backfill do item 1 zerar o
+   backlog uma vez, qualquer produto novo sem extractor determinístico
+   (placa-mãe ou outra categoria) volta a acumular sem identidade a
+   partir da primeira coleta depois do backfill -- o problema original
+   reaparece aos poucos. Ativar em produção é ação de configuração/deploy
+   (variável de ambiente, não mudança de código) -- cabe a esta sessão
+   executar quando o item 1 já estiver validado, não a "o dev".
 
 ## Escopo
 
 Script de backfill batch usando `reprocess_unresolved_products` já
-existente e já testada. Nenhuma mudança em
-`identity_learning.py`/`identity_ai.py` (o mecanismo já está correto e
-testado) -- só o "fio" que falta ligando ele ao banco real.
+existente e já testada (item 1) **e** ativação de
+`product_identity_learning_enabled` no caminho de coleta ao vivo (item
+2) -- os dois juntos, não um dos dois isolado (confirmado pelo
+usuário). Nenhuma mudança em `identity_learning.py`/`identity_ai.py`
+(o mecanismo já está correto e testado) -- só o "fio" que falta ligando
+ele ao banco real (backfill) e ao caminho de produção (flag).
 
 ## Fora de escopo
 
-Ativar `product_identity_learning_enabled` para o caminho de coleta ao
-vivo (decisão separada do usuário, item 2 do Objetivo). Qualquer
-mudança na extração/grounding da IA (`identity_ai.py`) ou no algoritmo
-de match/vínculo (`identity_learning.py`) -- já funcionam, não é o
-achado aqui. Parser determinístico por regex (`_motherboard` ou
-similar, por categoria de produto) -- considerado e descartado nesta
-revisão de escopo.
+Qualquer mudança na extração/grounding da IA (`identity_ai.py`) ou no
+algoritmo de match/vínculo (`identity_learning.py`) -- já funcionam,
+não é o achado aqui. Parser determinístico por regex (`_motherboard`
+ou similar, por categoria de produto) -- considerado e descartado
+nesta revisão de escopo.
 
 ## Critério de validação futuro
 
-Rodar o script `--dry-run` contra uma cópia/amostra do banco real,
-confirmar que as placas-mãe conhecidas (achado original desta TASK)
-aparecem na lista de candidatas e que a extração da IA preenche
-`family`/`manufacturer`/`model_name` plausíveis para cada uma, sem
-inventar valor ausente do título (grounding). Rodar `--apply` numa
-cópia descartável do banco primeiro (nunca direto em PROD na primeira
-vez), confirmar por SQL que nenhuma `Offer`/`PriceObservation`
-existente foi perdida ou duplicada -- só `Product.category`/
-`identity_key` mudaram de `NULL` para um valor resolvido, e o
-`Product` ad-hoc antigo (quando já existia um canônico) foi removido
-sem deixar `Offer` órfã. Só depois disso, autorização explícita do
-usuário para rodar `--apply` contra PROD de verdade.
+**Item 1 (backfill):** rodar o script `--dry-run` contra uma
+cópia/amostra do banco real, confirmar que as placas-mãe conhecidas
+(achado original desta TASK) aparecem na lista de candidatas e que a
+extração da IA preenche `family`/`manufacturer`/`model_name`
+plausíveis para cada uma, sem inventar valor ausente do título
+(grounding). Rodar `--apply` numa cópia descartável do banco primeiro
+(nunca direto em PROD na primeira vez), confirmar por SQL que nenhuma
+`Offer`/`PriceObservation` existente foi perdida ou duplicada -- só
+`Product.category`/`identity_key` mudaram de `NULL` para um valor
+resolvido, e o `Product` ad-hoc antigo (quando já existia um canônico)
+foi removido sem deixar `Offer` órfã. Só depois disso, autorização
+explícita do usuário para rodar `--apply` contra PROD de verdade.
+
+**Item 2 (flag ao vivo):** validado o item 1, ligar
+`product_identity_learning_enabled` primeiro em DEV/ambiente de
+validação, rodar uma missão real ponta a ponta com um produto sem
+extractor determinístico (ex.: uma placa-mãe nova, nunca vista) e
+confirmar que a oferta resolve identidade automaticamente na própria
+coleta, sem precisar do script de backfill depois. Só então, com os
+dois validados, autorização explícita do usuário para ligar a flag em
+PROD -- ação de deploy/configuração que cabe a esta sessão executar,
+não ao dev que só mexe em código.
