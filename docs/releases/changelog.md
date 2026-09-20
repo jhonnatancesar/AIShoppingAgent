@@ -1,5 +1,28 @@
 # Changelog
 
+## `v1.3.18` — Corrige handoff de deploy que ficou fora da v1.3.17
+
+Mesma lição já aplicada uma vez em `v1.3.16`: a tag `v1.3.17` foi
+cortada antes do commit que documentava os passos manuais da TASK-123
+no handoff de deploy. Sem mudança de código -- desta vez a correção
+aconteceu antes de qualquer deploy real usar a tag desatualizada.
+
+## `v1.3.17` — TASK-122 (busca sem oferta relevante não é mais bloqueio) + TASK-123 (backfill de identidade via IA)
+
+Terabyte/Amazon/Kabum/Mercado Livre não tratam mais busca sem
+correspondência aproveitável como bloqueio -- causa raiz confirmada ao
+vivo via Edge/CDP real (mesmo transporte de produção): zero ofertas
+depois que a página confirmadamente carregou é sucesso vazio, nunca
+bloqueio (`TASK-122`). Novo script `reprocess_unresolved_product_identity.py`
+liga o aprendizado de identidade de produto assistido por IA (já
+existente desde os checkpoints de `v1.3.15`) ao banco real -- backfill
+do backlog (placas-mãe incluídas) sem depender de nenhuma flag
+(`TASK-123`); cobrir produtos novos exige ligar
+`product_identity_learning_enabled` também, ação manual no deploy (ver
+`docs/operations/prod-deployment-handoff.md`). Ambas testadas (4 + 3
+testes novos, Postgres real onde aplicável) e documentadas em
+`docs/tasks/TASK-122.md`/`TASK-123.md`.
+
 ## `v1.3.16` — Corrige sequência de tag: handoff de deploy fora da v1.3.15
 
 Deploy real de `v1.3.15` em PROD (2026-09-20) revelou que a tag tinha
