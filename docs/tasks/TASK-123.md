@@ -58,10 +58,45 @@ backlog:
 `tests/integration/test_reprocess_unresolved_product_identity.py` (5
 testes) + `test_product_identity_learning.py` (14 testes, 1 novo) --
 todos passando contra Postgres real, `ruff check`/`format` limpos.
-**Ainda não rodado contra uma amostra/cópia do banco real de PROD**
-(só Postgres descartável de teste) -- esse passo, e a decisão de rodar
-`--apply` contra PROD de verdade, seguem pendentes de autorização
-explícita do usuário (ver "Critério de validação futuro").
+
+**`--dry-run --limit 100` rodado contra o banco REAL de PROD nesta
+mesma rodada (2026-09-20, `v1.3.20`) -- achou 2 problemas reais,
+corrigidos em `v1.3.21`, nenhum deles causado por dado real ruim:**
+
+1. **9 de ~10 lotes falharam na extração**
+   (`product_identity_ai_batch_extraction_failed`, log sem causa
+   visível -- `exc_info=False` sem mais nada). Causa raiz exata AINDA
+   NÃO confirmada (precisa do log melhorado rodando de novo em PROD
+   pra saber se é rede/provedor ou resposta fora do contrato) --
+   corrigido o que dava pra corrigir sem esse dado: log agora separa
+   `stage="generate"` (falha na chamada em si) de `stage="parse"`
+   (resposta recebida mas fora do contrato, com preview truncado do
+   conteúdo bruto) -- próxima rodada de `--dry-run` em PROD já traz a
+   causa real.
+2. **Relatório contraditório**: o resumo dizia "Resolvidos nesta
+   rodada: 13 de 100", mas o detalhe por produto mostrava 0
+   "RESOLVIDO" e 100 "continua sem identidade" -- bug real, não só
+   cosmético. Causa: em `--dry-run`, o `session.rollback()` de um lote
+   SEGUINTE (mesmo que ele falhe na própria chamada de IA -- o
+   rollback roda incondicionalmente ANTES) desfazia da sessão a
+   resolução de um lote ANTERIOR nunca commitada; o script reconsultava
+   o banco DEPOIS de tudo (`session.get`), então via só o estado final
+   pós-rollback. Corrigido com `outcome_sink` -- `reprocess_unresolved_
+   products` agora aceita um `dict` opcional que populate no MOMENTO de
+   cada resolução, nunca dependendo do estado da sessão sobreviver a um
+   rollback posterior. `apply_learned_identity` passou a devolver o
+   `Product` canônico resultante (antes `None`) para permitir isso sem
+   consulta extra. Regressão coberta por teste de integração real
+   reproduzindo exatamente o cenário (lote com sucesso seguido de lote
+   com falha, `tests/integration/test_product_identity_learning.py`).
+
+Nada foi aplicado/persistido em PROD nesse `--dry-run` (confirmado) --
+o operador corretamente parou antes de qualquer `--apply`, exatamente
+como as instruções de deploy pediam. Backlog real confirmado: **371**
+Products sem `identity_key`. Decisão de rodar `--apply` contra PROD de
+verdade segue pendente de autorização explícita do usuário, agora
+também esperando a próxima rodada de `--dry-run` com o log melhorado
+para confirmar a causa raiz da falha de extração antes de aplicar.
 
 **Item 2 (flag ao vivo) não iniciado** -- depende do item 1 estar
 validado contra dado real primeiro, conforme sequência já registrada

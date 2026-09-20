@@ -1,5 +1,32 @@
 # Changelog
 
+## `v1.3.21` — TASK-123: corrige relatório contraditório do dry-run e melhora diagnóstico de falha de lote
+
+Dois achados reais de um `--dry-run --limit 100` rodado contra o banco
+de PROD (371 Products, sob `v1.3.20`) -- nenhum deles causado por dado
+ruim, ambos no próprio script/mecanismo:
+
+1. O resumo dizia "Resolvidos nesta rodada: 13 de 100" enquanto o
+   detalhe por produto mostrava 0 `RESOLVIDO` e 100 "continua sem
+   identidade". Causa: em `--dry-run`, o `session.rollback()` de um
+   lote SEGUINTE (roda incondicionalmente antes da chamada de IA
+   daquele lote, mesmo que ela falhe depois) desfazia da sessão a
+   resolução de um lote ANTERIOR nunca commitada; reconsultar o banco
+   depois do fato só via o estado final pós-rollback. Corrigido com
+   `outcome_sink`: `reprocess_unresolved_products` aceita um `dict`
+   opcional populado no MOMENTO de cada resolução, nunca dependendo do
+   estado da sessão sobreviver a um rollback posterior.
+2. 9 de ~10 lotes falharam a extração real sem causa visível no log
+   (`product_identity_ai_batch_extraction_failed`, sem mais contexto).
+   `extract_product_identities_via_ai_batch` agora separa
+   `stage="generate"` (falha na chamada em si) de `stage="parse"`
+   (resposta recebida mas fora do contrato, com preview truncado do
+   conteúdo bruto) -- a próxima rodada em PROD já traz a causa real.
+
+Regressão do achado 1 coberta por teste de integração real
+reproduzindo o cenário exato. Nada foi aplicado/persistido em PROD --
+o operador corretamente parou antes de qualquer `--apply`.
+
 ## `v1.3.20` — TASK-123: ajusta lote/teto do backfill para o tamanho real do backlog (371 Products)
 
 Correção no mesmo dia da `v1.3.19`: os números originais (lote de 4,
