@@ -1,7 +1,12 @@
 # TASK-123 — Identidade de produtos via IA: backfill do backlog + cobertura de itens novos
 
-Status: **Item 1 implementado e testado (2026-09-20); item 2 não
-iniciado.** Duas revisões de escopo no mesmo dia do registro original:
+Status: **Concluída nesta sessão de desenvolvimento (2026-09-20).**
+Item 1 (backfill) implementado, testado e commitado local. Item 2
+(ligar a flag em PROD) fica **explicitamente adiado para a hora do
+deploy** -- decisão do usuário -- e deve ser executado junto com o
+próprio backfill do backlog real (`--apply` contra PROD), não antes:
+ver a seção "Ação no deploy" no fim deste documento. Duas revisões de
+escopo no mesmo dia do registro original:
 (1) a correção certa não é um parser determinístico novo por categoria
 de produto -- é ligar a máquina de aprendizado assistido por IA que
 **já existe e já foi testada** nos checkpoints 3-11 (`v1.3.15`), mas
@@ -156,3 +161,23 @@ coleta, sem precisar do script de backfill depois. Só então, com os
 dois validados, autorização explícita do usuário para ligar a flag em
 PROD -- ação de deploy/configuração que cabe a esta sessão executar,
 não ao dev que só mexe em código.
+
+## Ação no deploy (decisão do usuário, 2026-09-20)
+
+Na próxima rodada de deploy em PROD, fazer os dois passos abaixo
+juntos, nesta ordem, como parte do mesmo prompt/sessão de deploy (não
+como TASKs separadas):
+
+1. **Ligar `product_identity_learning_enabled=true`** em PROD (variável
+   de ambiente do `collection_worker` nativo) -- cobre itens novos a
+   partir da próxima coleta.
+2. **Rodar `python -m scripts.reprocess_unresolved_product_identity
+   --apply --limit <N>`** contra o banco real de PROD (repetir em lotes
+   até o script reportar 0 candidatos) -- pega o backlog que já existe
+   hoje (placas-mãe incluídas), não só o que chegar depois da flag
+   ligada.
+
+Sem o passo 2, ligar só a flag NÃO resolve o backlog já parado no banco
+(ela só afeta coleta nova, ver "Preflight" acima) -- os dois precisam
+acontecer juntos pra cobrir "itens novos" e "itens já pesquisados" ao
+mesmo tempo, conforme pedido explícito do usuário.
