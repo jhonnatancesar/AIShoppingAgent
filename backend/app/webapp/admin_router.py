@@ -229,12 +229,12 @@ class UpdateQueueConfigRequest(BaseModel):
     max_concurrent_user_batches_override: Annotated[int | None, Field(ge=1, le=4)] = (
         None
     )
-    user_cooldown_min_seconds_override: Annotated[
-        float | None, Field(gt=0, le=600)
-    ] = None
-    user_cooldown_max_seconds_override: Annotated[
-        float | None, Field(gt=0, le=600)
-    ] = None
+    user_cooldown_min_seconds_override: Annotated[float | None, Field(gt=0, le=600)] = (
+        None
+    )
+    user_cooldown_max_seconds_override: Annotated[float | None, Field(gt=0, le=600)] = (
+        None
+    )
     store_min_interval_seconds_override: Annotated[
         float | None, Field(gt=0, le=120)
     ] = None

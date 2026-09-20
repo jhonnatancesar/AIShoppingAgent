@@ -153,7 +153,8 @@ def evaluate_price_alerts(
     gate_open = checkpoint is None or _passes_checkpoint_gate(
         current_amount=current.amount,
         checkpoint=checkpoint,
-        policy=material_improvement_policy or MaterialImprovementPolicy(0.01, 2.0, 50.0),
+        policy=material_improvement_policy
+        or MaterialImprovementPolicy(0.01, 2.0, 50.0),
         market_assessment_supports_realert=market_assessment_supports_realert,
         realert_window=realert_window,
         now=now,

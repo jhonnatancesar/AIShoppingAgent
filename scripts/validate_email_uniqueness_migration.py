@@ -172,7 +172,10 @@ def main() -> None:
                 "a migration deveria ter recusado aplicar com duplicata real "
                 "presente, mas retornou sucesso"
             )
-        if "UniqueViolation" in combined_output and "RuntimeError" not in combined_output:
+        if (
+            "UniqueViolation" in combined_output
+            and "RuntimeError" not in combined_output
+        ):
             raise ValidationError(
                 "a migration falhou com um UniqueViolation cru do Postgres em "
                 "vez do erro claro e acionável esperado"
@@ -204,8 +207,7 @@ def main() -> None:
         # sozinha e aplicar com sucesso.
         with _scratch_connect() as connection:
             connection.execute(
-                "DELETE FROM users WHERE username IN "
-                "('legacy_dup_b', 'legacy_case_b')"
+                "DELETE FROM users WHERE username IN ('legacy_dup_b', 'legacy_case_b')"
             )
 
         applied = _run_alembic("upgrade", "head")

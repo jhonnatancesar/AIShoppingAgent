@@ -18,7 +18,11 @@ def build_alias_mapping(rows: Iterable[ProductIdentityAlias]) -> AliasMapping:
     """Só `status="active"` participa -- candidatos ainda não promovidos
     (TASK-112 §4) nunca influenciam `monitoring_key`."""
     return {
-        (row.category, row.attribute_name, row.raw_value_normalized): row.canonical_value
+        (
+            row.category,
+            row.attribute_name,
+            row.raw_value_normalized,
+        ): row.canonical_value
         for row in rows
         if row.status == "active"
     }

@@ -71,7 +71,9 @@ def _monitoring_item_id_for(sessions, mission_id: UUID) -> UUID | None:
         return link.monitoring_item_id if link is not None else None
 
 
-def _store_state(sessions, monitoring_item_id: UUID, store_id: UUID) -> MonitoringItemStore | None:
+def _store_state(
+    sessions, monitoring_item_id: UUID, store_id: UUID
+) -> MonitoringItemStore | None:
     with sessions() as session:
         return session.get(MonitoringItemStore, (monitoring_item_id, store_id))
 
@@ -84,7 +86,9 @@ def _monitoring_item_count(sessions) -> int:
 NOW = datetime.now(UTC)
 
 
-def _make_mission(integration_database, user_id: UUID, *, search_query: str, sources: tuple[str, ...]):
+def _make_mission(
+    integration_database, user_id: UUID, *, search_query: str, sources: tuple[str, ...]
+):
     mission, _codes = _create_mission(
         integration_database,
         user_id=user_id,
@@ -109,9 +113,14 @@ def test_two_missions_same_monitoring_key_share_one_monitoring_item(
     user_a = _seed_user(integration_database.sessions, "A")
     user_b = _seed_user(integration_database.sessions, "B")
 
-    mission_a = _make_mission(integration_database, user_a, search_query="RTX 5070 Ti", sources=("amazon",))
+    mission_a = _make_mission(
+        integration_database, user_a, search_query="RTX 5070 Ti", sources=("amazon",)
+    )
     mission_b = _make_mission(
-        integration_database, user_b, search_query="NVIDIA GeForce RTX 5070 Ti", sources=("amazon",)
+        integration_database,
+        user_b,
+        search_query="NVIDIA GeForce RTX 5070 Ti",
+        sources=("amazon",),
     )
 
     item_a = _monitoring_item_id_for(integration_database.sessions, mission_a.id)
@@ -130,7 +139,9 @@ def test_two_concurrent_creations_same_key_never_duplicate_monitoring_item(
 
     def _run_creation(user_id: UUID):
         async def run():
-            engine = create_collection_async_database_engine(integration_database.settings)
+            engine = create_collection_async_database_engine(
+                integration_database.settings
+            )
             sessions = create_async_session_factory(engine)
             try:
                 barrier.wait(timeout=10)
@@ -167,8 +178,12 @@ def test_different_monitoring_keys_never_share_item(integration_database) -> Non
     user_a = _seed_user(integration_database.sessions, "diff-A")
     user_b = _seed_user(integration_database.sessions, "diff-B")
 
-    mission_gpu = _make_mission(integration_database, user_a, search_query="RTX 5070 Ti", sources=("amazon",))
-    mission_cpu = _make_mission(integration_database, user_b, search_query="Ryzen 9950X3D", sources=("amazon",))
+    mission_gpu = _make_mission(
+        integration_database, user_a, search_query="RTX 5070 Ti", sources=("amazon",)
+    )
+    mission_cpu = _make_mission(
+        integration_database, user_b, search_query="Ryzen 9950X3D", sources=("amazon",)
+    )
 
     item_gpu = _monitoring_item_id_for(integration_database.sessions, mission_gpu.id)
     item_cpu = _monitoring_item_id_for(integration_database.sessions, mission_cpu.id)
@@ -177,11 +192,16 @@ def test_different_monitoring_keys_never_share_item(integration_database) -> Non
     assert item_gpu != item_cpu
 
 
-def test_unresolved_identity_never_links_and_never_creates_item(integration_database) -> None:
+def test_unresolved_identity_never_links_and_never_creates_item(
+    integration_database,
+) -> None:
     user = _seed_user(integration_database.sessions, "unresolved")
 
     mission = _make_mission(
-        integration_database, user, search_query="cadeira gamer reclinável azul", sources=("amazon",)
+        integration_database,
+        user,
+        search_query="cadeira gamer reclinável azul",
+        sources=("amazon",),
     )
 
     assert _monitoring_item_id_for(integration_database.sessions, mission.id) is None
@@ -193,31 +213,45 @@ def test_unresolved_identity_never_links_and_never_creates_item(integration_data
 # ---------------------------------------------------------------------------
 
 
-def test_shared_stores_get_one_monitoring_item_store_row_enabled(integration_database) -> None:
+def test_shared_stores_get_one_monitoring_item_store_row_enabled(
+    integration_database,
+) -> None:
     user_a = _seed_user(integration_database.sessions, "shared-A")
     user_b = _seed_user(integration_database.sessions, "shared-B")
 
     mission_a = _make_mission(
-        integration_database, user_a, search_query="RTX 5070 Ti", sources=("amazon", "kabum")
+        integration_database,
+        user_a,
+        search_query="RTX 5070 Ti",
+        sources=("amazon", "kabum"),
     )
     mission_b = _make_mission(
-        integration_database, user_b, search_query="RTX 5070 Ti", sources=("amazon", "kabum")
+        integration_database,
+        user_b,
+        search_query="RTX 5070 Ti",
+        sources=("amazon", "kabum"),
     )
 
     item_id = _monitoring_item_id_for(integration_database.sessions, mission_a.id)
-    assert item_id == _monitoring_item_id_for(integration_database.sessions, mission_b.id)
+    assert item_id == _monitoring_item_id_for(
+        integration_database.sessions, mission_b.id
+    )
 
     with integration_database.sessions() as session:
         rows = list(
             session.scalars(
-                select(MonitoringItemStore).where(MonitoringItemStore.monitoring_item_id == item_id)
+                select(MonitoringItemStore).where(
+                    MonitoringItemStore.monitoring_item_id == item_id
+                )
             )
         )
     assert len(rows) == 2  # amazon + kabum, nunca duplicado por missão
     assert all(row.is_enabled for row in rows)
 
 
-def test_partially_different_stores_matches_the_worked_example(integration_database) -> None:
+def test_partially_different_stores_matches_the_worked_example(
+    integration_database,
+) -> None:
     """Exemplo do pedido: A = 9950X3D + Amazon/Kabum/Pichau, B = 9950X3D +
     Amazon/Kabum -> 1 MonitoringItem, 3 MonitoringItemStore (amazon/kabum
     compartilhados por A+B, pichau só por A), todos habilitados."""
@@ -231,17 +265,24 @@ def test_partially_different_stores_matches_the_worked_example(integration_datab
         sources=("amazon", "kabum", "pichau"),
     )
     mission_b = _make_mission(
-        integration_database, user_b, search_query="Ryzen 9950X3D", sources=("amazon", "kabum")
+        integration_database,
+        user_b,
+        search_query="Ryzen 9950X3D",
+        sources=("amazon", "kabum"),
     )
 
     item_id = _monitoring_item_id_for(integration_database.sessions, mission_a.id)
-    assert item_id == _monitoring_item_id_for(integration_database.sessions, mission_b.id)
+    assert item_id == _monitoring_item_id_for(
+        integration_database.sessions, mission_b.id
+    )
 
     with integration_database.sessions() as session:
         rows = {
             row.store_id: row
             for row in session.scalars(
-                select(MonitoringItemStore).where(MonitoringItemStore.monitoring_item_id == item_id)
+                select(MonitoringItemStore).where(
+                    MonitoringItemStore.monitoring_item_id == item_id
+                )
             )
         }
     assert len(rows) == 3
@@ -256,8 +297,12 @@ def test_partially_different_stores_matches_the_worked_example(integration_datab
 def _seed_two_missions_sharing_amazon(integration_database, *, label: str):
     user_a = _seed_user(integration_database.sessions, f"{label}-A")
     user_b = _seed_user(integration_database.sessions, f"{label}-B")
-    mission_a = _make_mission(integration_database, user_a, search_query="RTX 5070 Ti", sources=("amazon",))
-    mission_b = _make_mission(integration_database, user_b, search_query="RTX 5070 Ti", sources=("amazon",))
+    mission_a = _make_mission(
+        integration_database, user_a, search_query="RTX 5070 Ti", sources=("amazon",)
+    )
+    mission_b = _make_mission(
+        integration_database, user_b, search_query="RTX 5070 Ti", sources=("amazon",)
+    )
     item_id = _monitoring_item_id_for(integration_database.sessions, mission_a.id)
     with integration_database.sessions() as session:
         store_id = session.scalar(
@@ -349,9 +394,13 @@ def test_last_active_mission_leaving_disables_item_store_without_deleting_histor
         assert session.get(MonitoringItem, item_id) is not None
 
 
-def test_resume_reuses_the_existing_monitoring_item_and_store(integration_database) -> None:
+def test_resume_reuses_the_existing_monitoring_item_and_store(
+    integration_database,
+) -> None:
     user = _seed_user(integration_database.sessions, "resume")
-    mission = _make_mission(integration_database, user, search_query="RTX 5070 Ti", sources=("amazon",))
+    mission = _make_mission(
+        integration_database, user, search_query="RTX 5070 Ti", sources=("amazon",)
+    )
     item_id = _monitoring_item_id_for(integration_database.sessions, mission.id)
     with integration_database.sessions() as session:
         store_id = session.scalar(
@@ -368,8 +417,13 @@ def test_resume_reuses_the_existing_monitoring_item_and_store(integration_databa
         actor_type="test",
         transitioned_at=NOW,
     )
-    assert _store_state(integration_database.sessions, item_id, store_id).is_enabled is False
-    assert _monitoring_item_count(integration_database.sessions) == 1  # nenhum item novo
+    assert (
+        _store_state(integration_database.sessions, item_id, store_id).is_enabled
+        is False
+    )
+    assert (
+        _monitoring_item_count(integration_database.sessions) == 1
+    )  # nenhum item novo
 
     with integration_database.sessions() as session:
         paused_version = session.get(Mission, mission.id).state_version
@@ -384,8 +438,13 @@ def test_resume_reuses_the_existing_monitoring_item_and_store(integration_databa
     )
 
     assert _monitoring_item_id_for(integration_database.sessions, mission.id) == item_id
-    assert _monitoring_item_count(integration_database.sessions) == 1  # continua o mesmo item
-    assert _store_state(integration_database.sessions, item_id, store_id).is_enabled is True
+    assert (
+        _monitoring_item_count(integration_database.sessions) == 1
+    )  # continua o mesmo item
+    assert (
+        _store_state(integration_database.sessions, item_id, store_id).is_enabled
+        is True
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -398,7 +457,12 @@ def test_resume_reuses_the_existing_monitoring_item_and_store(integration_databa
 
 
 def _run_transition_concurrently(
-    integration_database, *, mission_id: UUID, command: MissionCommand, expected_state_version: int, barrier: Barrier
+    integration_database,
+    *,
+    mission_id: UUID,
+    command: MissionCommand,
+    expected_state_version: int,
+    barrier: Barrier,
 ) -> None:
     async def run():
         engine = create_collection_async_database_engine(integration_database.settings)
@@ -462,7 +526,9 @@ def test_concurrent_pause_of_two_missions_correctly_disables_the_last_dependency
     assert row.is_enabled is False
 
 
-def test_concurrent_pause_and_resume_produce_correct_final_state(integration_database) -> None:
+def test_concurrent_pause_and_resume_produce_correct_final_state(
+    integration_database,
+) -> None:
     """A entra em pause enquanto B (já pausada antes, vinculada ao mesmo
     item+loja) entra em resume, ao mesmo tempo. B precisa da loja agora
     -- resultado final tem que ser habilitado, não importa a ordem real
@@ -521,7 +587,10 @@ def test_promote_confirmed_identity_moves_unresolved_mission_to_a_monitoring_ite
 ) -> None:
     user = _seed_user(integration_database.sessions, "unresolved-to-resolved")
     mission = _make_mission(
-        integration_database, user, search_query="acessório qualquer sem categoria", sources=("amazon",)
+        integration_database,
+        user,
+        search_query="acessório qualquer sem categoria",
+        sources=("amazon",),
     )
     assert _monitoring_item_id_for(integration_database.sessions, mission.id) is None
     assert _monitoring_item_count(integration_database.sessions) == 0
@@ -537,8 +606,12 @@ def test_promote_confirmed_identity_moves_unresolved_mission_to_a_monitoring_ite
     item_id = _monitoring_item_id_for(integration_database.sessions, mission.id)
     assert item_id is not None
     assert _monitoring_item_count(integration_database.sessions) == 1
-    row = _store_state(integration_database.sessions, item_id, _amazon_store_id(integration_database))
-    assert row is not None and row.is_enabled is True  # missão ACTIVE, já reflete na store
+    row = _store_state(
+        integration_database.sessions, item_id, _amazon_store_id(integration_database)
+    )
+    assert (
+        row is not None and row.is_enabled is True
+    )  # missão ACTIVE, já reflete na store
 
 
 def test_identity_change_moves_link_and_preserves_old_item_for_other_mission(
@@ -550,10 +623,16 @@ def test_identity_change_moves_link_and_preserves_old_item_for_other_mission(
     sair de X é que X.amazon desativa."""
     user_x = _seed_user(integration_database.sessions, "relink-X")
     user_b = _seed_user(integration_database.sessions, "relink-B")
-    mission_x = _make_mission(integration_database, user_x, search_query="RTX 5070 Ti", sources=("amazon",))
-    mission_b = _make_mission(integration_database, user_b, search_query="RTX 5070 Ti", sources=("amazon",))
+    mission_x = _make_mission(
+        integration_database, user_x, search_query="RTX 5070 Ti", sources=("amazon",)
+    )
+    mission_b = _make_mission(
+        integration_database, user_b, search_query="RTX 5070 Ti", sources=("amazon",)
+    )
     item_x = _monitoring_item_id_for(integration_database.sessions, mission_x.id)
-    assert item_x == _monitoring_item_id_for(integration_database.sessions, mission_b.id)
+    assert item_x == _monitoring_item_id_for(
+        integration_database.sessions, mission_b.id
+    )
 
     async def run():
         async with integration_database.async_sessions.begin() as session:
@@ -567,7 +646,9 @@ def test_identity_change_moves_link_and_preserves_old_item_for_other_mission(
     assert item_y is not None
     assert item_y != item_x
     # B nunca foi tocada -- continua vinculada a X.
-    assert _monitoring_item_id_for(integration_database.sessions, mission_b.id) == item_x
+    assert (
+        _monitoring_item_id_for(integration_database.sessions, mission_b.id) == item_x
+    )
     assert _monitoring_item_count(integration_database.sessions) == 2
 
     amazon_id = _amazon_store_id(integration_database)
@@ -595,9 +676,13 @@ def test_identity_change_moves_link_and_preserves_old_item_for_other_mission(
         assert session.get(MonitoringItem, item_x) is not None  # histórico preservado
 
 
-def test_reconciling_the_same_identity_again_is_idempotent(integration_database) -> None:
+def test_reconciling_the_same_identity_again_is_idempotent(
+    integration_database,
+) -> None:
     user = _seed_user(integration_database.sessions, "idempotent")
-    mission = _make_mission(integration_database, user, search_query="RTX 5070 Ti", sources=("amazon",))
+    mission = _make_mission(
+        integration_database, user, search_query="RTX 5070 Ti", sources=("amazon",)
+    )
     item_id = _monitoring_item_id_for(integration_database.sessions, mission.id)
     assert item_id is not None
 
@@ -611,11 +696,15 @@ def test_reconciling_the_same_identity_again_is_idempotent(integration_database)
 
     assert _monitoring_item_id_for(integration_database.sessions, mission.id) == item_id
     assert _monitoring_item_count(integration_database.sessions) == 1
-    row = _store_state(integration_database.sessions, item_id, _amazon_store_id(integration_database))
+    row = _store_state(
+        integration_database.sessions, item_id, _amazon_store_id(integration_database)
+    )
     assert row is not None and row.is_enabled is True
 
 
-def _select_all_variants(integration_database, *, user_id: UUID, mission_id: UUID, version: int):
+def _select_all_variants(
+    integration_database, *, user_id: UUID, mission_id: UUID, version: int
+):
     async def run():
         async with integration_database.async_sessions.begin() as session:
             return await set_mission_product_selection_async(
@@ -678,7 +767,14 @@ def _seed_resolved_product(sessions, *, text: str, store_id: UUID) -> Product:
         return product
 
 
-def _select_variant(integration_database, *, user_id: UUID, mission_id: UUID, product_id: UUID, version: int):
+def _select_variant(
+    integration_database,
+    *,
+    user_id: UUID,
+    mission_id: UUID,
+    product_id: UUID,
+    version: int,
+):
     async def run():
         async with integration_database.async_sessions.begin() as session:
             return await set_mission_product_selection_async(
@@ -694,9 +790,13 @@ def _select_variant(integration_database, *, user_id: UUID, mission_id: UUID, pr
     return asyncio.run(run())
 
 
-def test_family_mission_has_no_link_until_a_variant_is_selected(integration_database) -> None:
+def test_family_mission_has_no_link_until_a_variant_is_selected(
+    integration_database,
+) -> None:
     user = _seed_user(integration_database.sessions, "family-pending")
-    mission = _make_mission(integration_database, user, search_query="iPhone 17", sources=("amazon",))
+    mission = _make_mission(
+        integration_database, user, search_query="iPhone 17", sources=("amazon",)
+    )
     with integration_database.sessions() as session:
         criteria = session.scalar(
             select(MissionCriteria).where(MissionCriteria.mission_id == mission.id)
@@ -710,7 +810,9 @@ def test_selecting_a_specific_variant_creates_monitoring_item_immediately(
     integration_database,
 ) -> None:
     user = _seed_user(integration_database.sessions, "select-variant")
-    mission = _make_mission(integration_database, user, search_query="iPhone 17", sources=("amazon",))
+    mission = _make_mission(
+        integration_database, user, search_query="iPhone 17", sources=("amazon",)
+    )
     amazon_id = _amazon_store_id(integration_database)
     product_256 = _seed_resolved_product(
         integration_database.sessions, text="iPhone 17 Pro 256GB", store_id=amazon_id
@@ -719,7 +821,11 @@ def test_selecting_a_specific_variant_creates_monitoring_item_immediately(
         version = session.get(Mission, mission.id).state_version
 
     _select_variant(
-        integration_database, user_id=user, mission_id=mission.id, product_id=product_256.id, version=version
+        integration_database,
+        user_id=user,
+        mission_id=mission.id,
+        product_id=product_256.id,
+        version=version,
     )
 
     item_id = _monitoring_item_id_for(integration_database.sessions, mission.id)
@@ -729,9 +835,13 @@ def test_selecting_a_specific_variant_creates_monitoring_item_immediately(
     assert row is not None and row.is_enabled is True  # missão ACTIVE, já reflete
 
 
-def test_changing_selected_variant_moves_the_link_from_a_to_b(integration_database) -> None:
+def test_changing_selected_variant_moves_the_link_from_a_to_b(
+    integration_database,
+) -> None:
     user = _seed_user(integration_database.sessions, "select-a-then-b")
-    mission = _make_mission(integration_database, user, search_query="iPhone 17", sources=("amazon",))
+    mission = _make_mission(
+        integration_database, user, search_query="iPhone 17", sources=("amazon",)
+    )
     amazon_id = _amazon_store_id(integration_database)
     product_256 = _seed_resolved_product(
         integration_database.sessions, text="iPhone 17 Pro 256GB", store_id=amazon_id
@@ -742,7 +852,11 @@ def test_changing_selected_variant_moves_the_link_from_a_to_b(integration_databa
     with integration_database.sessions() as session:
         version = session.get(Mission, mission.id).state_version
     _select_variant(
-        integration_database, user_id=user, mission_id=mission.id, product_id=product_256.id, version=version
+        integration_database,
+        user_id=user,
+        mission_id=mission.id,
+        product_id=product_256.id,
+        version=version,
     )
     item_a = _monitoring_item_id_for(integration_database.sessions, mission.id)
     assert item_a is not None
@@ -750,7 +864,11 @@ def test_changing_selected_variant_moves_the_link_from_a_to_b(integration_databa
     with integration_database.sessions() as session:
         version = session.get(Mission, mission.id).state_version
     _select_variant(
-        integration_database, user_id=user, mission_id=mission.id, product_id=product_512.id, version=version
+        integration_database,
+        user_id=user,
+        mission_id=mission.id,
+        product_id=product_512.id,
+        version=version,
     )
     item_b = _monitoring_item_id_for(integration_database.sessions, mission.id)
 
@@ -779,13 +897,21 @@ def test_text_and_selected_product_for_the_same_variant_converge_to_the_same_key
     user_product = _seed_user(integration_database.sessions, "converge-product")
 
     mission_text = _make_mission(
-        integration_database, user_text, search_query="iPhone 17 Pro 256GB", sources=("amazon",)
+        integration_database,
+        user_text,
+        search_query="iPhone 17 Pro 256GB",
+        sources=("amazon",),
     )
-    item_from_text = _monitoring_item_id_for(integration_database.sessions, mission_text.id)
+    item_from_text = _monitoring_item_id_for(
+        integration_database.sessions, mission_text.id
+    )
     assert item_from_text is not None  # SPECIFIC_PRODUCT direto por texto
 
     mission_family = _make_mission(
-        integration_database, user_product, search_query="iPhone 17", sources=("amazon",)
+        integration_database,
+        user_product,
+        search_query="iPhone 17",
+        sources=("amazon",),
     )
     amazon_id = _amazon_store_id(integration_database)
     product_256 = _seed_resolved_product(
@@ -800,20 +926,26 @@ def test_text_and_selected_product_for_the_same_variant_converge_to_the_same_key
         product_id=product_256.id,
         version=version,
     )
-    item_from_product = _monitoring_item_id_for(integration_database.sessions, mission_family.id)
+    item_from_product = _monitoring_item_id_for(
+        integration_database.sessions, mission_family.id
+    )
 
     assert item_from_product is not None
     assert item_from_product == item_from_text
     assert _monitoring_item_count(integration_database.sessions) == 1
 
 
-def test_selected_product_prevails_over_less_specific_original_text(integration_database) -> None:
+def test_selected_product_prevails_over_less_specific_original_text(
+    integration_database,
+) -> None:
     """Caso 6 do pedido: o texto original da missão era só "iPhone 17"
     (família, sem variante) -- depois de selecionar 256GB, a identidade
     efetiva tem que ser a do Product selecionado, nunca continuar
     derivada do texto original (que sozinho nem resolveria)."""
     user = _seed_user(integration_database.sessions, "product-prevails")
-    mission = _make_mission(integration_database, user, search_query="iPhone 17", sources=("amazon",))
+    mission = _make_mission(
+        integration_database, user, search_query="iPhone 17", sources=("amazon",)
+    )
     amazon_id = _amazon_store_id(integration_database)
     product_256 = _seed_resolved_product(
         integration_database.sessions, text="iPhone 17 Pro 256GB", store_id=amazon_id
@@ -821,7 +953,11 @@ def test_selected_product_prevails_over_less_specific_original_text(integration_
     with integration_database.sessions() as session:
         version = session.get(Mission, mission.id).state_version
     _select_variant(
-        integration_database, user_id=user, mission_id=mission.id, product_id=product_256.id, version=version
+        integration_database,
+        user_id=user,
+        mission_id=mission.id,
+        product_id=product_256.id,
+        version=version,
     )
 
     item_id = _monitoring_item_id_for(integration_database.sessions, mission.id)
@@ -851,17 +987,29 @@ def test_two_all_mode_missions_for_the_same_family_share_one_monitoring_item(
     # select_all exige ao menos uma variante já conhecida da família
     # (mesmo com allow_uncollected_family_products=True) -- não gera
     # identidade do nada, só dispensa a exigência de variante específica.
-    _seed_resolved_product(integration_database.sessions, text="iPhone 17 Pro 256GB", store_id=amazon_id)
+    _seed_resolved_product(
+        integration_database.sessions, text="iPhone 17 Pro 256GB", store_id=amazon_id
+    )
 
-    mission_a = _make_mission(integration_database, user_a, search_query="iPhone 17", sources=("amazon",))
-    mission_b = _make_mission(integration_database, user_b, search_query="iPhone 17", sources=("amazon",))
-    assert _monitoring_item_id_for(integration_database.sessions, mission_a.id) is None  # PENDING
+    mission_a = _make_mission(
+        integration_database, user_a, search_query="iPhone 17", sources=("amazon",)
+    )
+    mission_b = _make_mission(
+        integration_database, user_b, search_query="iPhone 17", sources=("amazon",)
+    )
+    assert (
+        _monitoring_item_id_for(integration_database.sessions, mission_a.id) is None
+    )  # PENDING
 
     with integration_database.sessions() as session:
         version_a = session.get(Mission, mission_a.id).state_version
         version_b = session.get(Mission, mission_b.id).state_version
-    _select_all_variants(integration_database, user_id=user_a, mission_id=mission_a.id, version=version_a)
-    _select_all_variants(integration_database, user_id=user_b, mission_id=mission_b.id, version=version_b)
+    _select_all_variants(
+        integration_database, user_id=user_a, mission_id=mission_a.id, version=version_a
+    )
+    _select_all_variants(
+        integration_database, user_id=user_b, mission_id=mission_b.id, version=version_b
+    )
 
     item_a = _monitoring_item_id_for(integration_database.sessions, mission_a.id)
     item_b = _monitoring_item_id_for(integration_database.sessions, mission_b.id)
@@ -887,12 +1035,18 @@ def test_family_all_mode_defaults_only_unspecified_attributes_to_any_in_the_stor
     especificasse seria preservado, não zerado."""
     user = _seed_user(integration_database.sessions, "family-all-any")
     amazon_id = _amazon_store_id(integration_database)
-    _seed_resolved_product(integration_database.sessions, text="iPhone 17 Pro 256GB", store_id=amazon_id)
-    mission = _make_mission(integration_database, user, search_query="iPhone 17", sources=("amazon",))
+    _seed_resolved_product(
+        integration_database.sessions, text="iPhone 17 Pro 256GB", store_id=amazon_id
+    )
+    mission = _make_mission(
+        integration_database, user, search_query="iPhone 17", sources=("amazon",)
+    )
     with integration_database.sessions() as session:
         version = session.get(Mission, mission.id).state_version
 
-    _select_all_variants(integration_database, user_id=user, mission_id=mission.id, version=version)
+    _select_all_variants(
+        integration_database, user_id=user, mission_id=mission.id, version=version
+    )
 
     item_id = _monitoring_item_id_for(integration_database.sessions, mission.id)
     assert item_id is not None
@@ -922,10 +1076,18 @@ def test_all_mode_and_selected_specific_variant_never_share_the_same_item(
     )
     with integration_database.sessions() as session:
         version = session.get(Mission, mission_all.id).state_version
-    _select_all_variants(integration_database, user_id=user_all, mission_id=mission_all.id, version=version)
+    _select_all_variants(
+        integration_database,
+        user_id=user_all,
+        mission_id=mission_all.id,
+        version=version,
+    )
 
     mission_selected = _make_mission(
-        integration_database, user_selected, search_query="iPhone 17", sources=("amazon",)
+        integration_database,
+        user_selected,
+        search_query="iPhone 17",
+        sources=("amazon",),
     )
     with integration_database.sessions() as session:
         version = session.get(Mission, mission_selected.id).state_version
@@ -938,14 +1100,18 @@ def test_all_mode_and_selected_specific_variant_never_share_the_same_item(
     )
 
     item_all = _monitoring_item_id_for(integration_database.sessions, mission_all.id)
-    item_selected = _monitoring_item_id_for(integration_database.sessions, mission_selected.id)
+    item_selected = _monitoring_item_id_for(
+        integration_database.sessions, mission_selected.id
+    )
     assert item_all is not None
     assert item_selected is not None
     assert item_all != item_selected
     assert _monitoring_item_count(integration_database.sessions) == 2
 
 
-def test_switching_from_all_to_a_specific_selection_moves_the_link(integration_database) -> None:
+def test_switching_from_all_to_a_specific_selection_moves_the_link(
+    integration_database,
+) -> None:
     """Caso 7 do pedido: missão começa em ALL (escopo family) e depois o
     usuário restringe para uma variante específica (SELECTED) -- o
     vínculo tem que migrar de family para specific, histórico preservado,
@@ -955,19 +1121,30 @@ def test_switching_from_all_to_a_specific_selection_moves_the_link(integration_d
     product_256 = _seed_resolved_product(
         integration_database.sessions, text="iPhone 17 Pro 256GB", store_id=amazon_id
     )
-    mission = _make_mission(integration_database, user, search_query="iPhone 17", sources=("amazon",))
+    mission = _make_mission(
+        integration_database, user, search_query="iPhone 17", sources=("amazon",)
+    )
     with integration_database.sessions() as session:
         version = session.get(Mission, mission.id).state_version
-    _select_all_variants(integration_database, user_id=user, mission_id=mission.id, version=version)
+    _select_all_variants(
+        integration_database, user_id=user, mission_id=mission.id, version=version
+    )
     item_family = _monitoring_item_id_for(integration_database.sessions, mission.id)
     assert item_family is not None
     with integration_database.sessions() as session:
-        assert session.get(MonitoringItem, item_family).canonical_identity["scope"] == "family"
+        assert (
+            session.get(MonitoringItem, item_family).canonical_identity["scope"]
+            == "family"
+        )
 
     with integration_database.sessions() as session:
         version = session.get(Mission, mission.id).state_version
     _select_variant(
-        integration_database, user_id=user, mission_id=mission.id, product_id=product_256.id, version=version
+        integration_database,
+        user_id=user,
+        mission_id=mission.id,
+        product_id=product_256.id,
+        version=version,
     )
 
     item_specific = _monitoring_item_id_for(integration_database.sessions, mission.id)

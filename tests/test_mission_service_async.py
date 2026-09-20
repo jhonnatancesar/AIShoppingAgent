@@ -59,7 +59,8 @@ def _no_shared_monitoring(monkeypatch):
         "app.missions.service.activate_monitoring_item_stores_async", _noop
     )
     monkeypatch.setattr(
-        "app.missions.service.deactivate_monitoring_item_stores_if_unneeded_async", _noop
+        "app.missions.service.deactivate_monitoring_item_stores_if_unneeded_async",
+        _noop,
     )
 
 

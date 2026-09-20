@@ -378,7 +378,9 @@ class MissionVariantsReadyPayload:
     def __post_init__(self) -> None:
         if not isinstance(self.variants, tuple) or not 1 <= len(self.variants) <= 20:
             raise EventCatalogError("variants must contain between 1 and 20 items")
-        if any(not isinstance(item, ProductVariantOptionPayload) for item in self.variants):
+        if any(
+            not isinstance(item, ProductVariantOptionPayload) for item in self.variants
+        ):
             raise EventCatalogError("variants must use ProductVariantOptionPayload")
         if len({item.product_id for item in self.variants}) != len(self.variants):
             raise EventCatalogError("variants must be unique")

@@ -53,9 +53,7 @@ def upgrade() -> None:
         "ix_telegram_link_tokens_user_active",
         "telegram_link_tokens",
         ["user_id", "expires_at"],
-        postgresql_where=sa.text(
-            "consumed_at IS NULL AND invalidated_at IS NULL"
-        ),
+        postgresql_where=sa.text("consumed_at IS NULL AND invalidated_at IS NULL"),
     )
     op.create_index(
         "ix_telegram_link_tokens_expiry",

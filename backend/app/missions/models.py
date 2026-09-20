@@ -250,10 +250,15 @@ class MissionCriteria(Base):
     )
     target_currency: Mapped[str | None] = mapped_column(CHAR(3), nullable=True)
     request_kind: Mapped[str] = mapped_column(
-        String(32), nullable=False, default="generic_category", server_default="generic_category"
+        String(32),
+        nullable=False,
+        default="generic_category",
+        server_default="generic_category",
     )
     requested_family_key: Mapped[str | None] = mapped_column(String(80), nullable=True)
-    requested_identity_key: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    requested_identity_key: Mapped[str | None] = mapped_column(
+        String(80), nullable=True
+    )
     requested_variant: Mapped[str | None] = mapped_column(String(160), nullable=True)
     variant_selection_mode: Mapped[VariantSelectionMode] = mapped_column(
         Enum(
@@ -313,7 +318,10 @@ class MonitoringItem(Base):
     identity_version: Mapped[int] = mapped_column(Integer, nullable=False)
     canonical_identity: Mapped[dict] = mapped_column(JSONB, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=utc_now, server_default=func.now()
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+        server_default=func.now(),
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -349,7 +357,10 @@ class MissionMonitoringItem(Base):
         index=True,
     )
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=utc_now, server_default=func.now()
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+        server_default=func.now(),
     )
 
 
@@ -413,7 +424,10 @@ class MonitoringItemStore(Base):
         Integer, nullable=False, default=0, server_default="0"
     )
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=utc_now, server_default=func.now()
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+        server_default=func.now(),
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -580,7 +594,10 @@ class MissionProductSelection(Base):
         primary_key=True,
     )
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=utc_now, server_default=func.now()
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+        server_default=func.now(),
     )
 
 

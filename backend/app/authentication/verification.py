@@ -149,7 +149,9 @@ async def confirm_challenge_async(
         or challenge.attempts >= CHALLENGE_MAX_ATTEMPTS
     ):
         raise ChallengeInvalid("Código inválido ou expirado.")
-    if not secrets.compare_digest(challenge.code_hash, code_digest(code, pepper=pepper)):
+    if not secrets.compare_digest(
+        challenge.code_hash, code_digest(code, pepper=pepper)
+    ):
         challenge.attempts += 1
         raise ChallengeInvalid("Código inválido ou expirado.")
     challenge.used_at = current

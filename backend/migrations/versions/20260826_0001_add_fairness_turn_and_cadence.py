@@ -24,7 +24,9 @@ def upgrade() -> None:
     # _reserve_fairness_owners`).
     op.add_column(
         "user_collection_queue_state",
-        sa.Column("last_fairness_turn_id", postgresql.UUID(as_uuid=True), nullable=True),
+        sa.Column(
+            "last_fairness_turn_id", postgresql.UUID(as_uuid=True), nullable=True
+        ),
     )
 
     # `fairness_owner_user_id`: usuário que consumiu o turno de fairness
@@ -36,7 +38,9 @@ def upgrade() -> None:
     # pendurada na prática.
     op.add_column(
         "collection_runs",
-        sa.Column("fairness_owner_user_id", postgresql.UUID(as_uuid=True), nullable=True),
+        sa.Column(
+            "fairness_owner_user_id", postgresql.UUID(as_uuid=True), nullable=True
+        ),
     )
     op.create_foreign_key(
         op.f("fk_collection_runs_fairness_owner_user_id_users"),

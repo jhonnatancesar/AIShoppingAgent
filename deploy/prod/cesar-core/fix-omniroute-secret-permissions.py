@@ -32,7 +32,7 @@ def main() -> None:
     try:
         uid = int(os.environ["TARGET_UID"])
         gid = int(os.environ["TARGET_GID"])
-    except (KeyError, ValueError):
+    except KeyError, ValueError:
         fail("TARGET_UID/TARGET_GID not set or not valid integers")
 
     pairs_raw = os.environ.get("SECRET_COPY_PAIRS")
@@ -66,9 +66,7 @@ def main() -> None:
             os.close(fd)
         os.chmod(dst, 0o400)
         os.chown(dst, uid, gid)
-        print(
-            f"OK  {os.path.basename(dst)}: copiado com uid={uid} gid={gid} mode=0400"
-        )
+        print(f"OK  {os.path.basename(dst)}: copiado com uid={uid} gid={gid} mode=0400")
 
     print("FIX_SECRET_PERMISSIONS_DONE")
 

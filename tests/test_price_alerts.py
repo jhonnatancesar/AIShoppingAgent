@@ -367,7 +367,9 @@ def test_realert_allowed_months_later_when_market_confirms_good_deal() -> None:
         rearmed_at=t0 + timedelta(hours=2),
     )
     later = t0 + timedelta(days=200)
-    previous = _observation(offer_id, "4100.0000", observed_at=later - timedelta(hours=1))
+    previous = _observation(
+        offer_id, "4100.0000", observed_at=later - timedelta(hours=1)
+    )
     current = _observation(offer_id, "3950.0000", observed_at=later)
 
     alerts = evaluate_price_alerts(
@@ -382,7 +384,9 @@ def test_realert_allowed_months_later_when_market_confirms_good_deal() -> None:
         now=later,
     )
 
-    assert tuple(alert.event_type for alert in alerts) == (EventType.PRICE_DECREASED_V1,)
+    assert tuple(alert.event_type for alert in alerts) == (
+        EventType.PRICE_DECREASED_V1,
+    )
 
 
 def test_realert_blocked_without_good_market_assessment() -> None:
@@ -399,7 +403,9 @@ def test_realert_blocked_without_good_market_assessment() -> None:
         rearmed_at=t0 + timedelta(hours=2),
     )
     later = t0 + timedelta(days=200)
-    previous = _observation(offer_id, "4100.0000", observed_at=later - timedelta(hours=1))
+    previous = _observation(
+        offer_id, "4100.0000", observed_at=later - timedelta(hours=1)
+    )
     current = _observation(offer_id, "3950.0000", observed_at=later)
 
     alerts = evaluate_price_alerts(
@@ -442,7 +448,9 @@ def test_material_improvement_over_best_notified_alerts() -> None:
         now=t0 + timedelta(days=1),
     )
 
-    assert tuple(alert.event_type for alert in alerts) == (EventType.PRICE_DECREASED_V1,)
+    assert tuple(alert.event_type for alert in alerts) == (
+        EventType.PRICE_DECREASED_V1,
+    )
 
 
 def test_tiny_decrease_below_material_improvement_does_not_alert() -> None:
@@ -486,7 +494,9 @@ def test_checkpoint_none_preserves_pre_task113_behavior() -> None:
 
     alerts = evaluate_price_alerts(mission, criteria, current, previous)
 
-    assert tuple(alert.event_type for alert in alerts) == (EventType.PRICE_DECREASED_V1,)
+    assert tuple(alert.event_type for alert in alerts) == (
+        EventType.PRICE_DECREASED_V1,
+    )
 
 
 def test_should_rearm_on_material_rise_above_last_notified() -> None:

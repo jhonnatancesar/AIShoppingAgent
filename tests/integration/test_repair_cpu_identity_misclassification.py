@@ -22,15 +22,20 @@ pytestmark = pytest.mark.integration
 NOW = datetime(2026, 8, 26, 12, 0, tzinfo=UTC)
 
 _REPAIR_SCRIPT = (
-    Path(__file__).resolve().parents[2] / "scripts" / "repair_cpu_identity_misclassification.py"
+    Path(__file__).resolve().parents[2]
+    / "scripts"
+    / "repair_cpu_identity_misclassification.py"
 )
 
 
 def _load_repair_module():
-    spec = importlib.util.spec_from_file_location("repair_cpu_identity_misclassification", _REPAIR_SCRIPT)
+    spec = importlib.util.spec_from_file_location(
+        "repair_cpu_identity_misclassification", _REPAIR_SCRIPT
+    )
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
 
 _WRONG_RAW_TITLE = (
     "MSI Placa-mãe MAG X870E Tomahawk MAX WiFi, ATX - Suporta processadores "
@@ -60,7 +65,9 @@ def _seed_misclassified_offer(integration_database) -> tuple:
         user = User(display_name="repair-test", role=UserRole.USER)
         session.add(user)
         session.flush()
-        mission = Mission(user_id=user.id, title="repair-test", status=MissionStatus.ACTIVE)
+        mission = Mission(
+            user_id=user.id, title="repair-test", status=MissionStatus.ACTIVE
+        )
         session.add(mission)
         session.flush()
         product = Product(

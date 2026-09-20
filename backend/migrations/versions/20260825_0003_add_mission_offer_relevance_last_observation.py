@@ -25,9 +25,7 @@ def upgrade() -> None:
     # Mission já processou -- correto independente de quem coletou.
     op.add_column(
         "mission_offer_relevance",
-        sa.Column(
-            "last_observation_id", postgresql.UUID(as_uuid=True), nullable=True
-        ),
+        sa.Column("last_observation_id", postgresql.UUID(as_uuid=True), nullable=True),
     )
     op.create_foreign_key(
         op.f("fk_mission_offer_relevance_last_observation_id_price_observations"),

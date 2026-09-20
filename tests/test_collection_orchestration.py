@@ -299,25 +299,42 @@ def test_amazon_specific_search_preserves_multiple_commercial_options() -> None:
     assert [item.raw_offer.external_id for item in survivors] == ["B02", "B01", "B03"]
 
 
-def test_intermediate_candidates_rank_condition_seller_availability_then_price() -> None:
+def test_intermediate_candidates_rank_condition_seller_availability_then_price() -> (
+    None
+):
     offers = _normalized_offers(
         RawCollectedOffer(
-            source_code="amazon", url="https://example.invalid/used", title="Produto X",
-            collected_at=NOW, external_id="used", raw_price="R$ 100,00",
-            raw_currency="BRL", raw_availability="Disponível", raw_condition="Usado",
+            source_code="amazon",
+            url="https://example.invalid/used",
+            title="Produto X",
+            collected_at=NOW,
+            external_id="used",
+            raw_price="R$ 100,00",
+            raw_currency="BRL",
+            raw_availability="Disponível",
+            raw_condition="Usado",
             seller_kind=MarketplacePartyKind.MARKETPLACE_PARTNER,
         ),
         RawCollectedOffer(
-            source_code="amazon", url="https://example.invalid/new", title="Produto X",
-            collected_at=NOW, external_id="new", raw_price="R$ 200,00",
-            raw_currency="BRL", raw_availability="Disponível", raw_condition="Novo",
+            source_code="amazon",
+            url="https://example.invalid/new",
+            title="Produto X",
+            collected_at=NOW,
+            external_id="new",
+            raw_price="R$ 200,00",
+            raw_currency="BRL",
+            raw_availability="Disponível",
+            raw_condition="Novo",
             seller_kind=MarketplacePartyKind.PLATFORM,
         ),
     )
 
     survivors = _limit_intermediate_candidates(offers, limit=2)
 
-    assert [item.condition for item in survivors] == [OfferCondition.NEW, OfferCondition.USED]
+    assert [item.condition for item in survivors] == [
+        OfferCondition.NEW,
+        OfferCondition.USED,
+    ]
 
 
 def test_intermediate_candidates_keep_only_configured_limit() -> None:
@@ -386,14 +403,14 @@ def _rank_candidate(
     return _PrelistCandidate(relevance, observation, offer, store)
 
 
-def test_prelist_ranking_applies_all_commercial_priorities_and_excludes_no_match() -> None:
+def test_prelist_ranking_applies_all_commercial_priorities_and_excludes_no_match() -> (
+    None
+):
     store = SimpleNamespace(id=uuid4(), code="amazon")
     possible = _rank_candidate(
         relevance=OfferRelevance.POSSIBLE_MATCH, amount="1.00", store=store
     )
-    used = _rank_candidate(
-        condition=OfferCondition.USED, amount="10.00", store=store
-    )
+    used = _rank_candidate(condition=OfferCondition.USED, amount="10.00", store=store)
     refurbished = _rank_candidate(
         condition=OfferCondition.REFURBISHED, amount="20.00", store=store
     )

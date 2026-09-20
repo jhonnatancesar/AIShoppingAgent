@@ -423,7 +423,9 @@ def change_password_with_current(
     bruto para o chamador setar o cookie."""
     current = _aware_now(now)
     credential = session.get(UserCredential, user.id)
-    if credential is None or not verify_password(credential.password_hash, current_password):
+    if credential is None or not verify_password(
+        credential.password_hash, current_password
+    ):
         raise AuthenticationError("A senha atual informada está incorreta.")
     normalized = validate_password(new_password, username=user.username)
     credential.password_hash = hash_password(normalized)
@@ -460,7 +462,9 @@ async def set_new_password_async(
     credential = await session.get(UserCredential, user.id)
     if credential is None:
         session.add(
-            UserCredential(user_id=user.id, password_hash=encoded, password_changed_at=current)
+            UserCredential(
+                user_id=user.id, password_hash=encoded, password_changed_at=current
+            )
         )
     else:
         credential.password_hash = encoded

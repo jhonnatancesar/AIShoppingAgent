@@ -16,7 +16,9 @@ from app.coupons.worker_control import notify_coupon_worker_high_activity
 NOW = datetime(2026, 9, 8, 3, 0, tzinfo=UTC)
 
 
-def _client_factory(response: httpx.Response | None = None, *, raises: Exception | None = None):
+def _client_factory(
+    response: httpx.Response | None = None, *, raises: Exception | None = None
+):
     post = AsyncMock()
     if raises is not None:
         post.side_effect = raises
@@ -93,7 +95,9 @@ async def test_never_raises_when_worker_unreachable(tmp_path: Path) -> None:
     )
     factory, post = _client_factory(raises=httpx.ConnectError("recusado"))
 
-    await notify_coupon_worker_high_activity(settings, now=NOW, client_factory=factory)  # não levanta
+    await notify_coupon_worker_high_activity(
+        settings, now=NOW, client_factory=factory
+    )  # não levanta
 
     post.assert_awaited_once()
 
@@ -108,6 +112,8 @@ async def test_never_raises_on_non_200_response(tmp_path: Path) -> None:
     )
     factory, post = _client_factory(httpx.Response(401, json={"error": "unauthorized"}))
 
-    await notify_coupon_worker_high_activity(settings, now=NOW, client_factory=factory)  # não levanta
+    await notify_coupon_worker_high_activity(
+        settings, now=NOW, client_factory=factory
+    )  # não levanta
 
     post.assert_awaited_once()

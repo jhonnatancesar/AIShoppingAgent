@@ -75,7 +75,9 @@ def _harden_secrets_dir() -> None:
         timeout=10,
     )
     if result.returncode != 0:
-        logger.warning("falha ao aplicar ACL em %s: %s", SECRETS_DIR, result.stderr.strip())
+        logger.warning(
+            "falha ao aplicar ACL em %s: %s", SECRETS_DIR, result.stderr.strip()
+        )
 
 
 def _load_or_create_secret() -> bytes:
@@ -138,7 +140,9 @@ class RestartGovernor:
     def allow(self) -> tuple[bool, float]:
         with self._lock:
             now = time.time()
-            self._attempts = [t for t in self._attempts if now - t < RESTART_WINDOW_SECONDS]
+            self._attempts = [
+                t for t in self._attempts if now - t < RESTART_WINDOW_SECONDS
+            ]
             if len(self._attempts) >= MAX_RESTARTS_PER_WINDOW:
                 return False, 0.0
             delay = BACKOFF_SECONDS[min(len(self._attempts), len(BACKOFF_SECONDS) - 1)]
@@ -184,7 +188,9 @@ class WorkerMonitor:
             "reason": reason,
             "backoff_seconds": delay,
         }
-        logger.info("restart acionado (%s): motivo=%s backoff=%ss", triggered, reason, delay)
+        logger.info(
+            "restart acionado (%s): motivo=%s backoff=%ss", triggered, reason, delay
+        )
         self.last_action = action
         return action
 
@@ -195,9 +201,15 @@ class WorkerMonitor:
                 state = _query_task_state()
                 self.last_state = state
                 is_running = state == "Running"
-                logger.info("poll: task_state=%s previously_running=%s", state, previously_running)
+                logger.info(
+                    "poll: task_state=%s previously_running=%s",
+                    state,
+                    previously_running,
+                )
                 if previously_running and not is_running:
-                    logger.warning("worker caiu (estado da task: %s) -- acionando restart", state)
+                    logger.warning(
+                        "worker caiu (estado da task: %s) -- acionando restart", state
+                    )
                     self.restart_worker(reason=f"task state changed to {state}")
                 previously_running = is_running
             except Exception:
@@ -257,11 +269,15 @@ class OpsAgentHandler(BaseHTTPRequestHandler):
             return
         route = self.path.rstrip("/")
         if route == "/v1/collection_worker/status":
-            self._reply(200, {"service": "collection_worker", "task_state": _query_task_state()})
+            self._reply(
+                200, {"service": "collection_worker", "task_state": _query_task_state()}
+            )
         elif route == "/v1/collection_worker/start":
             state = _query_task_state()
             if state == "Running":
-                self._reply(200, {"service": "collection_worker", "status": "already_running"})
+                self._reply(
+                    200, {"service": "collection_worker", "status": "already_running"}
+                )
             else:
                 action = _MONITOR.restart_worker(reason="start solicitado via API")
                 self._reply(200, {"service": "collection_worker", **action})

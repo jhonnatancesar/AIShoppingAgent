@@ -104,9 +104,7 @@ def test_concurrent_registration_same_email_creates_only_one_account(
     assert sorted(results) == ["email", "ok"]
     with integration_database.sessions() as session:
         count = session.scalar(
-            select(func.count(User.id)).where(
-                User.email == "corrida_email@example.com"
-            )
+            select(func.count(User.id)).where(User.email == "corrida_email@example.com")
         )
     assert count == 1
 
@@ -149,7 +147,9 @@ def test_admin_create_user_duplicate_returns_conflict_never_500(
 def test_challenge_confirm_concurrent_only_one_succeeds(integration_database) -> None:
     async def setup():
         async with integration_database.async_sessions.begin() as session:
-            user = User(display_name="Alvo", role=UserRole.USER, username="alvo_challenge")
+            user = User(
+                display_name="Alvo", role=UserRole.USER, username="alvo_challenge"
+            )
             session.add(user)
             await session.flush()
             challenge, code = await create_challenge_async(
@@ -198,7 +198,9 @@ def test_full_registration_login_change_and_recover_cycle(integration_database) 
     user = _run(register())
 
     with integration_database.sessions.begin() as session:
-        authenticate_web_login(session, username="ciclo_completo", password="Senha#Original1")
+        authenticate_web_login(
+            session, username="ciclo_completo", password="Senha#Original1"
+        )
 
     with integration_database.sessions.begin() as session:
         db_user = session.get(User, user.id)
@@ -215,7 +217,9 @@ def test_full_registration_login_change_and_recover_cycle(integration_database) 
                 session, username="ciclo_completo", password="Senha#Original1"
             )
     with integration_database.sessions.begin() as session:
-        authenticate_web_login(session, username="ciclo_completo", password="Senha#Trocada2")
+        authenticate_web_login(
+            session, username="ciclo_completo", password="Senha#Trocada2"
+        )
 
     async def request_recovery():
         async with integration_database.async_sessions.begin() as session:
@@ -237,7 +241,10 @@ def test_full_registration_login_change_and_recover_cycle(integration_database) 
                 challenge_id=challenge_id,
                 code=code,
                 purposes=frozenset(
-                    {VerificationPurpose.PASSWORD_RESET, VerificationPurpose.PASSWORD_CHANGE}
+                    {
+                        VerificationPurpose.PASSWORD_RESET,
+                        VerificationPurpose.PASSWORD_CHANGE,
+                    }
                 ),
                 pepper=_TEST_PEPPER,
             )
@@ -272,7 +279,9 @@ def test_verification_challenge_code_hash_uses_hmac_not_plain_digest(
 
     async def setup():
         async with integration_database.async_sessions.begin() as session:
-            user = User(display_name="Alvo Hash", role=UserRole.USER, username="alvo_hash")
+            user = User(
+                display_name="Alvo Hash", role=UserRole.USER, username="alvo_hash"
+            )
             session.add(user)
             await session.flush()
             challenge, code = await create_challenge_async(

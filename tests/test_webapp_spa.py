@@ -100,7 +100,9 @@ def test_registration_and_recovery_shells_served_without_any_session(
     assert "spa shell" in response.text
 
 
-def test_csp_img_src_allowlists_real_store_hosts_without_wildcard(dist_dir: Path) -> None:
+def test_csp_img_src_allowlists_real_store_hosts_without_wildcard(
+    dist_dir: Path,
+) -> None:
     """TASK-115 (v1.2.5) + subtask 4 (auditoria GG Oferta, 2026-08-30): hosts
     reais das 6 lojas com Offer.image_url, nunca 'img-src *'/https: genérico."""
     client = TestClient(_build_app(dist_dir))
@@ -108,7 +110,9 @@ def test_csp_img_src_allowlists_real_store_hosts_without_wildcard(dist_dir: Path
     response = client.get("/app")
 
     csp = response.headers["content-security-policy"]
-    img_src = next(part for part in csp.split(";") if part.strip().startswith("img-src"))
+    img_src = next(
+        part for part in csp.split(";") if part.strip().startswith("img-src")
+    )
     tokens = img_src.split()[1:]  # remove "img-src"
     assert "*" not in tokens
     assert "https:" not in tokens  # nunca https: genérico (bare scheme) em img-src

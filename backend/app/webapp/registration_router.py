@@ -139,7 +139,10 @@ def register_web_user(
     settings: Settings = Depends(get_settings),
 ) -> WebSessionUser:
     _registration_rate_limiter.check(resolve_client_ip(request))
-    if payload.password.get_secret_value() != payload.password_confirmation.get_secret_value():
+    if (
+        payload.password.get_secret_value()
+        != payload.password_confirmation.get_secret_value()
+    ):
         raise ApiError(
             status_code=422,
             code="password_confirmation_mismatch",

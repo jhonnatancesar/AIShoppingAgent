@@ -708,11 +708,7 @@ def _bounded_ai_evidence_text(value: str | None, *, limit: int) -> str | None:
     available = limit - len(_OMITTED_EVIDENCE_MARKER)
     head = available // 2
     tail = available - head
-    return (
-        text[:head].rstrip()
-        + _OMITTED_EVIDENCE_MARKER
-        + text[-tail:].lstrip()
-    )
+    return text[:head].rstrip() + _OMITTED_EVIDENCE_MARKER + text[-tail:].lstrip()
 
 
 def _ai_evidence_item(evidence: EvidenceItem) -> dict[str, str | None]:

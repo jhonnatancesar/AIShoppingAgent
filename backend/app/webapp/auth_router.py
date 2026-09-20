@@ -173,7 +173,9 @@ async def request_password_recovery(
     # que o design de "resposta idêntica" existe justamente para evitar.
     pepper = _require_pepper(settings)
     user = await _resolve_identifier(session, payload.identifier)
-    if user is None or payload.channel not in available_channels(user, settings=settings):
+    if user is None or payload.channel not in available_channels(
+        user, settings=settings
+    ):
         return _decoy_challenge()
     try:
         challenge, code = await create_challenge_async(
@@ -243,12 +245,16 @@ async def confirm_password_recovery(
             message="Código inválido ou expirado.",
         )
     try:
-        await set_new_password_async(session, user=user, new_password=payload.new_password)
+        await set_new_password_async(
+            session, user=user, new_password=payload.new_password
+        )
     except PasswordPolicyError as error:
         # Sem commit: o challenge continua não-usado (não foi "queimado"
         # por uma senha fraca) -- o usuário pode tentar de novo com o
         # mesmo código, sem pedir um novo.
-        raise ApiError(status_code=422, code="weak_password", message=str(error)) from error
+        raise ApiError(
+            status_code=422, code="weak_password", message=str(error)
+        ) from error
     return OkResponse()
 
 
@@ -325,7 +331,10 @@ async def confirm_email_verification(
         raise ApiError(
             status_code=422, code="challenge_invalid", message=str(error)
         ) from error
-    if challenge.user_id != user.id or challenge.channel is not VerificationChannel.EMAIL:
+    if (
+        challenge.user_id != user.id
+        or challenge.channel is not VerificationChannel.EMAIL
+    ):
         await session.commit()
         raise ApiError(
             status_code=422,

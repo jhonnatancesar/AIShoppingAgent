@@ -84,9 +84,7 @@ def upgrade() -> None:
         "monitoring_item_stores",
         sa.Column("monitoring_item_id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("store_id", postgresql.UUID(as_uuid=True), nullable=False),
-        sa.Column(
-            "is_enabled", sa.Boolean(), server_default="true", nullable=False
-        ),
+        sa.Column("is_enabled", sa.Boolean(), server_default="true", nullable=False),
         sa.Column("next_run_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("last_run_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("next_eligible_at", sa.DateTime(timezone=True), nullable=True),
@@ -112,9 +110,7 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(
             ["monitoring_item_id"],
             ["monitoring_items.id"],
-            name=op.f(
-                "fk_monitoring_item_stores_monitoring_item_id_monitoring_items"
-            ),
+            name=op.f("fk_monitoring_item_stores_monitoring_item_id_monitoring_items"),
             ondelete="CASCADE",
         ),
         sa.ForeignKeyConstraint(

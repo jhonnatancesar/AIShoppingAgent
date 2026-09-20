@@ -23,7 +23,10 @@ def _session() -> MagicMock:
 @pytest.mark.anyio
 async def test_create_user_defaults_role_user_and_display_name_to_username() -> None:
     user = await create_user_with_password_async(
-        _session(), username="clientenovo", email="cliente@example.com", password="Senha#Forte123"
+        _session(),
+        username="clientenovo",
+        email="cliente@example.com",
+        password="Senha#Forte123",
     )
     assert user.role is UserRole.USER
     assert user.username == "clientenovo"

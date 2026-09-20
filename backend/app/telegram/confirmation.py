@@ -328,11 +328,15 @@ _SUPPORT_TYPE_PROMPT = (
     "Digite o número."
 )
 
-_SUPPORT_TYPE_RETRY = "Não entendi.\n\n1 — Erro/Bug\n2 — Outro suporte\n\nDigite 1 ou 2."
+_SUPPORT_TYPE_RETRY = (
+    "Não entendi.\n\n1 — Erro/Bug\n2 — Outro suporte\n\nDigite 1 ou 2."
+)
 
 _SUPPORT_DESCRIPTION_PROMPT = "✍️ Descreva o que aconteceu, em poucas linhas."
 
-_SUPPORT_DESCRIPTION_RETRY = "A descrição não pode ficar vazia. Descreva o que aconteceu."
+_SUPPORT_DESCRIPTION_RETRY = (
+    "A descrição não pode ficar vazia. Descreva o que aconteceu."
+)
 
 _SUPPORT_TYPE_LABELS: dict[str, str] = {"bug": "Erro/Bug", "support": "Outro suporte"}
 
@@ -375,7 +379,9 @@ def describe_support_feedback(payload: dict[str, Any]) -> str:
 
 
 _STORE_SUGGESTION_NAME_PROMPT = "🏪 Qual loja você quer sugerir?"
-_STORE_SUGGESTION_NAME_RETRY = "O nome da loja não pode ficar vazio. Qual loja você quer sugerir?"
+_STORE_SUGGESTION_NAME_RETRY = (
+    "O nome da loja não pode ficar vazio. Qual loja você quer sugerir?"
+)
 _STORE_SUGGESTION_URL_PROMPT = (
     "🔗 Se quiser, envie o link da loja.\n\nPara pular, envie 0."
 )

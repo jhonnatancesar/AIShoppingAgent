@@ -108,9 +108,7 @@ def upgrade() -> None:
         sa.Column("expires_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("lease_until", sa.DateTime(timezone=True), nullable=True),
         sa.Column("retry_after", sa.DateTime(timezone=True), nullable=True),
-        sa.Column(
-            "failure_count", sa.Integer(), server_default="0", nullable=False
-        ),
+        sa.Column("failure_count", sa.Integer(), server_default="0", nullable=False),
         sa.Column("last_error", sa.String(length=2000), nullable=True),
         sa.CheckConstraint(
             "historical_low_source IS NOT NULL OR historical_low_external IS NULL",
@@ -132,9 +130,7 @@ def upgrade() -> None:
             name=op.f("fk_market_price_assessments_store_id_stores"),
             ondelete="RESTRICT",
         ),
-        sa.PrimaryKeyConstraint(
-            "product_id", name=op.f("pk_market_price_assessments")
-        ),
+        sa.PrimaryKeyConstraint("product_id", name=op.f("pk_market_price_assessments")),
     )
     # Recuperação de lease expirado (§33.3, mesmo espírito de
     # `ix_shared_fan_out_tasks_processing_claimed_at`) -- sem isto, um
@@ -177,9 +173,7 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(
             ["last_alert_event_id"],
             ["events.id"],
-            name=op.f(
-                "fk_mission_product_alert_state_last_alert_event_id_events"
-            ),
+            name=op.f("fk_mission_product_alert_state_last_alert_event_id_events"),
             ondelete="RESTRICT",
         ),
         sa.PrimaryKeyConstraint(
@@ -259,9 +253,7 @@ def downgrade() -> None:
         table_name="market_price_assessments",
     )
     op.drop_table("market_price_assessments")
-    postgresql.ENUM(name="assessment_confidence").drop(
-        op.get_bind(), checkfirst=True
-    )
+    postgresql.ENUM(name="assessment_confidence").drop(op.get_bind(), checkfirst=True)
     postgresql.ENUM(name="market_price_classification").drop(
         op.get_bind(), checkfirst=True
     )

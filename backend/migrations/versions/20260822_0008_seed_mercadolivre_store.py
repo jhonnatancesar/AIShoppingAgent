@@ -46,6 +46,4 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.execute(
-        _STORES_TABLE.delete().where(_STORES_TABLE.c.code == "mercadolivre")
-    )
+    op.execute(_STORES_TABLE.delete().where(_STORES_TABLE.c.code == "mercadolivre"))

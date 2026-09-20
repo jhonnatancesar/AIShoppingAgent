@@ -82,9 +82,7 @@ def upgrade() -> None:
             server_default="pending",
             nullable=False,
         ),
-        sa.Column(
-            "attempt_count", sa.Integer(), server_default="0", nullable=False
-        ),
+        sa.Column("attempt_count", sa.Integer(), server_default="0", nullable=False),
         sa.Column("last_error", sa.String(length=2000), nullable=True),
         sa.Column("next_retry_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("claimed_at", sa.DateTime(timezone=True), nullable=True),

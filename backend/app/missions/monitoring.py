@@ -73,7 +73,11 @@ def _canonical_identity_payload(identity: MonitoringIdentity) -> dict:
 
 
 def _criteria_identity_text(criteria: MissionCriteria) -> str:
-    return f"{criteria.search_query} {criteria.model}" if criteria.model else criteria.search_query
+    return (
+        f"{criteria.search_query} {criteria.model}"
+        if criteria.model
+        else criteria.search_query
+    )
 
 
 def _sorted_store_ids(store_ids: Sequence[UUID]) -> list[UUID]:
@@ -100,7 +104,9 @@ def resolve_or_create_monitoring_item(
     session: Session, identity: MonitoringIdentity, *, now: datetime
 ) -> MonitoringItem:
     item = session.scalar(
-        select(MonitoringItem).where(MonitoringItem.monitoring_key == identity.monitoring_key)
+        select(MonitoringItem).where(
+            MonitoringItem.monitoring_key == identity.monitoring_key
+        )
     )
     if item is not None:
         return item
@@ -119,7 +125,9 @@ def resolve_or_create_monitoring_item(
         if _constraint_name(error) != _MONITORING_ITEM_KEY_CONSTRAINT:
             raise
         item = session.scalar(
-            select(MonitoringItem).where(MonitoringItem.monitoring_key == identity.monitoring_key)
+            select(MonitoringItem).where(
+                MonitoringItem.monitoring_key == identity.monitoring_key
+            )
         )
         if item is None:
             raise
@@ -130,7 +138,9 @@ async def resolve_or_create_monitoring_item_async(
     session: AsyncSession, identity: MonitoringIdentity, *, now: datetime
 ) -> MonitoringItem:
     item = await session.scalar(
-        select(MonitoringItem).where(MonitoringItem.monitoring_key == identity.monitoring_key)
+        select(MonitoringItem).where(
+            MonitoringItem.monitoring_key == identity.monitoring_key
+        )
     )
     if item is not None:
         return item
@@ -149,7 +159,9 @@ async def resolve_or_create_monitoring_item_async(
         if _constraint_name(error) != _MONITORING_ITEM_KEY_CONSTRAINT:
             raise
         item = await session.scalar(
-            select(MonitoringItem).where(MonitoringItem.monitoring_key == identity.monitoring_key)
+            select(MonitoringItem).where(
+                MonitoringItem.monitoring_key == identity.monitoring_key
+            )
         )
         if item is None:
             raise
@@ -164,7 +176,11 @@ async def resolve_or_create_monitoring_item_async(
 
 
 def _activate_item_stores(
-    session: Session, *, monitoring_item_id: UUID, store_ids: Sequence[UUID], now: datetime
+    session: Session,
+    *,
+    monitoring_item_id: UUID,
+    store_ids: Sequence[UUID],
+    now: datetime,
 ) -> None:
     """Sempre incondicional: religa (ou cria, na primeira vez) sem nunca
     resetar `next_run_at`/backoff de uma loja já conhecida -- reaproveita
@@ -197,7 +213,11 @@ def _activate_item_stores(
 
 
 async def _activate_item_stores_async(
-    session: AsyncSession, *, monitoring_item_id: UUID, store_ids: Sequence[UUID], now: datetime
+    session: AsyncSession,
+    *,
+    monitoring_item_id: UUID,
+    store_ids: Sequence[UUID],
+    now: datetime,
 ) -> None:
     for store_id in _sorted_store_ids(store_ids):
         statement = (
@@ -222,7 +242,11 @@ async def _activate_item_stores_async(
 
 
 def _other_active_mission_needs_store(
-    session: Session, *, monitoring_item_id: UUID, store_id: UUID, excluding_mission_id: UUID
+    session: Session,
+    *,
+    monitoring_item_id: UUID,
+    store_id: UUID,
+    excluding_mission_id: UUID,
 ) -> bool:
     return bool(
         session.scalar(
@@ -347,7 +371,9 @@ async def _deactivate_item_stores_if_unneeded_async(
 # ---------------------------------------------------------------------------
 
 
-def activate_monitoring_item_stores(session: Session, *, mission_id: UUID, now: datetime) -> None:
+def activate_monitoring_item_stores(
+    session: Session, *, mission_id: UUID, now: datetime
+) -> None:
     """ACTIVATE/RESUME: reativa a necessidade de coleta para cada loja que
     a missão seleciona."""
     link = session.get(MissionMonitoringItem, mission_id)
@@ -357,7 +383,10 @@ def activate_monitoring_item_stores(session: Session, *, mission_id: UUID, now: 
         select(MissionSource.store_id).where(MissionSource.mission_id == mission_id)
     ).all()
     _activate_item_stores(
-        session, monitoring_item_id=link.monitoring_item_id, store_ids=store_ids, now=now
+        session,
+        monitoring_item_id=link.monitoring_item_id,
+        store_ids=store_ids,
+        now=now,
     )
 
 
@@ -373,7 +402,10 @@ async def activate_monitoring_item_stores_async(
         )
     ).all()
     await _activate_item_stores_async(
-        session, monitoring_item_id=link.monitoring_item_id, store_ids=store_ids, now=now
+        session,
+        monitoring_item_id=link.monitoring_item_id,
+        store_ids=store_ids,
+        now=now,
     )
 
 
@@ -500,7 +532,9 @@ def _effective_identity(
        for a informação mais específica disponível (cobre `SPECIFIC_
        PRODUCT` já resolvido por texto e `PENDING`/`GENERIC_CATEGORY`,
        que continuam fail-closed, como sempre)."""
-    selected = _selected_product_identity(session, mission_id=mission_id, criteria=criteria)
+    selected = _selected_product_identity(
+        session, mission_id=mission_id, criteria=criteria
+    )
     if selected is not None:
         return selected
     if criteria.variant_selection_mode is VariantSelectionMode.ALL:
@@ -560,7 +594,9 @@ def reconcile_mission_monitoring_item(
     """
     identity = _effective_identity(session, mission_id=mission_id, criteria=criteria)
     current_link = session.get(MissionMonitoringItem, mission_id, with_for_update=True)
-    current_item_id = current_link.monitoring_item_id if current_link is not None else None
+    current_item_id = (
+        current_link.monitoring_item_id if current_link is not None else None
+    )
 
     target_item: MonitoringItem | None = None
     if identity is not None:
@@ -574,7 +610,10 @@ def reconcile_mission_monitoring_item(
     if target_item_id == current_item_id:
         if mission_is_active and current_item_id is not None:
             _activate_item_stores(
-                session, monitoring_item_id=current_item_id, store_ids=store_ids, now=now
+                session,
+                monitoring_item_id=current_item_id,
+                store_ids=store_ids,
+                now=now,
             )
         return target_item
 
@@ -611,13 +650,21 @@ async def reconcile_mission_monitoring_item_async(
     mission_is_active: bool,
     now: datetime,
 ) -> MonitoringItem | None:
-    identity = await _effective_identity_async(session, mission_id=mission_id, criteria=criteria)
-    current_link = await session.get(MissionMonitoringItem, mission_id, with_for_update=True)
-    current_item_id = current_link.monitoring_item_id if current_link is not None else None
+    identity = await _effective_identity_async(
+        session, mission_id=mission_id, criteria=criteria
+    )
+    current_link = await session.get(
+        MissionMonitoringItem, mission_id, with_for_update=True
+    )
+    current_item_id = (
+        current_link.monitoring_item_id if current_link is not None else None
+    )
 
     target_item: MonitoringItem | None = None
     if identity is not None:
-        target_item = await resolve_or_create_monitoring_item_async(session, identity, now=now)
+        target_item = await resolve_or_create_monitoring_item_async(
+            session, identity, now=now
+        )
     target_item_id = target_item.id if target_item is not None else None
 
     store_ids = (
@@ -629,7 +676,10 @@ async def reconcile_mission_monitoring_item_async(
     if target_item_id == current_item_id:
         if mission_is_active and current_item_id is not None:
             await _activate_item_stores_async(
-                session, monitoring_item_id=current_item_id, store_ids=store_ids, now=now
+                session,
+                monitoring_item_id=current_item_id,
+                store_ids=store_ids,
+                now=now,
             )
         return target_item
 

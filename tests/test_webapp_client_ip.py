@@ -31,7 +31,9 @@ def test_trusted_peer_with_cf_connecting_ip_returns_real_visitor_ip() -> None:
     assert resolve_client_ip(request) == "2804:3d90:49:45d1::1"
 
 
-def test_trusted_peer_without_cf_header_falls_back_to_last_x_forwarded_for_hop() -> None:
+def test_trusted_peer_without_cf_header_falls_back_to_last_x_forwarded_for_hop() -> (
+    None
+):
     request = _request(
         peer="127.0.0.1",
         headers={"X-Forwarded-For": "203.0.113.9"},

@@ -174,7 +174,11 @@ async def set_mission_product_selection_async(
             MissionProductSelection.mission_id == mission_id
         )
     )
-    selected = available if select_all else tuple(available_by_id[item] for item in requested_ids)
+    selected = (
+        available
+        if select_all
+        else tuple(available_by_id[item] for item in requested_ids)
+    )
     if not select_all:
         session.add_all(
             MissionProductSelection(

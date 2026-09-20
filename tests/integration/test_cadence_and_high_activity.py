@@ -16,7 +16,11 @@ from uuid import UUID, uuid4
 import pytest
 from app.collection.adapter import CollectionAdapter
 from app.collection.cadence import CadenceConfig, resolve_collection_cadence
-from app.collection.contracts import CollectionRequest, CollectionResult, RawCollectedOffer
+from app.collection.contracts import (
+    CollectionRequest,
+    CollectionResult,
+    RawCollectedOffer,
+)
 from app.collection.models import PromotionalWindow, StoreActivityState
 from app.collection.orchestration import claim_due_collections
 from app.collection.shared_claim import _apply_shared_backoff
@@ -169,7 +173,9 @@ def _monitoring_item_id_for(sessions, mission_id: UUID) -> UUID | None:
         return link.monitoring_item_id if link is not None else None
 
 
-def _monitoring_item_store(sessions, item_id: UUID, store_id: UUID) -> MonitoringItemStore:
+def _monitoring_item_store(
+    sessions, item_id: UUID, store_id: UUID
+) -> MonitoringItemStore:
     with sessions() as session:
         return session.get(MonitoringItemStore, (item_id, store_id))
 
@@ -179,9 +185,13 @@ def _monitoring_item_store(sessions, item_id: UUID, store_id: UUID) -> Monitorin
 # ---------------------------------------------------------------------------
 
 
-def test_normal_mode_never_schedules_below_configured_floor(integration_database) -> None:
+def test_normal_mode_never_schedules_below_configured_floor(
+    integration_database,
+) -> None:
     user_id = _seed_user(integration_database.sessions, "normal")
-    mission = _make_shared_mission(integration_database, user_id, search_query="RTX 5070 Ti")
+    mission = _make_shared_mission(
+        integration_database, user_id, search_query="RTX 5070 Ti"
+    )
     item_id = _monitoring_item_id_for(integration_database.sessions, mission.id)
     amazon_id = _store_id(integration_database, "amazon")
     config = CadenceConfig(normal_min_minutes=45, normal_max_minutes=75)
@@ -199,7 +209,9 @@ def test_normal_mode_never_schedules_below_configured_floor(integration_database
     )
     assert result.claimed is True
 
-    item_store = _monitoring_item_store(integration_database.sessions, item_id, amazon_id)
+    item_store = _monitoring_item_store(
+        integration_database.sessions, item_id, amazon_id
+    )
     delta_minutes = (item_store.next_run_at - NOW).total_seconds() / 60
     assert 45 <= delta_minutes <= 75
 
@@ -254,7 +266,9 @@ def test_cadence_config_rejects_promo_floor_below_30_minutes() -> None:
 
 def test_backoff_wins_over_active_promo_calendar(integration_database) -> None:
     user_id = _seed_user(integration_database.sessions, "backoff")
-    mission = _make_shared_mission(integration_database, user_id, search_query="RTX 5070 Ti")
+    mission = _make_shared_mission(
+        integration_database, user_id, search_query="RTX 5070 Ti"
+    )
     item_id = _monitoring_item_id_for(integration_database.sessions, mission.id)
     amazon_id = _store_id(integration_database, "amazon")
 
@@ -279,7 +293,9 @@ def test_backoff_wins_over_active_promo_calendar(integration_database) -> None:
 
     _run(apply_backoff())
 
-    item_store = _monitoring_item_store(integration_database.sessions, item_id, amazon_id)
+    item_store = _monitoring_item_store(
+        integration_database.sessions, item_id, amazon_id
+    )
     assert item_store.next_eligible_at is not None
     assert item_store.next_eligible_at > NOW  # ainda bloqueado, mesmo com promo ativa
 
@@ -304,9 +320,13 @@ def test_backoff_wins_over_active_promo_calendar(integration_database) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_high_activity_detected_from_persisted_price_observations(integration_database) -> None:
+def test_high_activity_detected_from_persisted_price_observations(
+    integration_database,
+) -> None:
     user_id = _seed_user(integration_database.sessions, "highactivity")
-    mission = _make_shared_mission(integration_database, user_id, search_query="RTX 5070 Ti")
+    mission = _make_shared_mission(
+        integration_database, user_id, search_query="RTX 5070 Ti"
+    )
     item_id = _monitoring_item_id_for(integration_database.sessions, mission.id)
     amazon_id = _store_id(integration_database, "amazon")
     config = CadenceConfig(
@@ -369,9 +389,13 @@ def test_high_activity_detected_from_persisted_price_observations(integration_da
 # ---------------------------------------------------------------------------
 
 
-def test_many_first_observations_never_trigger_high_activity(integration_database) -> None:
+def test_many_first_observations_never_trigger_high_activity(
+    integration_database,
+) -> None:
     user_id = _seed_user(integration_database.sessions, "firstobs")
-    mission = _make_shared_mission(integration_database, user_id, search_query="RTX 5070 Ti")
+    mission = _make_shared_mission(
+        integration_database, user_id, search_query="RTX 5070 Ti"
+    )
     item_id = _monitoring_item_id_for(integration_database.sessions, mission.id)
     amazon_id = _store_id(integration_database, "amazon")
     config = CadenceConfig(
@@ -417,7 +441,9 @@ def test_many_first_observations_never_trigger_high_activity(integration_databas
         assert state is None  # nunca sequer criado
 
 
-def _force_due(integration_database, item_id: UUID, store_id: UUID, due_at: datetime) -> None:
+def _force_due(
+    integration_database, item_id: UUID, store_id: UUID, due_at: datetime
+) -> None:
     """Atalho só de teste: força o item a ficar due num instante escolhido
     -- necessário para gerar várias mudanças comerciais dentro da MESMA
     janela de observação de atividade alta sem depender da cadência real
@@ -430,7 +456,9 @@ def _force_due(integration_database, item_id: UUID, store_id: UUID, due_at: date
         item_store.next_eligible_at = None
 
 
-def test_high_activity_reverts_to_normal_after_duration_expires(integration_database) -> None:
+def test_high_activity_reverts_to_normal_after_duration_expires(
+    integration_database,
+) -> None:
     amazon_id = _store_id(integration_database, "amazon")
     scope_id = uuid4()
     config = CadenceConfig(high_activity_duration_minutes=60)
@@ -470,14 +498,21 @@ def test_high_activity_reverts_to_normal_after_duration_expires(integration_data
 
 def _make_legacy_mission(integration_database, user_id, *, store_id, due_at):
     with integration_database.sessions.begin() as session:
-        mission = Mission(user_id=user_id, title="legacy cadence", status=MissionStatus.ACTIVE)
+        mission = Mission(
+            user_id=user_id, title="legacy cadence", status=MissionStatus.ACTIVE
+        )
         session.add(mission)
         session.flush()
         session.add_all(
             (
-                MissionCriteria(mission_id=mission.id, search_query="item genérico sem identidade"),
+                MissionCriteria(
+                    mission_id=mission.id, search_query="item genérico sem identidade"
+                ),
                 MissionSchedule(
-                    mission_id=mission.id, interval_minutes=15, next_run_at=due_at, is_enabled=True
+                    mission_id=mission.id,
+                    interval_minutes=15,
+                    next_run_at=due_at,
+                    is_enabled=True,
                 ),
                 MissionSource(mission_id=mission.id, store_id=store_id),
             )
@@ -498,13 +533,20 @@ def test_legacy_schedule_normal_cadence_never_below_floor(integration_database) 
         session.add(user)
         session.flush()
         user_id = user.id
-    mission_id = _make_legacy_mission(integration_database, user_id, store_id=pichau_id, due_at=NOW)
+    mission_id = _make_legacy_mission(
+        integration_database, user_id, store_id=pichau_id, due_at=NOW
+    )
 
     async def run():
         async with integration_database.async_sessions() as session, session.begin():
             claims = await claim_due_collections(
-                session, now=NOW, limit=25, max_users=5,
-                cadence_config=CadenceConfig(normal_min_minutes=45, normal_max_minutes=75),
+                session,
+                now=NOW,
+                limit=25,
+                max_users=5,
+                cadence_config=CadenceConfig(
+                    normal_min_minutes=45, normal_max_minutes=75
+                ),
             )
             return claims
 
@@ -533,7 +575,9 @@ def test_legacy_schedule_promo_cadence_applies(integration_database) -> None:
                 ends_at=NOW + timedelta(days=1),
             )
         )
-    mission_id = _make_legacy_mission(integration_database, user_id, store_id=pichau_id, due_at=NOW)
+    mission_id = _make_legacy_mission(
+        integration_database, user_id, store_id=pichau_id, due_at=NOW
+    )
 
     async def run():
         async with integration_database.async_sessions() as session, session.begin():
@@ -557,12 +601,16 @@ def test_legacy_schedule_promo_cadence_applies(integration_database) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_unrelated_monitoring_item_same_store_stays_normal(integration_database) -> None:
+def test_unrelated_monitoring_item_same_store_stays_normal(
+    integration_database,
+) -> None:
     """B: item A entra em HIGH_ACTIVITY; item B, mesma loja, produto
     totalmente alheio, permanece NORMAL."""
     user_a = _seed_user(integration_database.sessions, "scope-a")
     user_b = _seed_user(integration_database.sessions, "scope-b")
-    mission_a = _make_shared_mission(integration_database, user_a, search_query="RTX 5070 Ti")
+    mission_a = _make_shared_mission(
+        integration_database, user_a, search_query="RTX 5070 Ti"
+    )
     mission_b = _make_shared_mission(
         integration_database, user_b, search_query="AMD Ryzen 9 9950X"
     )
@@ -615,8 +663,12 @@ def test_two_missions_sharing_monitoring_item_share_high_activity(
     -> mesmo MonitoringItem -> compartilham o mesmo estado de atividade."""
     user_1 = _seed_user(integration_database.sessions, "shared-1")
     user_2 = _seed_user(integration_database.sessions, "shared-2")
-    mission_1 = _make_shared_mission(integration_database, user_1, search_query="RTX 5070 Ti")
-    mission_2 = _make_shared_mission(integration_database, user_2, search_query="RTX 5070 Ti")
+    mission_1 = _make_shared_mission(
+        integration_database, user_1, search_query="RTX 5070 Ti"
+    )
+    mission_2 = _make_shared_mission(
+        integration_database, user_2, search_query="RTX 5070 Ti"
+    )
     item_1 = _monitoring_item_id_for(integration_database.sessions, mission_1.id)
     item_2 = _monitoring_item_id_for(integration_database.sessions, mission_2.id)
     assert item_1 == item_2  # mesma unidade compartilhada (TASK-112)
@@ -668,7 +720,9 @@ def test_never_schedules_below_absolute_floor_even_in_high_activity(
     """I: piso absoluto de 30min -- HIGH_ACTIVITY nunca agenda antes disso,
     mesmo em múltiplas coletas sucessivas."""
     user_id = _seed_user(integration_database.sessions, "floor")
-    mission = _make_shared_mission(integration_database, user_id, search_query="RTX 5070 Ti")
+    mission = _make_shared_mission(
+        integration_database, user_id, search_query="RTX 5070 Ti"
+    )
     item_id = _monitoring_item_id_for(integration_database.sessions, mission.id)
     amazon_id = _store_id(integration_database, "amazon")
     config = CadenceConfig(
@@ -691,16 +745,24 @@ def test_never_schedules_below_absolute_floor_even_in_high_activity(
                 cadence_config=config,
             )
         )
-    item_store = _monitoring_item_store(integration_database.sessions, item_id, amazon_id)
-    delta_minutes = (item_store.next_run_at - (NOW + timedelta(minutes=20))).total_seconds() / 60
+    item_store = _monitoring_item_store(
+        integration_database.sessions, item_id, amazon_id
+    )
+    delta_minutes = (
+        item_store.next_run_at - (NOW + timedelta(minutes=20))
+    ).total_seconds() / 60
     assert delta_minutes >= 30
 
 
-def test_different_stores_same_monitoring_item_are_independent(integration_database) -> None:
+def test_different_stores_same_monitoring_item_are_independent(
+    integration_database,
+) -> None:
     """D: mesmo MonitoringItem, lojas diferentes -- HIGH_ACTIVITY numa loja
     nunca vaza para outra loja do mesmo item."""
     user_id = _seed_user(integration_database.sessions, "store-indep")
-    mission = _make_shared_mission(integration_database, user_id, search_query="RTX 5070 Ti")
+    mission = _make_shared_mission(
+        integration_database, user_id, search_query="RTX 5070 Ti"
+    )
     item_id = _monitoring_item_id_for(integration_database.sessions, mission.id)
     amazon_id = _store_id(integration_database, "amazon")
     kabum_id = _store_id(integration_database, "kabum")
@@ -744,7 +806,9 @@ def test_reclaim_before_next_run_at_does_not_recollect(integration_database) -> 
     """J: reclaim/restart antes de next_run_at nunca dispara nova coleta
     física, mesmo chamando de novo imediatamente (simula worker reiniciado)."""
     user_id = _seed_user(integration_database.sessions, "reclaim")
-    mission = _make_shared_mission(integration_database, user_id, search_query="RTX 5070 Ti")
+    mission = _make_shared_mission(
+        integration_database, user_id, search_query="RTX 5070 Ti"
+    )
     item_id = _monitoring_item_id_for(integration_database.sessions, mission.id)
     amazon_id = _store_id(integration_database, "amazon")
     provider = _VaryingPriceProvider()
@@ -761,7 +825,9 @@ def test_reclaim_before_next_run_at_does_not_recollect(integration_database) -> 
     )
     assert result_1.claimed is True
     assert provider.call_count == 1
-    item_store_after_1 = _monitoring_item_store(integration_database.sessions, item_id, amazon_id)
+    item_store_after_1 = _monitoring_item_store(
+        integration_database.sessions, item_id, amazon_id
+    )
     next_run_after_1 = item_store_after_1.next_run_at
     assert next_run_after_1 > NOW
 
@@ -780,5 +846,7 @@ def test_reclaim_before_next_run_at_does_not_recollect(integration_database) -> 
     assert result_2.claimed is False
     assert provider.call_count == 1  # nenhuma coleta física nova
 
-    item_store_after_2 = _monitoring_item_store(integration_database.sessions, item_id, amazon_id)
+    item_store_after_2 = _monitoring_item_store(
+        integration_database.sessions, item_id, amazon_id
+    )
     assert item_store_after_2.next_run_at == next_run_after_1  # inalterado

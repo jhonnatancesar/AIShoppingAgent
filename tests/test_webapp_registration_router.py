@@ -104,7 +104,10 @@ def test_register_success_creates_session_and_returns_user(
     )
 
     response = client.post(
-        "/api/v1/users/register", json=_payload(), cookies=_cookies(), headers=_csrf_headers()
+        "/api/v1/users/register",
+        json=_payload(),
+        cookies=_cookies(),
+        headers=_csrf_headers(),
     )
 
     assert response.status_code == 201
@@ -197,7 +200,10 @@ def test_register_invalid_username_is_422(
     )
 
     response = client.post(
-        "/api/v1/users/register", json=_payload(), cookies=_cookies(), headers=_csrf_headers()
+        "/api/v1/users/register",
+        json=_payload(),
+        cookies=_cookies(),
+        headers=_csrf_headers(),
     )
     assert response.status_code == 422
     assert response.json()["error"]["code"] == "registration_invalid"
@@ -215,7 +221,10 @@ def test_register_duplicate_returns_conflict_never_500(
     )
 
     response = client.post(
-        "/api/v1/users/register", json=_payload(), cookies=_cookies(), headers=_csrf_headers()
+        "/api/v1/users/register",
+        json=_payload(),
+        cookies=_cookies(),
+        headers=_csrf_headers(),
     )
     assert response.status_code == 409
     assert response.json()["error"]["code"] == f"{field}_taken"
@@ -266,7 +275,10 @@ def test_register_exceeding_the_limit_is_429_never_500(
             headers=_csrf_headers(),
         )
     response = client.post(
-        "/api/v1/users/register", json=_payload(), cookies=_cookies(), headers=_csrf_headers()
+        "/api/v1/users/register",
+        json=_payload(),
+        cookies=_cookies(),
+        headers=_csrf_headers(),
     )
 
     assert response.status_code == 429
@@ -312,7 +324,10 @@ def test_register_rate_limit_is_per_ip_not_global(
         _registration_rate_limiter.check("203.0.113.10")
 
     response = client.post(
-        "/api/v1/users/register", json=_payload(), cookies=_cookies(), headers=_csrf_headers()
+        "/api/v1/users/register",
+        json=_payload(),
+        cookies=_cookies(),
+        headers=_csrf_headers(),
     )
 
     assert response.status_code == 201
@@ -360,7 +375,10 @@ def test_registration_via_tunnel_same_visitor_shares_one_bucket(
 
     for _ in range(5):
         response = client.post(
-            "/api/v1/users/register", json=_payload(), cookies=_cookies(), headers=headers
+            "/api/v1/users/register",
+            json=_payload(),
+            cookies=_cookies(),
+            headers=headers,
         )
         assert response.status_code == 201
 
@@ -390,12 +408,18 @@ def test_registration_via_tunnel_different_visitors_get_different_buckets(
             headers=attacker_headers,
         )
     blocked = client.post(
-        "/api/v1/users/register", json=_payload(), cookies=_cookies(), headers=attacker_headers
+        "/api/v1/users/register",
+        json=_payload(),
+        cookies=_cookies(),
+        headers=attacker_headers,
     )
     assert blocked.status_code == 429
 
     still_works = client.post(
-        "/api/v1/users/register", json=_payload(), cookies=_cookies(), headers=victim_headers
+        "/api/v1/users/register",
+        json=_payload(),
+        cookies=_cookies(),
+        headers=victim_headers,
     )
     assert still_works.status_code == 201
 
@@ -416,7 +440,10 @@ def test_registration_via_tunnel_spoofed_x_forwarded_for_does_not_bypass(
             "X-Forwarded-For": f"{spoofed_prefix}.0.0.1, 198.51.100.200",
         }
         response = client.post(
-            "/api/v1/users/register", json=_payload(), cookies=_cookies(), headers=headers
+            "/api/v1/users/register",
+            json=_payload(),
+            cookies=_cookies(),
+            headers=headers,
         )
         assert response.status_code == 201
 

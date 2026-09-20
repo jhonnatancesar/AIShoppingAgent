@@ -28,4 +28,6 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_constraint("ck_collection_runs_ownership_xor", "collection_runs", type_="check")
+    op.drop_constraint(
+        "ck_collection_runs_ownership_xor", "collection_runs", type_="check"
+    )

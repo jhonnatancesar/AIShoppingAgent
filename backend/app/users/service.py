@@ -211,8 +211,10 @@ async def _resolve_creation_conflict_async(
         await session.scalar(select(User.id).where(User.username == username))
     ) is not None:
         return UserAlreadyExistsError("username")
-    if email is not None and (
-        await session.scalar(select(User.id).where(User.email == email))
-    ) is not None:
+    if (
+        email is not None
+        and (await session.scalar(select(User.id).where(User.email == email)))
+        is not None
+    ):
         return UserAlreadyExistsError("email")
     return UserAlreadyExistsError("unknown")

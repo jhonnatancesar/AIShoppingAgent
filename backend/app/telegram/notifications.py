@@ -796,7 +796,7 @@ async def _prepare_variant_notification_async(
             raise TelegramNotificationError("notification_payload_invalid")
         try:
             product_id = UUID(str(raw["product_id"]))
-        except (KeyError, ValueError):
+        except KeyError, ValueError:
             raise TelegramNotificationError("notification_payload_invalid") from None
         label = raw.get("label")
         product = await session.get(Product, product_id)
@@ -835,9 +835,7 @@ async def _prepare_variant_notification_async(
         "",
         "Escolha uma ou mais opções. Exemplo: 1 ou 1,3.",
     ]
-    return user.telegram_chat_id, (
-        _PreparedMessagePart(None, 0, "\n".join(lines)),
-    )
+    return user.telegram_chat_id, (_PreparedMessagePart(None, 0, "\n".join(lines)),)
 
 
 async def _prepare_authentication_notification_async(
@@ -1344,6 +1342,8 @@ def _condition_label(condition: OfferCondition | None) -> str:
     texto canônico de `UNKNOWN` ("condição não identificada"), nunca
     inventa "Novo" nem omite silenciosamente o problema."""
     return _CONDITION_LABELS.get(condition, _CONDITION_LABELS[OfferCondition.UNKNOWN])
+
+
 _AVAILABILITY_LABELS = {
     Availability.AVAILABLE: "✅ Disponível",
     Availability.UNKNOWN: "⚪ Disponibilidade não confirmada",
@@ -1394,13 +1394,17 @@ async def _render_prelist_v2_async(
                 if seller_value is not None
                 else None
             )
-        except (InvalidOperation, TypeError, ValueError):
+        except InvalidOperation, TypeError, ValueError:
             raise TelegramNotificationError("notification_payload_invalid") from None
         if relevance is OfferRelevance.NO_MATCH:
             raise TelegramNotificationError("notification_payload_invalid")
-        offer, product, store, observation, installments = (
-            await _load_offer_context_async(session, offer_id, observation_id)
-        )
+        (
+            offer,
+            product,
+            store,
+            observation,
+            installments,
+        ) = await _load_offer_context_async(session, offer_id, observation_id)
         if (
             store.id != store_id
             or observation.amount != amount

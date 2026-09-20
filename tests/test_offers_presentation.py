@@ -45,7 +45,10 @@ def test_different_offers_same_product_show_own_titles() -> None:
 
 def test_falls_back_to_product_display_name_when_raw_title_missing() -> None:
     product = _product(display_name="MSI X870E Gaming Plus WiFi")
-    assert resolve_offer_display_title(product, _observation()) == "MSI X870E Gaming Plus WiFi"
+    assert (
+        resolve_offer_display_title(product, _observation())
+        == "MSI X870E Gaming Plus WiFi"
+    )
 
 
 def test_falls_back_to_product_name_when_no_display_name() -> None:
@@ -59,7 +62,10 @@ def test_falls_back_to_product_name_when_no_display_name() -> None:
 def test_blank_raw_title_falls_back_to_product() -> None:
     product = _product(display_name="MSI X870E Gaming Plus WiFi")
     observation = SimpleNamespace(raw_evidence={"title": "   "})
-    assert resolve_offer_display_title(product, observation) == "MSI X870E Gaming Plus WiFi"
+    assert (
+        resolve_offer_display_title(product, observation)
+        == "MSI X870E Gaming Plus WiFi"
+    )
 
 
 def test_image_uses_offers_own_when_there_is_no_canonical() -> None:

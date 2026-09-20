@@ -81,7 +81,9 @@ def _seed_active_mission(sessions, *, user_id, title: str) -> Mission:
         session.add(MissionSource(mission_id=mission.id, store_id=store.id))
         session.add(
             MissionSchedule(
-                mission_id=mission.id, interval_minutes=60, next_run_at=datetime.now(UTC)
+                mission_id=mission.id,
+                interval_minutes=60,
+                next_run_at=datetime.now(UTC),
             )
         )
         session.flush()
@@ -181,7 +183,9 @@ def test_confirmed_create_mission_at_quota_limit_leaves_no_partial_mission(
     )
     for index in range(5):
         _seed_active_mission(
-            integration_database.sessions, user_id=user.id, title=f"missao ativa {index}"
+            integration_database.sessions,
+            user_id=user.id,
+            title=f"missao ativa {index}",
         )
 
     send_calls, response = _run_confirmed_create_mission_webhook(
@@ -195,7 +199,9 @@ def test_confirmed_create_mission_at_quota_limit_leaves_no_partial_mission(
     assert "missões ativas" in reply
 
     with integration_database.sessions.begin() as session:
-        missions = session.scalars(select(Mission).where(Mission.user_id == user.id)).all()
+        missions = session.scalars(
+            select(Mission).where(Mission.user_id == user.id)
+        ).all()
         assert len(missions) == 5, (
             "nenhuma missao nova (nem DRAFT) deveria ter sido persistida "
             f"quando a criacao foi recusada por cota; encontradas: "
@@ -230,7 +236,9 @@ def test_confirmed_create_mission_within_quota_still_succeeds(
     assert "Missão criada" in send_calls[0][1]
 
     with integration_database.sessions.begin() as session:
-        missions = session.scalars(select(Mission).where(Mission.user_id == user.id)).all()
+        missions = session.scalars(
+            select(Mission).where(Mission.user_id == user.id)
+        ).all()
         assert len(missions) == 1
         assert missions[0].status == MissionStatus.ACTIVE
 
@@ -253,7 +261,9 @@ def test_confirmed_create_mission_exactly_at_quota_boundary_succeeds(
     )
     for index in range(4):
         _seed_active_mission(
-            integration_database.sessions, user_id=user.id, title=f"missao ativa {index}"
+            integration_database.sessions,
+            user_id=user.id,
+            title=f"missao ativa {index}",
         )
 
     send_calls, response = _run_confirmed_create_mission_webhook(
@@ -265,7 +275,9 @@ def test_confirmed_create_mission_exactly_at_quota_boundary_succeeds(
     assert "Missão criada" in send_calls[0][1]
 
     with integration_database.sessions.begin() as session:
-        missions = session.scalars(select(Mission).where(Mission.user_id == user.id)).all()
+        missions = session.scalars(
+            select(Mission).where(Mission.user_id == user.id)
+        ).all()
         assert len(missions) == 5
         active = [m for m in missions if m.status == MissionStatus.ACTIVE]
         assert len(active) == 5

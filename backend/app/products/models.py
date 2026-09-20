@@ -116,16 +116,21 @@ class ProductIdentityAlias(Base):
             "status IN ('active', 'candidate')",
             name="ck_product_identity_aliases_status_values",
         ),
-        CheckConstraint("btrim(category) <> ''", name="ck_product_identity_aliases_category_not_blank"),
         CheckConstraint(
-            "btrim(attribute_name) <> ''", name="ck_product_identity_aliases_attribute_not_blank"
+            "btrim(category) <> ''",
+            name="ck_product_identity_aliases_category_not_blank",
+        ),
+        CheckConstraint(
+            "btrim(attribute_name) <> ''",
+            name="ck_product_identity_aliases_attribute_not_blank",
         ),
         CheckConstraint(
             "btrim(raw_value_normalized) <> ''",
             name="ck_product_identity_aliases_raw_value_not_blank",
         ),
         CheckConstraint(
-            "btrim(canonical_value) <> ''", name="ck_product_identity_aliases_canonical_value_not_blank"
+            "btrim(canonical_value) <> ''",
+            name="ck_product_identity_aliases_canonical_value_not_blank",
         ),
         Index(
             "uq_product_identity_aliases_scope",

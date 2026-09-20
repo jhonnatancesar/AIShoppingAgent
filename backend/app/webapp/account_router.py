@@ -385,7 +385,9 @@ def change_account_password(
             message="A senha atual informada está incorreta.",
         ) from error
     except PasswordPolicyError as error:
-        raise ApiError(status_code=422, code="weak_password", message=str(error)) from error
+        raise ApiError(
+            status_code=422, code="weak_password", message=str(error)
+        ) from error
     set_session_cookie(response, raw_token=raw_token, settings=settings)
     set_csrf_cookie(response, settings=settings)
     return _as_account(session, user)

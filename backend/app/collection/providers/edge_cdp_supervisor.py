@@ -428,7 +428,7 @@ class EdgeCdpSupervisor:
                     if name != "msedge.exe":
                         continue
                     cmdline = process.info["cmdline"] or []
-                except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                except psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess:
                     continue
                 normalized = [str(argument).casefold() for argument in cmdline]
                 if any(argument.startswith("--type=") for argument in normalized):

@@ -38,27 +38,17 @@ def upgrade() -> None:
     op.create_table(
         "collection_queue_config",
         sa.Column("id", sa.Integer(), nullable=False),
-        sa.Column(
-            "max_concurrent_user_batches_override", sa.Integer(), nullable=True
-        ),
-        sa.Column(
-            "user_cooldown_min_seconds_override", sa.Float(), nullable=True
-        ),
-        sa.Column(
-            "user_cooldown_max_seconds_override", sa.Float(), nullable=True
-        ),
-        sa.Column(
-            "store_min_interval_seconds_override", sa.Float(), nullable=True
-        ),
+        sa.Column("max_concurrent_user_batches_override", sa.Integer(), nullable=True),
+        sa.Column("user_cooldown_min_seconds_override", sa.Float(), nullable=True),
+        sa.Column("user_cooldown_max_seconds_override", sa.Float(), nullable=True),
+        sa.Column("store_min_interval_seconds_override", sa.Float(), nullable=True),
         sa.Column(
             "updated_at",
             sa.DateTime(timezone=True),
             server_default=sa.text("now()"),
             nullable=False,
         ),
-        sa.CheckConstraint(
-            "id = 1", name="ck_collection_queue_config_singleton"
-        ),
+        sa.CheckConstraint("id = 1", name="ck_collection_queue_config_singleton"),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_collection_queue_config")),
     )
 

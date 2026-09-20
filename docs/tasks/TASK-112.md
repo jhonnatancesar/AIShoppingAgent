@@ -588,7 +588,9 @@ class ProductIdentityAlias(Base):
     __table_args__ = (
         Index(
             "uq_product_identity_aliases_scope_raw",
-            "category", "attribute_name", "raw_value_normalized",
+            "category",
+            "attribute_name",
+            "raw_value_normalized",
             unique=True,
         ),
     )
@@ -745,8 +747,12 @@ class MonitoringItem(Base):
     )
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     monitoring_key: Mapped[str] = mapped_column(String(160), nullable=False)
-    identity_version: Mapped[int]          # MONITORING_KEY_VERSION, para migração de schema futura
-    canonical_identity: Mapped[dict]        # JSONB -- auditoria/ADMIN, nunca usado para comparação
+    identity_version: Mapped[
+        int
+    ]  # MONITORING_KEY_VERSION, para migração de schema futura
+    canonical_identity: Mapped[
+        dict
+    ]  # JSONB -- auditoria/ADMIN, nunca usado para comparação
     created_at: Mapped[datetime]
     updated_at: Mapped[datetime]
 ```
@@ -758,10 +764,13 @@ coluna em `MissionCriteria`** (`app/missions/models.py:327-353`):
 class MissionMonitoringItem(Base):
     __tablename__ = "mission_monitoring_items"
     mission_id: Mapped[UUID] = mapped_column(
-        ForeignKey("missions.id", ondelete="CASCADE"), primary_key=True,
-    )                                        # PK própria -- uma Mission nunca tem 2 vínculos
+        ForeignKey("missions.id", ondelete="CASCADE"),
+        primary_key=True,
+    )  # PK própria -- uma Mission nunca tem 2 vínculos
     monitoring_item_id: Mapped[UUID] = mapped_column(
-        ForeignKey("monitoring_items.id", ondelete="RESTRICT"), nullable=False, index=True,
+        ForeignKey("monitoring_items.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
     )
     created_at: Mapped[datetime]
 ```
@@ -787,20 +796,28 @@ class MonitoringItemStore(Base):
         CheckConstraint("consecutive_blocks >= 0", ...),
         Index(
             "ix_monitoring_item_stores_due",
-            "next_run_at", "monitoring_item_id", "store_id",
-            postgresql_where="is_enabled",     # Bitmap Index Scan confirmado, ver §12
+            "next_run_at",
+            "monitoring_item_id",
+            "store_id",
+            postgresql_where="is_enabled",  # Bitmap Index Scan confirmado, ver §12
         ),
     )
     monitoring_item_id: Mapped[UUID] = mapped_column(
-        ForeignKey("monitoring_items.id", ondelete="CASCADE"), primary_key=True,
+        ForeignKey("monitoring_items.id", ondelete="CASCADE"),
+        primary_key=True,
     )
     store_id: Mapped[UUID] = mapped_column(
-        ForeignKey("stores.id", ondelete="RESTRICT"), primary_key=True,
-    )                                       # PK composta (monitoring_item_id, store_id)
-    is_enabled: Mapped[bool]                 # True enquanto >= 1 Mission ACTIVE vinculada exigir a loja
-    next_run_at: Mapped[datetime | None]      # cadência (§12) -- quando reavaliar de novo
+        ForeignKey("stores.id", ondelete="RESTRICT"),
+        primary_key=True,
+    )  # PK composta (monitoring_item_id, store_id)
+    is_enabled: Mapped[
+        bool
+    ]  # True enquanto >= 1 Mission ACTIVE vinculada exigir a loja
+    next_run_at: Mapped[datetime | None]  # cadência (§12) -- quando reavaliar de novo
     last_run_at: Mapped[datetime | None]
-    next_eligible_at: Mapped[datetime | None] # backoff DEC-046 -- vence sempre sobre a cadência
+    next_eligible_at: Mapped[
+        datetime | None
+    ]  # backoff DEC-046 -- vence sempre sobre a cadência
     consecutive_blocks: Mapped[int]
     created_at: Mapped[datetime]
     updated_at: Mapped[datetime]

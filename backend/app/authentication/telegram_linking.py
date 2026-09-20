@@ -116,11 +116,7 @@ async def complete_telegram_link(
     now: datetime | None = None,
 ) -> User:
     current = _aware_now(now)
-    if (
-        not raw_token
-        or len(raw_token) > 128
-        or telegram_user_id != telegram_chat_id
-    ):
+    if not raw_token or len(raw_token) > 128 or telegram_user_id != telegram_chat_id:
         raise TelegramLinkError("Código inválido ou expirado.")
     token = await session.scalar(
         select(TelegramLinkToken)
@@ -131,9 +127,7 @@ async def complete_telegram_link(
         raise TelegramLinkError("Código inválido ou expirado.")
     target = await session.get(User, token.user_id, with_for_update=True)
     linked_user = await session.scalar(
-        select(User)
-        .where(User.telegram_user_id == telegram_user_id)
-        .with_for_update()
+        select(User).where(User.telegram_user_id == telegram_user_id).with_for_update()
     )
     if (
         target is None
@@ -202,9 +196,7 @@ def _token_is_usable(token: TelegramLinkToken, now: datetime) -> bool:
     )
 
 
-def _audit(
-    session: Session | AsyncSession, *, user: User, action: str
-) -> None:
+def _audit(session: Session | AsyncSession, *, user: User, action: str) -> None:
     session.add(
         AuditEntry(
             actor_type="user",

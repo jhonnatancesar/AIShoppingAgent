@@ -19,9 +19,7 @@ def upgrade() -> None:
     op.add_column(
         "offers", sa.Column("rating_average", sa.Numeric(3, 2), nullable=True)
     )
-    op.add_column(
-        "offers", sa.Column("review_count", sa.BigInteger(), nullable=True)
-    )
+    op.add_column("offers", sa.Column("review_count", sa.BigInteger(), nullable=True))
     op.add_column(
         "offers",
         sa.Column("rating_observed_at", sa.DateTime(timezone=True), nullable=True),
@@ -29,8 +27,7 @@ def upgrade() -> None:
     op.create_check_constraint(
         "ck_offers_rating_average_range",
         "offers",
-        "rating_average IS NULL OR "
-        "(rating_average >= 0 AND rating_average <= 5)",
+        "rating_average IS NULL OR (rating_average >= 0 AND rating_average <= 5)",
     )
     op.create_check_constraint(
         "ck_offers_review_count_non_negative",
@@ -48,15 +45,9 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_constraint(
-        "ck_offers_rating_snapshot_complete", "offers", type_="check"
-    )
-    op.drop_constraint(
-        "ck_offers_review_count_non_negative", "offers", type_="check"
-    )
-    op.drop_constraint(
-        "ck_offers_rating_average_range", "offers", type_="check"
-    )
+    op.drop_constraint("ck_offers_rating_snapshot_complete", "offers", type_="check")
+    op.drop_constraint("ck_offers_review_count_non_negative", "offers", type_="check")
+    op.drop_constraint("ck_offers_rating_average_range", "offers", type_="check")
     op.drop_column("offers", "rating_observed_at")
     op.drop_column("offers", "review_count")
     op.drop_column("offers", "rating_average")

@@ -103,7 +103,9 @@ def test_deidentify_account_scrubs_mutable_data_and_preserves_safe_audit(
     )
     user = _user()
     mission = SimpleNamespace(id=uuid4(), title="Busca da Pessoa Canary")
-    criteria = SimpleNamespace(search_query="privacy-canary notebook", mission_id=mission.id)
+    criteria = SimpleNamespace(
+        search_query="privacy-canary notebook", mission_id=mission.id
+    )
     schedule = SimpleNamespace(is_enabled=True)
     session = _PrivacySession(
         user,

@@ -44,9 +44,7 @@ class EdgeCdpTransport:
         supervisor: EdgeCdpSupervisor | None = None,
     ) -> None:
         self.endpoint = validate_loopback_cdp_endpoint(endpoint)
-        if min(
-            connect_timeout_ms, navigation_timeout_ms, document_timeout_ms
-        ) <= 0:
+        if min(connect_timeout_ms, navigation_timeout_ms, document_timeout_ms) <= 0:
             raise ValueError("CDP fallback timeouts must be positive")
         self._connect_timeout_ms = connect_timeout_ms
         self._navigation_timeout_ms = navigation_timeout_ms
@@ -68,9 +66,7 @@ class EdgeCdpTransport:
                 try:
                     await stack.enter_async_context(self._supervisor.lease())
                 except EdgeCdpSupervisorError as error:
-                    raise EdgeCdpTransportError(
-                        "CDP fallback failed"
-                    ) from error
+                    raise EdgeCdpTransportError("CDP fallback failed") from error
             playwright = None
             page = None
             try:

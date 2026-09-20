@@ -195,9 +195,7 @@ def create_async_database_engine(
         else:
             connect_args["connect_timeout"] = max(1, int(connect_timeout_seconds))
     engine = create_async_engine(
-        build_database_url(
-            current_settings, drivername=f"postgresql+{async_driver}"
-        ),
+        build_database_url(current_settings, drivername=f"postgresql+{async_driver}"),
         pool_pre_ping=True,
         connect_args=connect_args,
     )

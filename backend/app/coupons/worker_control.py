@@ -30,7 +30,10 @@ async def notify_coupon_worker_high_activity(
     now: datetime,
     client_factory: type[httpx.AsyncClient] = httpx.AsyncClient,
 ) -> None:
-    if not settings.coupon_worker_control_url or not settings.coupon_worker_control_token_file:
+    if (
+        not settings.coupon_worker_control_url
+        or not settings.coupon_worker_control_token_file
+    ):
         return
     try:
         token = settings.coupon_worker_control_token_file.read_text(

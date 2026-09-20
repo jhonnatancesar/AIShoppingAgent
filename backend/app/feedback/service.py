@@ -107,7 +107,9 @@ async def create_feedback_async(
 _MAX_LIST_LIMIT = 100
 
 
-def _apply_filters(statement, *, status: FeedbackStatus | None, kind: FeedbackKind | None):
+def _apply_filters(
+    statement, *, status: FeedbackStatus | None, kind: FeedbackKind | None
+):
     if status is not None:
         statement = statement.where(UserFeedback.status == status)
     if kind is not None:

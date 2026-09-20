@@ -30,7 +30,10 @@ class FakeProvider:
 
 def request(source_code: str = "kabum") -> CollectionRequest:
     return CollectionRequest(
-        source_code=source_code, search_query="RTX 5070", requested_at=NOW, mission_id=uuid4()
+        source_code=source_code,
+        search_query="RTX 5070",
+        requested_at=NOW,
+        mission_id=uuid4(),
     )
 
 

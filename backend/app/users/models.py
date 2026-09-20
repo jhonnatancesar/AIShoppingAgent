@@ -174,9 +174,7 @@ class User(Base):
     max_active_missions_override: Mapped[int | None] = mapped_column(
         Integer, nullable=True
     )
-    max_store_slots_override: Mapped[int | None] = mapped_column(
-        Integer, nullable=True
-    )
+    max_store_slots_override: Mapped[int | None] = mapped_column(Integer, nullable=True)
     max_daily_searches_override: Mapped[int | None] = mapped_column(
         Integer, nullable=True
     )

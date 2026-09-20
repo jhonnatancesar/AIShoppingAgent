@@ -31,7 +31,9 @@ def upgrade() -> None:
     )
     op.add_column("products", sa.Column("family_key", sa.String(80), nullable=True))
     op.add_column("products", sa.Column("identity_key", sa.String(80), nullable=True))
-    op.add_column("products", sa.Column("identity_version", sa.Integer(), nullable=True))
+    op.add_column(
+        "products", sa.Column("identity_version", sa.Integer(), nullable=True)
+    )
     op.create_check_constraint(
         "ck_products_identity_complete",
         "products",
@@ -63,13 +65,16 @@ def upgrade() -> None:
         ),
     )
     op.add_column(
-        "mission_criteria", sa.Column("requested_family_key", sa.String(80), nullable=True)
+        "mission_criteria",
+        sa.Column("requested_family_key", sa.String(80), nullable=True),
     )
     op.add_column(
-        "mission_criteria", sa.Column("requested_identity_key", sa.String(80), nullable=True)
+        "mission_criteria",
+        sa.Column("requested_identity_key", sa.String(80), nullable=True),
     )
     op.add_column(
-        "mission_criteria", sa.Column("requested_variant", sa.String(160), nullable=True)
+        "mission_criteria",
+        sa.Column("requested_variant", sa.String(160), nullable=True),
     )
     op.add_column(
         "mission_criteria",
@@ -146,7 +151,9 @@ def downgrade() -> None:
 
     op.drop_index("ix_products_family_key", table_name="products")
     op.drop_index("uq_products_identity_key", table_name="products")
-    op.drop_constraint("ck_products_identity_version_positive", "products", type_="check")
+    op.drop_constraint(
+        "ck_products_identity_version_positive", "products", type_="check"
+    )
     op.drop_constraint("ck_products_identity_complete", "products", type_="check")
     op.drop_column("products", "identity_version")
     op.drop_column("products", "identity_key")

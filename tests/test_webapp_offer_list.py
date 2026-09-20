@@ -27,7 +27,9 @@ def test_offer_list_statement_is_user_scoped_and_excludes_no_match() -> None:
 
     assert "exists" in sql
     assert "missions.user_id" in sql
-    assert "mission_offer_relevance.classification in ('match', 'possible_match')" in sql
+    assert (
+        "mission_offer_relevance.classification in ('match', 'possible_match')" in sql
+    )
     assert "no_match" not in sql
 
 
@@ -39,7 +41,9 @@ def test_offer_list_uses_latest_observation_contract_without_internal_data() -> 
         base_url="https://amazon.com.br",
         source_type=StoreSourceType.MARKETPLACE,
     )
-    product = Product(id=uuid4(), name="Galaxy S24 Ultra", display_name="Galaxy S24 Ultra 512 GB")
+    product = Product(
+        id=uuid4(), name="Galaxy S24 Ultra", display_name="Galaxy S24 Ultra 512 GB"
+    )
     seller = Seller(id=uuid4(), store_id=store.id, name="Amazon.com.br")
     offer = Offer(
         id=uuid4(),

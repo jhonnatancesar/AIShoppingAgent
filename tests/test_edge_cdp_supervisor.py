@@ -115,7 +115,9 @@ def test_lease_reused_across_batch_without_relaunch(tmp_path, monkeypatch) -> No
     asyncio.run(scenario())
 
 
-def test_idle_timeout_closes_edge_after_configured_period(tmp_path, monkeypatch) -> None:
+def test_idle_timeout_closes_edge_after_configured_period(
+    tmp_path, monkeypatch
+) -> None:
     supervisor = _build_supervisor(tmp_path, idle_timeout_seconds=0.05)
     calls, _state = _patch_lifecycle(monkeypatch, supervisor)
 
@@ -220,7 +222,9 @@ def _build_supervisor_with_real_decoy_process(tmp_path: Path) -> EdgeCdpSupervis
     )
 
 
-def test_ensure_running_creates_and_assigns_a_real_job_object(tmp_path, monkeypatch) -> None:
+def test_ensure_running_creates_and_assigns_a_real_job_object(
+    tmp_path, monkeypatch
+) -> None:
     """`_ensure_running` real (processo real lançado), só `wait_until_
     ready` trocado por dublê (evita depender de um CDP de verdade --
     responsabilidade de outro teste). Prova que o job é criado, o
@@ -251,11 +255,15 @@ def test_ensure_running_creates_and_assigns_a_real_job_object(tmp_path, monkeypa
     try:
         asyncio.run(scenario())
     finally:
-        if supervisor.process_id is not None and psutil.pid_exists(supervisor.process_id):
+        if supervisor.process_id is not None and psutil.pid_exists(
+            supervisor.process_id
+        ):
             psutil.Process(supervisor.process_id).kill()
 
 
-def test_terminate_launcher_closes_job_and_kills_real_process(tmp_path, monkeypatch) -> None:
+def test_terminate_launcher_closes_job_and_kills_real_process(
+    tmp_path, monkeypatch
+) -> None:
     """`_terminate_launcher` real -- prova que o cleanup normal (não o
     cenário de kill abrupto, coberto em `test_job_object.py`) também
     limpa o job corretamente, sem deixar handle vazando nem processo

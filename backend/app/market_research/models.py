@@ -137,9 +137,7 @@ class MarketPriceAssessment(Base):
     historical_low_source: Mapped[str | None] = mapped_column(
         String(2000), nullable=True
     )
-    historical_low_observed_at: Mapped[date | None] = mapped_column(
-        Date, nullable=True
-    )
+    historical_low_observed_at: Mapped[date | None] = mapped_column(Date, nullable=True)
     confidence: Mapped[AssessmentConfidence | None] = mapped_column(
         Enum(
             AssessmentConfidence,

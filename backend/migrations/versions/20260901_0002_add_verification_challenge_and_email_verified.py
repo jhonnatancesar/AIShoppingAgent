@@ -64,7 +64,8 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     op.add_column(
-        "users", sa.Column("email_verified_at", sa.DateTime(timezone=True), nullable=True)
+        "users",
+        sa.Column("email_verified_at", sa.DateTime(timezone=True), nullable=True),
     )
     bind = op.get_bind()
     bind.execute(

@@ -212,4 +212,6 @@ def test_unlink_preserves_web_account_and_missions() -> None:
     assert user.username == "web"
     assert user.telegram_user_id is None
     assert user.telegram_chat_id is None
-    assert "web_sessions" not in " ".join(str(statement) for statement in session.executed)
+    assert "web_sessions" not in " ".join(
+        str(statement) for statement in session.executed
+    )

@@ -387,7 +387,9 @@ async def test_alert_shows_exactly_the_coupon_that_produced_the_decision(
     )
     sent: list[str] = []
 
-    async def _send(chat_id: int, text: str, *, bot_token: SecretStr, **kwargs: object) -> None:
+    async def _send(
+        chat_id: int, text: str, *, bot_token: SecretStr, **kwargs: object
+    ) -> None:
         sent.append(text)
 
     monkeypatch.setattr("app.telegram.notifications.send_message", _send)
@@ -429,7 +431,9 @@ async def test_alert_never_switches_to_a_coupon_that_appeared_after_the_decision
     )
     sent: list[str] = []
 
-    async def _send(chat_id: int, text: str, *, bot_token: SecretStr, **kwargs: object) -> None:
+    async def _send(
+        chat_id: int, text: str, *, bot_token: SecretStr, **kwargs: object
+    ) -> None:
         sent.append(text)
 
     monkeypatch.setattr("app.telegram.notifications.send_message", _send)
@@ -472,7 +476,9 @@ async def test_alert_coupon_snapshot_stays_consistent_with_current_total(
     )
     sent: list[str] = []
 
-    async def _send(chat_id: int, text: str, *, bot_token: SecretStr, **kwargs: object) -> None:
+    async def _send(
+        chat_id: int, text: str, *, bot_token: SecretStr, **kwargs: object
+    ) -> None:
         sent.append(text)
 
     monkeypatch.setattr("app.telegram.notifications.send_message", _send)
@@ -512,7 +518,9 @@ async def test_alert_coupon_snapshot_survives_even_if_coupon_service_would_fail(
     )
     sent: list[str] = []
 
-    async def _send(chat_id: int, text: str, *, bot_token: SecretStr, **kwargs: object) -> None:
+    async def _send(
+        chat_id: int, text: str, *, bot_token: SecretStr, **kwargs: object
+    ) -> None:
         sent.append(text)
 
     monkeypatch.setattr("app.telegram.notifications.send_message", _send)
@@ -547,7 +555,9 @@ async def test_alert_without_coupon_snapshot_renders_normally_backward_compatibl
     )
     sent: list[str] = []
 
-    async def _send(chat_id: int, text: str, *, bot_token: SecretStr, **kwargs: object) -> None:
+    async def _send(
+        chat_id: int, text: str, *, bot_token: SecretStr, **kwargs: object
+    ) -> None:
         sent.append(text)
 
     monkeypatch.setattr("app.telegram.notifications.send_message", _send)
@@ -1027,7 +1037,9 @@ async def test_prelist_v2_renderer_groups_one_message_per_store(
 ) -> None:
     mission = _mission(_user())
     stores = [
-        Store(id=uuid4(), code="amazon", name="Amazon", base_url="https://amazon.com.br"),
+        Store(
+            id=uuid4(), code="amazon", name="Amazon", base_url="https://amazon.com.br"
+        ),
         Store(id=uuid4(), code="kabum", name="KaBuM!", base_url="https://kabum.com.br"),
     ]
     contexts = []
@@ -1075,19 +1087,12 @@ async def test_prelist_v2_renderer_groups_one_message_per_store(
                 "availability": observation.availability.value,
             }
         )
-    objects = {
-        (Offer, context[0].id): context[0]
-        for context in contexts
-    } | {
-        (Product, context[1].id): context[1]
-        for context in contexts
-    } | {
-        (Store, store.id): store
-        for store in stores
-    } | {
-        (PriceObservation, context[3].id): context[3]
-        for context in contexts
-    }
+    objects = (
+        {(Offer, context[0].id): context[0] for context in contexts}
+        | {(Product, context[1].id): context[1] for context in contexts}
+        | {(Store, store.id): store for store in stores}
+        | {(PriceObservation, context[3].id): context[3] for context in contexts}
+    )
     session = MagicMock()
     session.get = AsyncMock(side_effect=lambda model, key: objects.get((model, key)))
     session.scalars = AsyncMock(return_value=[])

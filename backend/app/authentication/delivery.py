@@ -33,7 +33,9 @@ class VerificationDeliveryProvider(ABC):
     channel: VerificationChannel
 
     @abstractmethod
-    async def deliver(self, *, user: User, code: str, purpose: VerificationPurpose) -> None:
+    async def deliver(
+        self, *, user: User, code: str, purpose: VerificationPurpose
+    ) -> None:
         """Entrega o código em claro; levanta `DeliveryUnavailable` se o
         canal não puder atender esta entrega específica (ex.: usuário sem
         `telegram_chat_id`, apesar de o canal em geral existir)."""
@@ -46,7 +48,9 @@ class TelegramDeliveryProvider(VerificationDeliveryProvider):
         self._bot_token = bot_token
         self._timeout_seconds = timeout_seconds
 
-    async def deliver(self, *, user: User, code: str, purpose: VerificationPurpose) -> None:
+    async def deliver(
+        self, *, user: User, code: str, purpose: VerificationPurpose
+    ) -> None:
         if user.telegram_chat_id is None:
             raise DeliveryUnavailable("usuário sem chat do Telegram vinculado")
         title = _CODE_MESSAGE_BY_PURPOSE[purpose]
@@ -74,7 +78,9 @@ class EmailDeliveryProvider(VerificationDeliveryProvider):
 
     channel = VerificationChannel.EMAIL
 
-    async def deliver(self, *, user: User, code: str, purpose: VerificationPurpose) -> None:
+    async def deliver(
+        self, *, user: User, code: str, purpose: VerificationPurpose
+    ) -> None:
         raise DeliveryUnavailable("nenhum provider de e-mail configurado")
 
 
@@ -82,7 +88,9 @@ def email_delivery_available(settings: Settings) -> bool:
     return bool(settings.email_delivery_provider)
 
 
-def available_channels(user: User, *, settings: Settings) -> frozenset[VerificationChannel]:
+def available_channels(
+    user: User, *, settings: Settings
+) -> frozenset[VerificationChannel]:
     """Só oferece um canal quando ele é genuinamente utilizável por este
     usuário -- nunca uma opção falsa (Subtask 9, seção "ESCOLHA DO
     CANAL")."""

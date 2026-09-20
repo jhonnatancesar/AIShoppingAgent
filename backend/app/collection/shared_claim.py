@@ -82,7 +82,8 @@ async def _advance_monitoring_item_store(
     mission_ids = (
         await session.scalars(
             select(MissionMonitoringItem.mission_id).where(
-                MissionMonitoringItem.monitoring_item_id == item_store.monitoring_item_id
+                MissionMonitoringItem.monitoring_item_id
+                == item_store.monitoring_item_id
             )
         )
     ).all()
@@ -207,7 +208,11 @@ async def _claim_shared_collection_in_session(
     #    mínimo entre acessos à mesma loja, não importa qual reivindicou
     #    por último.
     throttle = await session.get(StoreThrottleState, store_id)
-    if throttle is not None and throttle.next_allowed_at is not None and throttle.next_allowed_at > now:
+    if (
+        throttle is not None
+        and throttle.next_allowed_at is not None
+        and throttle.next_allowed_at > now
+    ):
         return None
 
     # 4. REGISTRAR CLAIM -- índice único parcial é defesa em profundidade;
@@ -216,8 +221,11 @@ async def _claim_shared_collection_in_session(
     try:
         async with session.begin_nested():
             run = await start_collection_run(
-                session, store_id, mission_id=None,
-                monitoring_item_id=monitoring_item_id, started_at=now,
+                session,
+                store_id,
+                mission_id=None,
+                monitoring_item_id=monitoring_item_id,
+                started_at=now,
             )
             # TASK-112 fase 3B: gravado na MESMA transação/savepoint do
             # claim -- se o chamador (claim_due_work) descobrir logo em
@@ -242,13 +250,18 @@ async def _claim_shared_collection_in_session(
         high_activity_notify=high_activity_notify,
     )
     await _advance_store_throttle(
-        session, store_id=store_id, claimed_at=now,
+        session,
+        store_id=store_id,
+        claimed_at=now,
         min_interval_seconds=store_min_interval_seconds,
     )
     criteria = canonical_collection_criteria(item.canonical_identity)
     return _SharedClaim(
-        run_id=run.id, criteria=criteria, store_code=store.code,
-        monitoring_item_id=monitoring_item_id, store_id=store_id,
+        run_id=run.id,
+        criteria=criteria,
+        store_code=store.code,
+        monitoring_item_id=monitoring_item_id,
+        store_id=store_id,
     )
 
 

@@ -128,8 +128,12 @@ def test_load_mission_list_extras_uses_only_persisted_relations(
         target_currency="BRL",
         sources=("kabum", "amazon"),
     )
-    _seed_relevant_offer(integration_database.sessions, mission_id=with_data.id, store_code="kabum")
-    _seed_relevant_offer(integration_database.sessions, mission_id=with_data.id, store_code="amazon")
+    _seed_relevant_offer(
+        integration_database.sessions, mission_id=with_data.id, store_code="kabum"
+    )
+    _seed_relevant_offer(
+        integration_database.sessions, mission_id=with_data.id, store_code="amazon"
+    )
     # NO_MATCH nunca conta -- prova que a agregação filtra por classificação,
     # não só por existir um vínculo em MissionOfferRelevance.
     _seed_relevant_offer(
@@ -152,7 +156,10 @@ def test_load_mission_list_extras_uses_only_persisted_relations(
 
     assert extras[with_data.id].target_amount == 4500
     assert extras[with_data.id].target_currency == "BRL"
-    assert {store.code for _source, store in extras[with_data.id].sources} == {"kabum", "amazon"}
+    assert {store.code for _source, store in extras[with_data.id].sources} == {
+        "kabum",
+        "amazon",
+    }
     assert extras[with_data.id].relevant_offer_count == 2
 
     assert extras[without_data.id].target_amount is None
@@ -177,11 +184,15 @@ def test_load_mission_list_extras_zeroes_count_for_pending_variant_family(
         requested_family_key="notebook-gamer",
         variant_selection_mode=VariantSelectionMode.PENDING,
     )
-    _seed_relevant_offer(integration_database.sessions, mission_id=pending_family.id, store_code="kabum")
+    _seed_relevant_offer(
+        integration_database.sessions, mission_id=pending_family.id, store_code="kabum"
+    )
 
     async def run():
         async with integration_database.async_sessions.begin() as session:
-            return await load_mission_list_extras(session, mission_ids=[pending_family.id])
+            return await load_mission_list_extras(
+                session, mission_ids=[pending_family.id]
+            )
 
     extras = asyncio.run(run())
     assert extras[pending_family.id].relevant_offer_count == 0
@@ -206,7 +217,9 @@ def test_load_mission_list_extras_query_count_does_not_scale_with_page_size(
         for index in range(5)
     ]
     for mission in missions:
-        _seed_relevant_offer(integration_database.sessions, mission_id=mission.id, store_code="kabum")
+        _seed_relevant_offer(
+            integration_database.sessions, mission_id=mission.id, store_code="kabum"
+        )
 
     def count_queries(mission_ids: list) -> int:
         counter = {"n": 0}
@@ -217,6 +230,7 @@ def test_load_mission_list_extras_query_count_does_not_scale_with_page_size(
         engine = integration_database.async_engine.sync_engine
         event.listen(engine, "before_cursor_execute", before_cursor_execute)
         try:
+
             async def run():
                 async with integration_database.async_sessions.begin() as session:
                     await load_mission_list_extras(session, mission_ids=mission_ids)

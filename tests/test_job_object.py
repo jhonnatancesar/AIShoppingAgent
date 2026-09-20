@@ -14,7 +14,9 @@ import psutil
 import pytest
 from app.collection.providers.job_object import EdgeLifecycleJob, JobObjectError
 
-pytestmark = pytest.mark.skipif(sys.platform != "win32", reason="Job Object é só Windows")
+pytestmark = pytest.mark.skipif(
+    sys.platform != "win32", reason="Job Object é só Windows"
+)
 
 
 def _spawn_disposable_process() -> subprocess.Popen:
@@ -49,7 +51,9 @@ def test_closing_job_kills_the_assigned_process() -> None:
 
         job.close()
 
-        assert _wait_until_gone(process.pid), "processo atribuido ao job deveria morrer ao fechar o handle"
+        assert _wait_until_gone(process.pid), (
+            "processo atribuido ao job deveria morrer ao fechar o handle"
+        )
     finally:
         if psutil.pid_exists(process.pid):
             process.kill()
@@ -68,7 +72,9 @@ def test_closing_job_never_kills_a_process_not_assigned_to_it() -> None:
         job.close()
 
         assert _wait_until_gone(assigned.pid)
-        assert psutil.pid_exists(untouched.pid), "processo NAO atribuido nunca deveria morrer"
+        assert psutil.pid_exists(untouched.pid), (
+            "processo NAO atribuido nunca deveria morrer"
+        )
     finally:
         for proc in (assigned, untouched):
             if psutil.pid_exists(proc.pid):
@@ -103,16 +109,18 @@ def test_child_dies_when_parent_process_is_killed_abruptly_no_close_called() -> 
     limpeza -- o Windows precisa fechar o handle sozinho e matar o `ping`
     junto, só por isso."""
     script = (
-        "import subprocess, sys, time\n"
-        "sys.path.insert(0, r'{backend_dir}')\n"
-        "from app.collection.providers.job_object import EdgeLifecycleJob\n"
-        "child = subprocess.Popen(['ping', '-n', '30', '127.0.0.1'], "
-        "stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL)\n"
-        "job = EdgeLifecycleJob()\n"
-        "job.assign(child.pid)\n"
-        "print(child.pid, flush=True)\n"
-        "time.sleep(30)\n"  # nunca chega a rodar `job.close()` -- morre antes, de propósito
-    ).format(backend_dir=str(Path(__file__).resolve().parents[1] / "backend"))
+        (
+            "import subprocess, sys, time\n"
+            "sys.path.insert(0, r'{backend_dir}')\n"
+            "from app.collection.providers.job_object import EdgeLifecycleJob\n"
+            "child = subprocess.Popen(['ping', '-n', '30', '127.0.0.1'], "
+            "stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL)\n"
+            "job = EdgeLifecycleJob()\n"
+            "job.assign(child.pid)\n"
+            "print(child.pid, flush=True)\n"
+            "time.sleep(30)\n"  # nunca chega a rodar `job.close()` -- morre antes, de propósito
+        ).format(backend_dir=str(Path(__file__).resolve().parents[1] / "backend"))
+    )
 
     parent = subprocess.Popen(
         [sys.executable, "-c", script],
@@ -122,7 +130,9 @@ def test_child_dies_when_parent_process_is_killed_abruptly_no_close_called() -> 
     )
     try:
         grandchild_pid_line = parent.stdout.readline().strip()
-        assert grandchild_pid_line, "processo pai (dublê) nunca chegou a criar/atribuir o job"
+        assert grandchild_pid_line, (
+            "processo pai (dublê) nunca chegou a criar/atribuir o job"
+        )
         grandchild_pid = int(grandchild_pid_line)
         assert psutil.pid_exists(grandchild_pid)
 
@@ -132,9 +142,9 @@ def test_child_dies_when_parent_process_is_killed_abruptly_no_close_called() -> 
         parent.kill()
         parent.wait(timeout=5)
 
-        assert _wait_until_gone(
-            grandchild_pid, timeout_seconds=10
-        ), "processo do 'Edge' deveria morrer sozinho quando o pai e' morto abruptamente, mesmo sem close() nenhum"
+        assert _wait_until_gone(grandchild_pid, timeout_seconds=10), (
+            "processo do 'Edge' deveria morrer sozinho quando o pai e' morto abruptamente, mesmo sem close() nenhum"
+        )
     finally:
         if parent.poll() is None:
             parent.kill()
@@ -142,7 +152,7 @@ def test_child_dies_when_parent_process_is_killed_abruptly_no_close_called() -> 
         try:
             if grandchild_pid_line and psutil.pid_exists(int(grandchild_pid_line)):
                 psutil.Process(int(grandchild_pid_line)).kill()
-        except (psutil.NoSuchProcess, NameError):
+        except psutil.NoSuchProcess, NameError:
             pass
 
 

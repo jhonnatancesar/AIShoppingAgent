@@ -464,9 +464,7 @@ def test_failure_with_existing_references_never_deletes_history(integration_data
     )
     assert first is HistoricalBootstrapStatus.COMPLETED_WITH_REFERENCES
     with integration_database.sessions() as session:
-        original_completed_at = session.scalar(
-            select(HistoricalBootstrap.completed_at)
-        )
+        original_completed_at = session.scalar(select(HistoricalBootstrap.completed_at))
 
     later = NOW + timedelta(days=91)  # elegível para revalidação de sucesso
     failing_search = FailingSearch()

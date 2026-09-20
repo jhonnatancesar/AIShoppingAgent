@@ -1173,7 +1173,9 @@ async def _apply_mission_variant_choice(
     all_index = len(entries) + 1
     normalized = text.strip().casefold()
     select_all = normalized in {str(all_index), "todas", "todos"}
-    indices = None if select_all else parse_multi_numbered_choice(text, count=len(entries))
+    indices = (
+        None if select_all else parse_multi_numbered_choice(text, count=len(entries))
+    )
     if not select_all and indices is None:
         return (
             "Não entendi. Digite um ou mais números da lista separados por vírgula "
@@ -1188,7 +1190,9 @@ async def _apply_mission_variant_choice(
             product_ids=(
                 ()
                 if select_all
-                else tuple(UUID(entries[index]["product_id"]) for index in indices or ())
+                else tuple(
+                    UUID(entries[index]["product_id"]) for index in indices or ()
+                )
             ),
             select_all=select_all,
             selected_at=datetime.now(UTC),
@@ -1201,7 +1205,9 @@ async def _apply_mission_variant_choice(
         MissionVariantSelectionError,
     ):
         user.pending_intent = None
-        return "Essa seleção não está mais disponível. Consulte a missão na aplicação web."
+        return (
+            "Essa seleção não está mais disponível. Consulte a missão na aplicação web."
+        )
     except MissionVersionConflictError:
         user.pending_intent = None
         return "A missão mudou desde esta lista. Consulte as variantes atuais na aplicação web."

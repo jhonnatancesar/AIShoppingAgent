@@ -592,9 +592,7 @@ def test_external_reference_skips_history_search_and_is_reused(
         amount=Decimal("3499.00"),
         collected_at=NOW - timedelta(days=10),
     )
-    search = _FakeSearchProvider(
-        (_evidence("lojaa.com.br"), _evidence("lojab.com.br"))
-    )
+    search = _FakeSearchProvider((_evidence("lojaa.com.br"), _evidence("lojab.com.br")))
     _use_search(monkeypatch, search)
 
     asyncio.run(
@@ -621,7 +619,9 @@ def test_external_reference_skips_history_search_and_is_reused(
         assert row is not None
         assert row.historical_low_external == Decimal("3499.00")
         assert row.historical_low_source == "https://comparador.example/historico"
-        assert row.evidence["historical_low_reference"]["method"] == "f1_bootstrap_reuse"
+        assert (
+            row.evidence["historical_low_reference"]["method"] == "f1_bootstrap_reuse"
+        )
 
 
 def test_external_reference_flag_off_preserves_task_113_behavior(
@@ -640,9 +640,7 @@ def test_external_reference_flag_off_preserves_task_113_behavior(
         amount=Decimal("3499.00"),
         collected_at=NOW - timedelta(days=10),
     )
-    search = _FakeSearchProvider(
-        (_evidence("lojaa.com.br"), _evidence("lojab.com.br"))
-    )
+    search = _FakeSearchProvider((_evidence("lojaa.com.br"), _evidence("lojab.com.br")))
     _use_search(monkeypatch, search)
 
     asyncio.run(
@@ -687,9 +685,7 @@ def test_external_reference_is_reused_regardless_of_age(
         amount=Decimal("2999.00"),
         collected_at=NOW - timedelta(days=200),
     )
-    search = _FakeSearchProvider(
-        (_evidence("lojaa.com.br"), _evidence("lojab.com.br"))
-    )
+    search = _FakeSearchProvider((_evidence("lojaa.com.br"), _evidence("lojab.com.br")))
     _use_search(monkeypatch, search)
 
     asyncio.run(
@@ -715,7 +711,9 @@ def test_external_reference_is_reused_regardless_of_age(
         row = session.get(MarketPriceAssessment, product.id)
         assert row is not None
         assert row.historical_low_external == Decimal("2999.00")
-        assert row.evidence["historical_low_reference"]["method"] == "f1_bootstrap_reuse"
+        assert (
+            row.evidence["historical_low_reference"]["method"] == "f1_bootstrap_reuse"
+        )
 
 
 def test_evidence_persists_only_safe_urls_and_minimizes_ai_content(
@@ -861,9 +859,7 @@ def test_last_error_redacts_sensitive_url_before_persistence(
         mark_assessment_failed(
             _session_factory(integration_database),
             product_id=product.id,
-            error=(
-                "timeout https://shop.example/produto?id=1&session_id=" + secret
-            ),
+            error=("timeout https://shop.example/produto?id=1&session_id=" + secret),
             now=NOW,
             settings=_SETTINGS,
         )
@@ -1069,9 +1065,7 @@ def test_phase_g_integrated_flow_flags_on_coupon_f1_f3_and_alert_snapshot(
     with integration_database.sessions.begin() as session:
         session.add(
             Coupon(
-                store_id=session.scalar(
-                    select(Store.id).where(Store.code == "amazon")
-                ),
+                store_id=session.scalar(select(Store.id).where(Store.code == "amazon")),
                 code="PHASEG20",
                 discount_kind="fixed_amount",
                 discount_value=Decimal("200.00"),
@@ -1176,9 +1170,7 @@ def test_phase_g_integrated_flow_flags_off_preserves_legacy_behavior(
     with integration_database.sessions.begin() as session:
         session.add(
             Coupon(
-                store_id=session.scalar(
-                    select(Store.id).where(Store.code == "amazon")
-                ),
+                store_id=session.scalar(select(Store.id).where(Store.code == "amazon")),
                 code="PHASEG20OFF",
                 discount_kind="fixed_amount",
                 discount_value=Decimal("200.00"),

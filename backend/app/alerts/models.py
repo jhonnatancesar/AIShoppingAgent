@@ -32,9 +32,7 @@ from app.database.time import utc_now
 
 class MissionProductAlertState(Base):
     __tablename__ = "mission_product_alert_state"
-    __table_args__ = (
-        Index("ix_mission_product_alert_state_product_id", "product_id"),
-    )
+    __table_args__ = (Index("ix_mission_product_alert_state_product_id", "product_id"),)
 
     mission_id: Mapped[UUID] = mapped_column(
         PostgreSQLUUID(as_uuid=True),

@@ -89,11 +89,7 @@ class CdpMagaluSearchTransport:
                     wait_until="domcontentloaded",
                     timeout=self._navigation_timeout_ms,
                 )
-                if (
-                    response is None
-                    or response.status == 408
-                    or response.status >= 500
-                ):
+                if response is None or response.status == 408 or response.status >= 500:
                     raise MagaluSearchTransportError("CDP navigation failed")
                 if response.status in {401, 403, 429}:
                     raise MagaluSearchTransportError(

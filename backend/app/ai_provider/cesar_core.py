@@ -54,9 +54,7 @@ class CesarCoreAIProvider:
         self._endpoint = endpoint + "/v1/ai/generate"
         self._service = service
         self._ai_profile = ai_profile
-        self._cost_policy = (
-            "free_only" if ai_profile == "user" else "paid_allowed"
-        )
+        self._cost_policy = "free_only" if ai_profile == "user" else "paid_allowed"
         self._service_class = service_class
         self._max_tokens = max_tokens
         self._timeout = timeout_seconds

@@ -62,7 +62,9 @@ def _store_ids(sessions, codes: tuple[str, str]) -> tuple:
     return tuple(rows[code] for code in codes)
 
 
-def test_two_stores_same_mission_product_never_double_alert(integration_database) -> None:
+def test_two_stores_same_mission_product_never_double_alert(
+    integration_database,
+) -> None:
     store_a, store_b = _store_ids(integration_database.sessions, ("amazon", "kabum"))
 
     with integration_database.sessions.begin() as session:
@@ -70,14 +72,20 @@ def test_two_stores_same_mission_product_never_double_alert(integration_database
         product = Product(name="TASK-113 G synthetic product")
         session.add_all((user, product))
         session.flush()
-        mission = Mission(user_id=user.id, title="TASK-113 G mission", status=MissionStatus.ACTIVE)
+        mission = Mission(
+            user_id=user.id, title="TASK-113 G mission", status=MissionStatus.ACTIVE
+        )
         offer_a = Offer(
-            product_id=product.id, store_id=store_a,
-            external_id=f"g-a-{uuid4().hex}", url=f"https://example.invalid/{uuid4().hex}",
+            product_id=product.id,
+            store_id=store_a,
+            external_id=f"g-a-{uuid4().hex}",
+            url=f"https://example.invalid/{uuid4().hex}",
         )
         offer_b = Offer(
-            product_id=product.id, store_id=store_b,
-            external_id=f"g-b-{uuid4().hex}", url=f"https://example.invalid/{uuid4().hex}",
+            product_id=product.id,
+            store_id=store_b,
+            external_id=f"g-b-{uuid4().hex}",
+            url=f"https://example.invalid/{uuid4().hex}",
         )
         session.add_all((mission, offer_a, offer_b))
         session.flush()
@@ -86,38 +94,54 @@ def test_two_stores_same_mission_product_never_double_alert(integration_database
         # referência 5000) + runs "atuais" (RUNNING, produzirão 4000 --
         # exatamente as que `_persist_phase_c` vai travar/finalizar).
         prev_run_a = CollectionRun(
-            mission_id=mission.id, store_id=store_a,
+            mission_id=mission.id,
+            store_id=store_a,
             status=CollectionRunStatus.SUCCEEDED,
-            started_at=NOW - timedelta(hours=2), finished_at=NOW - timedelta(hours=1),
+            started_at=NOW - timedelta(hours=2),
+            finished_at=NOW - timedelta(hours=1),
         )
         prev_run_b = CollectionRun(
-            mission_id=mission.id, store_id=store_b,
+            mission_id=mission.id,
+            store_id=store_b,
             status=CollectionRunStatus.SUCCEEDED,
-            started_at=NOW - timedelta(hours=2), finished_at=NOW - timedelta(hours=1),
+            started_at=NOW - timedelta(hours=2),
+            finished_at=NOW - timedelta(hours=1),
         )
         run_a = CollectionRun(
-            mission_id=mission.id, store_id=store_a,
-            status=CollectionRunStatus.RUNNING, started_at=NOW,
+            mission_id=mission.id,
+            store_id=store_a,
+            status=CollectionRunStatus.RUNNING,
+            started_at=NOW,
         )
         run_b = CollectionRun(
-            mission_id=mission.id, store_id=store_b,
-            status=CollectionRunStatus.RUNNING, started_at=NOW,
+            mission_id=mission.id,
+            store_id=store_b,
+            status=CollectionRunStatus.RUNNING,
+            started_at=NOW,
         )
         session.add_all((criteria, prev_run_a, prev_run_b, run_a, run_b))
         session.flush()
 
         def _observation(offer_id, run_id, amount, observed_at) -> PriceObservation:
             observation = PriceObservation(
-                offer_id=offer_id, collection_run_id=run_id,
-                amount=Decimal(amount), currency="BRL", total_amount=Decimal(amount),
-                availability=Availability.AVAILABLE, observed_at=observed_at,
+                offer_id=offer_id,
+                collection_run_id=run_id,
+                amount=Decimal(amount),
+                currency="BRL",
+                total_amount=Decimal(amount),
+                availability=Availability.AVAILABLE,
+                observed_at=observed_at,
             )
             session.add(observation)
             session.flush()
             return observation
 
-        previous_a = _observation(offer_a.id, prev_run_a.id, "5000.00", NOW - timedelta(hours=1))
-        previous_b = _observation(offer_b.id, prev_run_b.id, "5000.00", NOW - timedelta(hours=1))
+        previous_a = _observation(
+            offer_a.id, prev_run_a.id, "5000.00", NOW - timedelta(hours=1)
+        )
+        previous_b = _observation(
+            offer_b.id, prev_run_b.id, "5000.00", NOW - timedelta(hours=1)
+        )
         current_a = _observation(offer_a.id, run_a.id, "4000.00", NOW)
         current_b = _observation(offer_b.id, run_b.id, "4000.00", NOW)
 
@@ -131,7 +155,9 @@ def test_two_stores_same_mission_product_never_double_alert(integration_database
     # Mesma oportunidade comercial (5000 -> 4000), descoberta por DUAS
     # lojas "ao mesmo tempo" -- se o lock não serializasse, as duas
     # decidiriam com checkpoint=None (nunca alertado) e as duas alertariam.
-    def _outcome(run_id, store_id, offer_id, observation_id, previous_observation_id) -> _PhaseAOutcome:
+    def _outcome(
+        run_id, store_id, offer_id, observation_id, previous_observation_id
+    ) -> _PhaseAOutcome:
         pending = _PendingOffer(
             offer_id=offer_id,
             product_id=product_id,
@@ -262,17 +288,23 @@ def test_bootstrap_backfill_reconstructs_best_and_last_notified_deterministicall
         store = session.scalar(select(Store).where(Store.code == "amazon"))
         session.add_all((user, product))
         session.flush()
-        mission = Mission(user_id=user.id, title="TASK-113 I mission", status=MissionStatus.ACTIVE)
+        mission = Mission(
+            user_id=user.id, title="TASK-113 I mission", status=MissionStatus.ACTIVE
+        )
         offer = Offer(
-            product_id=product.id, store_id=store.id,
-            external_id=f"i-{uuid4().hex}", url=f"https://example.invalid/{uuid4().hex}",
+            product_id=product.id,
+            store_id=store.id,
+            external_id=f"i-{uuid4().hex}",
+            url=f"https://example.invalid/{uuid4().hex}",
         )
         session.add_all((mission, offer))
         session.flush()
 
         # Nunca teve nenhum Event -- não deve ganhar linha (não inventar).
         never_alerted_mission = Mission(
-            user_id=user.id, title="TASK-113 I never alerted", status=MissionStatus.ACTIVE
+            user_id=user.id,
+            title="TASK-113 I never alerted",
+            status=MissionStatus.ACTIVE,
         )
         session.add(never_alerted_mission)
         session.flush()
@@ -288,31 +320,52 @@ def test_bootstrap_backfill_reconstructs_best_and_last_notified_deterministicall
         )
 
         e1 = publish_event(
-            session, event_type=EventType.PRICE_DECREASED_V1,
-            aggregate_type=AggregateType.OFFER, aggregate_id=offer.id,
+            session,
+            event_type=EventType.PRICE_DECREASED_V1,
+            aggregate_type=AggregateType.OFFER,
+            aggregate_id=offer.id,
             payload=PriceDecreasedPayload(
-                offer_id=offer.id, observation_id=uuid4(), previous_observation_id=uuid4(),
-                previous_total=Decimal("4500.00"), current_total=Decimal("3900.00"), currency="BRL",
+                offer_id=offer.id,
+                observation_id=uuid4(),
+                previous_observation_id=uuid4(),
+                previous_total=Decimal("4500.00"),
+                current_total=Decimal("3900.00"),
+                currency="BRL",
             ),
-            occurred_at=t0, mission_id=mission.id,
+            occurred_at=t0,
+            mission_id=mission.id,
         )
         e2 = publish_event(
-            session, event_type=EventType.PRICE_TARGET_REACHED_V1,
-            aggregate_type=AggregateType.MISSION, aggregate_id=mission.id,
+            session,
+            event_type=EventType.PRICE_TARGET_REACHED_V1,
+            aggregate_type=AggregateType.MISSION,
+            aggregate_id=mission.id,
             payload=PriceTargetReachedPayload(
-                mission_id=mission.id, offer_id=offer.id, observation_id=uuid4(),
-                target_total=Decimal("4300.00"), current_total=Decimal("4199.99"), currency="BRL",
+                mission_id=mission.id,
+                offer_id=offer.id,
+                observation_id=uuid4(),
+                target_total=Decimal("4300.00"),
+                current_total=Decimal("4199.99"),
+                currency="BRL",
             ),
-            occurred_at=t1, mission_id=mission.id,
+            occurred_at=t1,
+            mission_id=mission.id,
         )
         e3 = publish_event(
-            session, event_type=EventType.PRICE_DECREASED_V1,
-            aggregate_type=AggregateType.OFFER, aggregate_id=offer.id,
+            session,
+            event_type=EventType.PRICE_DECREASED_V1,
+            aggregate_type=AggregateType.OFFER,
+            aggregate_id=offer.id,
             payload=PriceDecreasedPayload(
-                offer_id=offer.id, observation_id=uuid4(), previous_observation_id=uuid4(),
-                previous_total=Decimal("4600.00"), current_total=Decimal("4300.00"), currency="BRL",
+                offer_id=offer.id,
+                observation_id=uuid4(),
+                previous_observation_id=uuid4(),
+                previous_total=Decimal("4600.00"),
+                current_total=Decimal("4300.00"),
+                currency="BRL",
             ),
-            occurred_at=t2, mission_id=mission.id,
+            occurred_at=t2,
+            mission_id=mission.id,
         )
         event_ids = [e1.id, e2.id, e3.id]
         mission_id, product_id = mission.id, product.id

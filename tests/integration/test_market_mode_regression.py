@@ -60,7 +60,9 @@ def test_market_mode_survives_high_activity_without_monitoring_item(
         session.add_all((user, product))
         session.flush()
         mission = Mission(
-            user_id=user.id, title="TASK-116 regressao mission", status=MissionStatus.ACTIVE
+            user_id=user.id,
+            title="TASK-116 regressao mission",
+            status=MissionStatus.ACTIVE,
         )
         offer = Offer(
             product_id=product.id,
@@ -120,8 +122,10 @@ def test_market_mode_survives_high_activity_without_monitoring_item(
         )
 
         current_run = CollectionRun(
-            mission_id=mission.id, store_id=store_id,
-            status=CollectionRunStatus.RUNNING, started_at=NOW,
+            mission_id=mission.id,
+            store_id=store_id,
+            status=CollectionRunStatus.RUNNING,
+            started_at=NOW,
         )
         session.add(current_run)
         session.flush()
@@ -224,12 +228,16 @@ def test_resolve_product_market_mode_scopes_do_not_leak_across_missions(
             user_id=user.id, title="mission agitada", status=MissionStatus.ACTIVE
         )
         offer_quiet = Offer(
-            product_id=product.id, store_id=store_id,
-            external_id=f"quiet-{uuid4().hex}", url=f"https://example.invalid/{uuid4().hex}",
+            product_id=product.id,
+            store_id=store_id,
+            external_id=f"quiet-{uuid4().hex}",
+            url=f"https://example.invalid/{uuid4().hex}",
         )
         offer_busy = Offer(
-            product_id=product.id, store_id=store_id,
-            external_id=f"busy-{uuid4().hex}", url=f"https://example.invalid/{uuid4().hex}",
+            product_id=product.id,
+            store_id=store_id,
+            external_id=f"busy-{uuid4().hex}",
+            url=f"https://example.invalid/{uuid4().hex}",
         )
         session.add_all((mission_quiet, mission_busy, offer_quiet, offer_busy))
         session.flush()
@@ -238,12 +246,16 @@ def test_resolve_product_market_mode_scopes_do_not_leak_across_missions(
                 MissionCriteria(mission_id=mission_quiet.id, search_query="quiet"),
                 MissionCriteria(mission_id=mission_busy.id, search_query="busy"),
                 MissionOfferRelevance(
-                    mission_id=mission_quiet.id, offer_id=offer_quiet.id,
-                    classification=OfferRelevance.MATCH, classified_at=NOW,
+                    mission_id=mission_quiet.id,
+                    offer_id=offer_quiet.id,
+                    classification=OfferRelevance.MATCH,
+                    classified_at=NOW,
                 ),
                 MissionOfferRelevance(
-                    mission_id=mission_busy.id, offer_id=offer_busy.id,
-                    classification=OfferRelevance.MATCH, classified_at=NOW,
+                    mission_id=mission_busy.id,
+                    offer_id=offer_busy.id,
+                    classification=OfferRelevance.MATCH,
+                    classified_at=NOW,
                 ),
             )
         )
@@ -253,17 +265,23 @@ def test_resolve_product_market_mode_scopes_do_not_leak_across_missions(
             for i, amount in enumerate(("10.00", "11.00", "12.00", "13.00")):
                 observed_at = NOW - timedelta(minutes=25 - i * 5)
                 run = CollectionRun(
-                    mission_id=mission_id, store_id=store_id,
+                    mission_id=mission_id,
+                    store_id=store_id,
                     status=CollectionRunStatus.SUCCEEDED,
-                    started_at=observed_at, finished_at=observed_at,
+                    started_at=observed_at,
+                    finished_at=observed_at,
                 )
                 session.add(run)
                 session.flush()
                 session.add(
                     PriceObservation(
-                        offer_id=offer_id, collection_run_id=run.id,
-                        amount=Decimal(amount), currency="BRL", total_amount=Decimal(amount),
-                        availability=Availability.AVAILABLE, observed_at=observed_at,
+                        offer_id=offer_id,
+                        collection_run_id=run.id,
+                        amount=Decimal(amount),
+                        currency="BRL",
+                        total_amount=Decimal(amount),
+                        availability=Availability.AVAILABLE,
+                        observed_at=observed_at,
                     )
                 )
                 session.flush()
@@ -271,17 +289,23 @@ def test_resolve_product_market_mode_scopes_do_not_leak_across_missions(
         _seed_changes(offer_busy.id, mission_busy.id)
         # offer_quiet: só uma observação (FIRST_OBSERVATION) -- sem mudança real.
         run_quiet = CollectionRun(
-            mission_id=mission_quiet.id, store_id=store_id,
+            mission_id=mission_quiet.id,
+            store_id=store_id,
             status=CollectionRunStatus.SUCCEEDED,
-            started_at=NOW - timedelta(minutes=10), finished_at=NOW - timedelta(minutes=10),
+            started_at=NOW - timedelta(minutes=10),
+            finished_at=NOW - timedelta(minutes=10),
         )
         session.add(run_quiet)
         session.flush()
         session.add(
             PriceObservation(
-                offer_id=offer_quiet.id, collection_run_id=run_quiet.id,
-                amount=Decimal("20.00"), currency="BRL", total_amount=Decimal("20.00"),
-                availability=Availability.AVAILABLE, observed_at=NOW - timedelta(minutes=10),
+                offer_id=offer_quiet.id,
+                collection_run_id=run_quiet.id,
+                amount=Decimal("20.00"),
+                currency="BRL",
+                total_amount=Decimal("20.00"),
+                availability=Availability.AVAILABLE,
+                observed_at=NOW - timedelta(minutes=10),
             )
         )
         session.flush()

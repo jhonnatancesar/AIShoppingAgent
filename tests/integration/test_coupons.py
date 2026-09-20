@@ -119,9 +119,17 @@ def test_coupon_without_code_deduplicates_by_evidence(integration_database) -> N
     """`code=""` (nunca `NULL`) -- confirma que dois cupons sem código mas
     com evidências DIFERENTES coexistem, e a mesma evidência duplica."""
     store = _store(integration_database.sessions, code="amazon")
-    _coupon(integration_database.sessions, store_id=store.id, evidence="Você paga R$ 100 com o cupom")
+    _coupon(
+        integration_database.sessions,
+        store_id=store.id,
+        evidence="Você paga R$ 100 com o cupom",
+    )
     # Evidência diferente -- linha nova, sem conflito.
-    _coupon(integration_database.sessions, store_id=store.id, evidence="Você paga R$ 200 com o cupom")
+    _coupon(
+        integration_database.sessions,
+        store_id=store.id,
+        evidence="Você paga R$ 200 com o cupom",
+    )
     with integration_database.sessions() as session:
         assert (
             session.scalar(
@@ -136,7 +144,9 @@ def test_coupon_without_code_deduplicates_by_evidence(integration_database) -> N
 def test_coupon_offer_link_unique_pair(integration_database) -> None:
     store = _store(integration_database.sessions, code="magalu")
     product = _product(integration_database.sessions)
-    offer = _offer(integration_database.sessions, product_id=product.id, store_id=store.id)
+    offer = _offer(
+        integration_database.sessions, product_id=product.id, store_id=store.id
+    )
     coupon = _coupon(integration_database.sessions, store_id=store.id, code="MAGA15")
 
     with integration_database.sessions.begin() as session:
@@ -157,7 +167,9 @@ def test_deleting_offer_removes_only_the_link_never_the_coupon(
     Offer)."""
     store = _store(integration_database.sessions, code="magalu")
     product = _product(integration_database.sessions, title="NVIDIA GeForce RTX 5070")
-    offer = _offer(integration_database.sessions, product_id=product.id, store_id=store.id)
+    offer = _offer(
+        integration_database.sessions, product_id=product.id, store_id=store.id
+    )
     coupon = _coupon(integration_database.sessions, store_id=store.id, code="MAGA20")
 
     with integration_database.sessions.begin() as session:
@@ -188,12 +200,21 @@ def test_deleting_offer_removes_only_the_link_never_the_coupon(
 def test_get_coupons_for_offer_only_returns_linked_active(integration_database) -> None:
     store = _store(integration_database.sessions, code="mercadolivre")
     product = _product(integration_database.sessions, title="NVIDIA GeForce RTX 5060")
-    offer = _offer(integration_database.sessions, product_id=product.id, store_id=store.id)
-    linked_active = _coupon(integration_database.sessions, store_id=store.id, code="ML10")
-    linked_expired = _coupon(
-        integration_database.sessions, store_id=store.id, code="ML_OLD", status="expired"
+    offer = _offer(
+        integration_database.sessions, product_id=product.id, store_id=store.id
     )
-    unlinked = _coupon(integration_database.sessions, store_id=store.id, code="ML_GENERIC")
+    linked_active = _coupon(
+        integration_database.sessions, store_id=store.id, code="ML10"
+    )
+    linked_expired = _coupon(
+        integration_database.sessions,
+        store_id=store.id,
+        code="ML_OLD",
+        status="expired",
+    )
+    unlinked = _coupon(
+        integration_database.sessions, store_id=store.id, code="ML_GENERIC"
+    )
 
     with integration_database.sessions.begin() as session:
         session.add(CouponOfferLink(coupon_id=linked_active.id, offer_id=offer.id))
@@ -214,7 +235,9 @@ def test_get_unlinked_coupons_for_store_excludes_linked_and_other_stores(
     store = _store(integration_database.sessions, code="pichau")
     other_store = _store(integration_database.sessions, code="terabyte")
     product = _product(integration_database.sessions, title="NVIDIA GeForce RTX 5080")
-    offer = _offer(integration_database.sessions, product_id=product.id, store_id=store.id)
+    offer = _offer(
+        integration_database.sessions, product_id=product.id, store_id=store.id
+    )
 
     generic = _coupon(
         integration_database.sessions,
@@ -222,13 +245,20 @@ def test_get_unlinked_coupons_for_store_excludes_linked_and_other_stores(
         code="PICHAU5",
         scope_kind="store_wide",
     )
-    linked = _coupon(integration_database.sessions, store_id=store.id, code="PICHAU_LINKED")
-    other = _coupon(integration_database.sessions, store_id=other_store.id, code="TERA5")
+    linked = _coupon(
+        integration_database.sessions, store_id=store.id, code="PICHAU_LINKED"
+    )
+    other = _coupon(
+        integration_database.sessions, store_id=other_store.id, code="TERA5"
+    )
     # Cupom genérico (sem vínculo) mas já inativo -- não pode aparecer
     # como candidato, seja por ter "sumido" (expire_stale do worker) ou
     # por ter sido detectado esgotado/encerrado (evidence.py).
     expired_generic = _coupon(
-        integration_database.sessions, store_id=store.id, code="PICHAU_EXPIRED", status="expired"
+        integration_database.sessions,
+        store_id=store.id,
+        code="PICHAU_EXPIRED",
+        status="expired",
     )
 
     with integration_database.sessions.begin() as session:
@@ -256,7 +286,10 @@ def test_expired_coupon_row_survives_as_history_never_deleted(
     de candidatos do GG, mas continua existindo/consultável diretamente."""
     store = _store(integration_database.sessions, code="kabum")
     coupon = _coupon(
-        integration_database.sessions, store_id=store.id, code="KABUM_HIST", status="expired"
+        integration_database.sessions,
+        store_id=store.id,
+        code="KABUM_HIST",
+        status="expired",
     )
 
     with integration_database.sessions() as session:
@@ -285,8 +318,12 @@ def test_get_candidate_coupons_for_offer_unions_linked_and_unlinked_without_dupl
 ) -> None:
     store = _store(integration_database.sessions, code="amazon")
     product = _product(integration_database.sessions, title="NVIDIA GeForce RTX 4070")
-    offer = _offer(integration_database.sessions, product_id=product.id, store_id=store.id)
-    linked = _coupon(integration_database.sessions, store_id=store.id, code="AMZ_LINKED")
+    offer = _offer(
+        integration_database.sessions, product_id=product.id, store_id=store.id
+    )
+    linked = _coupon(
+        integration_database.sessions, store_id=store.id, code="AMZ_LINKED"
+    )
     generic = _coupon(
         integration_database.sessions,
         store_id=store.id,
@@ -316,7 +353,9 @@ def test_best_applicable_coupon_end_to_end_store_wide_against_real_rows(
 ) -> None:
     store = _store(integration_database.sessions, code="magalu")
     product = _product(integration_database.sessions, title="NVIDIA GeForce RTX 4060")
-    offer = _offer(integration_database.sessions, product_id=product.id, store_id=store.id)
+    offer = _offer(
+        integration_database.sessions, product_id=product.id, store_id=store.id
+    )
     _coupon(
         integration_database.sessions,
         store_id=store.id,
@@ -330,7 +369,9 @@ def test_best_applicable_coupon_end_to_end_store_wide_against_real_rows(
             candidates = await get_candidate_coupons_for_offer(
                 session, offer_id=offer.id, store_id=store.id
             )
-            return best_applicable_coupon(offer_row, candidates, Decimal("300.00"), "BRL")
+            return best_applicable_coupon(
+                offer_row, candidates, Decimal("300.00"), "BRL"
+            )
 
     applied = asyncio.run(_fetch())
     assert applied is not None
@@ -343,7 +384,9 @@ def test_best_applicable_coupon_end_to_end_product_scope_requires_exact_url(
 ) -> None:
     store = _store(integration_database.sessions, code="pichau")
     product = _product(integration_database.sessions, title="NVIDIA GeForce RTX 4080")
-    offer = _offer(integration_database.sessions, product_id=product.id, store_id=store.id)
+    offer = _offer(
+        integration_database.sessions, product_id=product.id, store_id=store.id
+    )
     other_offer = _offer(
         integration_database.sessions, product_id=product.id, store_id=store.id
     )
@@ -361,7 +404,9 @@ def test_best_applicable_coupon_end_to_end_product_scope_requires_exact_url(
             candidates = await get_candidate_coupons_for_offer(
                 session, offer_id=target_offer_id, store_id=store.id
             )
-            return best_applicable_coupon(offer_row, candidates, Decimal("300.00"), "BRL")
+            return best_applicable_coupon(
+                offer_row, candidates, Decimal("300.00"), "BRL"
+            )
 
     assert asyncio.run(_fetch(offer.id)) is not None
     # Mesma Store, mesmo Product, URL DIFERENTE -- nunca aplica por
@@ -379,7 +424,12 @@ def test_best_applicable_coupon_end_to_end_product_scope_requires_exact_url(
 def test_list_active_coupons_only_returns_active(integration_database) -> None:
     store = _store(integration_database.sessions, code="kabum")
     active = _coupon(integration_database.sessions, store_id=store.id, code="ATIVO1")
-    _coupon(integration_database.sessions, store_id=store.id, code="EXPIRADO1", status="expired")
+    _coupon(
+        integration_database.sessions,
+        store_id=store.id,
+        code="EXPIRADO1",
+        status="expired",
+    )
 
     async def _fetch():
         async with integration_database.async_sessions() as session:
@@ -459,6 +509,7 @@ def test_list_active_coupons_single_query_no_n_plus_one(integration_database) ->
     engine = integration_database.async_engine.sync_engine
     event.listen(engine, "before_cursor_execute", before_cursor_execute)
     try:
+
         async def _fetch():
             async with integration_database.async_sessions() as session:
                 return await list_active_coupons(session)
@@ -471,7 +522,9 @@ def test_list_active_coupons_single_query_no_n_plus_one(integration_database) ->
     assert counter["n"] == 1  # uma única query, nunca uma por cupom
 
 
-def test_list_active_coupons_preserves_absent_fields_as_none(integration_database) -> None:
+def test_list_active_coupons_preserves_absent_fields_as_none(
+    integration_database,
+) -> None:
     """Nenhum campo opcional ausente é inventado -- `None` chega como
     `None` até o fim, nunca um valor default fabricado."""
     store = _store(integration_database.sessions, code="terabyte")
@@ -503,7 +556,9 @@ def test_list_active_coupons_preserves_absent_fields_as_none(integration_databas
 
 def test_list_active_coupons_returns_store_explicitly(integration_database) -> None:
     store = _store(integration_database.sessions, code="mercadolivre")
-    coupon = _coupon(integration_database.sessions, store_id=store.id, code="LOJA_EXPLICITA")
+    coupon = _coupon(
+        integration_database.sessions, store_id=store.id, code="LOJA_EXPLICITA"
+    )
 
     async def _fetch():
         async with integration_database.async_sessions() as session:
@@ -527,7 +582,9 @@ def test_list_active_coupons_returns_store_explicitly(integration_database) -> N
 # ---------------------------------------------------------------------------
 
 
-def test_list_coupons_endpoint_returns_active_with_real_fields(integration_database) -> None:
+def test_list_coupons_endpoint_returns_active_with_real_fields(
+    integration_database,
+) -> None:
     store = _store(integration_database.sessions, code="kabum")
     coupon = _coupon(
         integration_database.sessions,
@@ -542,7 +599,10 @@ def test_list_coupons_endpoint_returns_active_with_real_fields(integration_datab
         source_url="https://www.kabum.com.br/cupons",
     )
     _coupon(
-        integration_database.sessions, store_id=store.id, code="ENDPOINT_EXPIRADO", status="expired"
+        integration_database.sessions,
+        store_id=store.id,
+        code="ENDPOINT_EXPIRADO",
+        status="expired",
     )
 
     async def _fetch():
@@ -591,11 +651,15 @@ def test_list_coupons_endpoint_returns_empty_code_as_none(integration_database) 
     assert match.code is None
 
 
-def test_list_coupons_endpoint_source_url_absent_stays_none(integration_database) -> None:
+def test_list_coupons_endpoint_source_url_absent_stays_none(
+    integration_database,
+) -> None:
     """Sem `source_url` capturado, o campo chega `None` na API -- nunca
     uma URL fabricada a partir do nome da loja/código/slug."""
     store = _store(integration_database.sessions, code="magalu")
-    coupon = _coupon(integration_database.sessions, store_id=store.id, code="", source_url=None)
+    coupon = _coupon(
+        integration_database.sessions, store_id=store.id, code="", source_url=None
+    )
 
     async def _fetch():
         async with integration_database.async_sessions() as session:

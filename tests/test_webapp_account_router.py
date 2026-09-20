@@ -211,9 +211,7 @@ def test_change_password_wrong_current_password_is_422_never_500(monkeypatch) ->
     def _fail(*a: object, **k: object) -> None:
         raise AuthenticationError("senha atual incorreta")
 
-    monkeypatch.setattr(
-        "app.webapp.account_router.change_password_with_current", _fail
-    )
+    monkeypatch.setattr("app.webapp.account_router.change_password_with_current", _fail)
 
     response = _client(_user()).put(
         "/api/v1/account/password", json=_password_payload(current_password="errada")
@@ -229,13 +227,13 @@ def test_change_password_weak_new_password_is_422(monkeypatch) -> None:
     def _fail(*a: object, **k: object) -> None:
         raise PasswordPolicyError("Essa senha é muito comum ou previsível.")
 
-    monkeypatch.setattr(
-        "app.webapp.account_router.change_password_with_current", _fail
-    )
+    monkeypatch.setattr("app.webapp.account_router.change_password_with_current", _fail)
 
     response = _client(_user()).put(
         "/api/v1/account/password",
-        json=_password_payload(new_password="senha123", new_password_confirmation="senha123"),
+        json=_password_payload(
+            new_password="senha123", new_password_confirmation="senha123"
+        ),
     )
 
     assert response.status_code == 422

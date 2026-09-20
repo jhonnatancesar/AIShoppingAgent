@@ -116,7 +116,9 @@ class EdgeLifecycleJob:
             _PROCESS_SET_QUOTA | _PROCESS_TERMINATE, False, pid
         )
         if not process_handle:
-            raise JobObjectError(f"OpenProcess({pid}) failed: {ctypes.get_last_error()}")
+            raise JobObjectError(
+                f"OpenProcess({pid}) failed: {ctypes.get_last_error()}"
+            )
         try:
             ok = self._kernel32.AssignProcessToJobObject(self._handle, process_handle)
             if not ok:

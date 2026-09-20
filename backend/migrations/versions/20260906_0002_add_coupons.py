@@ -34,9 +34,7 @@ def upgrade() -> None:
         "coupons",
         sa.Column("id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("store_id", postgresql.UUID(as_uuid=True), nullable=False),
-        sa.Column(
-            "code", sa.Text(), nullable=False, server_default=sa.text("''")
-        ),
+        sa.Column("code", sa.Text(), nullable=False, server_default=sa.text("''")),
         sa.Column("discount_kind", sa.String(20), nullable=True),
         sa.Column("discount_value", sa.Numeric(19, 4), nullable=True),
         sa.Column("minimum_purchase_amount", sa.Numeric(19, 4), nullable=True),
@@ -60,12 +58,12 @@ def upgrade() -> None:
             server_default=sa.text("now()"),
             nullable=False,
         ),
-        sa.CheckConstraint("btrim(evidence) <> ''", name="ck_coupons_evidence_not_blank"),
+        sa.CheckConstraint(
+            "btrim(evidence) <> ''", name="ck_coupons_evidence_not_blank"
+        ),
         sa.ForeignKeyConstraint(["store_id"], ["stores.id"], ondelete="RESTRICT"),
         sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint(
-            "store_id", "code", "evidence", name="uq_coupons_evidence"
-        ),
+        sa.UniqueConstraint("store_id", "code", "evidence", name="uq_coupons_evidence"),
     )
     op.create_index("ix_coupons_store_status", "coupons", ["store_id", "status"])
 
@@ -86,13 +84,9 @@ def upgrade() -> None:
         # pode ficar impossível de excluir só por ter cupom associado.
         sa.ForeignKeyConstraint(["offer_id"], ["offers.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint(
-            "coupon_id", "offer_id", name="uq_coupon_offer_links_pair"
-        ),
+        sa.UniqueConstraint("coupon_id", "offer_id", name="uq_coupon_offer_links_pair"),
     )
-    op.create_index(
-        "ix_coupon_offer_links_offer", "coupon_offer_links", ["offer_id"]
-    )
+    op.create_index("ix_coupon_offer_links_offer", "coupon_offer_links", ["offer_id"])
 
 
 def downgrade() -> None:

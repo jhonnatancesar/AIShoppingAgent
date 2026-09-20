@@ -205,9 +205,7 @@ def test_advance_registration_rejects_favorite_stores_with_no_known_match() -> N
 
     with pytest.raises(RegistrationError):
         asyncio.run(
-            advance_registration(
-                user, answer="shopee, aliexpress", session=_session()
-            )
+            advance_registration(user, answer="shopee, aliexpress", session=_session())
         )
     assert user.registration_step == "favorite_stores"
 
