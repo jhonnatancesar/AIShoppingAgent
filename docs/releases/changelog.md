@@ -1,5 +1,15 @@
 # Changelog
 
+## `v1.3.16` — Corrige sequência de tag: handoff de deploy fora da v1.3.15
+
+Deploy real de `v1.3.15` em PROD (2026-09-20) revelou que a tag tinha
+sido cortada antes do commit que corrigia `docs/operations/prod-deployment-handoff.md`
+-- checkout da tag trazia handoff desatualizado (v1.3.8/v1.0.0). Sem
+mudança de código; `v1.3.16` só aponta para o commit correto. Deploy em
+si correu bem (a sessão que executou verificou tudo contra o código/
+servidor real antes de agir). Ver `docs/internal/project-context.md`,
+seção "Deploy real em PROD (2026-09-20) e correção de sequência de tag".
+
 ## `v1.3.15` — Identidade global de produto, cobertura de testes ≥90%, resiliência dos workers a reinícios
 
 Commit e publicação do diff acumulado dos checkpoints 2-11 (2026-09-12 a

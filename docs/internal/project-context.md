@@ -4382,3 +4382,47 @@ precisa rodar `manage_ops_agent_service.ps1 -Action Install` (ou
 `-Action FixStartup` se o serviço já existir) na máquina de produção e,
 idealmente, validar um reinício real de PC/Docker/containers antes de
 considerar esta rodada tecnicamente fechada.
+
+## Deploy real em PROD (2026-09-20) e correção de sequência de tag
+
+O deploy de `v1.3.15` (GG Oferta) + `v1.0.4` (Coupon Worker) foi
+executado com sucesso numa sessão separada, diretamente no servidor de
+produção (Windows Server `CESAR-SERVER`), seguindo o handoff. **Achado
+real durante a execução:** a tag `v1.3.15` tinha sido criada ANTES do
+commit que corrigia `docs/operations/prod-deployment-handoff.md`
+(`d071adc`) -- o checkout da tag trazia o handoff desatualizado (ainda
+descrevendo `v1.3.8`/`v1.0.0`, tratando o Coupon Worker como "primeira
+instalação"). A sessão que executou o deploy não confiou cegamente no
+documento: verificou cada fato técnico (tags, head de migration,
+scripts, estado real dos processos) direto no código/servidor antes de
+agir, e todos bateram com o que este documento já descrevia em `main` --
+por isso seguiu em frente com segurança. **Corrigido com a tag
+`v1.3.16`** (sem mudança de código, só aponta para o commit que já tinha
+o handoff certo) -- lição registrada: sempre cortar a tag DEPOIS do
+último commit de documentação do handoff, nunca antes.
+
+Resultado real do deploy, confirmado com verificação de saúde de
+verdade (não só "comando sem erro"): backup do PostgreSQL gerado e
+validado antes das 6 migrations (head confirmado `20260913_0001`);
+`api`/`telegram_notifier`/`ops_controller` religados e saudáveis
+(`/health`/`/ready` OK, logs limpos); Windows Ops Agent corrigido de
+`Automatic` simples para `Automatic (Delayed Start)` via `-Action
+FixStartup` (estava instalado, mas não com o tipo de início certo --
+exatamente o achado desta rodada); Scheduled Task do Coupon Worker
+atualizada com `MultipleInstances IgnoreNew`; `collection_worker`
+confirmado gravando dados reais (31 `price_observations` em 5 minutos)
+depois de reativado -- ambos os workers estavam com a Scheduled Task
+**Disabled** de uma sessão anterior, não só parados, e foram
+reabilitados nesta rodada. DEC-133 (login do Mercado Livre) já estava
+satisfeito antes desta sessão (25 cupons reais da área `/cupons` no
+banco), mas com sessão datada de 11/09 (>1 semana) -- **vale confirmar
+depois do próximo ciclo do Coupon Worker (~16h BRT) se a área `/cupons`
+continua sendo capturada**, já que a existência de dado antigo não prova
+que a sessão do Edge ainda está válida agora. Nenhuma feature flag foi
+alterada; César Core/OmniRoute não foram tocados.
+
+**Achado secundário, não corrigido (fora de escopo do deploy):**
+container Docker órfão `aishoppingagent-collection_worker-1`, parado
+desde 2026-08-22, sobra de quando o worker era containerizado (antes da
+TASK-109) -- decisão de limpar ou não cabe ao usuário, não decidida
+ainda.
