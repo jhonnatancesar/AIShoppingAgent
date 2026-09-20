@@ -2,6 +2,7 @@
 required-version = ">=0.16,<0.17"
 target-version = "py314"
 line-length = 88
+extend-exclude = ["tmp", ".pytest-tmp", "checkpoints"]
 
 [tool.ruff.lint]
 select = ["E4", "E7", "E9", "F", "I", "UP"]

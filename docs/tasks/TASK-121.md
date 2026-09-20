@@ -1,8 +1,17 @@
 # TASK-121 — Ligar a aba "Cupons" a dados reais (listagem geral, não só aplicabilidade)
 
-Status: **Planejada, não iniciada.** Registrada em 2026-09-09 a partir de
+Status: **Concluída e publicada.** Registrada em 2026-09-09 a partir de
 achado real do pós-deploy `v1.3.9` (investigação de "por que cupons não
-aparecem no site").
+aparecem no site"). Implementada em duas rodadas: `GET /api/v1/coupons`
++ `list_active_coupons()` + `CouponsPage.tsx` ligada a dados reais
+(commit `93d8e17`, tag `v1.3.12`, 2026-09-09) e revisão de UX real em
+navegador (agrupamento por loja, link `source_url`, correção de
+duplicação em `valid_until`; commit `379ce41`, tag `v1.3.13`,
+2026-09-11). Ver `docs/internal/project-context.md`, seção "TASK-121 --
+aba Cupons ligada a dados reais (2026-09-09/11)" para o registro
+funcional consolidado. Este status estava desatualizado (mantido como
+"planejada" mesmo após a implementação) até esta correção de
+2026-09-16.
 
 ## Problema
 

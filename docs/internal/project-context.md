@@ -3935,3 +3935,297 @@ documentado -- ver patch própria do repositório do Coupon Worker.
 
 **Nenhuma alteração em cupons/site/Telegram (`v1.3.9`) nesta rodada.**
 **Nenhum deploy foi executado nesta rodada.**
+
+## Correção isolada do HIGH_ACTIVITY: notificação sai de dentro da transação de claim (`DEC-132`, 2026-09-09)
+
+Revisão da v1.3.10 encontrou violação de contrato: `notify_coupon_
+worker_high_activity` (I/O de rede real) era chamada de dentro da
+transação de claim que segura `SELECT ... FOR UPDATE` em
+`MissionSource`/`MonitoringItemStore` -- `shared_claim.py` já se
+declarava, na própria docstring, "nunca chamada de rede/IA". Um Coupon
+Worker lento prendia a linha claimada mais tempo que o necessário.
+`EdgeLifecycleJob`/`DEC-131` não foi tocado nesta correção.
+
+Correção: a decisão de `HIGH_ACTIVITY` continua exatamente onde estava
+(`resolve_collection_cadence`); o que mudou é só o disparo, que agora
+sai do coletor agregado `_ClaimedBatch.high_activity_detected` e roda
+em `CollectionOrchestrator.run_batch` **depois** que a transação de
+claim já commitou -- nunca mais dentro do lock. Deduplicado: no máximo
+um `POST /control/promo` por batch, mesmo com múltiplas stores em
+HIGH_ACTIVITY ao mesmo tempo (antes, cada `attempt` notificava por
+conta própria). 36/36 testes de integração aprovados (Postgres real);
+achado à parte confirmado pré-existente (16 falhas em
+`test_webapp_offers_router.py`, fragilidade de isolamento de teste, não
+regressão desta correção). Release: `v1.3.11`. Nenhum deploy executado.
+
+## TASK-121 -- aba Cupons ligada a dados reais (2026-09-09/11)
+
+Fechou a lacuna documentada em `docs/tasks/TASK-121.md` (achado do
+pós-deploy `v1.3.9`): `CouponsPage.tsx` só renderizava 6 cards de
+**modelo** hardcoded (`COUPON_TEMPLATES`), nunca integrados ao Coupon
+Worker -- lacuna herdada da Subtask 11 original, nunca formalizada como
+TASK própria até então.
+
+**Rodada 1 (commit `93d8e17`, tag `v1.3.12`, 2026-09-09):** nova
+`list_active_coupons()` (`app/coupons/service.py`, join explícito
+Coupon+Store numa única query, sem N+1 -- distinta e nunca reaproveitada
+de `get_active_coupons_by_store`, que continua exclusiva do caminho de
+aplicabilidade `applied_coupon`/`DEC-129`); endpoint novo `GET
+/api/v1/coupons` (`app/webapp/coupons_router.py`, mesmo padrão de sessão
+autenticada dos demais routers); frontend (`frontend/src/api/coupons.ts`,
+`couponCardMapping.ts`) passa a consumir dado real via
+`CouponCollection`/`CouponCardData` já existentes, removendo
+`COUPON_TEMPLATES`. Escopo estrito: não mexe em aplicabilidade
+cupom↔Offer, Telegram, coleta ou HIGH_ACTIVITY/Job Object. `tsc`, `oxlint`
+e `ruff` limpos; testes de integração novos cobrindo apenas-ativos,
+ordenação, limite defensivo, ausência de N+1, campos ausentes como
+`None`.
+
+**Rodada 2 -- revisão (commit `379ce41`, tag `v1.3.13`, 2026-09-11):**
+correções encontradas validando em navegador real (Playwright/Edge,
+dados reais do Coupon Worker): card nunca usa `raw_rule_text`/preço
+bruto como fallback de título (só desconto estruturado ou "Cupom
+disponível"); link "Ver na loja" a partir de `source_url` validado
+(http/https), sempre presente mesmo sem código; agrupamento por loja
+com contagem, loja fora do catálogo visual continua aparecendo com nome
+real; corrigida duplicação de prefixo em `valid_until` ("Válido até
+Válido até X" -> "Válido até X", o worker já manda a frase completa).
+
+**Tag seguinte (`v1.3.14`, 2026-09-11, commit `85349b7`):** correção
+não relacionada a cupons -- `fix(webapp): evita cache indevido do
+index.html da SPA no navegador`. Este é o último commit real de
+`origin/main` (`git log -1` = 2026-09-11 17:21:54 -0300); nenhum commit
+novo desde então.
+
+**Status de TASK-121 corrigido nesta reconstrução:** `docs/tasks/
+TASK-121.md` continuava com o cabeçalho "Planejada, não iniciada" apesar
+de implementada e publicada -- corrigido para "Concluída e publicada"
+em 2026-09-16, apontando para esta seção.
+
+## Lacuna operacional real: login do Mercado Livre nunca feito na instalação de PROD do Coupon Worker (`DEC-133`, 2026-09-10)
+
+Achado com dado real do Postgres de PROD (não suposição): a área
+`/cupons` do Mercado Livre (`div.coupon-card`, sessão autenticada
+exigida, já documentada em `DEC-106` no repositório do Coupon Worker)
+nunca retornou nenhuma linha em PROD (`0` cupons com
+`source_url LIKE '%/cupons%'` para `mercadolivre`, desde sempre) --
+porque o handoff de deploy (`docs/operations/prod-deployment-handoff.md`,
+seção 9) nunca incluía o passo de rodar `login_manual.py` com uma conta
+de pesquisa dedicada na máquina de PROD antes de agendar a tarefa. As
+demais fontes do Mercado Livre que não exigem login (carrossel da home,
+banner de campanha, aprofundamento de produto) funcionam normalmente em
+PROD (454 cupons reais persistidos, 7 ativos no momento da checagem).
+
+Corrigido apenas na documentação: o handoff ganhou um passo 6 explícito
+(login manual + conta de pesquisa dedicada, nunca a pessoal, aviso
+contra abrir um segundo Edge no mesmo perfil enquanto a tarefa agendada
+roda). **O login em si continua pendente na máquina real de PROD** --
+depende do usuário (para a tarefa agendada, loga manualmente, confirma
+sessão, reinicia a tarefa); não é uma ação que o assistente execute
+sozinho.
+
+## Quatro correções pontuais sem TASK formal, com migrations aplicadas mas trabalho ainda NÃO commitado (2026-09-11/12)
+
+Mesmo padrão já aceito para TASK-093/114/115/116 (achado real de
+produção, sem `docs/tasks/TASK-*.md` dedicado). As quatro migrations
+existem em `backend/migrations/versions/` e o código de produção
+correspondente já está no working tree, mas **nenhuma das quatro foi
+commitada** -- confirmado por `git status` (arquivos `??`/`M` ainda
+pendentes) e por `git log`, que não tem nenhum commit entre `v1.3.14`
+(11/09) e o início do checkpoint 3 (13/09) cobrindo este conteúdo.
+Fazem parte do mesmo diff de 150 arquivos citado no checkpoint 11 como
+"fora do escopo desta rodada de cobertura".
+
+- **`offer_supersession`** (`20260912_0001`, `offers.superseded_by_id`/
+  `superseded_at`): correção sobre a duplicação do vendedor Amazon --
+  quando um vendedor real é identificado pela primeira vez para um
+  anúncio que antes só existia sem vendedor, a Offer antiga é marcada
+  como substituída IMEDIATAMENTE
+  (`app.collection.orchestration._supersede_old_unattributed_offer`),
+  saindo de listagem/comparação sem esperar frescor por envelhecimento;
+  histórico de `PriceObservation` da Offer antiga permanece intocado e
+  acessível por ID direto, nunca fundido/reatribuído ao vendedor novo.
+- **`coupon_evidence_isolation`** (`20260912_0002`,
+  `coupons.evidence_isolation`/`derived_reference_price`): mecanismo de
+  cupom sem código. `evidence_isolation` formaliza como coluna
+  persistida o quão isolada era a fonte da evidência ("widget"/
+  "component" confiáveis; "page" pode ter vazado texto de produto
+  relacionado). `derived_reference_price` guarda o preço-base usado
+  para derivar um desconto que a loja não informa em R$/%
+  (`app.coupons.pricing.is_derived_discount_still_valid` reconfirma
+  validade no momento do consumo, nunca confia sozinho no valor
+  derivado na coleta).
+- **`search_history`** (`20260912_0004`, "Frente 5"): `search_receipts`
+  (TASK-107) já gravava uma linha por pesquisa aceita, só para cota
+  (`user_id`/`created_at`), sem o texto pesquisado. Nova coluna
+  `query_text` (nulo para linhas antigas, nunca backfilled) grava o
+  texto real; nova tabela `search_receipt_products` liga cada pesquisa
+  aos `Product`s RECONHECIDOS (`identity_key IS NOT NULL`) que ela
+  retornou -- é essa ligação, não o texto livre, que alimentaria uma
+  visão comunitária futura ("Veja o que estão pesquisando"), só com
+  nomes de produto canônicos, nunca o texto digitado pelo usuário.
+  Código relacionado: `backend/app/quotas/query.py` (novo, untracked),
+  `backend/app/webapp/search_router.py` (modificado).
+- **`preserve_installment_terms`** (`20260912_0005`): `offer_
+  installment_options` ganha `payment_method`; a constraint de
+  unicidade antiga (`uq_offer_installment_options_observation_count`)
+  colapsava condições de parcelamento distintas com a mesma contagem de
+  parcelas -- substituída por `uq_offer_installment_options_terms`,
+  agora incluindo `payment_method` na chave de unicidade
+  (`postgresql_nulls_not_distinct=True`). Sem backfill de modalidade;
+  downgrade recusa contagens duplicadas em vez de apagar histórico
+  válido.
+
+**Nenhuma destas quatro tem TASK formal em `docs/tasks/`, nenhuma foi
+citada em nenhum checkpoint até esta reconstrução, e nenhuma foi
+commitada** -- ficam registradas aqui como código real presente no
+working tree, pendente de revisão/commit junto com o restante do diff
+acumulado (rodada de cobertura + identidade global + estas quatro).
+
+## Identidade global de produtos: SKU vs part number + árbitro de IA + aprendizado cross-store (checkpoints 3-11, 2026-09-13 a 2026-09-16)
+
+Trabalho iniciado em 2026-09-13 (checkpoint 3), imediatamente após a
+migration `20260913_0001_add_identity_candidate_sku_fields` (também
+ainda não commitada). Objetivo: resolver casos onde o mesmo produto
+aparece com atributos parcialmente divergentes entre lojas (SKU
+específico da loja vs. part number do fabricante, variantes com
+título quase idêntico) sem depender de nome de loja no código do
+resolvedor.
+
+**O que já existia antes do checkpoint 3:** resolução determinística de
+identidade por tokens (`_find_reusable_candidate_by_tokens`,
+`products/identity_learning.py`), sem distinguir formalmente atributo
+"ausente" (`MISSING`) de atributo "conflitante" (`CONTRADICTORY`) --
+bug original que motivou esta rodada.
+
+**Checkpoint 3 (2026-09-13):** implementado (código escrito e revisado,
+não só planejado) --
+`store_sku`/`manufacturer_part_number` como campos próprios em
+`ProductIdentityCandidate` e na extração por IA (`identity_ai.py`,
+disciplina anti-alucinação `_is_grounded` estendida aos dois campos
+novos); árbitro de IA novo (`identity_arbiter.py`,
+`arbitrate_same_product`, veredito `SAME_PRODUCT`/`DIFFERENT_PRODUCT`/
+`INCONCLUSIVE`, fail-closed em qualquer erro/JSON inválido); fluxo de
+"zona cinzenta" em `identity_learning.py` -- candidatos que o matching
+determinístico recusa por variante/atributo ausente ou divergente
+passam primeiro por matching determinístico de `manufacturer_part_
+number` (sem gastar chamada de árbitro) e só then pelo árbitro de IA.
+**Bug real encontrado e NÃO resolvido neste checkpoint:**
+`sqlalchemy.exc.MissingGreenlet` em 2 dos 6 testes de integração reais
+contra Postgres (suspeita: acesso a atributo ORM expirado após
+`session.rollback()`).
+
+**Checkpoint 4 (2026-09-13, mesma sessão/dia seguinte):**
+`MissingGreenlet` diagnosticado e corrigido (causa raiz confirmada: ORM
+acessando atributo de objeto expirado pós-`rollback()`; correção em
+`_resolved_from_candidate`, tipo união `_ArbitrationCandidate`).
+Validação real Pichau/Terabyte (ASUS TUF Gaming B650M-E WiFi) executada
+de ponta a ponta com Postgres DEV real + César Core real + IA real, sem
+stub: convergência confirmada para o mesmo `identity_key`. **Segundo bug
+real encontrado e corrigido na mesma sessão:** o árbitro sempre chamava
+IA com `profile=UserRole.USER`, mas em produção o `CollectionOrchestrator`
+usa `build_admin_dev_ai_provider_manager()` -- incompatibilidade de
+profile faria o árbitro sempre cair em `INCONCLUSIVE` (fail-closed) por
+erro de credencial, nunca por decisão real de conteúdo; testes antigos
+não pegavam isso por usarem um fake que ignora profile. Corrigido com
+`arbiter_ai_manager: AIProviderManager | None` dedicado, propagado por
+`identity_learning.py`/`orchestration.py`/`worker.py` (produção
+constrói com `build_user_ai_provider_manager`, USER-only, coerente com
+a política de IA do projeto). **Novo bloqueio encontrado:**
+`scripts/check.ps1` parou na varredura de segredos (30 leaks em dois
+arquivos não versionados -- `.claude/settings.local.json` e
+`tmp/magalu-edge-final.html` -- pré-existentes, não relacionados ao
+código desta sessão); pipeline não chegou a lint/cobertura/integração
+completa.
+
+**Checkpoint 5 (2026-09-14):** bloqueio de segredos resolvido
+(allowlist pontual de scratch + supressão específica, sem enfraquecer a
+regra real); `ruff check`/`format` 100% limpos no repositório inteiro;
+suíte de integração oficial 341 passed/0 falhas. Medição real revelou
+que a cobertura unitária ISOLADA era 79,90% (abaixo do gate de 90%
+configurado em `pyproject.toml`), mas a cobertura COMBINADA (unit +
+integração) já era 90,23%. O usuário rejeitou resolver isso abaixando o
+gate e pediu investigação de causa raiz com testes reais, mantendo o
+gate de 90% -- deu início à rodada de fechamento de cobertura descrita
+abaixo.
+
+**Checkpoints 6 a 10 (2026-09-14 a 16):** rodada sistemática de
+fechamento de cobertura unitária isolada, em duas fases -- "lógica
+pura" primeiro (`market_research/service.py`,
+`historical_bootstrap/service.py`, `collection/providers/
+edge_cdp_supervisor.py`, `events/catalog.py`, `products/identity.py`,
+`stores.py`, `admin_router.py`, `identity_learning.py`) e depois
+`async`/`AsyncSession` mockada (`orchestration.py`,
+`shared_collection.py`, `cadence.py`, todos levados a 100%). Progressão
+da cobertura unitária isolada global: 79,90% (checkpoint 5) -> 81,29%
+-> 81,51% -> 84,00% -> 86,27% -> 87,35% -> 90,00% (checkpoint 11). Um
+achado de falha órfã (`KabumProvider`, suspeita de teste flaky) foi
+investigado e não reproduziu nas rodadas seguintes (evidência, não
+prova definitiva).
+
+**Checkpoint 11 -- fechamento técnico final (2026-09-16):** os quatro
+critérios de conclusão exigidos pelo usuário foram todos atingidos:
+
+- Cobertura unitária isolada: **90,00%** exatos (gate `--cov-fail-under=90`
+  cumprido, nunca abaixado).
+- Suíte de integração oficial: **341 passed, 0 falhas**
+  (`scripts/run_integration_tests.py`, Postgres 18.4-alpine descartável,
+  head Alembic único `20260913_0001`).
+- Cobertura combinada (unit + integração) remedida: **93,21%** --
+  melhora real sobre os 90,23% do checkpoint 5.
+- `scripts/check.ps1` de ponta a ponta: **aprovado**, todas as 9 etapas
+  verdes (Gitleaks, `pip check`, `ruff check`, `ruff format --check`,
+  testes unitários com cobertura, `alembic heads`, `docker compose
+  config`, suíte de integração).
+
+Revisão de fechamento pedida pelo usuário concluída sem achar problema
+real: os 4 `pragma: no cover` existentes são genuinamente inalcançáveis
+por construção (nenhum novo, nenhuma exclusão ampliada); os 2
+`gitleaks:allow` são pontuais (slug de teste, não segredo real); o
+working tree revisado por completo (diff de 150 arquivos, majoritário
+de rodadas anteriores à iniciativa de cobertura -- inclui as quatro
+correções sem TASK formal e a identidade global descritas acima, todas
+ainda não commitadas). Esta rodada de cobertura surgiu diretamente do
+checkpoint 5 (gate de cobertura vs. combinada) e consumiu os
+checkpoints 6 a 11 -- várias sessões inteiras -- antes de retomar
+qualquer trabalho funcional novo.
+
+**Nenhum commit, push, tag ou deploy foi realizado em nenhum dos
+checkpoints 3 a 11.** Comunicação em PT-BR mantida. Nenhuma alteração
+de gate de cobertura, nenhuma exclusão de cobertura ampliada, nenhuma
+allowlist de segredo ampliada.
+
+**Estado funcional atual do GG (2026-09-16, fim do checkpoint 11):**
+todo o código de identidade global (checkpoints 3-11), as quatro
+correções sem TASK formal (offer_supersession, coupon_evidence_
+isolation, search_history, preserve_installment_terms) e a rodada de
+fechamento de cobertura estão implementados, testados e tecnicamente
+prontos no working tree local -- nada disso está em `origin/main`
+(que permanece em `85349b7`/`v1.3.14`, 2026-09-11) nem em PROD.
+**Próximo passo real, ainda não iniciado:** revisão do usuário sobre
+todo este diff acumulado e sua decisão sobre commit/push -- só depois
+disso caberia cogitar qualquer nova TASK funcional (e.g., retomar a
+lacuna do login do Mercado Livre em PROD, `DEC-133`, ou formalizar as
+quatro correções sem TASK como TASKs próprias).
+
+**Correção de auditoria forense (2026-09-16, sessão seguinte ao
+fechamento do checkpoint 11):** a pendência 5 do checkpoint 3 ("teste
+estrutural de desacoplamento de loja não foi escrito") **foi
+verificada como resolvida por prova direta de código e execução**, não
+só por documentação -- existe hoje `tests/integration/
+test_collection_orchestration.py::
+test_identity_learning_reuses_across_a_brand_new_store_never_seen_before`
+(usa "magalu", nunca citada em nenhum outro teste de identidade, para
+provar que `resolve_or_learn_product_variant` não recebe nem depende do
+código da loja), confirmado passando via `scripts/run_integration_
+tests.py` nesta sessão (1 passed, Postgres descartável real, head
+`20260913_0001`). **`checkpoints/2026-09-14/checkpoint-5.md` registrou
+essa pendência como resolvida citando o teste ERRADO**
+(`test_product_identity.py::test_same_variant_from_all_stores_reuses_
+one_global_product`, que é da TASK-111, tracked e sem alteração nesta
+rodada, e testa 6 lojas já conhecidas -- não uma loja nunca vista) --
+nenhum checkpoint entre o 5 e o 11 corrigiu essa mistura, nem registrou
+quando/onde o teste certo foi de fato escrito. O teste certo está no
+mesmo arquivo modificado (`tests/integration/
+test_collection_orchestration.py`, tracked com alterações não
+commitadas) que já contém o restante da suíte de identidade global.

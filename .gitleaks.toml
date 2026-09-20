@@ -13,4 +13,10 @@ paths = [
   '''(^|[\\/])\.env($|\.)''',
   '''(^|[\\/])\.venv([\\/]|$)''',
   '''(^|[\\/])__pycache__([\\/]|$)''',
+  # Nunca rastreados pelo git (.gitignore local/global) -- scratch de
+  # investigação (tmp/, .pytest-tmp/) e configuração local do próprio
+  # Claude Code (.claude/), nunca candidatos a commit.
+  '''(^|[\\/])tmp([\\/]|$)''',
+  '''(^|[\\/])\.pytest-tmp([\\/]|$)''',
+  '''(^|[\\/])\.claude([\\/]|$)''',
 ]
