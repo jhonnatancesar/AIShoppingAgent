@@ -1,5 +1,18 @@
 # Changelog
 
+## `v1.3.20` — TASK-123: ajusta lote/teto do backfill para o tamanho real do backlog (371 Products)
+
+Correção no mesmo dia da `v1.3.19`: os números originais (lote de 4,
+teto de 20 por rodada) supunham um backlog pequeno -- o usuário revelou
+que o backlog real de `Product`s sem `identity_key` tem **371** linhas,
+o que exigiria ~19 execuções manuais de `--apply` para esgotar,
+inviável de acompanhar de perto. `_BATCH_SIZE` sobe para 10 (~10x menos
+chamadas de IA que 1-por-produto) e `_MAX_LIMIT` para 100 -- 371 cabe
+em ~4 rodadas. Grounding determinístico continua validando cada item
+do lote contra o próprio título, sem exceção -- lote maior não abre mão
+dessa proteção. Testes ajustados para o novo tamanho de lote (13
+produtos/2 chamadas de IA), suíte completa relevante passando.
+
 ## `v1.3.19` — TASK-123: backfill de identidade em lote (4/chamada) + corrige perda de resolução entre rollbacks
 
 Resolve uma preocupação real levantada pelo usuário sobre o custo de

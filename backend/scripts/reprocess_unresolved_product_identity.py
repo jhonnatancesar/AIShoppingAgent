@@ -44,17 +44,21 @@ Lote de IA (mesma pergunta do usuário, correção 2026-09-20): em vez de
 1 chamada de IA por Product (depois de tentar o motor determinístico/
 cache/reuso sem IA para cada um), `reprocess_unresolved_products` agora
 agrupa só os produtos que realmente precisam de extração em lotes de
-`_BATCH_SIZE` (4) títulos por chamada -- corta o número de chamadas
-de IA por ~4x. Por isso `--limit`/`--dry-run`/`--apply` têm um teto
-rígido de `_MAX_LIMIT` (20 Products, 5 lotes de 4) -- este script é
-para o backlog pequeno já conhecido, não para volume alto sem
-supervisão; rode em rodadas de até 20 até esgotar o backlog.
+`_BATCH_SIZE` (10) títulos por chamada -- corta o número de chamadas
+de IA por ~10x. Números ajustados no mesmo dia depois que o usuário
+revelou o tamanho real do backlog (371 Products, não a dúzia que se
+supunha ao escolher 4/20 originalmente) -- `_BATCH_SIZE=4`/
+`_MAX_LIMIT=20` exigiriam ~19 execuções manuais de `--apply` pra
+esgotar o backlog, inviável de acompanhar de perto. Por isso
+`--limit`/`--dry-run`/`--apply` têm um teto rígido de `_MAX_LIMIT`
+(100 Products, 10 lotes de 10) -- ainda supervisionável por rodada,
+mas 371 cabe em ~4 rodadas em vez de ~19.
 
 Uso:
     python -m scripts.reprocess_unresolved_product_identity --count-only
     python -m scripts.reprocess_unresolved_product_identity --dry-run
-    python -m scripts.reprocess_unresolved_product_identity --dry-run --limit 20
-    python -m scripts.reprocess_unresolved_product_identity --apply --limit 20
+    python -m scripts.reprocess_unresolved_product_identity --dry-run --limit 100
+    python -m scripts.reprocess_unresolved_product_identity --apply --limit 100
 """
 
 from __future__ import annotations
@@ -78,8 +82,8 @@ from app.users.models import UserRole
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-_BATCH_SIZE = 4
-_MAX_LIMIT = 20
+_BATCH_SIZE = 10
+_MAX_LIMIT = 100
 
 
 async def _total_unresolved_count(session: AsyncSession) -> int:

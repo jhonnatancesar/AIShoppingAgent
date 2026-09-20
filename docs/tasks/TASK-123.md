@@ -17,21 +17,27 @@ novos que continuam chegando sem identidade a cada coleta, não só um ou
 outro. Versão anterior desta TASK (parser `_motherboard` por regex)
 descartada -- ver "Objetivo" abaixo para o porquê.
 
-**Item 1 (backfill) concluído nesta sessão** (script publicado em
-`v1.3.18`, ver changelog) + **correção adicional de custo/robustez
-2026-09-20, ainda LOCAL, não commitada/publicada** -- achado real ao
-responder uma pergunta direta do usuário sobre gasto de quota de IA:
+**Item 1 (backfill) concluído nesta sessão** (script publicado
+originalmente em `v1.3.18`, ver changelog) + **correção adicional de
+custo/robustez 2026-09-20 (`v1.3.19`) + ajuste de escala no mesmo dia
+(`v1.3.20`)** -- achados reais ao responder perguntas diretas do
+usuário sobre gasto de quota de IA e, depois, sobre o tamanho real do
+backlog:
 
 - **`--count-only`**: conta o backlog REAL (sem `limit`, zero chamada
   de IA) antes de qualquer decisão de ritmo.
-- **Lote de IA** (`_BATCH_SIZE=4`): `reprocess_unresolved_products`
+- **Lote de IA** (`_BATCH_SIZE=10`): `reprocess_unresolved_products`
   ganhou `batch_size`/`extract_product_identities_via_ai_batch`
   (`identity_ai.py`) -- agrupa só os produtos que realmente precisam
   de extração (depois do motor determinístico/cache/reuso sem IA) em
-  lotes de 4 títulos por chamada, ~4x menos chamadas que 1-por-produto.
-  Por isso `--limit`/`--dry-run`/`--apply` agora têm teto rígido de 20
-  (`_MAX_LIMIT`, 5 lotes de 4) -- este script é para o backlog pequeno
-  já conhecido, roda em rodadas de até 20 até esgotar.
+  lotes de títulos por chamada, ~10x menos chamadas que 1-por-produto.
+  `--limit`/`--dry-run`/`--apply` têm teto rígido de 100
+  (`_MAX_LIMIT`, 10 lotes de 10). **Números ajustados no mesmo dia**:
+  a escolha original (lote de 4, teto de 20) supunha um backlog
+  pequeno -- o usuário revelou que o backlog real tem **371 Products**,
+  o que exigiria ~19 execuções manuais de `--apply` com os números
+  originais (inviável de acompanhar de perto); com 10/100, 371 cabe em
+  ~4 rodadas.
 - **Bug real encontrado e corrigido**: `session.rollback()` (proteção
   contra `idle_in_transaction_session_timeout` antes de cada chamada
   de IA) expira TODAS as instâncias já carregadas da sessão, não só a
@@ -46,7 +52,7 @@ responder uma pergunta direta do usuário sobre gasto de quota de IA:
   perder trabalho intermediário é inofensivo -- nada deveria sobreviver
   mesmo). Regressão coberta por teste de integração real com 2 Products
   distintos (`tests/integration/test_product_identity_learning.py`) e
-  por um teste de 5 Products/2 lotes
+  por um teste de 13 Products/2 lotes
   (`tests/integration/test_reprocess_unresolved_product_identity.py`).
 
 `tests/integration/test_reprocess_unresolved_product_identity.py` (5
@@ -202,11 +208,12 @@ como TASKs separadas):
    --count-only`** primeiro (zero custo de IA) para saber o tamanho
    real do backlog antes de decidir o ritmo.
 3. **Rodar `python -m scripts.reprocess_unresolved_product_identity
-   --apply --limit 20`** contra o banco real de PROD (repetir em
-   rodadas de até 20 -- teto do script -- até reportar 0 candidatos)
-   -- pega o backlog que já existe hoje (placas-mãe incluídas), não só
-   o que chegar depois da flag ligada. Lote de 4 títulos por chamada de
-   IA (~4x menos chamadas que 1-por-produto).
+   --apply --limit 100`** contra o banco real de PROD (repetir em
+   rodadas de até 100 -- teto do script -- até reportar 0 candidatos)
+   -- pega o backlog que já existe hoje (placas-mãe incluídas, ~371
+   Products conhecidos nesta rodada), não só o que chegar depois da
+   flag ligada. Lote de 10 títulos por chamada de IA (~10x menos
+   chamadas que 1-por-produto).
 
 Sem o passo 3, ligar só a flag NÃO resolve o backlog já parado no banco
 (ela só afeta coleta nova, ver "Preflight" acima) -- os dois precisam

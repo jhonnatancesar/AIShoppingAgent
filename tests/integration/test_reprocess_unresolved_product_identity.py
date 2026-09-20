@@ -282,39 +282,37 @@ def test_apply_twice_is_idempotent(integration_database) -> None:
         )
 
 
-def test_batch_of_five_products_uses_two_ai_calls_not_five(
+def test_batch_of_thirteen_products_uses_two_ai_calls_not_thirteen(
     integration_database,
 ) -> None:
-    """Prova o pedido real do usuário (2026-09-20): lote de `_BATCH_SIZE`
-    (4) produtos por chamada de IA -- 5 Products DIFERENTES (nenhum
-    reaproveitável entre si antes da extração) devem gastar só 2
-    chamadas de IA (4 + 1), nunca 5. Também é a regressão do bug real
-    encontrado nesta mesma rodada: `session.rollback()` entre lotes
-    expirava produtos já carregados e/ou descartava trabalho já
-    aplicado de um lote anterior -- aqui os 5 sobrevivem, todos com a
-    MESMA identidade (mesmos campos na extração estática), o que força
-    o caminho de MERGE de `apply_learned_identity` dentro do próprio
-    lote e entre lotes (só o primeiro promovido vira canônico; os
-    outros 4 migram as Offers pra ele e são removidos)."""
+    """Prova o pedido real do usuário (2026-09-20, ajustado no mesmo dia
+    depois que o usuário revelou que o backlog real tem 371 Products,
+    não a dúzia suposta ao escolher os números originais): lote de
+    `_BATCH_SIZE` (10) produtos por chamada de IA -- 13 Products
+    DIFERENTES (nenhum reaproveitável entre si antes da extração) devem
+    gastar só 2 chamadas de IA (10 + 3), nunca 13. Também é a regressão
+    do bug real encontrado nesta mesma rodada: `session.rollback()`
+    entre lotes expirava produtos já carregados e/ou descartava
+    trabalho já aplicado de um lote anterior -- aqui os 13 sobrevivem,
+    todos com a MESMA identidade (mesmos campos na extração estática),
+    o que força o caminho de MERGE de `apply_learned_identity` dentro
+    do próprio lote e entre lotes (só o primeiro promovido vira
+    canônico; os outros 12 migram as Offers pra ele e são removidos)."""
     module = _load_script_module()
-    titles = [
-        _MOBO_TITLE,
-        f"{_MOBO_TITLE} - Loja B",
-        f"{_MOBO_TITLE} - Loja C",
-        f"{_MOBO_TITLE} - Loja D",
-        f"{_MOBO_TITLE} - Loja E",
-    ]
+    titles = [_MOBO_TITLE] + [f"{_MOBO_TITLE} - Loja {i}" for i in range(1, 13)]
     seeded = [_seed_unresolved_product(integration_database, title) for title in titles]
     product_ids = [product_id for product_id, _offer_id, _observation_id in seeded]
     offer_ids = [offer_id for _product_id, offer_id, _observation_id in seeded]
     manager = _StaticIdentityAIManager(_MOBO_EXTRACTION)
 
     _run(
-        module.run(apply=True, limit=20, ai_manager=manager, arbiter_ai_manager=manager)
+        module.run(
+            apply=True, limit=100, ai_manager=manager, arbiter_ai_manager=manager
+        )
     )
 
     assert manager.calls == 2, (
-        "5 produtos em lotes de 4 devem gastar 2 chamadas de IA (4 + 1), não 5"
+        "13 produtos em lotes de 10 devem gastar 2 chamadas de IA (10 + 3), não 13"
     )
 
     with integration_database.sessions() as session:

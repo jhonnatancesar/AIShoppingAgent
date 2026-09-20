@@ -46,8 +46,8 @@ uma foto de um instante, não uma garantia de que nada mudou depois):
 
 | Componente | Tag | Commit | Observação |
 |---|---|---|---|
-| GG Oferta | **`v1.3.19`** | `204da8a` (`main`) | Substitui `v1.3.17`/`v1.3.18`. Traz, além de tudo que essas já traziam (TASK-122/TASK-123 original, identidade global de produto, cobertura de testes ≥90%, correção do Windows Ops Agent, ver linha histórica abaixo): **TASK-123 (correção de custo/robustez)** -- backfill de identidade agora processa em LOTE (4 títulos por chamada de IA, ~4x menos chamadas) e `--limit` tem teto de 20 por rodada; `--count-only` reporta o backlog real sem custo de IA. Corrigido também um bug preexistente que podia quebrar ou perder silenciosamente a identidade já resolvida de um produto quando 2+ produtos da mesma rodada precisavam de extração real -- ver seção "TASK-123 -- ação obrigatória no deploy" logo abaixo desta tabela para os comandos atualizados, não é automático |
-| GG Oferta (histórico) | `v1.3.15`–`v1.3.18` | `e8ac138`/`d071adc`/`ba3ef16`/`2155a21` | Identidade global de produto (SKU vs part number + árbitro de IA), parcelamento real, `offer_supersession`, `coupon_evidence_isolation`, `search_history` + área DEV, cobertura de testes ≥90%, correção do início do Windows Ops Agent, fechamento documental do episódio `INC-2026-09-17-001` (`v1.3.15`); duas correções de sequência de tag sem mudança de código (`v1.3.16`, `v1.3.18`); TASK-122 (busca sem oferta relevante não é mais bloqueio) + TASK-123 original -- script de backfill sem lote (`v1.3.17`). Substituem `v1.3.8` (handoff parado desde então, v1.3.9-v1.3.14 foram hotfixes pontuais não documentados aqui) |
+| GG Oferta | **`v1.3.20`** | `204da8a` (`main`) | Substitui `v1.3.17`–`v1.3.19`. Traz, além de tudo que essas já traziam (TASK-122/TASK-123 original, identidade global de produto, cobertura de testes ≥90%, correção do Windows Ops Agent, ver linha histórica abaixo): **TASK-123 (correção de custo/robustez + ajuste de escala)** -- backfill de identidade agora processa em LOTE (10 títulos por chamada de IA, ~10x menos chamadas) e `--limit` tem teto de 100 por rodada (números ajustados no mesmo dia ao saber que o backlog real tem 371 Products, não a dúzia suposta inicialmente); `--count-only` reporta o backlog real sem custo de IA. Corrigido também um bug preexistente que podia quebrar ou perder silenciosamente a identidade já resolvida de um produto quando 2+ produtos da mesma rodada precisavam de extração real -- ver seção "TASK-123 -- ação obrigatória no deploy" logo abaixo desta tabela para os comandos atualizados, não é automático |
+| GG Oferta (histórico) | `v1.3.15`–`v1.3.19` | `e8ac138`/`d071adc`/`ba3ef16`/`2155a21`/`204da8a` | Identidade global de produto (SKU vs part number + árbitro de IA), parcelamento real, `offer_supersession`, `coupon_evidence_isolation`, `search_history` + área DEV, cobertura de testes ≥90%, correção do início do Windows Ops Agent, fechamento documental do episódio `INC-2026-09-17-001` (`v1.3.15`); correções de sequência de tag sem mudança de código (`v1.3.16`, `v1.3.18`); TASK-122 (busca sem oferta relevante não é mais bloqueio) + TASK-123 original -- script de backfill sem lote (`v1.3.17`); TASK-123 com lote de 4/teto de 20, número revisado logo em seguida (`v1.3.19`). Substituem `v1.3.8` (handoff parado desde então, v1.3.9-v1.3.14 foram hotfixes pontuais não documentados aqui) |
 | César Core | **`v1.2.1`** | `a5ba084` | Política real de providers AI (`ai_profile`, 4 connections, 2 combos) + saneamento documental. **Imagem já publicada e verificada no GHCR:** `ghcr.io/jhonnatancesar/cesar-core:1.2.1` (também `:1.2`, `:1`, `:latest`). **PROD não usa esta tag/repositório diretamente — só a imagem, via `deploy/prod/cesar-core.compose.yaml`.** Não mudou nesta rodada -- confirme se já é a versão rodando antes de reafirmar, não reinstale/rebuilde sem necessidade |
 | Coupon Worker | **`v1.0.4`** | `75a7bce` (`master`) | Substitui `v1.0.0` (já instalado em PROD desde a primeira release -- isto NÃO é uma primeira instalação, ver nota na seção 9). Traz retry com backoff ao abrir o coupon store (não aborta mais na primeira falha se o Postgres ainda não estiver pronto) e `MultipleInstances IgnoreNew` explícito na Scheduled Task -- **worker.py precisa ser atualizado e a Scheduled Task precisa de `-Action Update` para essas duas correções entrarem em vigor** (seção 9) |
 
@@ -67,12 +67,12 @@ Histórico relevante anterior a estas tags, para contexto:
   refinamento de esgotamento).
 
 **Para o deploy em si:** faça checkout das tags acima nos dois
-repositórios que existem em PROD (`git checkout v1.3.19` — confirme que é
+repositórios que existem em PROD (`git checkout v1.3.20` — confirme que é
 essa a mais recente com `git tag --sort=-creatordate` antes — no GG
 Oferta, `v1.0.4` no Coupon Worker, sem mudança desde a rodada anterior).
 O César Core **não tem repositório em PROD**: use `deploy/prod/
 cesar-core.compose.yaml` (deste próprio checkout do GG Oferta, já em
-`v1.3.19`), que já referencia `ghcr.io/jhonnatancesar/cesar-core:1.2.1`
+`v1.3.20`), que já referencia `ghcr.io/jhonnatancesar/cesar-core:1.2.1`
 como imagem padrão — nenhum `docker build`, nenhum clone do repositório
 `cesar-core`.
 
@@ -84,31 +84,33 @@ abaixo, depois que o código já estiver atualizado e os containers já
 religados (depois da seção 7, antes de declarar o deploy concluído):
 
 1. **Rodar o backfill contra o backlog real** (produtos já coletados
-   sem identidade -- placas-mãe entre eles). Correção de 2026-09-20
-   (pergunta real do usuário sobre custo de IA): primeiro conte o
-   backlog SEM gastar nada --
+   sem identidade -- placas-mãe entre eles, **371 conhecidos nesta
+   rodada**). Correção de 2026-09-20 (pergunta real do usuário sobre
+   custo de IA, depois ajustada no mesmo dia ao saber o tamanho real do
+   backlog): primeiro conte o backlog SEM gastar nada --
    ```powershell
    docker compose run --rm api python -m scripts.reprocess_unresolved_product_identity --count-only
    ```
    -- depois confira uma amostra real com `--dry-run`:
    ```powershell
-   docker compose run --rm api python -m scripts.reprocess_unresolved_product_identity --dry-run --limit 20
+   docker compose run --rm api python -m scripts.reprocess_unresolved_product_identity --dry-run --limit 100
    ```
    Leia a saída -- confirme que os candidatos listados fazem sentido
    (nomes de produto reais, sem lixo) e que a extração da IA (coluna
    `RESOLVIDO -> category=...`) parece plausível antes de aplicar de
    verdade:
    ```powershell
-   docker compose run --rm api python -m scripts.reprocess_unresolved_product_identity --apply --limit 20
+   docker compose run --rm api python -m scripts.reprocess_unresolved_product_identity --apply --limit 100
    ```
-   `--limit` tem teto fixo de **20** (o script recusa valor maior) --
-   já processa em lotes de 4 títulos por chamada de IA internamente
-   (~4x menos chamadas que 1-por-produto), então uma rodada de 20 já
-   cobre 5 chamadas de IA, não 20. Repita `--count-only`/`--dry-run`/
-   `--apply` em rodadas sucessivas até a saída mostrar "Total REAL de
-   Products sem identity_key no banco: 0" -- só então o backlog está
-   zerado. Cada rodada `--apply` chama IA de verdade (custo real) --
-   não rode em loop automatizado sem supervisão.
+   `--limit` tem teto fixo de **100** (o script recusa valor maior) --
+   já processa em lotes de 10 títulos por chamada de IA internamente
+   (~10x menos chamadas que 1-por-produto), então uma rodada de 100 já
+   cobre ~10 chamadas de IA, não 100 -- e os 371 conhecidos cabem em
+   ~4 rodadas. Repita `--count-only`/`--dry-run`/`--apply` em rodadas
+   sucessivas até a saída mostrar "Total REAL de Products sem
+   identity_key no banco: 0" -- só então o backlog está zerado. Cada
+   rodada `--apply` chama IA de verdade (custo real) -- não rode em
+   loop automatizado sem supervisão, acompanhe a saída de cada rodada.
 2. **Ligar a flag para cobrir itens novos dali em diante** -- variável
    de ambiente de **Máquina** do Windows lida pelo `collection_worker`
    nativo (`Settings.product_identity_learning_enabled`,
