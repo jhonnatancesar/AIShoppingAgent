@@ -46,7 +46,8 @@ uma foto de um instante, não uma garantia de que nada mudou depois):
 
 | Componente | Tag | Commit | Observação |
 |---|---|---|---|
-| GG Oferta | **`v1.3.15`** | `e8ac138` (`main`) | Substitui `v1.3.8` (handoff desatualizado desde então — v1.3.9 a v1.3.14 foram hotfixes pontuais não documentados aqui, reconciliar via `git log`/estado real, nunca assumir). Traz: identidade global de produto (SKU vs part number + árbitro de IA), parcelamento real, `offer_supersession`, `coupon_evidence_isolation`, `search_history` + área DEV, cobertura de testes ≥90%, correção do início do Windows Ops Agent (seção do worker nativo abaixo) e fechamento documental do episódio `INC-2026-09-17-001` (falso positivo, sem impacto de segurança real). Ver `docs/internal/project-context.md`, seção "Resiliência dos workers a reinícios de PC/Docker/containers", para o relato técnico completo |
+| GG Oferta | **`v1.3.17`** | `ba3ef16` (`main`) | Substitui `v1.3.16` (correção de sequência de tag da rodada anterior, sem mudança de código). Traz, além de tudo que `v1.3.15`/`v1.3.16` já traziam (identidade global de produto, cobertura de testes ≥90%, correção do Windows Ops Agent, ver linha histórica abaixo): **TASK-122** -- Terabyte/Amazon/Kabum/Mercado Livre não tratam mais busca sem correspondência aproveitável como `provider_blocked` (fix automático, vem só com o código, nenhuma ação extra no deploy); **TASK-123** -- script `backend/scripts/reprocess_unresolved_product_identity.py` (backfill de identidade de produto via IA) **-- precisa de ação explícita no deploy, ver seção "TASK-123 -- ação obrigatória no deploy" logo abaixo desta tabela**, não é automático |
+| GG Oferta (histórico) | `v1.3.15`/`v1.3.16` | `e8ac138`/`d071adc` | Identidade global de produto (SKU vs part number + árbitro de IA), parcelamento real, `offer_supersession`, `coupon_evidence_isolation`, `search_history` + área DEV, cobertura de testes ≥90%, correção do início do Windows Ops Agent, fechamento documental do episódio `INC-2026-09-17-001`. `v1.3.16` só corrigiu a sequência da tag (handoff desatualizado na `v1.3.15`), sem mudança de código -- lição aplicada nesta atualização: handoff sempre atualizado ANTES de cortar a tag da vez. Substituem `v1.3.8` (handoff parado desde então, v1.3.9-v1.3.14 foram hotfixes pontuais não documentados aqui) |
 | César Core | **`v1.2.1`** | `a5ba084` | Política real de providers AI (`ai_profile`, 4 connections, 2 combos) + saneamento documental. **Imagem já publicada e verificada no GHCR:** `ghcr.io/jhonnatancesar/cesar-core:1.2.1` (também `:1.2`, `:1`, `:latest`). **PROD não usa esta tag/repositório diretamente — só a imagem, via `deploy/prod/cesar-core.compose.yaml`.** Não mudou nesta rodada -- confirme se já é a versão rodando antes de reafirmar, não reinstale/rebuilde sem necessidade |
 | Coupon Worker | **`v1.0.4`** | `75a7bce` (`master`) | Substitui `v1.0.0` (já instalado em PROD desde a primeira release -- isto NÃO é uma primeira instalação, ver nota na seção 9). Traz retry com backoff ao abrir o coupon store (não aborta mais na primeira falha se o Postgres ainda não estiver pronto) e `MultipleInstances IgnoreNew` explícito na Scheduled Task -- **worker.py precisa ser atualizado e a Scheduled Task precisa de `-Action Update` para essas duas correções entrarem em vigor** (seção 9) |
 
@@ -66,13 +67,58 @@ Histórico relevante anterior a estas tags, para contexto:
   refinamento de esgotamento).
 
 **Para o deploy em si:** faça checkout das tags acima nos dois
-repositórios que existem em PROD (`git checkout v1.3.15` — confirme que é
+repositórios que existem em PROD (`git checkout v1.3.17` — confirme que é
 essa a mais recente com `git tag --sort=-creatordate` antes — no GG
-Oferta, `v1.0.4` no Coupon Worker). O César Core **não tem repositório
-em PROD**: use `deploy/prod/cesar-core.compose.yaml` (deste próprio
-checkout do GG Oferta, já em `v1.3.15`), que já referencia `ghcr.io/
-jhonnatancesar/cesar-core:1.2.1` como imagem padrão — nenhum `docker
-build`, nenhum clone do repositório `cesar-core`.
+Oferta, `v1.0.4` no Coupon Worker, sem mudança desde a rodada anterior).
+O César Core **não tem repositório em PROD**: use `deploy/prod/
+cesar-core.compose.yaml` (deste próprio checkout do GG Oferta, já em
+`v1.3.17`), que já referencia `ghcr.io/jhonnatancesar/cesar-core:1.2.1`
+como imagem padrão — nenhum `docker build`, nenhum clone do repositório
+`cesar-core`.
+
+## TASK-123 — ação obrigatória no deploy (não é automática)
+
+Diferente do resto desta tag (que entra em vigor só com o código
+novo), **TASK-123 exige dois passos manuais explícitos**, na ordem
+abaixo, depois que o código já estiver atualizado e os containers já
+religados (depois da seção 7, antes de declarar o deploy concluído):
+
+1. **Rodar o backfill contra o backlog real** (produtos já coletados
+   sem identidade -- placas-mãe entre eles):
+   ```powershell
+   docker compose run --rm api python -m scripts.reprocess_unresolved_product_identity --dry-run --limit 50
+   ```
+   Leia a saída -- confirme que os candidatos listados fazem sentido
+   (nomes de produto reais, sem lixo) e que a extração da IA (coluna
+   `RESOLVIDO -> category=...`) parece plausível antes de aplicar de
+   verdade:
+   ```powershell
+   docker compose run --rm api python -m scripts.reprocess_unresolved_product_identity --apply --limit 50
+   ```
+   Repita com `--apply` em lotes (pode subir `--limit`) até a saída
+   mostrar "Products sem identity_key (candidatos...): 0" -- só então o
+   backlog está zerado. Cada rodada `--apply` chama IA de verdade (custo
+   real) -- não rode em loop automatizado sem supervisão.
+2. **Ligar a flag para cobrir itens novos dali em diante** -- variável
+   de ambiente de **Máquina** do Windows lida pelo `collection_worker`
+   nativo (`Settings.product_identity_learning_enabled`,
+   `backend/app/core/config.py:401`, `env_prefix="AISHOPPING_"`).
+   **Ainda não gerenciada por `scripts\manage_collection_worker_config.ps1`**
+   (confirmado nesta rodada -- só as variáveis já existentes do
+   wiring do César Core estão lá) -- defina diretamente:
+   ```powershell
+   [Environment]::SetEnvironmentVariable("AISHOPPING_PRODUCT_IDENTITY_LEARNING_ENABLED", "true", "Machine")
+   ```
+   Igual às demais variáveis de Máquina deste processo (seção "GG
+   Oferta — worker nativo" abaixo): o Task Scheduler lê variáveis de
+   Máquina frescas a cada disparo, sem precisar de logoff/reboot/restart
+   manual da tarefa. Sem esse passo, o backfill do passo 1 resolve o
+   que já existe hoje, mas qualquer produto novo sem extrator
+   determinístico volta a acumular sem identidade a partir da próxima
+   coleta.
+
+**Sem os dois passos, TASK-123 fica sem efeito real em PROD** -- o
+código sozinho não muda nada até alguém rodar o script e ligar a flag.
 
 ## 2. O que fazer primeiro (antes de qualquer deploy)
 
