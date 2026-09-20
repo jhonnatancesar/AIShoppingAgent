@@ -46,8 +46,8 @@ uma foto de um instante, não uma garantia de que nada mudou depois):
 
 | Componente | Tag | Commit | Observação |
 |---|---|---|---|
-| GG Oferta | **`v1.3.17`** | `ba3ef16` (`main`) | Substitui `v1.3.16` (correção de sequência de tag da rodada anterior, sem mudança de código). Traz, além de tudo que `v1.3.15`/`v1.3.16` já traziam (identidade global de produto, cobertura de testes ≥90%, correção do Windows Ops Agent, ver linha histórica abaixo): **TASK-122** -- Terabyte/Amazon/Kabum/Mercado Livre não tratam mais busca sem correspondência aproveitável como `provider_blocked` (fix automático, vem só com o código, nenhuma ação extra no deploy); **TASK-123** -- script `backend/scripts/reprocess_unresolved_product_identity.py` (backfill de identidade de produto via IA) **-- precisa de ação explícita no deploy, ver seção "TASK-123 -- ação obrigatória no deploy" logo abaixo desta tabela**, não é automático |
-| GG Oferta (histórico) | `v1.3.15`/`v1.3.16` | `e8ac138`/`d071adc` | Identidade global de produto (SKU vs part number + árbitro de IA), parcelamento real, `offer_supersession`, `coupon_evidence_isolation`, `search_history` + área DEV, cobertura de testes ≥90%, correção do início do Windows Ops Agent, fechamento documental do episódio `INC-2026-09-17-001`. `v1.3.16` só corrigiu a sequência da tag (handoff desatualizado na `v1.3.15`), sem mudança de código -- lição aplicada nesta atualização: handoff sempre atualizado ANTES de cortar a tag da vez. Substituem `v1.3.8` (handoff parado desde então, v1.3.9-v1.3.14 foram hotfixes pontuais não documentados aqui) |
+| GG Oferta | **`v1.3.19`** | `204da8a` (`main`) | Substitui `v1.3.17`/`v1.3.18`. Traz, além de tudo que essas já traziam (TASK-122/TASK-123 original, identidade global de produto, cobertura de testes ≥90%, correção do Windows Ops Agent, ver linha histórica abaixo): **TASK-123 (correção de custo/robustez)** -- backfill de identidade agora processa em LOTE (4 títulos por chamada de IA, ~4x menos chamadas) e `--limit` tem teto de 20 por rodada; `--count-only` reporta o backlog real sem custo de IA. Corrigido também um bug preexistente que podia quebrar ou perder silenciosamente a identidade já resolvida de um produto quando 2+ produtos da mesma rodada precisavam de extração real -- ver seção "TASK-123 -- ação obrigatória no deploy" logo abaixo desta tabela para os comandos atualizados, não é automático |
+| GG Oferta (histórico) | `v1.3.15`–`v1.3.18` | `e8ac138`/`d071adc`/`ba3ef16`/`2155a21` | Identidade global de produto (SKU vs part number + árbitro de IA), parcelamento real, `offer_supersession`, `coupon_evidence_isolation`, `search_history` + área DEV, cobertura de testes ≥90%, correção do início do Windows Ops Agent, fechamento documental do episódio `INC-2026-09-17-001` (`v1.3.15`); duas correções de sequência de tag sem mudança de código (`v1.3.16`, `v1.3.18`); TASK-122 (busca sem oferta relevante não é mais bloqueio) + TASK-123 original -- script de backfill sem lote (`v1.3.17`). Substituem `v1.3.8` (handoff parado desde então, v1.3.9-v1.3.14 foram hotfixes pontuais não documentados aqui) |
 | César Core | **`v1.2.1`** | `a5ba084` | Política real de providers AI (`ai_profile`, 4 connections, 2 combos) + saneamento documental. **Imagem já publicada e verificada no GHCR:** `ghcr.io/jhonnatancesar/cesar-core:1.2.1` (também `:1.2`, `:1`, `:latest`). **PROD não usa esta tag/repositório diretamente — só a imagem, via `deploy/prod/cesar-core.compose.yaml`.** Não mudou nesta rodada -- confirme se já é a versão rodando antes de reafirmar, não reinstale/rebuilde sem necessidade |
 | Coupon Worker | **`v1.0.4`** | `75a7bce` (`master`) | Substitui `v1.0.0` (já instalado em PROD desde a primeira release -- isto NÃO é uma primeira instalação, ver nota na seção 9). Traz retry com backoff ao abrir o coupon store (não aborta mais na primeira falha se o Postgres ainda não estiver pronto) e `MultipleInstances IgnoreNew` explícito na Scheduled Task -- **worker.py precisa ser atualizado e a Scheduled Task precisa de `-Action Update` para essas duas correções entrarem em vigor** (seção 9) |
 
@@ -67,12 +67,12 @@ Histórico relevante anterior a estas tags, para contexto:
   refinamento de esgotamento).
 
 **Para o deploy em si:** faça checkout das tags acima nos dois
-repositórios que existem em PROD (`git checkout v1.3.17` — confirme que é
+repositórios que existem em PROD (`git checkout v1.3.19` — confirme que é
 essa a mais recente com `git tag --sort=-creatordate` antes — no GG
 Oferta, `v1.0.4` no Coupon Worker, sem mudança desde a rodada anterior).
 O César Core **não tem repositório em PROD**: use `deploy/prod/
 cesar-core.compose.yaml` (deste próprio checkout do GG Oferta, já em
-`v1.3.17`), que já referencia `ghcr.io/jhonnatancesar/cesar-core:1.2.1`
+`v1.3.19`), que já referencia `ghcr.io/jhonnatancesar/cesar-core:1.2.1`
 como imagem padrão — nenhum `docker build`, nenhum clone do repositório
 `cesar-core`.
 

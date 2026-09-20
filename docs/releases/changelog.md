@@ -1,5 +1,24 @@
 # Changelog
 
+## `v1.3.19` — TASK-123: backfill de identidade em lote (4/chamada) + corrige perda de resolução entre rollbacks
+
+Resolve uma preocupação real levantada pelo usuário sobre o custo de
+quota de IA do backfill de identidade global de produto: o script
+`reprocess_unresolved_product_identity.py` agora agrupa até 4 títulos
+por chamada de IA (`extract_product_identities_via_ai_batch`), ~4x
+menos chamadas que 1-por-produto; `--limit` tem teto fixo de 20 por
+rodada e `--count-only` reporta o backlog real sem gastar nada. No
+caminho, reproduzido com um teste de integração real e corrigido um
+bug preexistente (não introduzido pelo lote, só tornado mais provável
+por ele): `session.rollback()` -- usado para evitar
+`idle_in_transaction_session_timeout` antes de cada chamada de IA --
+expirava todas as instâncias já carregadas da sessão, podendo quebrar
+ou descartar silenciosamente a identidade já resolvida de um produto
+anterior quando 2+ produtos da mesma rodada precisavam de extração
+real. Ver `docs/tasks/TASK-123.md` e a seção "TASK-123 -- ação
+obrigatória no deploy" em `docs/operations/prod-deployment-handoff.md`
+para os comandos atualizados.
+
 ## `v1.3.18` — Corrige handoff de deploy que ficou fora da v1.3.17
 
 Mesma lição já aplicada uma vez em `v1.3.16`: a tag `v1.3.17` foi
