@@ -84,21 +84,31 @@ abaixo, depois que o código já estiver atualizado e os containers já
 religados (depois da seção 7, antes de declarar o deploy concluído):
 
 1. **Rodar o backfill contra o backlog real** (produtos já coletados
-   sem identidade -- placas-mãe entre eles):
+   sem identidade -- placas-mãe entre eles). Correção de 2026-09-20
+   (pergunta real do usuário sobre custo de IA): primeiro conte o
+   backlog SEM gastar nada --
    ```powershell
-   docker compose run --rm api python -m scripts.reprocess_unresolved_product_identity --dry-run --limit 50
+   docker compose run --rm api python -m scripts.reprocess_unresolved_product_identity --count-only
+   ```
+   -- depois confira uma amostra real com `--dry-run`:
+   ```powershell
+   docker compose run --rm api python -m scripts.reprocess_unresolved_product_identity --dry-run --limit 20
    ```
    Leia a saída -- confirme que os candidatos listados fazem sentido
    (nomes de produto reais, sem lixo) e que a extração da IA (coluna
    `RESOLVIDO -> category=...`) parece plausível antes de aplicar de
    verdade:
    ```powershell
-   docker compose run --rm api python -m scripts.reprocess_unresolved_product_identity --apply --limit 50
+   docker compose run --rm api python -m scripts.reprocess_unresolved_product_identity --apply --limit 20
    ```
-   Repita com `--apply` em lotes (pode subir `--limit`) até a saída
-   mostrar "Products sem identity_key (candidatos...): 0" -- só então o
-   backlog está zerado. Cada rodada `--apply` chama IA de verdade (custo
-   real) -- não rode em loop automatizado sem supervisão.
+   `--limit` tem teto fixo de **20** (o script recusa valor maior) --
+   já processa em lotes de 4 títulos por chamada de IA internamente
+   (~4x menos chamadas que 1-por-produto), então uma rodada de 20 já
+   cobre 5 chamadas de IA, não 20. Repita `--count-only`/`--dry-run`/
+   `--apply` em rodadas sucessivas até a saída mostrar "Total REAL de
+   Products sem identity_key no banco: 0" -- só então o backlog está
+   zerado. Cada rodada `--apply` chama IA de verdade (custo real) --
+   não rode em loop automatizado sem supervisão.
 2. **Ligar a flag para cobrir itens novos dali em diante** -- variável
    de ambiente de **Máquina** do Windows lida pelo `collection_worker`
    nativo (`Settings.product_identity_learning_enabled`,

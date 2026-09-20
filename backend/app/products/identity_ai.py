@@ -43,19 +43,9 @@ from app.users.models import UserRole
 logger = logging.getLogger("app.products.identity_ai")
 
 EXTRACT_IDENTITY_PURPOSE = "extract_product_identity"
+BATCH_EXTRACT_IDENTITY_PURPOSE = "extract_product_identity_batch"
 
-_SYSTEM_PROMPT = (
-    "Você recebe o título bruto de um anúncio de e-commerce e precisa "
-    "estruturar a identidade do produto para permitir comparação de preço "
-    "entre lojas diferentes que vendem o MESMO item -- de QUALQUER "
-    "categoria (eletrônicos, eletrodomésticos, móveis, vestuário etc.), "
-    "nunca só hardware de PC.\n\n"
-    "Responda somente com um objeto JSON válido, sem texto adicional, "
-    "comentários ou blocos de código, exatamente neste formato: "
-    '{"category": string, "brand": string, "family": string, '
-    '"model": string, "variant": string | null, '
-    '"store_sku": string | null, "manufacturer_part_number": string | null, '
-    '"attributes": {string: string}}\n\n'
+_FIELD_INSTRUCTIONS = (
     "category: categoria geral do produto em uma palavra (ex.: "
     '"monitor", "teclado", "gpu", "smartphone").\n'
     'brand: fabricante (ex.: "LG", "Samsung", "Logitech").\n'
@@ -101,6 +91,39 @@ _SYSTEM_PROMPT = (
     "marca, família E modelo com segurança, devolva strings vazias "
     '("") nesses campos em vez de adivinhar.'
 )
+
+_SYSTEM_PROMPT = (
+    "Você recebe o título bruto de um anúncio de e-commerce e precisa "
+    "estruturar a identidade do produto para permitir comparação de preço "
+    "entre lojas diferentes que vendem o MESMO item -- de QUALQUER "
+    "categoria (eletrônicos, eletrodomésticos, móveis, vestuário etc.), "
+    "nunca só hardware de PC.\n\n"
+    "Responda somente com um objeto JSON válido, sem texto adicional, "
+    "comentários ou blocos de código, exatamente neste formato: "
+    '{"category": string, "brand": string, "family": string, '
+    '"model": string, "variant": string | null, '
+    '"store_sku": string | null, "manufacturer_part_number": string | null, '
+    '"attributes": {string: string}}\n\n'
+) + _FIELD_INSTRUCTIONS
+
+_BATCH_SYSTEM_PROMPT = (
+    "Você recebe uma LISTA de títulos brutos de anúncios de e-commerce de "
+    'lojas diferentes, cada um identificado por um "id" numérico, e '
+    "precisa estruturar a identidade de CADA produto da lista "
+    "independentemente -- de QUALQUER categoria (eletrônicos, "
+    "eletrodomésticos, móveis, vestuário etc.), nunca só hardware de PC. "
+    'IMPORTANTE: cada item deve usar SOMENTE o título do MESMO "id" -- '
+    "nunca misture informação entre títulos de ids diferentes da lista, "
+    "mesmo que pareçam descrever o mesmo produto.\n\n"
+    'Entrada: um array JSON de objetos {"id": number, "title": string}.\n\n'
+    "Responda somente com um array JSON válido, com exatamente um objeto "
+    'por "id" recebido (mesma quantidade de itens da entrada), sem texto '
+    "adicional, comentários ou blocos de código, exatamente neste formato "
+    'por item: {"id": number, "category": string, "brand": string, '
+    '"family": string, "model": string, "variant": string | null, '
+    '"store_sku": string | null, "manufacturer_part_number": string | null, '
+    '"attributes": {string: string}}\n\n'
+) + _FIELD_INSTRUCTIONS
 
 
 def _strip_markdown_code_fence(content: str) -> str:
@@ -462,3 +485,121 @@ async def extract_product_identity_via_ai(
     except Exception:
         logger.warning("product_identity_ai_extraction_failed", exc_info=False)
         return None
+
+
+async def extract_product_identities_via_ai_batch(
+    manager: AIProviderManager,
+    *,
+    raw_titles: list[str],
+    profile: UserRole,
+    requested_at: datetime | None = None,
+) -> list[AIIdentityExtraction | None]:
+    """Mesmo contrato de `extract_product_identity_via_ai`, mas manda um
+    LOTE de títulos numa única chamada de IA (`request.purpose=
+    BATCH_EXTRACT_IDENTITY_PURPOSE`) -- criada para TASK-123 (achado
+    real 2026-09-20, pergunta direta do usuário: resolver o backlog de
+    `Product.identity_key IS NULL` gastava 1 chamada de IA por produto,
+    o que ameaça a quota diária gratuita quando o backlog cresce).
+
+    Devolve uma lista NA MESMA ORDEM/TAMANHO de `raw_titles`. Cada
+    posição é casada pelo "id" que a própria IA devolve (nunca por
+    ordem posicional da resposta -- o modelo gratuito pode reordenar
+    ou omitir item), então um item malformado ou fora do contrato vira
+    `None` SÓ naquela posição, sem contaminar os demais itens do
+    mesmo lote. Quando a chamada inteira falha (rede/provedor, ou a
+    resposta nem é um array JSON) -- TODAS as posições vêm `None`,
+    mesmo fail-closed do modo de item único, só que no grão do lote
+    inteiro em vez de 1 título; o chamador trata isso como "continua
+    sem identidade nesta rodada", nunca como erro fatal."""
+    results: list[AIIdentityExtraction | None] = [None] * len(raw_titles)
+    if not raw_titles:
+        return results
+    moment = requested_at or datetime.now(UTC)
+    payload_in = [
+        {"id": index, "title": title} for index, title in enumerate(raw_titles)
+    ]
+    request = AIRequest(
+        request_id=uuid4(),
+        profile=profile,
+        purpose=BATCH_EXTRACT_IDENTITY_PURPOSE,
+        messages=(
+            AIMessage(AIMessageRole.SYSTEM, _BATCH_SYSTEM_PROMPT),
+            AIMessage(AIMessageRole.USER, json.dumps(payload_in, ensure_ascii=False)),
+        ),
+        requested_at=moment,
+    )
+    try:
+        response = await manager.generate(request)
+        payload = json.loads(_strip_markdown_code_fence(response.content))
+        if not isinstance(payload, list):
+            raise ValueError("expected a JSON array")
+    except Exception:
+        logger.warning("product_identity_ai_batch_extraction_failed", exc_info=False)
+        return results
+
+    expected_keys = {
+        "id",
+        "category",
+        "brand",
+        "family",
+        "model",
+        "variant",
+        "store_sku",
+        "manufacturer_part_number",
+        "attributes",
+    }
+    for item in payload:
+        if not isinstance(item, dict) or set(item) != expected_keys:
+            continue
+        item_id = item["id"]
+        if (
+            not isinstance(item_id, int)
+            or isinstance(item_id, bool)
+            or not (0 <= item_id < len(raw_titles))
+        ):
+            continue
+        category, brand, family, model = (
+            item["category"],
+            item["brand"],
+            item["family"],
+            item["model"],
+        )
+        variant = item["variant"]
+        store_sku = item["store_sku"]
+        manufacturer_part_number = item["manufacturer_part_number"]
+        attributes = item["attributes"]
+        if not all(
+            isinstance(value, str) for value in (category, brand, family, model)
+        ):
+            continue
+        if variant is not None and not isinstance(variant, str):
+            continue
+        if store_sku is not None and not isinstance(store_sku, str):
+            continue
+        if manufacturer_part_number is not None and not isinstance(
+            manufacturer_part_number, str
+        ):
+            continue
+        if not isinstance(attributes, dict) or not all(
+            isinstance(k, str) and isinstance(v, str) for k, v in attributes.items()
+        ):
+            continue
+        if not (
+            category.strip() and brand.strip() and family.strip() and model.strip()
+        ):
+            continue
+        results[item_id] = AIIdentityExtraction(
+            category=category.strip(),
+            brand=brand.strip(),
+            family=family.strip(),
+            model=model.strip(),
+            variant=variant.strip() if variant else None,
+            store_sku=store_sku.strip() if store_sku else None,
+            manufacturer_part_number=(
+                manufacturer_part_number.strip() if manufacturer_part_number else None
+            ),
+            attributes={k: v.strip() for k, v in attributes.items() if v.strip()},
+            ai_provider=response.provider,
+            ai_model=response.model,
+        )
+    return results

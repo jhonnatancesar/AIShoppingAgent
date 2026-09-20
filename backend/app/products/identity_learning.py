@@ -40,6 +40,7 @@ from app.products.identity import (
 from app.products.identity_ai import (
     AIIdentityExtraction,
     evaluate_ai_identity_extraction,
+    extract_product_identities_via_ai_batch,
     extract_product_identity_via_ai,
     normalized_title_hash,
     tokens_present,
@@ -352,63 +353,51 @@ async def _find_same_model_candidates(
     ]
 
 
-async def resolve_or_learn_product_variant(
+@dataclass(frozen=True, slots=True)
+class _PreparedResolution:
+    """Resultado da fase SEM chamada de extração por IA (motor
+    determinístico, cache de hash exato, reuso por tokens e o
+    levantamento -- só leitura -- de candidatos da zona cinzenta).
+
+    `done=True` já é a resolução final (`resolved` pode ser `None`
+    quando o hash exato já tinha uma decisão não-aprovada -- mesmo
+    fail-closed de sempre). `done=False` significa que só uma
+    extração por IA pode resolver este título; `title_hash`/
+    `arbitration_candidates` seguem para `_finish_resolution_with_
+    extraction` depois que essa extração acontecer (single ou em
+    lote)."""
+
+    done: bool
+    resolved: ResolvedProductVariant | None
+    title_hash: str | None = None
+    arbitration_candidates: tuple[_ArbitrationCandidate, ...] = ()
+
+
+async def _prepare_resolution(
     session: AsyncSession,
-    *,
     raw_title: str,
-    ai_manager: AIProviderManager,
-    profile: UserRole = UserRole.ADMIN,
-    arbiter_ai_manager: AIProviderManager | None = None,
+    *,
     now: datetime | None = None,
-) -> ResolvedProductVariant | None:
-    """Resolve a identidade de um título, aprendendo uma proposta nova
-    via IA quando necessário -- SEMPRE tenta o motor determinístico
-    primeiro (`resolve_product_variant`, os 5 extratores regex
-    existentes NUNCA são substituídos ou contornados). Só recorre à IA
-    quando o motor determinístico não reconhece o título.
-
-    Contrato de concorrência: assume que `session` NÃO está no meio de
-    uma transação que precisa permanecer curta -- esta função faz I/O
-    de rede (chamada de IA) quando não há candidato já decidido para
-    este título. Chame a partir de uma fase sem seção crítica de banco
-    aberta (mesmo espírito de Fase B do `CollectionOrchestrator`,
-    TASK-079) -- nunca de dentro de `_resolve_offer`/`_persist_phase_a`.
-
-    Devolve `None` quando: o motor determinístico falhou E não há
-    candidato aprovado E (a extração por IA falhou OU não passou no
-    grounding determinístico) -- nesse último caso, uma proposta fica
-    registrada em `product_identity_candidates` com `status=
-    "pending_review"` para revisão humana, mas a chamada atual segue
-    tratando o produto como não identificado (fail-closed, mesmo
-    comportamento de sempre para título não reconhecido).
-
-    `arbiter_ai_manager` -- achado real confirmado empiricamente
-    (checkpoint 3, 2026-09-13): `app.products.identity_arbiter.
-    arbitrate_same_product` SEMPRE envia `profile=UserRole.USER`
-    (é assim que garante `cost_policy="free_only"`), mas a wiring real
-    de produção (`app.collection.worker.run_worker`) monta o `ai_manager`
-    do pipeline inteiro com `build_admin_dev_ai_provider_manager`
-    (`profile=None`, só aceita `{ADMIN, DEV}`). Passar o MESMO
-    `ai_manager` para o árbitro faz `CesarCoreAIProviderManager.generate`
-    rejeitar a requisição com `AIRequestError` -- capturado pelo
-    `except Exception` fail-closed do árbitro, então em produção ele
-    SEMPRE devolvia `INCONCLUSIVE` silenciosamente, nunca decidindo de
-    verdade a zona cinzenta. `arbiter_ai_manager` deixa quem monta o
-    pipeline (produção) passar um manager separado construído com
-    `build_user_ai_provider_manager` especificamente para o árbitro;
-    quando omitido (`None`), cai de volta em `ai_manager` -- preserva o
-    comportamento já coberto pelos testes existentes, cujo `ai_manager`
-    fake não valida profile."""
+) -> _PreparedResolution:
+    """Tenta resolver SEM nenhuma chamada de extração por IA -- motor
+    determinístico, cache de hash exato, reuso por tokens contra
+    conhecimento já aprovado (ver `_find_reusable_candidate_by_tokens`).
+    Extraída de `resolve_or_learn_product_variant` para ser reaproveitada
+    também pelo caminho em lote (`reprocess_unresolved_products`,
+    `batch_size > 1`) -- mesma ordem/regras, nenhuma mudança de
+    comportamento para o chamador de item único."""
     deterministic = resolve_product_variant(raw_title)
     if deterministic is not None:
-        return deterministic
+        return _PreparedResolution(done=True, resolved=deterministic)
 
     title_hash = normalized_title_hash(raw_title)
     existing = await _find_candidate(session, title_hash)
     if existing is not None:
         if existing.status != "approved":
-            return None
-        return _resolved_from_candidate(existing)
+            return _PreparedResolution(done=True, resolved=None)
+        return _PreparedResolution(
+            done=True, resolved=_resolved_from_candidate(existing)
+        )
 
     # Reconhecimento por tokens contra conhecimento JÁ APROVADO -- título
     # DIFERENTE (loja/wording diferente) da MESMA família/modelo/variante,
@@ -448,33 +437,44 @@ async def resolve_or_learn_product_variant(
             # família/modelo já reconhecida) é equivalente; só evita
             # duplicar a linha, nunca perde a resolução.
             pass
-        return _resolved_from_candidate(reusable)
+        return _PreparedResolution(
+            done=True, resolved=_resolved_from_candidate(reusable)
+        )
 
     # Candidatos de mesma marca/família/modelo que não venceram o reuso
     # acima só por causa de variant/atributo ausente ou divergente --
-    # decididos pelo árbitro de IA logo abaixo (zona cinzenta), nunca
-    # tratados como produto diferente automaticamente.
+    # decididos pelo árbitro de IA em `_finish_resolution_with_extraction`
+    # (zona cinzenta), nunca tratados como produto diferente
+    # automaticamente.
     arbitration_candidates = await _find_same_model_candidates(
         session, raw_title_normalized
     )
-
-    # As consultas acima (`_find_candidate`/`_find_reusable_candidate_by_
-    # tokens`/`_find_same_model_candidates`) deixam uma transação
-    # implícita aberta (autobegin do SQLAlchemy); sem este rollback ela
-    # ficaria ociosa durante a chamada de rede à IA abaixo e seria
-    # derrubada pelo `idle_in_transaction_session_timeout` do servidor
-    # (achado real de 2026-09-13: `InterfaceError: cannot call
-    # Transaction.commit(): underlying connection closed`, reproduzido
-    # com título real e confirmado no log do Postgres). Só leituras
-    # aconteceram até aqui, então não há nada a perder; a sessão reabre
-    # transação sozinha na próxima operação.
-    await session.rollback()
-    extraction = await extract_product_identity_via_ai(
-        ai_manager, raw_title=raw_title, profile=profile
+    return _PreparedResolution(
+        done=False,
+        resolved=None,
+        title_hash=title_hash,
+        arbitration_candidates=tuple(arbitration_candidates),
     )
-    if extraction is None:
-        return None
 
+
+async def _finish_resolution_with_extraction(
+    session: AsyncSession,
+    *,
+    raw_title: str,
+    title_hash: str,
+    arbitration_candidates: tuple[_ArbitrationCandidate, ...],
+    extraction: AIIdentityExtraction,
+    ai_manager: AIProviderManager,
+    arbiter_ai_manager: AIProviderManager | None,
+    now: datetime | None = None,
+) -> ResolvedProductVariant | None:
+    """Continuação de `_prepare_resolution` depois que uma extração de
+    IA (item único ou uma posição de um lote) já existe -- zona
+    cinzenta (árbitro) + avaliação de grounding + persistência do
+    candidato. Extraída de `resolve_or_learn_product_variant` sem
+    nenhuma mudança de comportamento; `arbiter_ai_manager` segue a
+    MESMA regra documentada lá (separado do `ai_manager` principal,
+    nunca reaproveitado -- bug real do checkpoint 3)."""
     if arbitration_candidates:
         listing_b = _listing_evidence_from_extraction(extraction)
         for candidate in arbitration_candidates:
@@ -593,6 +593,93 @@ async def resolve_or_learn_product_variant(
     return evaluated.resolved
 
 
+async def resolve_or_learn_product_variant(
+    session: AsyncSession,
+    *,
+    raw_title: str,
+    ai_manager: AIProviderManager,
+    profile: UserRole = UserRole.ADMIN,
+    arbiter_ai_manager: AIProviderManager | None = None,
+    now: datetime | None = None,
+) -> ResolvedProductVariant | None:
+    """Resolve a identidade de um título, aprendendo uma proposta nova
+    via IA quando necessário -- SEMPRE tenta o motor determinístico
+    primeiro (`resolve_product_variant`, os 5 extratores regex
+    existentes NUNCA são substituídos ou contornados). Só recorre à IA
+    quando o motor determinístico não reconhece o título.
+
+    Contrato de concorrência: assume que `session` NÃO está no meio de
+    uma transação que precisa permanecer curta -- esta função faz I/O
+    de rede (chamada de IA) quando não há candidato já decidido para
+    este título. Chame a partir de uma fase sem seção crítica de banco
+    aberta (mesmo espírito de Fase B do `CollectionOrchestrator`,
+    TASK-079) -- nunca de dentro de `_resolve_offer`/`_persist_phase_a`.
+
+    Devolve `None` quando: o motor determinístico falhou E não há
+    candidato aprovado E (a extração por IA falhou OU não passou no
+    grounding determinístico) -- nesse último caso, uma proposta fica
+    registrada em `product_identity_candidates` com `status=
+    "pending_review"` para revisão humana, mas a chamada atual segue
+    tratando o produto como não identificado (fail-closed, mesmo
+    comportamento de sempre para título não reconhecido).
+
+    `arbiter_ai_manager` -- achado real confirmado empiricamente
+    (checkpoint 3, 2026-09-13): `app.products.identity_arbiter.
+    arbitrate_same_product` SEMPRE envia `profile=UserRole.USER`
+    (é assim que garante `cost_policy="free_only"`), mas a wiring real
+    de produção (`app.collection.worker.run_worker`) monta o `ai_manager`
+    do pipeline inteiro com `build_admin_dev_ai_provider_manager`
+    (`profile=None`, só aceita `{ADMIN, DEV}`). Passar o MESMO
+    `ai_manager` para o árbitro faz `CesarCoreAIProviderManager.generate`
+    rejeitar a requisição com `AIRequestError` -- capturado pelo
+    `except Exception` fail-closed do árbitro, então em produção ele
+    SEMPRE devolvia `INCONCLUSIVE` silenciosamente, nunca decidindo de
+    verdade a zona cinzenta. `arbiter_ai_manager` deixa quem monta o
+    pipeline (produção) passar um manager separado construído com
+    `build_user_ai_provider_manager` especificamente para o árbitro;
+    quando omitido (`None`), cai de volta em `ai_manager` -- preserva o
+    comportamento já coberto pelos testes existentes, cujo `ai_manager`
+    fake não valida profile.
+
+    Implementação (2026-09-20): composta de `_prepare_resolution`
+    (motor determinístico/cache/reuso, sem IA) + `_finish_resolution_
+    with_extraction` (zona cinzenta + grounding, depois de UMA
+    extração) -- mesmo comportamento/ordem de sempre, só fatorado para
+    também ser reaproveitado pelo caminho em lote de `reprocess_
+    unresolved_products` (`batch_size > 1`)."""
+    prepared = await _prepare_resolution(session, raw_title, now=now)
+    if prepared.done:
+        return prepared.resolved
+
+    # As consultas de `_prepare_resolution` deixam uma transação
+    # implícita aberta (autobegin do SQLAlchemy); sem este rollback ela
+    # ficaria ociosa durante a chamada de rede à IA abaixo e seria
+    # derrubada pelo `idle_in_transaction_session_timeout` do servidor
+    # (achado real de 2026-09-13: `InterfaceError: cannot call
+    # Transaction.commit(): underlying connection closed`, reproduzido
+    # com título real e confirmado no log do Postgres). Só leituras
+    # aconteceram até aqui, então não há nada a perder; a sessão reabre
+    # transação sozinha na próxima operação.
+    await session.rollback()
+    extraction = await extract_product_identity_via_ai(
+        ai_manager, raw_title=raw_title, profile=profile
+    )
+    if extraction is None:
+        return None
+
+    assert prepared.title_hash is not None  # sempre setado quando done=False
+    return await _finish_resolution_with_extraction(
+        session,
+        raw_title=raw_title,
+        title_hash=prepared.title_hash,
+        arbitration_candidates=prepared.arbitration_candidates,
+        extraction=extraction,
+        ai_manager=ai_manager,
+        arbiter_ai_manager=arbiter_ai_manager,
+        now=now,
+    )
+
+
 async def apply_learned_identity(
     session: AsyncSession, *, product: Product, resolved: ResolvedProductVariant
 ) -> None:
@@ -655,6 +742,8 @@ async def reprocess_unresolved_products(
     profile: UserRole = UserRole.ADMIN,
     arbiter_ai_manager: AIProviderManager | None = None,
     limit: int = 100,
+    batch_size: int = 1,
+    apply: bool = False,
 ) -> int:
     """Tenta resolver de novo `Product`s sem `identity_key` -- fallback
     ad-hoc criado por `app.collection.orchestration._resolve_offer`
@@ -672,23 +761,125 @@ async def reprocess_unresolved_products(
     removido; quando não existe nenhum ainda, o PRÓPRIO ad-hoc é
     promovido no lugar (ganha os campos de identidade), sem criar uma
     linha nova. Devolve quantos `Product`s foram resolvidos nesta
-    chamada (não o total ainda pendente -- `limit` pagina o trabalho)."""
+    chamada (não o total ainda pendente -- `limit` pagina o trabalho).
+
+    `batch_size` (padrão 1, comportamento IDÊNTICO ao de sempre --
+    `resolve_or_learn_product_variant` por produto, em ordem): quando
+    `> 1`, criado para TASK-123 (achado real 2026-09-20, custo de IA
+    do backlog) -- primeiro resolve todos os produtos possíveis SEM IA
+    (`_prepare_resolution`: motor determinístico/cache/reuso), depois
+    agrupa só os que sobraram em lotes de `batch_size` e manda UMA
+    chamada de IA por lote (`extract_product_identities_via_ai_batch`)
+    em vez de uma por produto.
+
+    Dois bugs REAIS encontrados e corrigidos aqui (2026-09-20, reproduzidos
+    com um teste de integração real, 2 Products distintos precisando de
+    extração de verdade na MESMA chamada -- nenhum teste anterior cobria
+    isso, todos usavam só 1 Product):
+
+    1. CRASH: `product.name` de um Product AINDA não processado, lido
+    DEPOIS que o `session.rollback()` (de um Product anterior) já rodou,
+    dispara um lazy-load síncrono fora do greenlet async e quebra --
+    `session.rollback()` expira TODAS as instâncias já carregadas da
+    sessão, não só a que está sendo processada no momento. Corrigido
+    capturando `(id, name)` de TODOS os `unresolved` como valores simples
+    ANTES do primeiro rollback; o `Product` só é relido via `session.get`
+    (async-safe) na hora de aplicar.
+
+    2. PERDA SILENCIOSA: mesmo sem crashar, `session.rollback()` desfaz a
+    transação corrente INTEIRA (nunca só um SAVEPOINT) -- se um Product
+    já tinha sido resolvido E aplicado (mas ainda não commitado) quando
+    outro Product seguinte precisa de nova chamada de IA, o rollback
+    daquele segundo Product apagaria o trabalho do primeiro. Só importa
+    quando o chamador realmente PRETENDE persistir (`apply=True`); em
+    dry-run, perder trabalho intermediário é inofensivo (nada deveria
+    sobreviver mesmo). Corrigido commitando IMEDIATAMENTE depois de cada
+    `apply_learned_identity` bem-sucedido, sempre que `apply=True` -- só
+    então o próximo rollback (do próximo Product/lote) nunca mais alcança
+    esse trabalho."""
     unresolved = (
         await session.scalars(
             select(Product).where(Product.identity_key.is_(None)).limit(limit)
         )
     ).all()
+    # Capturados como valores simples AQUI, antes de qualquer rollback --
+    # ver bug 1 acima.
+    items = [(product.id, product.name) for product in unresolved]
+
+    if batch_size <= 1:
+        resolved_count = 0
+        for product_id, raw_title in items:
+            resolved = await resolve_or_learn_product_variant(
+                session,
+                raw_title=raw_title,
+                ai_manager=ai_manager,
+                profile=profile,
+                arbiter_ai_manager=arbiter_ai_manager,
+            )
+            if resolved is None:
+                continue
+            product = await session.get(Product, product_id)
+            if product is None or product.identity_key is not None:
+                continue
+            await apply_learned_identity(session, product=product, resolved=resolved)
+            resolved_count += 1
+            if apply:
+                await session.commit()
+        return resolved_count
+
     resolved_count = 0
-    for product in unresolved:
-        resolved = await resolve_or_learn_product_variant(
-            session,
-            raw_title=product.name,
-            ai_manager=ai_manager,
-            profile=profile,
-            arbiter_ai_manager=arbiter_ai_manager,
-        )
-        if resolved is None:
+    pending: list[tuple[object, str, _PreparedResolution]] = []
+    for product_id, raw_title in items:
+        prepared = await _prepare_resolution(session, raw_title)
+        if prepared.done:
+            if prepared.resolved is not None:
+                product = await session.get(Product, product_id)
+                if product is not None and product.identity_key is None:
+                    await apply_learned_identity(
+                        session, product=product, resolved=prepared.resolved
+                    )
+                    resolved_count += 1
+                    if apply:
+                        await session.commit()
             continue
-        await apply_learned_identity(session, product=product, resolved=resolved)
-        resolved_count += 1
+        pending.append((product_id, raw_title, prepared))
+
+    for start in range(0, len(pending), batch_size):
+        chunk = pending[start : start + batch_size]
+        # Mesmo motivo do rollback em `resolve_or_learn_product_variant`:
+        # nunca segurar transação ociosa durante a chamada de rede à IA.
+        # Seguro por causa do commit acima (bug 2): tudo que já foi
+        # aplicado com `apply=True` já é durável antes deste ponto.
+        await session.rollback()
+        extractions = await extract_product_identities_via_ai_batch(
+            ai_manager,
+            raw_titles=[raw_title for _, raw_title, _ in chunk],
+            profile=profile,
+        )
+        for (product_id, raw_title, prepared), extraction in zip(
+            chunk, extractions, strict=True
+        ):
+            if extraction is None:
+                continue
+            resolved = await _finish_resolution_with_extraction(
+                session,
+                raw_title=raw_title,
+                title_hash=prepared.title_hash,
+                arbitration_candidates=prepared.arbitration_candidates,
+                extraction=extraction,
+                ai_manager=ai_manager,
+                arbiter_ai_manager=arbiter_ai_manager,
+            )
+            if resolved is None:
+                continue
+            product = await session.get(Product, product_id)
+            if product is None or product.identity_key is not None:
+                # Corrida: outro processo já resolveu/removeu este
+                # Product entre a montagem do lote e agora -- nunca
+                # reaplica nem propaga erro, só não conta de novo.
+                continue
+            await apply_learned_identity(session, product=product, resolved=resolved)
+            resolved_count += 1
+            if apply:
+                await session.commit()
     return resolved_count

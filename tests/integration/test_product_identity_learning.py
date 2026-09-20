@@ -282,6 +282,139 @@ def test_reprocess_unresolved_offer_after_definition_is_learned(
         assert len(same_identity_products) == 1
 
 
+class _ByTitleIdentityAIManager:
+    """Fronteira de IA controlada que devolve uma extração DIFERENTE por
+    título (chaveada pelo próprio título recebido) -- necessária para
+    `test_reprocess_two_distinct_products_both_needing_real_extraction_
+    dont_lose_each_other` abaixo, onde os 2 Products têm identidades
+    REALMENTE diferentes (precisa provar que o segundo não atropela o
+    primeiro, não só que os dois "funcionam")."""
+
+    def __init__(self, extraction_by_title: dict[str, str]) -> None:
+        self._by_title = extraction_by_title
+        self.calls = 0
+
+    async def generate(self, request):
+        self.calls += 1
+        title = request.messages[-1].content
+        return AIResponse(
+            request_id=request.request_id,
+            provider="stub",
+            model="stub-identity-model",
+            content=self._by_title[title],
+            finished_at=datetime.now(UTC),
+        )
+
+
+def test_reprocess_two_distinct_products_both_needing_real_extraction_dont_lose_each_other(
+    integration_database,
+) -> None:
+    """Regressão de um bug REAL encontrado e corrigido em 2026-09-20
+    (achado ao implementar lote de IA para TASK-123, mas o bug já
+    existia antes, no caminho sequencial de sempre -- nenhum teste
+    anterior cobria 2+ Products precisando de extração de IA de
+    verdade na MESMA chamada de `reprocess_unresolved_products`, só 1):
+
+    1. CRASH: o `session.rollback()` que protege contra
+    `idle_in_transaction_session_timeout` antes de CADA chamada de IA
+    expira TODAS as instâncias já carregadas da sessão -- reler
+    `Product.name` de um Product ainda não processado (carregado
+    junto no mesmo `SELECT` inicial) depois desse rollback disparava
+    um lazy-load síncrono fora do greenlet async.
+
+    2. PERDA SILENCIOSA: mesmo sem crashar, esse MESMO rollback desfaz
+    a transação inteira -- se o primeiro Product já tinha sido
+    resolvido e aplicado (mas ainda não commitado) quando o segundo
+    precisa de nova chamada de IA, o rollback do segundo apagava o
+    trabalho do primeiro.
+
+    Corrigido capturando `(id, title)` como valores simples antes de
+    qualquer rollback, e commitando cada resolução imediatamente
+    quando `apply=True` (aqui: `reprocess_unresolved_products` chamado
+    com uma sessão real, seguido de commit do chamador -- o ponto é
+    que NENHUM dos dois Products pode desaparecer ou quebrar)."""
+    title_a = "Placa-mãe Asus TUF Gaming B650-Plus WiFi DDR5 AM5"
+    title_b = "Placa-mãe Gigabyte AORUS Elite AX B650 DDR5 AM5"
+
+    with integration_database.sessions.begin() as session:
+        store = session.scalar(select(Store).where(Store.code == "amazon"))
+        product_a = Product(id=uuid4(), name=title_a)
+        product_b = Product(id=uuid4(), name=title_b)
+        session.add_all([product_a, product_b])
+        session.flush()
+        session.add_all(
+            [
+                Offer(
+                    product_id=product_a.id,
+                    store_id=store.id,
+                    external_id="dev-identity-reprocess-distinct-a",
+                    url="https://example.invalid/dev-identity-reprocess-distinct-a",
+                ),
+                Offer(
+                    product_id=product_b.id,
+                    store_id=store.id,
+                    external_id="dev-identity-reprocess-distinct-b",
+                    url="https://example.invalid/dev-identity-reprocess-distinct-b",
+                ),
+            ]
+        )
+        session.flush()
+        product_id_a, product_id_b = product_a.id, product_b.id
+
+    extraction_a = json.dumps(
+        {
+            "category": "motherboard",
+            "brand": "ASUS",
+            "family": "TUF Gaming",
+            "model": "B650-Plus",
+            "variant": "wifi",
+            "store_sku": None,
+            "manufacturer_part_number": None,
+            "attributes": {"socket": "AM5", "chipset": "B650"},
+        }
+    )
+    extraction_b = json.dumps(
+        {
+            "category": "motherboard",
+            "brand": "Gigabyte",
+            "family": "AORUS Elite",
+            "model": "AX",
+            "variant": None,
+            "store_sku": None,
+            "manufacturer_part_number": None,
+            "attributes": {"socket": "AM5", "chipset": "B650"},
+        }
+    )
+    manager = _ByTitleIdentityAIManager({title_a: extraction_a, title_b: extraction_b})
+
+    async def _reprocess():
+        async with integration_database.async_sessions() as session:
+            count = await reprocess_unresolved_products(
+                session,
+                ai_manager=manager,
+                profile=UserRole.ADMIN,
+                arbiter_ai_manager=manager,
+                apply=True,
+            )
+            await session.commit()
+            return count
+
+    reprocessed_count = asyncio.run(_reprocess())
+    assert reprocessed_count == 2
+    assert manager.calls == 2
+
+    with integration_database.sessions.begin() as session:
+        resolved_a = session.get(Product, product_id_a)
+        resolved_b = session.get(Product, product_id_b)
+        assert resolved_a is not None and resolved_a.identity_key is not None, (
+            "Product A não pode desaparecer nem ficar sem identidade"
+        )
+        assert resolved_b is not None and resolved_b.identity_key is not None, (
+            "Product B não pode desaparecer nem ficar sem identidade"
+        )
+        assert resolved_a.identity_key != resolved_b.identity_key
+
+
 # ---------------------------------------------------------------------------
 # Placas-mãe -- categoria pedida explicitamente pelo dono do produto, coleta
 # de lojas DIFERENTES com textos DIFERENTES (não o mesmo título reprocessado,

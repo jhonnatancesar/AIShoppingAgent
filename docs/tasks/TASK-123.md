@@ -17,18 +17,45 @@ novos que continuam chegando sem identidade a cada coleta, não só um ou
 outro. Versão anterior desta TASK (parser `_motherboard` por regex)
 descartada -- ver "Objetivo" abaixo para o porquê.
 
-**Item 1 (backfill) concluído nesta sessão:**
-`backend/scripts/reprocess_unresolved_product_identity.py` (commit
-`bf34f19`, local, não pushado) + `tests/integration/
-test_reprocess_unresolved_product_identity.py` (3 testes, Postgres
-real, provando dry-run/apply/idempotência e a garantia central de não
-perder `Offer`/`PriceObservation` já coletada). Rodado junto com os
-testes de identidade já existentes (17 passed, sem interferência).
-`ruff check`/`format` limpos em todo o repositório. **Ainda não rodado
-contra uma amostra/cópia do banco real de PROD** (só Postgres
-descartável de teste) -- esse passo, e a decisão de rodar `--apply`
-contra PROD de verdade, seguem pendentes de autorização explícita do
-usuário (ver "Critério de validação futuro").
+**Item 1 (backfill) concluído nesta sessão** (script publicado em
+`v1.3.18`, ver changelog) + **correção adicional de custo/robustez
+2026-09-20, ainda LOCAL, não commitada/publicada** -- achado real ao
+responder uma pergunta direta do usuário sobre gasto de quota de IA:
+
+- **`--count-only`**: conta o backlog REAL (sem `limit`, zero chamada
+  de IA) antes de qualquer decisão de ritmo.
+- **Lote de IA** (`_BATCH_SIZE=4`): `reprocess_unresolved_products`
+  ganhou `batch_size`/`extract_product_identities_via_ai_batch`
+  (`identity_ai.py`) -- agrupa só os produtos que realmente precisam
+  de extração (depois do motor determinístico/cache/reuso sem IA) em
+  lotes de 4 títulos por chamada, ~4x menos chamadas que 1-por-produto.
+  Por isso `--limit`/`--dry-run`/`--apply` agora têm teto rígido de 20
+  (`_MAX_LIMIT`, 5 lotes de 4) -- este script é para o backlog pequeno
+  já conhecido, roda em rodadas de até 20 até esgotar.
+- **Bug real encontrado e corrigido**: `session.rollback()` (proteção
+  contra `idle_in_transaction_session_timeout` antes de cada chamada
+  de IA) expira TODAS as instâncias já carregadas da sessão, não só a
+  atual -- com 2+ Products precisando de extração de verdade na MESMA
+  rodada, isso ou quebrava (lazy-load síncrono fora do greenlet async)
+  ou descartava silenciosamente a identidade já aplicada de um Product
+  anterior ainda não commitado. Bug PREEXISTENTE (não introduzido pelo
+  lote), nunca pego porque nenhum teste anterior cobria 2+ Products
+  precisando de IA na mesma chamada. Corrigido: título/id capturados
+  como valores simples antes de qualquer rollback, e cada resolução é
+  commitada imediatamente quando `--apply` (nunca em `--dry-run`, onde
+  perder trabalho intermediário é inofensivo -- nada deveria sobreviver
+  mesmo). Regressão coberta por teste de integração real com 2 Products
+  distintos (`tests/integration/test_product_identity_learning.py`) e
+  por um teste de 5 Products/2 lotes
+  (`tests/integration/test_reprocess_unresolved_product_identity.py`).
+
+`tests/integration/test_reprocess_unresolved_product_identity.py` (5
+testes) + `test_product_identity_learning.py` (14 testes, 1 novo) --
+todos passando contra Postgres real, `ruff check`/`format` limpos.
+**Ainda não rodado contra uma amostra/cópia do banco real de PROD**
+(só Postgres descartável de teste) -- esse passo, e a decisão de rodar
+`--apply` contra PROD de verdade, seguem pendentes de autorização
+explícita do usuário (ver "Critério de validação futuro").
 
 **Item 2 (flag ao vivo) não iniciado** -- depende do item 1 estar
 validado contra dado real primeiro, conforme sequência já registrada
@@ -172,12 +199,16 @@ como TASKs separadas):
    de ambiente do `collection_worker` nativo) -- cobre itens novos a
    partir da próxima coleta.
 2. **Rodar `python -m scripts.reprocess_unresolved_product_identity
-   --apply --limit <N>`** contra o banco real de PROD (repetir em lotes
-   até o script reportar 0 candidatos) -- pega o backlog que já existe
-   hoje (placas-mãe incluídas), não só o que chegar depois da flag
-   ligada.
+   --count-only`** primeiro (zero custo de IA) para saber o tamanho
+   real do backlog antes de decidir o ritmo.
+3. **Rodar `python -m scripts.reprocess_unresolved_product_identity
+   --apply --limit 20`** contra o banco real de PROD (repetir em
+   rodadas de até 20 -- teto do script -- até reportar 0 candidatos)
+   -- pega o backlog que já existe hoje (placas-mãe incluídas), não só
+   o que chegar depois da flag ligada. Lote de 4 títulos por chamada de
+   IA (~4x menos chamadas que 1-por-produto).
 
-Sem o passo 2, ligar só a flag NÃO resolve o backlog já parado no banco
+Sem o passo 3, ligar só a flag NÃO resolve o backlog já parado no banco
 (ela só afeta coleta nova, ver "Preflight" acima) -- os dois precisam
 acontecer juntos pra cobrir "itens novos" e "itens já pesquisados" ao
 mesmo tempo, conforme pedido explícito do usuário.
