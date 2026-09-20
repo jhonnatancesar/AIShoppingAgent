@@ -72,6 +72,7 @@ from app.ai_provider import (
     build_user_ai_provider_manager,
 )
 from app.core.config import get_settings
+from app.core.logging import configure_logging
 from app.database.session import (
     create_async_database_engine,
     create_async_session_factory,
@@ -222,6 +223,21 @@ def main() -> None:
         parser.error("--limit precisa ser positivo")
     if args.limit > _MAX_LIMIT:
         parser.error(f"--limit não pode passar de {_MAX_LIMIT} nesta rodada")
+    # Achado real em PROD (2026-09-20, `v1.3.21`): sem isto, os campos de
+    # diagnóstico (`stage`/`error`/`raw_content_preview`) que `identity_ai.
+    # extract_product_identities_via_ai_batch` anexa via `extra={}` nunca
+    # aparecem na saída -- o `logging` padrão do Python, sem handler
+    # configurado, cai no `lastResort` (só `%(message)s`, descarta `extra`).
+    # Mesmo `configure_logging` (JSON em stdout) já usado por `app.main`/
+    # `app.collection.worker`/`app.telegram.worker` -- nenhum script deste
+    # diretório chamava isto antes; só passou a importar de verdade agora
+    # que um log em `extra={}` precisou ser lido de fato por um operador.
+    settings = get_settings()
+    configure_logging(
+        settings.log_level,
+        service_name="aishoppingagent-reprocess-unresolved-product-identity",
+        environment=settings.environment,
+    )
     asyncio.run(run(apply=args.apply, limit=args.limit, count_only=args.count_only))
 
 
