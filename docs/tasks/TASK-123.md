@@ -1,16 +1,33 @@
 # TASK-123 — Identidade de produtos via IA: backfill do backlog + cobertura de itens novos
 
-Status: **Registrada, não iniciada.** Duas revisões de escopo em
-2026-09-20, mesmo dia do registro original: (1) a correção certa não é
-um parser determinístico novo por categoria de produto -- é ligar a
-máquina de aprendizado assistido por IA que **já existe e já foi
-testada** nos checkpoints 3-11 (`v1.3.15`), mas nunca foi conectada a
-nada que a acione de verdade; (2) o usuário confirmou explicitamente
-que quer os **dois lados** cobertos -- o backlog já coletado (placas-mãe
-achadas originalmente) **e** os itens novos que continuam chegando sem
-identidade a cada coleta, não só um ou outro. Versão anterior desta
-TASK (parser `_motherboard` por regex) descartada -- ver "Objetivo"
-abaixo para o porquê.
+Status: **Item 1 implementado e testado (2026-09-20); item 2 não
+iniciado.** Duas revisões de escopo no mesmo dia do registro original:
+(1) a correção certa não é um parser determinístico novo por categoria
+de produto -- é ligar a máquina de aprendizado assistido por IA que
+**já existe e já foi testada** nos checkpoints 3-11 (`v1.3.15`), mas
+nunca foi conectada a nada que a acione de verdade; (2) o usuário
+confirmou explicitamente que quer os **dois lados** cobertos -- o
+backlog já coletado (placas-mãe achadas originalmente) **e** os itens
+novos que continuam chegando sem identidade a cada coleta, não só um ou
+outro. Versão anterior desta TASK (parser `_motherboard` por regex)
+descartada -- ver "Objetivo" abaixo para o porquê.
+
+**Item 1 (backfill) concluído nesta sessão:**
+`backend/scripts/reprocess_unresolved_product_identity.py` (commit
+`bf34f19`, local, não pushado) + `tests/integration/
+test_reprocess_unresolved_product_identity.py` (3 testes, Postgres
+real, provando dry-run/apply/idempotência e a garantia central de não
+perder `Offer`/`PriceObservation` já coletada). Rodado junto com os
+testes de identidade já existentes (17 passed, sem interferência).
+`ruff check`/`format` limpos em todo o repositório. **Ainda não rodado
+contra uma amostra/cópia do banco real de PROD** (só Postgres
+descartável de teste) -- esse passo, e a decisão de rodar `--apply`
+contra PROD de verdade, seguem pendentes de autorização explícita do
+usuário (ver "Critério de validação futuro").
+
+**Item 2 (flag ao vivo) não iniciado** -- depende do item 1 estar
+validado contra dado real primeiro, conforme sequência já registrada
+abaixo.
 
 ## Preflight (confirmado no código, não suposição)
 
