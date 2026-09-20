@@ -46,9 +46,9 @@ uma foto de um instante, não uma garantia de que nada mudou depois):
 
 | Componente | Tag | Commit | Observação |
 |---|---|---|---|
-| GG Oferta | **`v1.3.8`** | `e0bf582` (`main`) | Substitui `v1.3.7` (blocker estrutural: connections `searxng-search`/`firecrawl` nunca provisionadas no OmniRoute, `503`/`502` em `/v1/search`/`/v1/fetch` -- `DEC-126`. Handoff/runbook deixam de tratar essas connections como "já vêm prontas", seção 5.3 nova) |
-| César Core | **`v1.2.1`** | `a5ba084` | Política real de providers AI (`ai_profile`, 4 connections, 2 combos) + saneamento documental. **Imagem já publicada e verificada no GHCR:** `ghcr.io/jhonnatancesar/cesar-core:1.2.1` (também `:1.2`, `:1`, `:latest`). **PROD não usa esta tag/repositório diretamente — só a imagem, via `deploy/prod/cesar-core.compose.yaml`.** |
-| Coupon Worker | **`v1.0.0`** | `5f502e1` (`master`) | Primeira release — coleta real de cupons com persistência no Postgres do GG |
+| GG Oferta | **`v1.3.15`** | `e8ac138` (`main`) | Substitui `v1.3.8` (handoff desatualizado desde então — v1.3.9 a v1.3.14 foram hotfixes pontuais não documentados aqui, reconciliar via `git log`/estado real, nunca assumir). Traz: identidade global de produto (SKU vs part number + árbitro de IA), parcelamento real, `offer_supersession`, `coupon_evidence_isolation`, `search_history` + área DEV, cobertura de testes ≥90%, correção do início do Windows Ops Agent (seção do worker nativo abaixo) e fechamento documental do episódio `INC-2026-09-17-001` (falso positivo, sem impacto de segurança real). Ver `docs/internal/project-context.md`, seção "Resiliência dos workers a reinícios de PC/Docker/containers", para o relato técnico completo |
+| César Core | **`v1.2.1`** | `a5ba084` | Política real de providers AI (`ai_profile`, 4 connections, 2 combos) + saneamento documental. **Imagem já publicada e verificada no GHCR:** `ghcr.io/jhonnatancesar/cesar-core:1.2.1` (também `:1.2`, `:1`, `:latest`). **PROD não usa esta tag/repositório diretamente — só a imagem, via `deploy/prod/cesar-core.compose.yaml`.** Não mudou nesta rodada -- confirme se já é a versão rodando antes de reafirmar, não reinstale/rebuilde sem necessidade |
+| Coupon Worker | **`v1.0.4`** | `75a7bce` (`master`) | Substitui `v1.0.0` (já instalado em PROD desde a primeira release -- isto NÃO é uma primeira instalação, ver nota na seção 9). Traz retry com backoff ao abrir o coupon store (não aborta mais na primeira falha se o Postgres ainda não estiver pronto) e `MultipleInstances IgnoreNew` explícito na Scheduled Task -- **worker.py precisa ser atualizado e a Scheduled Task precisa de `-Action Update` para essas duas correções entrarem em vigor** (seção 9) |
 
 **`v1.2.0` do César Core existiu por um instante e falhou na
 verificação do workflow** (`__version__` do pacote não batia com a tag —
@@ -66,11 +66,11 @@ Histórico relevante anterior a estas tags, para contexto:
   refinamento de esgotamento).
 
 **Para o deploy em si:** faça checkout das tags acima nos dois
-repositórios que existem em PROD (`git checkout v1.3.8` — confirme que é
+repositórios que existem em PROD (`git checkout v1.3.15` — confirme que é
 essa a mais recente com `git tag --sort=-creatordate` antes — no GG
-Oferta, `v1.0.0` no Coupon Worker). O César Core **não tem repositório
+Oferta, `v1.0.4` no Coupon Worker). O César Core **não tem repositório
 em PROD**: use `deploy/prod/cesar-core.compose.yaml` (deste próprio
-checkout do GG Oferta, já em `v1.3.8`), que já referencia `ghcr.io/
+checkout do GG Oferta, já em `v1.3.15`), que já referencia `ghcr.io/
 jhonnatancesar/cesar-core:1.2.1` como imagem padrão — nenhum `docker
 build`, nenhum clone do repositório `cesar-core`.
 
@@ -111,33 +111,49 @@ Repita para os dois repositórios antes de prosseguir para a seção 3.
 
 ## 3. Migrations necessárias (só GG Oferta)
 
-Head esperado após o pull: `20260906_0002`. Duas migrations compõem
-esse head, ambas já testadas em DEV:
+Head esperado após o pull da tag `v1.3.15`: **`20260913_0001`** (único
+head, confirmado sem ramificação pelo checkpoint-11 da rodada que gerou
+esta tag). Seis migrations novas compõem o salto desde o head anterior
+documentado aqui (`20260906_0002`) até este, todas já testadas em DEV
+(integração 341 passed/0 falhas, `alembic heads` confirmando head único):
 
-- `20260906_0001_add_historical_bootstrap_retry` — retry/backoff
-  exponencial e lease do `HistoricalBootstrap` (F1).
-- `20260906_0002_add_coupons` — schema de `coupons`/`coupon_offer_links`.
+- `20260912_0001_add_offer_supersession` — supersede oferta antiga
+  não-atribuída quando a identificação real do vendedor chega depois.
+- `20260912_0002_add_coupon_evidence_isolation` — isola evidência de
+  cupom por observação.
+- `20260912_0003_add_product_identity_candidates` — schema base do
+  matcher de identidade global de produto (`ProductIdentityCandidate`).
+- `20260912_0004_add_search_history` — `SearchReceipt`/
+  `SearchReceiptProduct`, base da área DEV "minhas pesquisas".
+- `20260912_0005_preserve_installment_terms` — unicidade de condição de
+  parcelamento por termos completos, modalidade nullable.
+- `20260913_0001_add_identity_candidate_sku_fields` — `store_sku`/
+  `manufacturer_part_number` em `ProductIdentityCandidate`.
 
-**DEV já está no head `20260906_0002`. PROD ainda não teve nenhuma das
-duas aplicada — confirme o head real de PROD antes de rodar qualquer
-coisa:**
+**Confirme o head real de PROD antes de rodar qualquer coisa** (pode já
+estar mais avançado que `20260906_0002` se algum hotfix intermediário
+aplicou migration sem atualizar este documento -- reconciliar pelo
+`alembic history`/`git log` reais, nunca assumir):
 
 ```powershell
 docker compose run --rm api python -m alembic -c alembic.ini current
 ```
 
-Se o head de PROD já for `20260906_0002` por algum motivo não
-documentado aqui, **pare e reporte** — não é o estado esperado.
-Aplicar:
+Se o head real não bater com nenhum ponto conhecido do histórico de
+migrations do repositório, **pare e reporte** antes de aplicar qualquer
+coisa. Aplicar (idempotente, seguro rodar mesmo se algumas dessas seis já
+estiverem aplicadas):
 
 ```powershell
 docker compose run --rm api python -m alembic -c alembic.ini upgrade head
 ```
 
-César Core e Coupon Worker não têm migration própria neste deploy
-(Coupon Worker grava em tabelas já existentes do GG Oferta — a
-migration acima precisa estar aplicada **antes** de configurar
-`COUPONS_POSTGRES_DSN` nele).
+César Core não tem migration própria neste deploy. Coupon Worker não tem
+migration própria (grava em tabelas já existentes do GG Oferta) -- mas
+`20260912_0002`/`20260912_0003` alteram schema que ele consome
+(`coupons`, indiretamente `stores`/produtos); a migration acima precisa
+estar aplicada **antes** de reiniciar o Coupon Worker com o código novo
+(seção 9).
 
 ## 4. Configuração necessária (nomes de variável — nunca valores aqui)
 
@@ -199,6 +215,30 @@ sem precisar de logoff/reboot/restart -- comprovado ao vivo em PROD em
 Não é necessário reiniciar a Scheduled Task manualmente depois de rodar
 `-Action Install`; a próxima vez que ela disparar já lê a configuração
 nova.
+
+**Windows Ops Agent (`AIShoppingAgentOpsAgent`) -- verificação
+obrigatória nesta rodada (achado de 2026-09-20).** Este serviço é o
+único componente que detecta e reinicia o `collection_worker` quando ele
+cai (a Scheduled Task acima usa `RestartCount 0` de propósito -- ver
+[`docs/architecture/windows-collection-worker.md`](../architecture/windows-collection-worker.md#windows-ops-agent-supervisão-e-integração-com-ops_controller)).
+Se ele já estiver instalado em PROD de uma rodada anterior a esta,
+**muito provavelmente está com início Manual, não Automático** --
+confirme e corrija antes de prosseguir:
+
+```powershell
+# Verifica o tipo de início atual (StartMode):
+powershell -File ops_agent\manage_ops_agent_service.ps1 -Action Status
+
+# Se StartMode não for "Auto" (delayed), corrige sem reinstalar:
+powershell -File ops_agent\manage_ops_agent_service.ps1 -Action FixStartup
+
+# Se o serviço ainda não existir nesta máquina, instala já corrigido:
+powershell -File ops_agent\manage_ops_agent_service.ps1 -Action Install -PythonPath "<python.exe deste servidor>"
+```
+
+Sem essa correção, um reinício de PC deixa o `collection_worker` sem
+supervisão até o próximo logon manual de alguém -- era exatamente o
+sintoma que motivou esta investigação.
 
 ### César Core (`deploy/prod/.env` — lido pelo Compose por estar na mesma
 pasta de `cesar-core.compose.yaml`, não é o `.env` de nenhum repositório
@@ -743,8 +783,43 @@ ative uma de cada vez, prove antes de ativar a próxima):
 
 ## 9. Coupon Worker — primeira instalação em PROD
 
-**Esta é a primeira instalação deste componente em PROD** (`v1.0.0`,
-primeira release). Nenhuma escolha de caminho/forma de execução fica a
+**Atualização de 2026-09-20 -- PROD NÃO é mais uma primeira instalação.**
+O Coupon Worker já está instalado e rodando em PROD desde a `v1.0.0`
+(confirmado por `DEC-133`, `docs/internal/decision-log.md`: 454 cupons
+reais do Mercado Livre persistidos, worker saudável). Os passos 1-5
+abaixo já foram feitos -- **não repita a instalação do zero**. Para
+atualizar uma instalação já existente para `v1.0.4`, faça só isto, nesta
+ordem:
+
+1. `Stop-ScheduledTask -TaskName "AIShoppingCoupon-Worker"` (ou
+   `.\manage_coupon_worker_task.ps1 -Action Stop`) -- nunca atualize
+   código com o worker rodando.
+2. `git fetch origin --tags` + `git checkout v1.0.4` no diretório real da
+   instalação (confirme o caminho, seção "O que fazer primeiro" acima).
+3. Se `COUPONS_POSTGRES_DSN` já está configurada em `.env` (deveria
+   estar, é instalação existente), **não precisa reinstalar** --
+   `worker.py` já tem o retry novo embutido.
+4. `.\manage_coupon_worker_task.ps1 -Action Update -TaskUser "<mesmo usuário já configurado>"`
+   -- reaplica a definição da Scheduled Task, incluindo o
+   `MultipleInstances IgnoreNew` novo (idempotente, não duplica a
+   tarefa).
+5. Se o passo 6 abaixo (login manual do Mercado Livre) **ainda não foi
+   feito nesta instalação** (confirme: `SELECT count(*) FROM coupons c
+   JOIN stores s ON s.id=c.store_id WHERE s.code='mercadolivre' AND
+   c.source_url LIKE '%/cupons%'` no Postgres do GG -- zero linhas =
+   ainda pendente, ver `DEC-133`), faça agora, com a tarefa ainda parada
+   do passo 1.
+6. `.\manage_coupon_worker_task.ps1 -Action Start` (ou `-Action Enable`
+   se só estava desabilitada).
+
+Os passos 1-9 abaixo continuam válidos como referência completa (e para
+qualquer instalação nova futura em outra máquina) -- inclusive o passo 6
+(login manual), citado no passo 5 acima.
+
+---
+
+**Procedimento completo de primeira instalação (histórico/referência --
+`v1.0.0`).** Nenhuma escolha de caminho/forma de execução fica a
 critério de quem está executando — siga exatamente estes passos.
 
 1. **Diretório**: clone/atualize o repositório em
