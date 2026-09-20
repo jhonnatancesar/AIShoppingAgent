@@ -44,3 +44,8 @@ backend/.venv/
 # Build local do site público (MkDocs); publicado via GitHub Actions, não versionado
 .site-build/
 site/
+
+# Scratch de investigação/diagnóstico e artefatos de teste locais, nunca versionados
+# (mesmos caminhos já excluídos em .gitleaks.toml)
+tmp/
+.pytest-tmp/
