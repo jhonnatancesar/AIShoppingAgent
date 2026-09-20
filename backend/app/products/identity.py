@@ -219,6 +219,81 @@ def resolve_product_variant(text: str) -> ResolvedProductVariant | None:
     )
 
 
+def normalize_for_grounding(text: str) -> str:
+    """Mesma normalização (`_normalized`) usada internamente pelos
+    extratores -- exposta para `app.products.identity_ai` verificar
+    grounding (marca/família/modelo devolvidos pela IA precisam
+    aparecer literalmente no título, nesta mesma normalização) sem
+    duplicar a lógica de acentuação/espaço/maiúsculas."""
+    return _normalized(text)
+
+
+def build_resolved_variant_from_fields(
+    *,
+    category: str,
+    brand: str,
+    family: str,
+    model: str,
+    variant: str | None,
+    attributes: Mapping[str, str],
+) -> ResolvedProductVariant | None:
+    """Constrói um `ResolvedProductVariant` a partir de campos JÁ
+    estruturados (nunca de texto livre) -- ponte para fontes de
+    identidade que não são os extratores regex deste módulo (hoje:
+    `app.products.identity_ai`, extração assistida por IA validada por
+    grounding). Reaproveita EXATAMENTE as mesmas `_family_key`/
+    `_identity_key`/`_label` que `resolve_product_variant` usa -- a
+    fórmula de chave nunca muda conforme a origem dos campos; só quem
+    preenche `category`/`brand`/`family`/`model`/`variant`/`attributes`
+    muda (regex determinística aqui, IA + validação determinística lá).
+
+    `category`/`brand`/`family`/`model`/`variant` são normalizados para
+    slug (mesma normalização de `_slug`) -- nunca aceita valor vazio
+    depois de normalizado (`None` nesse caso, fail-closed, mesmo
+    espírito de `resolve_product_variant`). Nenhum atributo é
+    obrigatório aqui (`required_attributes=frozenset()`) -- quem chama
+    decide se a ausência de um atributo esperado deve rejeitar o
+    resultado, antes de persistir."""
+    category_slug = _slug(category)
+    brand_slug = _slug(brand)
+    family_slug = _slug(family)
+    model_slug = _slug(model)
+    variant_slug = _slug(variant) if variant else "base"
+    if not all((category_slug, brand_slug, family_slug, model_slug, variant_slug)):
+        return None
+    normalized_attributes = tuple(
+        sorted((_slug(name), _normalized(value)) for name, value in attributes.items())
+    )
+    parsed = _ParsedFamily(
+        category=category_slug,
+        brand=brand_slug,
+        family=family_slug,
+        model=model_slug,
+        variant=variant_slug,
+        variant_explicit=variant is not None,
+        attributes=normalized_attributes,
+        required_attributes=frozenset(),
+    )
+    identity_key = _identity_key(parsed)
+    if identity_key is None:  # pragma: no cover
+        # `_identity_key` só devolve `None` quando `required_attributes`
+        # não é subconjunto dos atributos -- aqui `required_attributes`
+        # é sempre `frozenset()` (acima), então esse ramo é
+        # estruturalmente inalcançável por qualquer chamador real.
+        return None
+    return ResolvedProductVariant(
+        category=parsed.category,
+        brand=parsed.brand,
+        family=parsed.family,
+        model=parsed.model,
+        variant=parsed.variant,
+        attributes=parsed.attributes,
+        family_key=_family_key(parsed),
+        identity_key=identity_key,
+        label=_label(parsed),
+    )
+
+
 def classify_product_request(text: str) -> ProductRequestIdentity:
     """Distingue produto específico, família e categoria sem usar IA."""
     parsed = _parse(text)
@@ -334,9 +409,13 @@ class CategoryDefinition:
 _CATEGORY_REGISTRY: tuple[CategoryDefinition, ...] = (
     # -- Categorias com extractor de texto funcionando hoje (_EXTRACTORS
     # abaixo) -- únicas com monitoring_key testada nesta fase.
-    CategoryDefinition("smartphone", (AttributeDefinition("storage_gb", blocking=True),)),
+    CategoryDefinition(
+        "smartphone", (AttributeDefinition("storage_gb", blocking=True),)
+    ),
     CategoryDefinition("cpu"),
-    CategoryDefinition("gpu", (AttributeDefinition("board_brand"), AttributeDefinition("vram"))),
+    CategoryDefinition(
+        "gpu", (AttributeDefinition("board_brand"), AttributeDefinition("vram"))
+    ),
     # -- Ontologia registrada para o restante das categorias previstas no
     # desenho (docs/tasks/TASK-112.md §1.3), sem extractor de texto ainda.
     # Inertes por enquanto (_parse nunca devolve essas categorias); existem
@@ -397,7 +476,11 @@ _CATEGORY_REGISTRY: tuple[CategoryDefinition, ...] = (
         ),
     ),
     CategoryDefinition(
-        "hdd", (AttributeDefinition("capacity_gb", blocking=True), AttributeDefinition("interface"))
+        "hdd",
+        (
+            AttributeDefinition("capacity_gb", blocking=True),
+            AttributeDefinition("interface"),
+        ),
     ),
     CategoryDefinition(
         "motherboard",
@@ -408,11 +491,18 @@ _CATEGORY_REGISTRY: tuple[CategoryDefinition, ...] = (
         ),
     ),
     CategoryDefinition(
-        "psu", (AttributeDefinition("wattage", blocking=True), AttributeDefinition("certification"))
+        "psu",
+        (
+            AttributeDefinition("wattage", blocking=True),
+            AttributeDefinition("certification"),
+        ),
     ),
-    CategoryDefinition("case", (AttributeDefinition("form_factor"), AttributeDefinition("color"))),
     CategoryDefinition(
-        "cooler", (AttributeDefinition("type", blocking=True), AttributeDefinition("size_mm"))
+        "case", (AttributeDefinition("form_factor"), AttributeDefinition("color"))
+    ),
+    CategoryDefinition(
+        "cooler",
+        (AttributeDefinition("type", blocking=True), AttributeDefinition("size_mm")),
     ),
     CategoryDefinition(
         "keyboard",
@@ -422,18 +512,28 @@ _CATEGORY_REGISTRY: tuple[CategoryDefinition, ...] = (
             AttributeDefinition("connectivity"),
         ),
     ),
-    CategoryDefinition("mouse", (AttributeDefinition("connectivity"), AttributeDefinition("dpi"))),
+    CategoryDefinition(
+        "mouse", (AttributeDefinition("connectivity"), AttributeDefinition("dpi"))
+    ),
     CategoryDefinition("headset", (AttributeDefinition("connectivity"),)),
     CategoryDefinition("console", (AttributeDefinition("storage_gb"),)),
     CategoryDefinition(
-        "controller", (AttributeDefinition("color"), AttributeDefinition("connectivity"))
+        "controller",
+        (AttributeDefinition("color"), AttributeDefinition("connectivity")),
     ),
     CategoryDefinition(
-        "camera", (AttributeDefinition("resolution_mp"), AttributeDefinition("sensor_type"))
+        "camera",
+        (AttributeDefinition("resolution_mp"), AttributeDefinition("sensor_type")),
     ),
-    CategoryDefinition("router", (AttributeDefinition("wifi_standard"), AttributeDefinition("bands"))),
     CategoryDefinition(
-        "printer", (AttributeDefinition("type", blocking=True), AttributeDefinition("connectivity"))
+        "router", (AttributeDefinition("wifi_standard"), AttributeDefinition("bands"))
+    ),
+    CategoryDefinition(
+        "printer",
+        (
+            AttributeDefinition("type", blocking=True),
+            AttributeDefinition("connectivity"),
+        ),
     ),
 )
 _CATEGORY_BY_NAME: dict[str, CategoryDefinition] = {
@@ -484,9 +584,7 @@ _CPU_COMPATIBILITY_PHRASE = re.compile(
 # inequívocas (nunca "cooler" aqui: um Processador real legitimamente se
 # anuncia "Com Cooler AMD Wraith Stealth"/"Sem Cooler" -- ambíguo demais
 # para entrar nesta lista sem virar falso negativo).
-_NON_CPU_PRODUCT_CATEGORY = re.compile(
-    r"\bPLACA.?MAE\b|\bMOTHERBOARD\b|\bMAINBOARD\b"
-)
+_NON_CPU_PRODUCT_CATEGORY = re.compile(r"\bPLACA.?MAE\b|\bMOTHERBOARD\b|\bMAINBOARD\b")
 
 
 def _mentions_cpu_only_as_compatibility(text: str) -> bool:
@@ -782,14 +880,24 @@ def _build_monitoring_identity(
     attributes = tuple(
         (
             attr.name,
-            _canonical_attribute(category, attr.name, attribute_values[attr.name], aliases)
+            _canonical_attribute(
+                category, attr.name, attribute_values[attr.name], aliases
+            )
             if attr.name in attribute_values
             else "ANY",
         )
         for attr in category_def.attributes
     )
 
-    parts = [f"v{MONITORING_KEY_VERSION}", scope.value, category, brand_c, family_c, model_c, variant_c]
+    parts = [
+        f"v{MONITORING_KEY_VERSION}",
+        scope.value,
+        category,
+        brand_c,
+        family_c,
+        model_c,
+        variant_c,
+    ]
     parts.extend(f"{name}={value}" for name, value in attributes)
     digest = sha256("|".join(parts).encode("utf-8")).hexdigest()
     return MonitoringIdentity(
@@ -836,7 +944,11 @@ def resolve_monitoring_identity(
     parsed = _parse(text)
     if parsed is None:
         return None
-    if parsed.category not in _CATEGORY_BY_NAME:
+    if parsed.category not in _CATEGORY_BY_NAME:  # pragma: no cover
+        # `_CATEGORY_BY_NAME` cobre TODAS as categorias de
+        # `_CATEGORY_REGISTRY`, incluindo as 3 que `_parse` de fato
+        # produz (smartphone, cpu, gpu) -- inalcançável por qualquer
+        # texto que `_parse` já saiba reconhecer.
         return None
     found = dict(parsed.attributes)
     if not parsed.required_attributes.issubset(found):
@@ -883,7 +995,10 @@ def resolve_monitoring_identity_for_family(
     parsed = _parse(text)
     if parsed is None:
         return None
-    if parsed.category not in _CATEGORY_BY_NAME:
+    if parsed.category not in _CATEGORY_BY_NAME:  # pragma: no cover
+        # Mesmo raciocínio de `resolve_monitoring_identity`: nenhuma
+        # categoria que `_parse` produza fica de fora de
+        # `_CATEGORY_BY_NAME` -- inalcançável por texto real.
         return None
     return _build_monitoring_identity(
         scope=MonitoringScope.FAMILY,

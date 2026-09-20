@@ -1,7 +1,6 @@
 """Identidade determinística de produto/variante da TASK-097."""
 
 import pytest
-
 from app.products.identity import (
     ProductRequestKind,
     classify_product_request,
@@ -17,11 +16,16 @@ def test_specific_iphone_capacity_has_one_exact_identity() -> None:
 
     assert request.kind is ProductRequestKind.SPECIFIC_PRODUCT
     assert same is not None and request.identity_key == same.identity_key
-    assert other_capacity is not None and other_capacity.identity_key != request.identity_key
+    assert (
+        other_capacity is not None
+        and other_capacity.identity_key != request.identity_key
+    )
     assert pro_max is not None and pro_max.identity_key != request.identity_key
 
 
-def test_iphone_family_has_no_specific_identity_and_keeps_optional_variant_scope() -> None:
+def test_iphone_family_has_no_specific_identity_and_keeps_optional_variant_scope() -> (
+    None
+):
     broad = classify_product_request("iPhone 17")
     pro = classify_product_request("iPhone 17 Pro")
 
@@ -57,7 +61,6 @@ def test_same_s24_ultra_capacity_converges_across_store_titles() -> None:
     assert amazon is not None and kabum is not None and smaller is not None
     assert amazon.identity_key == kabum.identity_key
     assert amazon.identity_key != smaller.identity_key
-
 
 
 # TASK-114 (DEC-105): _cpu()/_intel_cpu() nunca podem classificar como CPU

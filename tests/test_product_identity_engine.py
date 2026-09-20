@@ -12,10 +12,12 @@ from hashlib import sha256
 from app.products.identity import (
     MONITORING_KEY_VERSION,
     MonitoringScope,
+    _storage_attribute,
+    canonical_collection_criteria,
     resolve_monitoring_identity,
     resolve_monitoring_identity_for_family,
+    resolve_monitoring_identity_for_resolved_product,
 )
-
 
 # ---------------------------------------------------------------------------
 # CPU (AMD Ryzen) -- caso obrigatório do pedido
@@ -70,7 +72,10 @@ def test_cpu_different_tier_families_never_share_key() -> None:
     assert ryzen_9.family == "ryzen-9"
     assert ryzen_7.family == "ryzen-7"
     assert ryzen_5.family == "ryzen-5"
-    assert len({ryzen_9.monitoring_key, ryzen_7.monitoring_key, ryzen_5.monitoring_key}) == 3
+    assert (
+        len({ryzen_9.monitoring_key, ryzen_7.monitoring_key, ryzen_5.monitoring_key})
+        == 3
+    )
 
 
 def test_cpu_without_any_amd_signal_never_resolves() -> None:
@@ -92,7 +97,11 @@ def test_gpu_equivalent_texts_converge_to_the_same_key() -> None:
     assert bare is not None
     assert prefixed is not None
     assert full_marketing_text is not None
-    assert bare.monitoring_key == prefixed.monitoring_key == full_marketing_text.monitoring_key
+    assert (
+        bare.monitoring_key
+        == prefixed.monitoring_key
+        == full_marketing_text.monitoring_key
+    )
 
 
 def test_gpu_bare_ti_and_rtx_prefixed_converge_with_board_brand_any() -> None:
@@ -208,7 +217,9 @@ def test_alias_map_makes_different_spellings_converge() -> None:
 
     without_alias = resolve_monitoring_identity("RTX 5070 Ti ASUSTEK")
     with_alias = resolve_monitoring_identity("RTX 5070 Ti ASUSTEK", aliases=aliases)
-    canonical_spelling = resolve_monitoring_identity("RTX 5070 Ti ASUS", aliases=aliases)
+    canonical_spelling = resolve_monitoring_identity(
+        "RTX 5070 Ti ASUS", aliases=aliases
+    )
 
     assert without_alias is not None and with_alias is not None
     assert canonical_spelling is not None
@@ -313,7 +324,9 @@ def test_family_scope_equivalent_texts_converge_to_the_same_key() -> None:
     assert first.monitoring_key == second.monitoring_key
 
 
-def test_family_scope_preserves_explicit_variant_but_defaults_unspecified_attribute_to_any() -> None:
+def test_family_scope_preserves_explicit_variant_but_defaults_unspecified_attribute_to_any() -> (
+    None
+):
     """Correção: modo ALL NUNCA apaga o que o usuário de fato pediu.
     'Pro' foi escrito explicitamente -- continua restrito a Pro. Storage
     não foi mencionado -- vira ANY, nunca um valor inventado."""
@@ -356,7 +369,9 @@ def test_family_scope_gpu_bare_defaults_board_brand_to_any() -> None:
     assert dict(resolved.attributes)["board_brand"] == "ANY"
 
 
-def test_family_scope_gpu_explicit_board_brand_is_preserved_and_never_shares_key() -> None:
+def test_family_scope_gpu_explicit_board_brand_is_preserved_and_never_shares_key() -> (
+    None
+):
     """Mesma regra do pedido: 'RTX 5070 Ti' -> board_brand ANY; 'RTX 5070
     Ti ASUS' -> board_brand=asus, chave diferente -- mesmo em modo ALL."""
     bare = resolve_monitoring_identity_for_family("RTX 5070 Ti")
@@ -392,5 +407,135 @@ def test_family_scope_skips_the_blocking_attribute_check() -> None:
 
 
 def test_family_scope_unknown_category_never_resolves() -> None:
-    assert resolve_monitoring_identity_for_family("cadeira gamer reclinável azul") is None
+    assert (
+        resolve_monitoring_identity_for_family("cadeira gamer reclinável azul") is None
+    )
     assert resolve_monitoring_identity("caneta esferográfica azul") is None
+
+
+def test_storage_attribute_converts_terabytes_to_gigabytes() -> None:
+    """`_storage_attribute` converte TB para GB antes de aplicar o piso de
+    64GB que distingue armazenamento de RAM nos títulos atuais. O regex
+    (`\\d{2,4}\\s*(GB|TB)`) exige 2-4 dígitos -- por isso o teste usa um
+    valor de 2 dígitos, não o "1TB"/"2TB" de uma capacidade real de
+    smartphone (esses nem chegam a casar com o regex)."""
+    assert _storage_attribute("SSD Externo 16TB") == (("storage_gb", "16384"),)
+
+
+# ---------------------------------------------------------------------------
+# Fonte 2/3 (TASK-112) -- identidade já estruturada de um Product resolvido
+# ---------------------------------------------------------------------------
+
+
+def test_resolved_product_identity_converges_to_same_key_as_equivalent_text() -> None:
+    """`resolve_monitoring_identity_for_resolved_product` não é uma segunda
+    fonte de verdade -- as mesmas colunas de `Product` produzem a MESMA
+    monitoring_key que o texto equivalente produziria via `_build_
+    monitoring_identity`."""
+    from_text = resolve_monitoring_identity("Ryzen 9950X3D")
+    from_resolved_product = resolve_monitoring_identity_for_resolved_product(
+        category="cpu",
+        brand="AMD",
+        family="Ryzen 9",
+        model="9950X3D",
+        variant=None,
+        attributes={},
+    )
+    assert from_text is not None and from_resolved_product is not None
+    assert from_resolved_product.monitoring_key == from_text.monitoring_key
+
+
+def test_resolved_product_identity_fails_closed_when_any_field_is_missing() -> None:
+    """Produto sem identidade totalmente resolvida (qualquer uma das 4
+    colunas ausente) nunca gera monitoring_key -- fail-closed, igual a
+    texto não reconhecido."""
+    base = {
+        "category": "cpu",
+        "brand": "AMD",
+        "family": "Ryzen",
+        "model": "9950X3D",
+        "variant": None,
+        "attributes": {},
+    }
+    for missing_field in ("category", "brand", "family", "model"):
+        kwargs = {**base, missing_field: None}
+        assert resolve_monitoring_identity_for_resolved_product(**kwargs) is None
+
+
+def test_resolved_product_identity_fails_closed_for_unregistered_category() -> None:
+    """`resolve_monitoring_identity_for_resolved_product` não valida a
+    categoria antes de `_build_monitoring_identity` (ela vem de `Product.
+    category`, já resolvido -- diferente das fontes 1/3 baseadas em texto,
+    que checam `_CATEGORY_BY_NAME` antes de sequer chegar aqui). Ainda
+    assim o núcleo único fecha fail-closed para uma categoria que não
+    exista em `_CATEGORY_REGISTRY`."""
+    assert (
+        resolve_monitoring_identity_for_resolved_product(
+            category="categoria-nunca-registrada",
+            brand="AMD",
+            family="Ryzen 9",
+            model="9950X3D",
+            variant=None,
+            attributes={},
+        )
+        is None
+    )
+
+
+def test_resolved_product_identity_fails_closed_when_blocking_attribute_missing() -> (
+    None
+):
+    """Escopo é sempre `SPECIFIC` nesta fonte -- a mesma checagem de
+    atributo bloqueante que vale para texto (`storage_gb` do smartphone)
+    também vale aqui quando o `Product` resolvido não trouxe o atributo."""
+    assert (
+        resolve_monitoring_identity_for_resolved_product(
+            category="smartphone",
+            brand="Apple",
+            family="iPhone 17",
+            model="Pro",
+            variant=None,
+            attributes={},
+        )
+        is None
+    )
+
+
+# ---------------------------------------------------------------------------
+# canonical_collection_criteria (TASK-112, fase 3A) -- busca compartilhada
+# reconstruída do payload canônico persistido
+# ---------------------------------------------------------------------------
+
+
+def test_canonical_collection_criteria_excludes_any_variant_and_attributes() -> None:
+    """Valores `"ANY"` (sem restrição) nunca entram na query de busca --
+    são ausência de uma palavra a mais, não uma palavra literal."""
+    criteria = canonical_collection_criteria(
+        {
+            "brand": "nvidia",
+            "family": "geforce-rtx",
+            "model": "5070-ti",
+            "variant": "ANY",
+            "attributes": {"board_brand": "asus", "vram": "ANY"},
+        }
+    )
+    assert criteria.search_query == "nvidia geforce rtx 5070 ti asus"
+    assert criteria.model == "5070-ti"
+
+
+def test_canonical_collection_criteria_includes_explicit_variant_and_attributes() -> (
+    None
+):
+    """Variant/atributos restritos (diferentes de `"ANY"`) sempre entram na
+    busca, na mesma ordem determinística de `_build_monitoring_identity`
+    (brand, family, model, variant, atributos)."""
+    criteria = canonical_collection_criteria(
+        {
+            "brand": "apple",
+            "family": "iphone-17-pro",
+            "model": "iphone-17-pro",
+            "variant": "128gb",
+        }
+    )
+    assert criteria.search_query == "apple iphone 17 pro iphone 17 pro 128gb"
+    assert criteria.model == "iphone-17-pro"
