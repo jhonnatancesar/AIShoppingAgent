@@ -1,5 +1,32 @@
 # Changelog
 
+## `v1.3.15` — Identidade global de produto, cobertura de testes ≥90%, resiliência dos workers a reinícios
+
+Commit e publicação do diff acumulado dos checkpoints 2-11 (2026-09-12 a
+16): identidade global de produto (SKU vs part number + árbitro de IA
+GLOBAL, fail-closed), parcelamento real (precedência detalhe/card),
+`offer_supersession`, `coupon_evidence_isolation`, `search_history` +
+área DEV "minhas pesquisas", e a rodada de fechamento de cobertura de
+testes (unitária isolada 90,00% exatos, integração 341 passed/0 falhas,
+combinada 93,21%, `scripts/check.ps1` ponta a ponta aprovado). Auditoria
+de documentação/checkpoints em 2026-09-20 corrigiu dois erros reais
+encontrados (`docs/tasks/TASK-121.md` com status desatualizado; `.gitignore`
+sem a exclusão de `tmp/`/`.pytest-tmp/` que o checkpoint-5 relatava ter
+feito) e fechou documentalmente um episódio de falso positivo de prompt
+injection de 16-17/09 (`INC-2026-09-17-001`, esclarecido como alucinação
+do mecanismo de compactação de contexto, não um ataque real).
+
+Investigação sistemática e correção real de por que o `collection_worker`
+(GG Oferta) e o Coupon Worker (repositório separado) não retomavam
+sozinhos após reinícios de PC/Docker/containers: causa raiz no GG Oferta
+era o Windows Ops Agent (`AIShoppingAgentOpsAgent`) instalado com início
+Manual em vez de Automático (confirmado no código-fonte real do pywin32
+instalado); corrigido com `ops_agent/manage_ops_agent_service.ps1`
+(novo, idempotente). Ver `docs/internal/project-context.md`, seção
+"Resiliência dos workers a reinícios de PC/Docker/containers", para o
+detalhe completo, incluindo a pendência real de validação em ambiente
+com Administrador. Sem deploy em PROD nesta rodada.
+
 ## FASE E.3 — hardening de Fetch concluído localmente
 
 Auditorias integrais read-only de DEV/PROD não encontraram segredo persistido.

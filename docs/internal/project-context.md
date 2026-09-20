@@ -4229,3 +4229,156 @@ quando/onde o teste certo foi de fato escrito. O teste certo está no
 mesmo arquivo modificado (`tests/integration/
 test_collection_orchestration.py`, tracked com alterações não
 commitadas) que já contém o restante da suíte de identidade global.
+
+## Auditoria de documentação/checkpoints e fechamento do diff acumulado (2026-09-20)
+
+**Commit do diff acumulado dos checkpoints 2-11:** todo o trabalho
+descrito acima (identidade global de produto, as quatro correções sem
+TASK formal, e a rodada de fechamento de cobertura) foi revisado e
+commitado localmente nesta sessão, em 8 commits lógicos por área --
+`dec8977` (fix do `.gitignore`, discrepância do checkpoint-5 corrigida:
+`tmp/`/`.pytest-tmp/` nunca tinham sido de fato ignorados, só
+`.gitleaks.toml` recebeu as exclusões), `2003044` (refactor: `ruff
+format` em 78 arquivos, verificado byte-a-byte como 100% cosmético),
+`d1f38c7` (feat: identidade global -- SKU/MPN + árbitro de IA),
+`0ccce4f` (feat: `search_history` + área DEV "minhas pesquisas" --
+achado colateral: essa feature e a permissão `DEV_PANEL_ACCESS` vêm da
+correção de escopo "Frente 5" de 2026-09-12, que não tinha checkpoint
+formal registrado até esta sincronização), `bdfea96` (fix: parcelamento
+real + `offer_supersession` + `coupon_evidence_isolation`), `0f2ac6d`
+(chore: limpeza de 4 arquivos de scratch da própria auditoria
+commitados por engano no commit anterior -- corrigido na hora),
+`30c16ce` (test: rodada de fechamento de cobertura, gate 90%), `2b66d60`
+(chore: varredura de segredos/lint + correção do status do
+`TASK-121.md`). `git diff 85349b7..HEAD --stat` confirmou 190 arquivos,
+batendo com o esperado. **Ainda não publicado em `origin/main`** no
+momento em que estes commits foram criados -- ver decisão de push mais
+abaixo.
+
+**Segundo erro de documentação encontrado nesta auditoria** (o primeiro
+já é o do `TASK-121.md`, acima): `checkpoint-5.md` (2026-09-14) afirmava
+ter adicionado ao `.gitignore` uma seção ignorando `tmp/`/`.pytest-tmp/`,
+mas isso nunca tinha sido aplicado de fato -- só `.gitleaks.toml`
+recebeu as exclusões reais. Corrigido pelo commit `dec8977` acima. O
+arquivo `checkpoints/checkpoint-5.md` em si não foi reescrito (histórico
+local imutável, nunca rastreado pelo git).
+
+## Fechamento do episódio de compactação alucinada (16-17/09) -- falso alarme confirmado
+
+Em 2026-09-16 21:46 e de novo em 2026-09-17 14:53, a sessão que produziu
+os checkpoints 3-11 recebeu, como primeiro turno após uma compactação
+automática de contexto, uma mensagem no formato padrão `"This session is
+being continued from a previous conversation..."` contendo um trecho
+adicional em terceira pessoa mandando parar de usar ferramentas e não
+fazer mais perguntas. O assistente da época tratou isso como possível
+tentativa de injeção de instrução e corretamente não obedeceu,
+continuando o trabalho real que já estava em andamento.
+
+**Confirmado pelo usuário nesta auditoria (2026-09-20): não foi um
+ataque real.** Foi o próprio mecanismo de compactação de contexto
+alucinando esse conteúdo -- não uma instrução maliciosa injetada por
+terceiros nem por qualquer conteúdo externo lido durante a sessão.
+Registrado também em
+[`docs/internal/security-incident-log.md`](../internal/security-incident-log.md)
+como `INC-2026-09-17-001` (classificado como falso positivo, não como
+incidente de segurança real).
+
+A cautela do assistente da época teve um efeito colateral legítimo e
+real: motivou o usuário a pedir, na mesma sessão, uma auditoria forense
+reconciliando os relatórios dos checkpoints 3-11 contra o working tree
+real -- essa auditoria é quem encontrou e corrigiu o erro de
+`TASK-121.md` citado acima. A investigação gerou uma pasta local
+`.forensics/` (nunca rastreada pelo git) com dumps de transcript,
+scripts de análise ad-hoc e extratos das evidências; confirmou também,
+via um marcador de commits e checagem de objetos soltos do git, que
+nenhum commit foi feito às escondidas durante o episódio -- histórico
+do repositório íntegro. Nesta sessão de 2026-09-20, o subconjunto
+realmente relevante dessa investigação (os dois trechos de resumo de
+compactação com o conteúdo suspeito, a sequência de turnos humanos, o
+registro de chamadas de ferramenta entre as duas ocorrências, e como o
+assistente reagiu) foi preservado em
+`checkpoints/2026-09-17-forensics-incident/` (mesma convenção de
+`checkpoints/`, local, nunca rastreado pelo git); dumps brutos grandes,
+scripts de investigação de uso único e dois arquivos soltos na raiz do
+repositório criados por engano durante a investigação
+(`.forensicsline_7375_normal.json`/`.forensicsline_8324_full.json`)
+foram descartados por não terem valor de registro futuro.
+
+## Resiliência dos workers a reinícios de PC/Docker/containers (2026-09-20)
+
+Investigação sistemática (systematic-debugging) pedida pelo usuário:
+por que o `collection_worker` (GG Oferta) e o Coupon Worker não retomam
+sozinhos depois de reinícios de PC, do Docker ou dos containers.
+
+**Causa raiz 1 (`collection_worker`):** o Windows Ops Agent
+(`AIShoppingAgentOpsAgent`, `ops_agent/collection_worker_ops_agent.py`)
+é o único componente responsável por detectar e reiniciar o worker
+quando ele cai -- a Scheduled Task usa `RestartCount 0` de propósito,
+porque o reinício nativo do Task Scheduler já foi comprovado (TASK-109)
+não funcionar para um processo morto externamente. O procedimento até
+então documentado (`python collection_worker_ops_agent.py install` cru)
+registrava o serviço com início **Manual**, não Automático -- confirmado
+lendo o código-fonte real do `win32serviceutil` (pywin32) instalado no
+projeto: `InstallService` usa `SERVICE_DEMAND_START` como default quando
+`--startup` não é passado, e o próprio `usage()` do pywin32 documenta
+"default = manual". Depois de um reinício de PC, ninguém reinicia o
+serviço, e nada supervisiona o `collection_worker`.
+
+Hipóteses descartadas por leitura direta do código (não suposição): o
+loop principal (`run_worker`) já captura qualquer exceção por lote e
+tenta de novo com backoff exponencial, nunca derruba o processo por
+falha transitória; o engine SQLAlchemy do worker já usa
+`pool_pre_ping=True`, descartando conexões mortas sozinho após um
+restart do Postgres/Docker; `build_edge_supervisor` já é fail-soft;
+execução duplicada já é prevenida por `MultipleInstances IgnoreNew` + o
+teste "already_running" do próprio Ops Agent + locking real no banco.
+
+**Correção:** `ops_agent/manage_ops_agent_service.ps1` (novo) -- instala/
+corrige o serviço garantindo `Automatic (Delayed Start)` via `sc.exe
+config ... start= delayed-auto` (idempotente, roda por cima de uma
+instalação já existente) e automatiza a recuperação nativa do SCM (`sc
+failure`, antes só um comando documentado, nunca executado por nenhum
+script). Documentação corrigida em
+`docs/architecture/windows-collection-worker.md` e no docstring de
+`collection_worker_ops_agent.py` para nunca mais apontar para o comando
+cru que causava o bug. Commit `9ee9772`.
+
+**Causa raiz 2 (Coupon Worker, repositório separado
+`AIShoppingAgent-cupom`):** `PostgresCouponStore.__init__`
+(`coupons/persistence.py`) faz um `psycopg.connect` + `SELECT 1` EAGER
+na construção, por design (nunca finge saudável sem essa prova) -- sem
+nenhum retry, `sys.exit(1)` imediato se o Postgres (Docker) ainda não
+estiver pronto no momento exato em que a Scheduled Task dispara. Só
+sobrava o `RestartCount=3`/`RestartInterval=2min` nativo do Task
+Scheduler (~6 minutos no total), curto demais para um cold start real de
+Docker Desktop, e este worker nunca teve um supervisor externo
+equivalente ao Ops Agent.
+
+**Correção:** `open_coupon_store_with_retry` (novo, em `worker.py`) --
+retry com backoff exponencial (5s -> 60s, teto de 10 minutos) antes de
+desistir e abortar; nunca muda o comportamento de `PostgresCouponStore`
+em si (continua nunca caindo pra SQLite em silêncio). Provado com 3
+testes novos (`test_worker_startup_retry.py`): sucesso imediato quando
+saudável, retry+backoff real até suceder, desistência correta após o
+prazo. Suíte completa do repositório rodada depois: **77 passed**, 1
+falha pré-existente e não relacionada (`test_job_object.py`, gap de
+configuração do `pytest-asyncio` que já existia antes desta sessão, não
+investigada por estar fora do escopo). `manage_coupon_worker_task.ps1`
+também ganhou `MultipleInstances IgnoreNew` explícito (antes dependia do
+default implícito do cmdlet) como defesa em profundidade. Commit
+`5070f76` no repositório `AIShoppingAgent-cupom`.
+
+**Pendência real, não escondida:** esta sessão não tinha privilégio de
+Administrador -- não foi possível instalar o Windows Service de verdade
+nem reiniciar o PC/Docker fisicamente para validar as três cenários
+ponta a ponta. Validado até onde deu sem Administrador: sintaxe do
+`manage_ops_agent_service.ps1` inteira (parse via AST, sem erro em
+nenhum caminho), execução real até o gate de Administrador (falha limpa
+e esperada, não erro de sintaxe), sintaxe `sc.exe` conferida contra um
+serviço inexistente real (erro 1060 limpo). O fix do Coupon Worker foi
+validado de verdade via testes automatizados reais, não só leitura de
+código. **Próximo passo real, ainda pendente:** alguém com Administrador
+precisa rodar `manage_ops_agent_service.ps1 -Action Install` (ou
+`-Action FixStartup` se o serviço já existir) na máquina de produção e,
+idealmente, validar um reinício real de PC/Docker/containers antes de
+considerar esta rodada tecnicamente fechada.
