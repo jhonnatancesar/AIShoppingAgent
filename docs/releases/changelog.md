@@ -1,5 +1,25 @@
 # Changelog
 
+## `v1.3.23` — TASK-123: ancora a mensagem do lote em linguagem natural (achado do usuário, não do dev)
+
+Duas tentativas seguidas do mesmo lote de 8 títulos em PROD (sob
+`v1.3.22`, log já legível) mostraram falhas DIFERENTES: `502 Bad
+Gateway` do próprio César Core numa rodada, e o fallback
+`openrouter/free` devolvendo o texto solto `"User Safety: safe"` (não
+o array JSON pedido) na outra. O usuário questionou a suposição
+inicial de "problema de infraestrutura" -- ele nunca teve esse tipo de
+problema com OpenRouter free para outras tarefas de IA do projeto.
+Investigação confirmou: o modo de item único sempre manda o título
+como texto natural puro; o modo em lote mandava um array JSON CRU como
+mensagem inteira do usuário, sem nenhuma frase em linguagem natural
+ancorando a tarefa -- formato atípico pra um modelo de chat mais fraco/
+gratuito, explicação plausível para o "User Safety: safe" (mesma
+complexidade de regras nos dois modos, `_FIELD_INSTRUCTIONS` idêntica).
+Corrigido: a mensagem do usuário no modo lote agora ancora a instrução
+em linguagem natural imediatamente antes do JSON. Testes ajustados,
+suíte completa passando. Validação real (nova chamada de IA em PROD)
+ainda pendente.
+
 ## `v1.3.22` — TASK-123: liga logging estruturado no script de backfill (diagnóstico de v1.3.21 ficava mudo)
 
 Achado pelo próprio operador numa segunda rodada de `--dry-run` real

@@ -73,7 +73,12 @@ class _StaticIdentityAIManager:
     async def generate(self, request):
         self.calls += 1
         if request.purpose == BATCH_EXTRACT_IDENTITY_PURPOSE:
-            requested_items = json.loads(request.messages[-1].content)
+            # A mensagem do usuário tem uma frase em linguagem natural
+            # ANTES do array JSON (achado real de PROD, 2026-09-20,
+            # `v1.3.22` -- ver `extract_product_identities_via_ai_batch`)
+            # -- o array sempre começa no primeiro `[`.
+            user_content = request.messages[-1].content
+            requested_items = json.loads(user_content[user_content.index("[") :])
             single = json.loads(self._content)
             content = json.dumps(
                 [{"id": item["id"], **single} for item in requested_items]

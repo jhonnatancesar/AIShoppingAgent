@@ -112,11 +112,50 @@ verdade agora que um `extra={}` precisou ser lido de fato. Corrigido em
 service_name="aishoppingagent-reprocess-unresolved-product-identity",
 environment=settings.environment)` antes de rodar, mesmo padrão dos
 outros entry points. Confirmado manualmente que os campos aparecem no
-JSON depois da correção. Decisão de rodar `--apply` contra PROD de
-verdade segue pendente de autorização explícita do usuário, agora
-esperando uma TERCEIRA rodada de `--dry-run` em PROD (sob `v1.3.22`)
-para finalmente ver a causa raiz real da falha de extração de 9 de ~10
-lotes -- ainda desconhecida.
+JSON depois da correção.
+
+**Terceira e quarta rodadas em PROD sob `v1.3.22`** (com o log já
+legível) revelaram duas falhas DIFERENTES em duas tentativas seguidas
+do mesmo lote de 8 títulos -- não um evento isolado repetindo:
+
+- Rodada 3: `stage="generate"`, `error="AIProviderError: cesar_core_
+  request_failed"` -- o próprio César Core devolveu `502 Bad Gateway`
+  em `POST /v1/ai/generate`, antes de chegar a qualquer modelo.
+- Rodada 4 (mesmo lote, nova tentativa): César Core respondeu `200 OK`,
+  a cascata passou por Gemini e Groq (nenhum apareceu como `ai_model`)
+  e caiu no fallback `openrouter/free`, que devolveu `stage="parse"`,
+  `raw_content_preview="User Safety: safe"` -- texto solto, não o array
+  JSON pedido.
+
+**Causa raiz real (achado do usuário, não do dev)**: o modo de item
+único (`extract_product_identity_via_ai`) manda o título como TEXTO
+NATURAL puro na mensagem do usuário; o modo em lote mandava um array
+JSON CRU (`json.dumps(payload_in)`) como mensagem do usuário, sem
+nenhuma frase em linguagem natural ancorando a tarefa ali do lado dos
+dados -- `_FIELD_INSTRUCTIONS` (a complexidade das regras) é IDÊNTICA
+nos dois modos, então a diferença real não era "instrução complexa
+demais", era "formato de mensagem atípico pra um modelo de chat mais
+fraco/gratuito". Isso explica plausivelmente o `"User Safety: safe"`
+(um modelo mais fraco recebendo um blob JSON cru como mensagem inteira,
+sem frase alguma, pode reagir como se fosse algo pra classificar/
+moderar em vez de processar). **Nunca confirmado 100% sem acesso a logs
+do lado do provedor** -- é a explicação mais plausível e testável, não
+uma certeza absoluta.
+
+**Corrigido em `v1.3.23`**: a mensagem do usuário no modo lote agora
+ancora a tarefa em linguagem natural imediatamente antes do JSON
+(`"Processe os N títulos abaixo, um por \"id\", seguindo exatamente as
+instruções acima:\n\n" + json.dumps(...)`) -- mesma técnica de
+prompt engineering já validada implicitamente pelo modo de item único
+(que sempre manda texto natural, nunca JSON cru). Testes ajustados
+(os fakes de IA agora extraem o array a partir do primeiro `[`, não
+fazem mais `json.loads` da mensagem inteira), suíte completa passando.
+
+Decisão de rodar `--apply` contra PROD de verdade segue pendente de
+autorização explícita do usuário. Antes disso, falta validar que a
+correção de `v1.3.23` realmente resolve o problema -- só confirmável
+com uma nova chamada real de IA em PROD (não reproduzível localmente
+sem acesso às mesmas condições/credenciais reais).
 
 **Item 2 (flag ao vivo) não iniciado** -- depende do item 1 estar
 validado contra dado real primeiro, conforme sequência já registrada

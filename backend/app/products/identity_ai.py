@@ -531,13 +531,29 @@ async def extract_product_identities_via_ai_batch(
     payload_in = [
         {"id": index, "title": title} for index, title in enumerate(raw_titles)
     ]
+    # Achado real em PROD (2026-09-20, `v1.3.22`): o modo de item único
+    # manda o título como texto natural puro; mandar só um array JSON cru
+    # como mensagem do usuário (sem nenhuma frase em linguagem natural
+    # ancorando a tarefa ali do lado dos dados) é um formato atípico pra
+    # um modelo de chat -- reproduzido em PROD com o fallback gratuito
+    # (`openrouter/free`) devolvendo `"User Safety: safe"` em vez do
+    # array pedido, quando o item único (mesmas `_FIELD_INSTRUCTIONS`,
+    # mesma complexidade de regras) nunca teve esse problema. Corrigido
+    # ancorando a instrução em linguagem natural imediatamente antes do
+    # JSON, técnica conhecida pra melhorar obediência em modelos mais
+    # fracos/gratuitos -- nunca confiar só no system prompt pra isso.
+    user_message = (
+        f'Processe os {len(payload_in)} títulos abaixo, um por "id", '
+        "seguindo exatamente as instruções acima:\n\n"
+        + json.dumps(payload_in, ensure_ascii=False)
+    )
     request = AIRequest(
         request_id=uuid4(),
         profile=profile,
         purpose=BATCH_EXTRACT_IDENTITY_PURPOSE,
         messages=(
             AIMessage(AIMessageRole.SYSTEM, _BATCH_SYSTEM_PROMPT),
-            AIMessage(AIMessageRole.USER, json.dumps(payload_in, ensure_ascii=False)),
+            AIMessage(AIMessageRole.USER, user_message),
         ),
         requested_at=moment,
     )
