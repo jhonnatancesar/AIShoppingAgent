@@ -190,14 +190,35 @@ controla o Edge** -- só supervisiona o estado nativo da Scheduled Task.
   a `SYSTEM` + `BUILTIN\Administrators` (SID fixo `S-1-5-32-544`, não o
   nome localizado) via `icacls`. Fora do Git, nunca logado.
 
-Instalar/gerenciar o serviço (como Administrador):
+Instalar/gerenciar o serviço (como Administrador) -- SEMPRE via
+`ops_agent\manage_ops_agent_service.ps1`, nunca chamando
+`collection_worker_ops_agent.py` diretamente com `install`/`update` cru:
 
 ```powershell
-python ops_agent\collection_worker_ops_agent.py install
-python ops_agent\collection_worker_ops_agent.py start
-python ops_agent\collection_worker_ops_agent.py stop
-python ops_agent\collection_worker_ops_agent.py remove
+powershell -File ops_agent\manage_ops_agent_service.ps1 -Action Install -PythonPath "C:\...\python.exe"
+powershell -File ops_agent\manage_ops_agent_service.ps1 -Action Start
+powershell -File ops_agent\manage_ops_agent_service.ps1 -Action Status
+powershell -File ops_agent\manage_ops_agent_service.ps1 -Action Stop
+powershell -File ops_agent\manage_ops_agent_service.ps1 -Action Remove
 ```
+
+**Achado real de 2026-09-20 (auditoria de resiliência a reinícios de
+PC/Docker/containers) -- causa raiz de o `collection_worker` não retomar
+sozinho depois de um reinício de PC:** chamar `collection_worker_ops_agent.py
+install` diretamente (o procedimento documentado aqui até esta correção)
+registra o serviço com início **Manual**, não Automático -- confirmado lendo
+o código-fonte real do `win32serviceutil` (pywin32) instalado neste
+projeto: `InstallService` usa `startType = win32service.SERVICE_DEMAND_START`
+como default quando `--startup` não é passado, e o próprio `usage()` do
+pywin32 documenta "default = manual". Depois de um reinício de PC,
+**ninguém inicia o serviço de novo** -- e como é exatamente esse serviço
+que detecta e reinicia o `collection_worker` quando ele cai (a Scheduled
+Task sozinha, com `RestartCount 0` de propósito, não cobre isso), o worker
+fica sem supervisão até o próximo logon manual. `manage_ops_agent_service.ps1`
+corrige isso de forma idempotente (`sc.exe config ... start= delayed-auto`,
+seguro rodar por cima de uma instalação já existente) e também automatiza
+a recuperação nativa do SCM (`sc failure`, mencionada logo abaixo) -- antes
+só um comando documentado, nunca executado por nenhum script.
 
 ### Integração com o `ops_controller` (Docker)
 

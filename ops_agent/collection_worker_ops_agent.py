@@ -6,12 +6,25 @@ apenas monitora o estado nativo da Scheduled Task
 se o worker morrer, aciona essa mesma tarefa para reiniciar. Expoe uma API
 HTTP minima (status/start/restart), assinada por HMAC, em loopback apenas.
 
-Instalar como servico (executar como Administrador):
-    python collection_worker_ops_agent.py install
-    python collection_worker_ops_agent.py start
+Instalar como servico (executar como Administrador) -- SEMPRE via
+manage_ops_agent_service.ps1, nunca chamando este arquivo diretamente com
+"install" cru:
+    powershell -File manage_ops_agent_service.ps1 -Action Install -PythonPath "C:\...\python.exe"
+    powershell -File manage_ops_agent_service.ps1 -Action Start
 
-Configurar recuperacao nativa do proprio servico (reinicio pelo SCM em
-caso de queda do Ops Agent -- nao depende deste script):
+Achado real de 2026-09-20 (investigacao de por que o collection_worker nao
+retomava sozinho apos reinicios de PC/Docker/containers): chamar este
+arquivo diretamente com "install" (sem "--startup delayed" ANTES do verbo,
+na ordem exigida pelo proprio win32serviceutil.usage() do pywin32)
+registra o servico com inicio MANUAL -- confirmado lendo
+win32serviceutil.InstallService: "if startType is None: startType =
+win32service.SERVICE_DEMAND_START". Depois de um reinicio de PC, ninguem
+inicia o servico de novo, entao nada supervisiona o collection_worker.
+manage_ops_agent_service.ps1 corrige isso via "sc.exe config ... start=
+delayed-auto" de forma idempotente (roda por cima de uma instalacao ja
+existente tambem, sem precisar reinstalar) e AUTOMATIZA a recuperacao
+nativa do SCM abaixo (antes so documentada aqui, nunca executada por
+nenhum script):
     sc failure AIShoppingAgentOpsAgent reset= 86400 actions= restart/5000/restart/15000/restart/30000
 """
 
