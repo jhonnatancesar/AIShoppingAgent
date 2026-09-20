@@ -93,10 +93,30 @@ corrigidos em `v1.3.21`, nenhum deles causado por dado real ruim:**
 Nada foi aplicado/persistido em PROD nesse `--dry-run` (confirmado) --
 o operador corretamente parou antes de qualquer `--apply`, exatamente
 como as instruções de deploy pediam. Backlog real confirmado: **371**
-Products sem `identity_key`. Decisão de rodar `--apply` contra PROD de
+Products sem `identity_key`.
+
+**Segunda rodada em PROD sob `v1.3.21`** (mesmo backlog, mesmo
+`--dry-run --limit 100`) confirmou o bug 2 corrigido (resumo/detalhe
+batendo: 10 merges + 3 resolvidos = 13, igual ao resumo) e achou um
+gap real no bug 1: os campos `stage`/`error`/`raw_content_preview`
+adicionados ao log NUNCA apareciam na saída, mesmo com o código
+correto -- **causa raiz achada pelo próprio operador antes de escalar**:
+`backend/scripts/reprocess_unresolved_product_identity.py` nunca
+chamava `configure_logging` (`app/core/logging.py`, formatter JSON em
+stdout, já usado por `app.main`/`app.collection.worker`/`app.telegram.
+worker`) -- sem handler configurado, o `logging` padrão do Python cai
+no `lastResort` (só `%(message)s`, descarta qualquer campo de `extra`).
+Nenhum script deste diretório chamava isso antes; só importou de
+verdade agora que um `extra={}` precisou ser lido de fato. Corrigido em
+`v1.3.22`: `main()` chama `configure_logging(settings.log_level,
+service_name="aishoppingagent-reprocess-unresolved-product-identity",
+environment=settings.environment)` antes de rodar, mesmo padrão dos
+outros entry points. Confirmado manualmente que os campos aparecem no
+JSON depois da correção. Decisão de rodar `--apply` contra PROD de
 verdade segue pendente de autorização explícita do usuário, agora
-também esperando a próxima rodada de `--dry-run` com o log melhorado
-para confirmar a causa raiz da falha de extração antes de aplicar.
+esperando uma TERCEIRA rodada de `--dry-run` em PROD (sob `v1.3.22`)
+para finalmente ver a causa raiz real da falha de extração de 9 de ~10
+lotes -- ainda desconhecida.
 
 **Item 2 (flag ao vivo) não iniciado** -- depende do item 1 estar
 validado contra dado real primeiro, conforme sequência já registrada

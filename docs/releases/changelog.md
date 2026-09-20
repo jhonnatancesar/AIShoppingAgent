@@ -1,5 +1,22 @@
 # Changelog
 
+## `v1.3.22` — TASK-123: liga logging estruturado no script de backfill (diagnóstico de v1.3.21 ficava mudo)
+
+Achado pelo próprio operador numa segunda rodada de `--dry-run` real
+em PROD, sob `v1.3.21`: os campos `stage`/`error`/`raw_content_preview`
+adicionados ao log de falha de lote nunca apareciam na saída, mesmo com
+o código correto. Causa raiz: `reprocess_unresolved_product_identity.py`
+nunca chamava `configure_logging` (`app/core/logging.py`, formatter
+JSON em stdout, já usado por `app.main`/`app.collection.worker`/
+`app.telegram.worker`) -- sem handler configurado, o `logging` padrão
+do Python cai no `lastResort` (só a mensagem, descarta `extra`).
+Nenhum script de `backend/scripts/` chamava isso antes. Corrigido:
+`main()` configura logging antes de rodar, mesmo padrão dos outros
+entry points -- confirmado manualmente que os campos aparecem no JSON
+depois da correção. Causa raiz da própria falha de extração (9 de ~10
+lotes falhando em PROD) continua desconhecida -- só agora vai dar pra
+ver no log de uma próxima rodada.
+
 ## `v1.3.21` — TASK-123: corrige relatório contraditório do dry-run e melhora diagnóstico de falha de lote
 
 Dois achados reais de um `--dry-run --limit 100` rodado contra o banco
