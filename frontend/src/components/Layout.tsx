@@ -15,12 +15,12 @@ import { cn } from '@/lib/utils'
  * "Administração" na mesma navegação, decidida por `isAdmin` (permissão
  * real vinda da sessão, nunca uma escolha feita no login). */
 export function AppLayout() {
-  const { user, isAdmin, logout } = useAuth()
+  const { user, isAdmin, isDev, logout } = useAuth()
   const location = useLocation()
   const prefersReducedMotion = useReducedMotion()
   const [mobileOpen, setMobileOpen] = useState(false)
   const onAdminArea = location.pathname.startsWith('/admin')
-  const navGroups = navGroupsFor(isAdmin)
+  const navGroups = navGroupsFor(isAdmin, isDev)
 
   function renderSidebar(onClose?: () => void) {
     return (

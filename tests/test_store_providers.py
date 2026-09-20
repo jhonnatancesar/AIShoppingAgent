@@ -78,7 +78,7 @@ CASES = (
         '<li class="ui-search-layout__item"><div>'
         '<a class="poly-component__title" '
         'href="https://produto.mercadolivre.com.br/MLB-123#origin=share&wid=MLB123">'
-        'GPU Mercado Livre</a>'
+        "GPU Mercado Livre</a>"
         '<img class="poly-component__picture" src="https://http2.mlstatic.com/gpu.jpg">'
         '<div class="poly-price__current"><span class="andes-money-amount">'
         '<span class="andes-money-amount__currency-symbol">R$</span>'
@@ -321,9 +321,14 @@ def test_mercado_livre_edge_is_primary_and_playwright_never_touched(
     provider = MercadoLivreProvider(clock=lambda: NOW, cdp_transport=transport)
 
     result = asyncio.run(
-        provider.collect(CollectionRequest(
-            source_code="mercadolivre", search_query="Produto", requested_at=NOW, mission_id=uuid4()
-        ))
+        provider.collect(
+            CollectionRequest(
+                source_code="mercadolivre",
+                search_query="Produto",
+                requested_at=NOW,
+                mission_id=uuid4(),
+            )
+        )
     )
 
     assert result.offers == offers
@@ -354,8 +359,11 @@ def test_mercado_livre_cdp_failure_never_falls_back_to_playwright(
         asyncio.run(
             provider.collect(
                 CollectionRequest(
-            source_code="mercadolivre", search_query="Produto", requested_at=NOW, mission_id=uuid4()
-        )
+                    source_code="mercadolivre",
+                    search_query="Produto",
+                    requested_at=NOW,
+                    mission_id=uuid4(),
+                )
             )
         )
 
@@ -371,8 +379,11 @@ def test_mercado_livre_without_cdp_transport_fails_isolated_without_navigation()
         asyncio.run(
             provider.collect(
                 CollectionRequest(
-            source_code="mercadolivre", search_query="Produto", requested_at=NOW, mission_id=uuid4()
-        )
+                    source_code="mercadolivre",
+                    search_query="Produto",
+                    requested_at=NOW,
+                    mission_id=uuid4(),
+                )
             )
         )
 
@@ -422,9 +433,14 @@ def test_terabyte_uses_cdp_transport_as_primary_and_extracts_multiple_offers(
     provider = TerabyteProvider(clock=lambda: NOW, cdp_transport=transport)
 
     result = asyncio.run(
-        provider.collect(CollectionRequest(
-            source_code="terabyte", search_query="RTX 5070", requested_at=NOW, mission_id=uuid4()
-        ))
+        provider.collect(
+            CollectionRequest(
+                source_code="terabyte",
+                search_query="RTX 5070",
+                requested_at=NOW,
+                mission_id=uuid4(),
+            )
+        )
     )
 
     assert result.offers == offers
@@ -450,9 +466,14 @@ def test_terabyte_never_falls_back_to_blocked_playwright_on_cdp_failure(
 
     with pytest.raises(EdgeCdpTransportError):
         asyncio.run(
-            provider.collect(CollectionRequest(
-            source_code="terabyte", search_query="RTX 5070", requested_at=NOW, mission_id=uuid4()
-        ))
+            provider.collect(
+                CollectionRequest(
+                    source_code="terabyte",
+                    search_query="RTX 5070",
+                    requested_at=NOW,
+                    mission_id=uuid4(),
+                )
+            )
         )
 
 
@@ -463,9 +484,14 @@ def test_terabyte_without_cdp_transport_fails_isolated_without_navigation() -> N
 
     with pytest.raises(EdgeCdpTransportError, match="not configured"):
         asyncio.run(
-            provider.collect(CollectionRequest(
-            source_code="terabyte", search_query="RTX 5070", requested_at=NOW, mission_id=uuid4()
-        ))
+            provider.collect(
+                CollectionRequest(
+                    source_code="terabyte",
+                    search_query="RTX 5070",
+                    requested_at=NOW,
+                    mission_id=uuid4(),
+                )
+            )
         )
 
 
@@ -493,8 +519,11 @@ def test_terabyte_reconnects_via_fresh_cdp_run_on_each_collection() -> None:
     transport = Transport()
     provider = TerabyteProvider(clock=lambda: NOW, cdp_transport=transport)
     request = CollectionRequest(
-            source_code="terabyte", search_query="RTX 5070", requested_at=NOW, mission_id=uuid4()
-        )
+        source_code="terabyte",
+        search_query="RTX 5070",
+        requested_at=NOW,
+        mission_id=uuid4(),
+    )
 
     asyncio.run(provider.collect(request))
     asyncio.run(provider.collect(request))
@@ -548,8 +577,11 @@ def test_magalu_search_uses_ssr_json_and_returns_multiple_without_playwright(
         availability_fallback_max_candidates=0,
     )
     request = CollectionRequest(
-            source_code="magalu", search_query="Galaxy S24 Ultra", requested_at=NOW, mission_id=uuid4()
-        )
+        source_code="magalu",
+        search_query="Galaxy S24 Ultra",
+        requested_at=NOW,
+        mission_id=uuid4(),
+    )
 
     result = asyncio.run(provider.collect(request))
 
@@ -658,6 +690,44 @@ def test_magalu_promotional_badge_is_not_mistaken_for_condition() -> None:
     assert normalized.condition is OfferCondition.NEW
 
 
+def test_magalu_recondicionado_badge_marks_condition_recondicionado() -> None:
+    """Mesmo padrão de evidência do badge de usado (subtask 3), agora para
+    o rótulo de recondicionado/refurbished/renewed."""
+    item = _magalu_offer_item(
+        title="Samsung Galaxy S24 Ultra 512GB Titânio Cinza",
+        badges=[
+            {
+                "imageUrl": (
+                    "https://i.mlcdn.com.br/selo-ml/{w}x{h}/"
+                    "d3ae6610-3a09-11ef-8d27-3eaeed8b6162.png"
+                ),
+                "text": "produtorecondicionado",
+            }
+        ],
+    )
+
+    offer = _collect_magalu_single_offer(item)
+    normalized = PriceNormalizer().normalize_offer(offer)
+
+    assert normalized.condition is OfferCondition.REFURBISHED
+
+
+def test_magalu_recondicionado_title_without_badge_marks_condition_recondicionado() -> (
+    None
+):
+    """Sem badge nenhum, a condição cai para o título -- mesmo padrão já
+    coberto para "usado"/"seminovo", agora para "recondicionado"."""
+    item = _magalu_offer_item(
+        title="Samsung Galaxy S24 Ultra 512GB (Recondicionado)",
+        badges=[],
+    )
+
+    offer = _collect_magalu_single_offer(item)
+    normalized = PriceNormalizer().normalize_offer(offer)
+
+    assert normalized.condition is OfferCondition.REFURBISHED
+
+
 def test_magalu_transport_failure_does_not_use_playwright_fallback(monkeypatch) -> None:
     calls = 0
 
@@ -678,14 +748,21 @@ def test_magalu_transport_failure_does_not_use_playwright_fallback(monkeypatch) 
 
     with pytest.raises(MagaluSearchTransportError, match="CDP unavailable"):
         asyncio.run(
-            provider.collect(CollectionRequest(
-            source_code="magalu", search_query="Produto", requested_at=NOW, mission_id=uuid4()
-        ))
+            provider.collect(
+                CollectionRequest(
+                    source_code="magalu",
+                    search_query="Produto",
+                    requested_at=NOW,
+                    mission_id=uuid4(),
+                )
+            )
         )
     assert calls == 1
 
 
-def test_magalu_does_not_open_managed_browser_for_detail_enrichment(monkeypatch) -> None:
+def test_magalu_does_not_open_managed_browser_for_detail_enrichment(
+    monkeypatch,
+) -> None:
     offer = RawCollectedOffer(
         source_code="magalu",
         url="https://www.magazineluiza.com.br/produto/p/basic/",
@@ -784,7 +861,7 @@ def test_marketplace_detail_condition_from_structured_data(
     Magalu já tinha teste próprio; estes cobrem as células que faltavam
     (usado em ambas, novo no Mercado Livre)."""
     html = (
-        "<script type=\"application/ld+json\">"
+        '<script type="application/ld+json">'
         f'{{"@type":"Product","itemCondition":"https://schema.org/{schema_condition}"}}'
         "</script>"
     )
@@ -1191,9 +1268,7 @@ class _CdpSearchCollectMixin(PlaywrightStoreProvider):
                     state="attached", timeout=1000
                 )
             except Exception as error:
-                raise ProviderBlockedError(
-                    self.source_code, response.status
-                ) from error
+                raise ProviderBlockedError(self.source_code, response.status) from error
             offers = await self.extract(page, self._clock())
             if not offers:
                 raise ProviderBlockedError(self.source_code, response.status)
@@ -1284,8 +1359,8 @@ def test_fallback_resolves_only_top_k_unknown_by_price_ascending(monkeypatch) ->
             return None if goto_calls[-1].endswith("/d") else "Disponível"
 
     request = CollectionRequest(
-            source_code="fk", search_query="GPU", requested_at=NOW, mission_id=uuid4()
-        )
+        source_code="fk", search_query="GPU", requested_at=NOW, mission_id=uuid4()
+    )
     provider = FallbackProvider(
         clock=lambda: NOW,
         availability_fallback_max_candidates=3,
@@ -1370,8 +1445,8 @@ def test_fallback_isolates_failure_and_still_resolves_next_candidate(
             return "Disponível"
 
     request = CollectionRequest(
-            source_code="fk2", search_query="GPU", requested_at=NOW, mission_id=uuid4()
-        )
+        source_code="fk2", search_query="GPU", requested_at=NOW, mission_id=uuid4()
+    )
     provider = FlakyFallbackProvider(
         clock=lambda: NOW, cdp_transport=_FakeCdpTransport(Page())
     )
@@ -1456,8 +1531,8 @@ def test_fallback_stops_entire_cycle_on_blocked_status(monkeypatch) -> None:
             return "Disponível"
 
     request = CollectionRequest(
-            source_code="fk3", search_query="GPU", requested_at=NOW, mission_id=uuid4()
-        )
+        source_code="fk3", search_query="GPU", requested_at=NOW, mission_id=uuid4()
+    )
     provider = BlockedFallbackProvider(
         clock=lambda: NOW,
         availability_fallback_max_candidates=3,
@@ -1511,8 +1586,8 @@ def test_fallback_skips_navigation_when_provider_has_no_product_page_hook(
             return Locator()
 
     request = CollectionRequest(
-            source_code="amazon", search_query="GPU", requested_at=NOW, mission_id=uuid4()
-        )
+        source_code="amazon", search_query="GPU", requested_at=NOW, mission_id=uuid4()
+    )
     provider = AmazonProvider(
         clock=lambda: NOW, cdp_transport=_FakeCdpTransport(Page())
     )
@@ -1576,30 +1651,164 @@ def test_kabum_resolve_product_availability_branches() -> None:
     assert asyncio.run(evidence("<body>Sem nenhuma evidência clara</body>")) is None
 
 
+def _amazon_feature_block(
+    feature_name: str, text: str, *, href: str | None = None
+) -> str:
+    inner = (
+        f'<a href="{href}" class="offer-display-feature-text-message">{text}</a>'
+        if href is not None
+        else f'<span class="offer-display-feature-text-message">{text}</span>'
+    )
+    return (
+        '<div class="offer-display-feature-text" '
+        f'offer-display-feature-name="{feature_name}">{inner}</div>'
+    )
+
+
 @pytest.mark.parametrize(
-    ("value", "expected"),
+    ("merchant", "fulfiller", "expected_seller", "expected_fulfillment"),
     (
-        ("Amazon.com.br", MarketplacePartyKind.PLATFORM),
-        ("GX Group ⭐⭐⭐⭐⭐", MarketplacePartyKind.MARKETPLACE_PARTNER),
-        (None, MarketplacePartyKind.UNKNOWN),
+        # Vendido e entregue pela própria Amazon (achado ao vivo, 2026-09-11).
+        (
+            "Amazon.com.br",
+            "Amazon",
+            MarketplacePartyKind.PLATFORM,
+            MarketplacePartyKind.PLATFORM,
+        ),
+        # Vendido por parceiro real, entregue pela Amazon (achado ao vivo,
+        # 2026-09-11: "JE Accessory Hub" / "Amazon" -- blocos separados,
+        # nunca a mesma leitura para os dois papéis).
+        (
+            "JE Accessory Hub",
+            "Amazon",
+            MarketplacePartyKind.MARKETPLACE_PARTNER,
+            MarketplacePartyKind.PLATFORM,
+        ),
+        # Vendido E entregue pelo próprio parceiro (sem FBA).
+        (
+            "Shop Coronitas",
+            "Shop Coronitas",
+            MarketplacePartyKind.MARKETPLACE_PARTNER,
+            MarketplacePartyKind.MARKETPLACE_PARTNER,
+        ),
     ),
 )
-def test_amazon_classifies_combined_merchant_detail(value, expected) -> None:
-    block = (
-        '<div class="offer-display-feature-text" '
-        'offer-display-feature-name="desktop-merchant-info">'
-        f'<span class="offer-display-feature-text-message">{value}</span></div>'
-        if value is not None
-        else "<body>Sem informação comercial</body>"
+def test_amazon_classifies_seller_and_fulfillment_separately(
+    merchant, fulfiller, expected_seller, expected_fulfillment
+) -> None:
+    html = _amazon_feature_block(
+        "desktop-merchant-info",
+        merchant,
+        href="/gp/help/seller/at-a-glance.html?seller=X",
+    ) + _amazon_feature_block("desktop-fulfiller-info", fulfiller)
+
+    async def scenario():
+        async with BrowserSession() as session:
+            page = await session.new_page()
+            await page.set_content(html)
+            return await AmazonProvider().resolve_marketplace_parties(page)
+
+    assert asyncio.run(scenario()) == (expected_seller, expected_fulfillment)
+
+
+def test_amazon_marketplace_parties_unknown_without_any_block() -> None:
+    async def scenario():
+        async with BrowserSession() as session:
+            page = await session.new_page()
+            await page.set_content("<body>Sem informação comercial</body>")
+            return await AmazonProvider().resolve_marketplace_parties(page)
+
+    assert asyncio.run(scenario()) == (
+        MarketplacePartyKind.UNKNOWN,
+        MarketplacePartyKind.UNKNOWN,
+    )
+
+
+def test_amazon_resolve_seller_name_reads_merchant_block_only() -> None:
+    html = _amazon_feature_block(
+        "desktop-merchant-info",
+        "JE Accessory Hub",
+        href="/gp/help/seller/at-a-glance.html?seller=X",
+    ) + _amazon_feature_block("desktop-fulfiller-info", "Amazon")
+
+    async def scenario():
+        async with BrowserSession() as session:
+            page = await session.new_page()
+            await page.set_content(html)
+            return await AmazonProvider().resolve_seller_name(page)
+
+    assert asyncio.run(scenario()) == "JE Accessory Hub"
+
+
+@pytest.mark.parametrize(
+    ("href", "expected"),
+    (
+        (
+            "/gp/help/seller/at-a-glance.html/ref=dp_merchant_link?ie=UTF8&seller=A2I8NJ01N6P55G&asin=B0B8RNYTJF",
+            "A2I8NJ01N6P55G",
+        ),
+        (None, None),  # Amazon vendendo diretamente: bloco vira <span>, sem link.
+    ),
+)
+def test_amazon_resolve_seller_external_id_from_profile_link(href, expected) -> None:
+    html = _amazon_feature_block("desktop-merchant-info", "JE Accessory Hub", href=href)
+
+    async def scenario():
+        async with BrowserSession() as session:
+            page = await session.new_page()
+            await page.set_content(html)
+            return await AmazonProvider().resolve_seller_external_id(page)
+
+    assert asyncio.run(scenario()) == expected
+
+
+def test_amazon_enrich_offer_details_populates_seller_external_id() -> None:
+    html = _amazon_feature_block(
+        "desktop-merchant-info",
+        "JE Accessory Hub",
+        href="/gp/help/seller/at-a-glance.html?seller=A2I8NJ01N6P55G",
+    ) + _amazon_feature_block("desktop-fulfiller-info", "Amazon")
+
+    class Response:
+        status = 200
+
+    class PreloadedPage:
+        """Página real (via BrowserSession) com o HTML já carregado --
+        `goto` não navega de novo, só confirma a resposta (o detalhe já
+        está pronto para os hooks `resolve_*` lerem)."""
+
+        def __init__(self, page) -> None:
+            self._page = page
+
+        async def goto(self, url, **kwargs):
+            return Response()
+
+        def locator(self, selector):
+            return self._page.locator(selector)
+
+    offer = RawCollectedOffer(
+        source_code="amazon",
+        url="https://www.amazon.com.br/dp/B0B8RNYTJF",
+        title="Produto",
+        collected_at=NOW,
+        raw_price="R$ 10,00",
+        raw_currency="BRL",
     )
 
     async def scenario():
         async with BrowserSession() as session:
             page = await session.new_page()
-            await page.set_content(block)
-            return await AmazonProvider().resolve_marketplace_parties(page)
+            await page.set_content(html)
+            transport = _FakeCdpTransport(PreloadedPage(page))
+            return await AmazonProvider(cdp_transport=transport).enrich_offer_details(
+                (offer,)
+            )
 
-    assert asyncio.run(scenario()) == (expected, expected)
+    enriched = asyncio.run(scenario())
+    assert enriched[0].seller_external_id == "A2I8NJ01N6P55G"
+    assert enriched[0].seller_name == "JE Accessory Hub"
+    assert enriched[0].seller_kind == MarketplacePartyKind.MARKETPLACE_PARTNER
+    assert enriched[0].fulfillment_kind == MarketplacePartyKind.PLATFORM
 
 
 @pytest.mark.parametrize(
@@ -1850,9 +2059,7 @@ def test_unified_detail_enrichment_opens_each_offer_only_once(monkeypatch) -> No
     )
 
     enriched = asyncio.run(
-        Provider(cdp_transport=_FakeCdpTransport(Page())).enrich_offer_details(
-            (offer,)
-        )
+        Provider(cdp_transport=_FakeCdpTransport(Page())).enrich_offer_details((offer,))
     )[0]
 
     assert visited == [offer.url]
@@ -1864,7 +2071,7 @@ def test_unified_detail_enrichment_opens_each_offer_only_once(monkeypatch) -> No
     assert enriched.seller_name == "Loja oficial"
 
 
-def test_terabyte_unified_detail_enrichment_never_opens_page(monkeypatch) -> None:
+def test_terabyte_unified_detail_enrichment_does_not_open_when_disabled() -> None:
     offer = RawCollectedOffer(
         source_code="terabyte",
         url="https://example.invalid/product",
@@ -1874,7 +2081,8 @@ def test_terabyte_unified_detail_enrichment_never_opens_page(monkeypatch) -> Non
         raw_currency="BRL",
     )
 
-    assert asyncio.run(TerabyteProvider().enrich_offer_details((offer,))) == (offer,)
+    provider = TerabyteProvider(installment_option_max_candidates=0)
+    assert asyncio.run(provider.enrich_offer_details((offer,))) == (offer,)
 
 
 def test_marketplace_enrichment_stops_after_block(monkeypatch) -> None:
@@ -1901,9 +2109,9 @@ def test_marketplace_enrichment_stops_after_block(monkeypatch) -> None:
     )
 
     enriched = asyncio.run(
-        AmazonProvider(cdp_transport=_FakeCdpTransport(Page())).enrich_marketplace_parties(
-            offers
-        )
+        AmazonProvider(
+            cdp_transport=_FakeCdpTransport(Page())
+        ).enrich_marketplace_parties(offers)
     )
 
     assert visited == ["https://example.invalid/1"]
@@ -1985,8 +2193,8 @@ def test_fallback_disabled_when_max_candidates_is_zero(monkeypatch) -> None:
             return "Disponível"
 
     request = CollectionRequest(
-            source_code="fk4", search_query="GPU", requested_at=NOW, mission_id=uuid4()
-        )
+        source_code="fk4", search_query="GPU", requested_at=NOW, mission_id=uuid4()
+    )
     provider = ZeroKProvider(
         clock=lambda: NOW,
         availability_fallback_max_candidates=0,
@@ -2047,8 +2255,8 @@ def test_fallback_noop_when_no_unknown_candidates(monkeypatch) -> None:
             return "Disponível"
 
     request = CollectionRequest(
-            source_code="fk5", search_query="GPU", requested_at=NOW, mission_id=uuid4()
-        )
+        source_code="fk5", search_query="GPU", requested_at=NOW, mission_id=uuid4()
+    )
     provider = NoUnknownProvider(
         clock=lambda: NOW, cdp_transport=_FakeCdpTransport(Page())
     )
@@ -2105,8 +2313,8 @@ def test_fallback_treats_resolve_product_availability_exception_as_unresolved(
             raise RuntimeError("evidencia inesperada quebrou a extracao")
 
     request = CollectionRequest(
-            source_code="fk6", search_query="GPU", requested_at=NOW, mission_id=uuid4()
-        )
+        source_code="fk6", search_query="GPU", requested_at=NOW, mission_id=uuid4()
+    )
     provider = RaisingResolveProvider(
         clock=lambda: NOW, cdp_transport=_FakeCdpTransport(Page())
     )
@@ -2158,8 +2366,8 @@ def test_provider_rejects_silent_empty_collection(monkeypatch) -> None:
             return ()
 
     request = CollectionRequest(
-            source_code="empty", search_query="GPU", requested_at=NOW, mission_id=uuid4()
-        )
+        source_code="empty", search_query="GPU", requested_at=NOW, mission_id=uuid4()
+    )
 
     with pytest.raises(ProviderBlockedError):
         asyncio.run(
@@ -2189,8 +2397,8 @@ def test_provider_retries_safe_navigation_timeout_only(monkeypatch) -> None:
             raise AssertionError("navigation failure must happen before extraction")
 
     request = CollectionRequest(
-            source_code="timeout", search_query="GPU", requested_at=NOW, mission_id=uuid4()
-        )
+        source_code="timeout", search_query="GPU", requested_at=NOW, mission_id=uuid4()
+    )
     provider = TimeoutProvider(
         clock=lambda: NOW,
         cdp_transport=_FakeCdpTransport(Page()),
@@ -2286,9 +2494,14 @@ def test_pichau_cdp_results_release_collection(monkeypatch) -> None:
     monkeypatch.setattr(provider, "extract", _extract)
 
     result = asyncio.run(
-        provider.collect(CollectionRequest(
-            source_code="pichau", search_query="GPU", requested_at=NOW, mission_id=uuid4()
-        ))
+        provider.collect(
+            CollectionRequest(
+                source_code="pichau",
+                search_query="GPU",
+                requested_at=NOW,
+                mission_id=uuid4(),
+            )
+        )
     )
 
     assert result.offers == offers
@@ -2333,8 +2546,11 @@ def test_pichau_cdp_zero_results_releases_valid_empty_collection(monkeypatch) ->
     result = asyncio.run(
         provider.collect(
             CollectionRequest(
-            source_code="pichau", search_query="zzz-nao-existe", requested_at=NOW, mission_id=uuid4()
-        )
+                source_code="pichau",
+                search_query="zzz-nao-existe",
+                requested_at=NOW,
+                mission_id=uuid4(),
+            )
         )
     )
 
@@ -2375,9 +2591,14 @@ def test_pichau_cdp_neither_state_raises_blocked_not_silent_empty(
 
     with pytest.raises(ProviderBlockedError):
         asyncio.run(
-            provider.collect(CollectionRequest(
-            source_code="pichau", search_query="GPU", requested_at=NOW, mission_id=uuid4()
-        ))
+            provider.collect(
+                CollectionRequest(
+                    source_code="pichau",
+                    search_query="GPU",
+                    requested_at=NOW,
+                    mission_id=uuid4(),
+                )
+            )
         )
 
 
@@ -2402,9 +2623,14 @@ def test_pichau_cdp_failure_never_falls_back_to_playwright(monkeypatch) -> None:
 
     with pytest.raises(EdgeCdpTransportError):
         asyncio.run(
-            provider.collect(CollectionRequest(
-            source_code="pichau", search_query="GPU", requested_at=NOW, mission_id=uuid4()
-        ))
+            provider.collect(
+                CollectionRequest(
+                    source_code="pichau",
+                    search_query="GPU",
+                    requested_at=NOW,
+                    mission_id=uuid4(),
+                )
+            )
         )
 
 

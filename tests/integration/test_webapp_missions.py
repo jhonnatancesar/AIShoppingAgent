@@ -633,3 +633,9 @@ def test_expired_status_is_filterable_reached_via_the_real_domain_transition(
     result = asyncio.run(list_expired())
 
     assert [item.id for item in result] == [mission.id]
+
+
+# Frente 5: os testes de "pesquisas em alta"/"todas as pesquisas" que
+# viviam aqui foram MOVIDOS para tests/integration/test_search_history.py
+# -- a fonte de verdade não é mais missão nenhuma, ver
+# app.quotas.query/app.webapp.search_router.

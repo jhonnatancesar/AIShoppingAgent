@@ -39,8 +39,7 @@ class Offer(Base):
             name="ck_offers_image_url_http",
         ),
         CheckConstraint(
-            "rating_average IS NULL OR "
-            "(rating_average >= 0 AND rating_average <= 5)",
+            "rating_average IS NULL OR (rating_average >= 0 AND rating_average <= 5)",
             name="ck_offers_rating_average_range",
         ),
         CheckConstraint(
@@ -57,6 +56,19 @@ class Offer(Base):
         Index("ix_offers_product_id", "product_id"),
         Index("ix_offers_store_id", "store_id"),
         Index("ix_offers_seller_id", "seller_id"),
+        Index(
+            "ix_offers_superseded_by_id",
+            "superseded_by_id",
+            postgresql_where="superseded_by_id IS NOT NULL",
+        ),
+        CheckConstraint(
+            "superseded_by_id IS NULL OR superseded_by_id <> id",
+            name="ck_offers_superseded_by_not_self",
+        ),
+        CheckConstraint(
+            "(superseded_by_id IS NULL) = (superseded_at IS NULL)",
+            name="ck_offers_superseded_pair_complete",
+        ),
         Index(
             "uq_offers_retailer_external_id",
             "store_id",
@@ -116,9 +128,7 @@ class Offer(Base):
     external_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     url: Mapped[str] = mapped_column(Text, nullable=False)
     image_url: Mapped[str | None] = mapped_column(Text, nullable=True)
-    rating_average: Mapped[Decimal | None] = mapped_column(
-        Numeric(3, 2), nullable=True
-    )
+    rating_average: Mapped[Decimal | None] = mapped_column(Numeric(3, 2), nullable=True)
     review_count: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     rating_observed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
@@ -150,6 +160,26 @@ class Offer(Base):
     redundância semântica (`app.collection.orchestration._persist_phase_a`)
     -- é o único lugar que preserva "a oferta continuou sendo vista" sem
     tocar no histórico append-only de `PriceObservation`."""
+    superseded_by_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("offers.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    superseded_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    """Rodada de frescor (2026-09-11, correção sobre a exclusão só por
+    idade): quando um vendedor real é identificado pela primeira vez
+    para um anúncio (`store_id`+`external_id`) que antes só existia sem
+    vendedor (`seller_id IS NULL`), a Offer ANTIGA é marcada como
+    substituída pela NOVA (`_supersede_old_unattributed_offer`,
+    `orchestration.py`) -- some de listagem/comparação IMEDIATAMENTE
+    (não espera a oferta antiga envelhecer via `resolve_offer_
+    freshness`), mas seu histórico (`PriceObservation`) permanece
+    intocado e acessível por ID direto -- nunca fundido nem reatribuído
+    ao vendedor novo. `ondelete=SET NULL` (nunca CASCADE/RESTRICT): a
+    Offer nova pode ser removida sem impedir a remoção da antiga nem
+    reviver a supersessão como se apontasse pra outra linha."""
 
 
 class OfferShortLink(Base):

@@ -137,7 +137,9 @@ def _store_id(integration_database, code: str) -> UUID:
         return session.scalar(select(Store.id).where(Store.code == code))
 
 
-def _make_shared_mission(integration_database, user_id: UUID, *, search_query: str) -> Mission:
+def _make_shared_mission(
+    integration_database, user_id: UUID, *, search_query: str
+) -> Mission:
     async def run():
         async with integration_database.async_sessions.begin() as session:
             mission, _codes = await create_mission_from_criteria_async(
@@ -215,7 +217,9 @@ def _seed_cooldown(sessions, user_id: UUID, *, next_eligible_at: datetime) -> No
 
 def test_linked_mission_excluded_from_legacy_selector(integration_database) -> None:
     user_id = _seed_user(integration_database.sessions, "linked")
-    mission = _make_shared_mission(integration_database, user_id, search_query="RTX 5070 Ti")
+    mission = _make_shared_mission(
+        integration_database, user_id, search_query="RTX 5070 Ti"
+    )
     item_id = _monitoring_item_id_for(integration_database.sessions, mission.id)
     assert item_id is not None
 
@@ -240,7 +244,9 @@ def test_linked_mission_excluded_from_legacy_selector(integration_database) -> N
     # mesmo tendo `MissionSchedule` fisicamente presente.
     async def run_legacy():
         async with integration_database.async_sessions() as session:
-            claims = await claim_due_collections(session, now=NOW, limit=25, max_users=5)
+            claims = await claim_due_collections(
+                session, now=NOW, limit=25, max_users=5
+            )
             await session.commit()
             return claims
 
@@ -268,7 +274,9 @@ def test_shared_high_activity_signals_batch_flag_via_claim_due_work(
     from app.core.config import Settings
 
     user_id = _seed_user(integration_database.sessions, "sharedflag")
-    mission = _make_shared_mission(integration_database, user_id, search_query="RTX 5070 Ti")
+    mission = _make_shared_mission(
+        integration_database, user_id, search_query="RTX 5070 Ti"
+    )
     item_id = _monitoring_item_id_for(integration_database.sessions, mission.id)
     assert item_id is not None
     amazon_id = _store_id(integration_database, "amazon")
@@ -302,12 +310,16 @@ def test_shared_high_activity_signals_batch_flag_via_claim_due_work(
     assert batch.high_activity_detected is True
 
 
-def test_shared_high_activity_never_signals_without_settings(integration_database) -> None:
+def test_shared_high_activity_never_signals_without_settings(
+    integration_database,
+) -> None:
     """Mesmo cenário, sem `settings` -- `claim_due_work` nem cria o
     coletor (`high_activity_notify=None`), então `high_activity_detected`
     fica `False` mesmo com a cadência tendo decidido HIGH_ACTIVITY."""
     user_id = _seed_user(integration_database.sessions, "sharedflagoff")
-    mission = _make_shared_mission(integration_database, user_id, search_query="RTX 5070 Ti")
+    mission = _make_shared_mission(
+        integration_database, user_id, search_query="RTX 5070 Ti"
+    )
     item_id = _monitoring_item_id_for(integration_database.sessions, mission.id)
     assert item_id is not None
     amazon_id = _store_id(integration_database, "amazon")
@@ -323,7 +335,11 @@ def test_shared_high_activity_never_signals_without_settings(integration_databas
     async def run():
         async with integration_database.async_sessions() as session:
             batch = await claim_due_work(
-                session, now=NOW, limit=25, max_users=5, cadence_config=_DETERMINISTIC_CADENCE
+                session,
+                now=NOW,
+                limit=25,
+                max_users=5,
+                cadence_config=_DETERMINISTIC_CADENCE,
             )
             await session.commit()
             return batch
@@ -345,7 +361,9 @@ def test_shared_high_activity_notifies_coupon_worker_after_commit_via_run_batch(
     from app.core.config import Settings
 
     user_id = _seed_user(integration_database.sessions, "sharednotify")
-    mission = _make_shared_mission(integration_database, user_id, search_query="RTX 5070 Ti")
+    mission = _make_shared_mission(
+        integration_database, user_id, search_query="RTX 5070 Ti"
+    )
     item_id = _monitoring_item_id_for(integration_database.sessions, mission.id)
     assert item_id is not None
     amazon_id = _store_id(integration_database, "amazon")
@@ -399,7 +417,9 @@ def test_shared_high_activity_never_notifies_without_settings(
     integration_database, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     user_id = _seed_user(integration_database.sessions, "sharednotifyoff")
-    mission = _make_shared_mission(integration_database, user_id, search_query="RTX 5070 Ti")
+    mission = _make_shared_mission(
+        integration_database, user_id, search_query="RTX 5070 Ti"
+    )
     item_id = _monitoring_item_id_for(integration_database.sessions, mission.id)
     assert item_id is not None
     amazon_id = _store_id(integration_database, "amazon")
@@ -448,7 +468,9 @@ def test_high_activity_notify_not_duplicated_across_legacy_and_shared_same_batch
     from app.core.config import Settings
 
     shared_user = _seed_user(integration_database.sessions, "dedup-shared")
-    mission = _make_shared_mission(integration_database, shared_user, search_query="RTX 5070 Ti")
+    mission = _make_shared_mission(
+        integration_database, shared_user, search_query="RTX 5070 Ti"
+    )
     item_id = _monitoring_item_id_for(integration_database.sessions, mission.id)
     assert item_id is not None
     amazon_id = _store_id(integration_database, "amazon")
@@ -462,7 +484,9 @@ def test_high_activity_notify_not_duplicated_across_legacy_and_shared_same_batch
     with integration_database.sessions.begin() as session:
         session.add(
             StoreActivityState(
-                store_id=amazon_id, scope_id=item_id, high_activity_until=NOW + timedelta(hours=2)
+                store_id=amazon_id,
+                scope_id=item_id,
+                high_activity_until=NOW + timedelta(hours=2),
             )
         )
         session.add(
@@ -510,7 +534,9 @@ def test_high_activity_notify_not_duplicated_across_legacy_and_shared_same_batch
 # ---------------------------------------------------------------------------
 
 
-def test_claim_due_collections_never_creates_shared_side_effects(integration_database) -> None:
+def test_claim_due_collections_never_creates_shared_side_effects(
+    integration_database,
+) -> None:
     linked_user = _seed_user(integration_database.sessions, "cdc-linked")
     linked_mission = _make_shared_mission(
         integration_database, linked_user, search_query="RTX 5070 Ti"
@@ -526,7 +552,9 @@ def test_claim_due_collections_never_creates_shared_side_effects(integration_dat
 
     async def run():
         async with integration_database.async_sessions() as session:
-            claims = await claim_due_collections(session, now=NOW, limit=25, max_users=5)
+            claims = await claim_due_collections(
+                session, now=NOW, limit=25, max_users=5
+            )
             await session.commit()
             return claims
 
@@ -549,23 +577,35 @@ def test_claim_due_collections_never_creates_shared_side_effects(integration_dat
 # ---------------------------------------------------------------------------
 
 
-def test_rider_queue_state_never_touched_while_owner_advances(integration_database) -> None:
+def test_rider_queue_state_never_touched_while_owner_advances(
+    integration_database,
+) -> None:
     owner_id = _seed_user(integration_database.sessions, "owner")
     rider_id = _seed_user(integration_database.sessions, "rider")
-    owner_mission = _make_shared_mission(integration_database, owner_id, search_query="RTX 5070 Ti")
+    owner_mission = _make_shared_mission(
+        integration_database, owner_id, search_query="RTX 5070 Ti"
+    )
     rider_mission = _make_shared_mission(
         integration_database, rider_id, search_query="NVIDIA GeForce RTX 5070 Ti"
     )
     item_id = _monitoring_item_id_for(integration_database.sessions, owner_mission.id)
-    assert item_id == _monitoring_item_id_for(integration_database.sessions, rider_mission.id)
+    assert item_id == _monitoring_item_id_for(
+        integration_database.sessions, rider_mission.id
+    )
 
     rider_next_eligible = NOW + timedelta(hours=3)
-    _seed_cooldown(integration_database.sessions, rider_id, next_eligible_at=rider_next_eligible)
+    _seed_cooldown(
+        integration_database.sessions, rider_id, next_eligible_at=rider_next_eligible
+    )
 
     async def run():
         async with integration_database.async_sessions() as session:
             batch = await claim_due_work(
-                session, now=NOW, limit=25, max_users=5, cadence_config=_DETERMINISTIC_CADENCE
+                session,
+                now=NOW,
+                limit=25,
+                max_users=5,
+                cadence_config=_DETERMINISTIC_CADENCE,
             )
             await session.commit()
             return batch
@@ -590,23 +630,37 @@ def test_rider_queue_state_never_touched_while_owner_advances(integration_databa
 # ---------------------------------------------------------------------------
 
 
-def test_shared_claim_not_selected_when_all_linked_users_in_cooldown(integration_database) -> None:
+def test_shared_claim_not_selected_when_all_linked_users_in_cooldown(
+    integration_database,
+) -> None:
     user_a = _seed_user(integration_database.sessions, "allcooldown-a")
     user_b = _seed_user(integration_database.sessions, "allcooldown-b")
-    mission_a = _make_shared_mission(integration_database, user_a, search_query="RTX 5070 Ti")
+    mission_a = _make_shared_mission(
+        integration_database, user_a, search_query="RTX 5070 Ti"
+    )
     mission_b = _make_shared_mission(
         integration_database, user_b, search_query="NVIDIA GeForce RTX 5070 Ti"
     )
     item_id = _monitoring_item_id_for(integration_database.sessions, mission_a.id)
-    assert item_id == _monitoring_item_id_for(integration_database.sessions, mission_b.id)
+    assert item_id == _monitoring_item_id_for(
+        integration_database.sessions, mission_b.id
+    )
 
-    _seed_cooldown(integration_database.sessions, user_a, next_eligible_at=NOW + timedelta(hours=1))
-    _seed_cooldown(integration_database.sessions, user_b, next_eligible_at=NOW + timedelta(hours=1))
+    _seed_cooldown(
+        integration_database.sessions, user_a, next_eligible_at=NOW + timedelta(hours=1)
+    )
+    _seed_cooldown(
+        integration_database.sessions, user_b, next_eligible_at=NOW + timedelta(hours=1)
+    )
 
     async def run():
         async with integration_database.async_sessions() as session:
             batch = await claim_due_work(
-                session, now=NOW, limit=25, max_users=5, cadence_config=_DETERMINISTIC_CADENCE
+                session,
+                now=NOW,
+                limit=25,
+                max_users=5,
+                cadence_config=_DETERMINISTIC_CADENCE,
             )
             await session.commit()
             return batch
@@ -634,7 +688,9 @@ def test_standalone_shared_collection_allows_null_owner_without_touching_queue_s
     integration_database,
 ) -> None:
     user_id = _seed_user(integration_database.sessions, "standalone")
-    mission = _make_shared_mission(integration_database, user_id, search_query="RTX 5070 Ti")
+    mission = _make_shared_mission(
+        integration_database, user_id, search_query="RTX 5070 Ti"
+    )
     item_id = _monitoring_item_id_for(integration_database.sessions, mission.id)
     amazon_id = _store_id(integration_database, "amazon")
     provider = _CountingGpuProvider()
@@ -663,15 +719,23 @@ def test_standalone_shared_collection_allows_null_owner_without_touching_queue_s
     assert _queue_state(integration_database.sessions, user_id) is None
 
 
-def test_orchestrated_shared_claim_always_has_non_null_owner(integration_database) -> None:
+def test_orchestrated_shared_claim_always_has_non_null_owner(
+    integration_database,
+) -> None:
     user_id = _seed_user(integration_database.sessions, "orchestrated")
-    mission = _make_shared_mission(integration_database, user_id, search_query="RTX 5070 Ti")
+    mission = _make_shared_mission(
+        integration_database, user_id, search_query="RTX 5070 Ti"
+    )
     item_id = _monitoring_item_id_for(integration_database.sessions, mission.id)
 
     async def run():
         async with integration_database.async_sessions() as session:
             batch = await claim_due_work(
-                session, now=NOW, limit=25, max_users=5, cadence_config=_DETERMINISTIC_CADENCE
+                session,
+                now=NOW,
+                limit=25,
+                max_users=5,
+                cadence_config=_DETERMINISTIC_CADENCE,
             )
             await session.commit()
             return batch
@@ -692,11 +756,13 @@ def test_orchestrated_shared_claim_always_has_non_null_owner(integration_databas
 # ---------------------------------------------------------------------------
 
 
-def test_reserved_owner_with_zero_real_claims_never_advances_cooldown(integration_database) -> None:
+def test_reserved_owner_with_zero_real_claims_never_advances_cooldown(
+    integration_database,
+) -> None:
     from app.collection.fairness import _advance_store_throttle
 
     user_id = _seed_user(integration_database.sessions, "zeroclaim")
-    mission = _make_shared_mission(integration_database, user_id, search_query="RTX 5070 Ti")
+    _make_shared_mission(integration_database, user_id, search_query="RTX 5070 Ti")
     amazon_id = _store_id(integration_database, "amazon")
 
     async def seed_throttle():
@@ -711,7 +777,11 @@ def test_reserved_owner_with_zero_real_claims_never_advances_cooldown(integratio
     async def run():
         async with integration_database.async_sessions() as session:
             batch = await claim_due_work(
-                session, now=NOW, limit=25, max_users=5, cadence_config=_DETERMINISTIC_CADENCE
+                session,
+                now=NOW,
+                limit=25,
+                max_users=5,
+                cadence_config=_DETERMINISTIC_CADENCE,
             )
             await session.commit()
             return batch
@@ -736,13 +806,19 @@ def test_reserved_owner_with_zero_real_claims_never_advances_cooldown(integratio
 # ---------------------------------------------------------------------------
 
 
-def test_collection_batch_result_totals_include_both_paths(integration_database) -> None:
+def test_collection_batch_result_totals_include_both_paths(
+    integration_database,
+) -> None:
     shared_user = _seed_user(integration_database.sessions, "totals-shared")
     _make_shared_mission(integration_database, shared_user, search_query="RTX 5070 Ti")
     legacy_user = _seed_user(integration_database.sessions, "totals-legacy")
     pichau_id = _store_id(integration_database, "pichau")
     _make_legacy_mission(
-        integration_database, legacy_user, due_at=NOW, store_id=pichau_id, label="totals"
+        integration_database,
+        legacy_user,
+        due_at=NOW,
+        store_id=pichau_id,
+        label="totals",
     )
 
     engine = create_collection_async_database_engine(integration_database.settings)
@@ -773,7 +849,9 @@ class _EmptyPichauProvider:
     source_code = "pichau"
 
     async def collect(self, request: CollectionRequest) -> CollectionResult:
-        return CollectionResult(self.source_code, request.requested_at, request.requested_at)
+        return CollectionResult(
+            self.source_code, request.requested_at, request.requested_at
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -800,13 +878,18 @@ def test_concurrent_claim_due_work_never_double_claims_and_never_deadlocks(
 
     def _claim(_index: int):
         async def _claim_async():
-            engine = create_collection_async_database_engine(integration_database.settings)
+            engine = create_collection_async_database_engine(
+                integration_database.settings
+            )
             sessions = create_async_session_factory(engine)
             try:
                 async with sessions() as session, session.begin():
                     barrier.wait(timeout=10)
                     return await claim_due_work(
-                        session, now=NOW, limit=25, max_users=5,
+                        session,
+                        now=NOW,
+                        limit=25,
+                        max_users=5,
                         cadence_config=_DETERMINISTIC_CADENCE,
                     )
             finally:
@@ -825,7 +908,9 @@ def test_concurrent_claim_due_work_never_double_claims_and_never_deadlocks(
     with integration_database.sessions() as session:
         legacy_runs = list(
             session.scalars(
-                select(CollectionRun).where(CollectionRun.mission_id == legacy_mission.id)
+                select(CollectionRun).where(
+                    CollectionRun.mission_id == legacy_mission.id
+                )
             )
         )
         shared_runs = list(

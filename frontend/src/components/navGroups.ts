@@ -1,5 +1,5 @@
 import type { ComponentType } from 'react'
-import { Home, LifeBuoy, Search, ShieldCheck, ShoppingBag, Target, Ticket, UserRound } from 'lucide-react'
+import { Code2, Home, LifeBuoy, Search, ShieldCheck, ShoppingBag, Target, Ticket, UserRound } from 'lucide-react'
 
 interface NavItem { to: string; label: string; icon: ComponentType<{ className?: string }>; end?: boolean }
 
@@ -17,18 +17,22 @@ const ADMIN_NAV: NavItem[] = [
   { to: '/admin', label: 'Administração', icon: ShieldCheck, end: true },
 ]
 
+const DEV_NAV: NavItem[] = [
+  { to: '/app/dev/pesquisas', label: 'Pesquisas (DEV)', icon: Code2 },
+]
+
 interface NavGroupSpec { label?: string; items: NavItem[] }
 
-/** Única fonte da navegação exibida (Subtask 8) -- pura e testável sem
- * Router/AuthContext: USER só enxerga `USER_NAV`; ADMIN (permissão real
- * da sessão, nunca escolha do login) enxerga USER_NAV + a seção
- * "Administração", nunca um layout/nav totalmente separado. */
-export function navGroupsFor(isAdmin: boolean): NavGroupSpec[] {
-  if (!isAdmin) return [{ items: USER_NAV }]
-  return [
-    { label: 'Principal', items: USER_NAV },
-    { label: 'Administração', items: ADMIN_NAV },
-  ]
+/** Única fonte da navegação exibida (Subtask 8, estendida na Frente 5) --
+ * pura e testável sem Router/AuthContext: USER só enxerga `USER_NAV`;
+ * ADMIN (permissão real da sessão, nunca escolha do login) enxerga
+ * USER_NAV + "Administração"; DEV enxerga tudo isso mais "Pesquisas
+ * (DEV)", nunca um layout/nav totalmente separado. */
+export function navGroupsFor(isAdmin: boolean, isDev: boolean): NavGroupSpec[] {
+  const groups: NavGroupSpec[] = [{ label: isAdmin ? 'Principal' : undefined, items: USER_NAV }]
+  if (isAdmin) groups.push({ label: 'Administração', items: ADMIN_NAV })
+  if (isDev) groups.push({ label: 'DEV', items: DEV_NAV })
+  return groups
 }
 
 export type { NavItem, NavGroupSpec }

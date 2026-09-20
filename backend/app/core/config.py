@@ -250,7 +250,9 @@ class Settings(BaseSettings):
     # até que um valor real seja decidido explicitamente e configurado
     # aqui. `max_active_missions_override` por usuário continua tendo
     # prioridade sobre este default, igual ao de USER.
-    default_max_active_missions_admin_dev: int | None = Field(default=None, ge=1, le=1000)
+    default_max_active_missions_admin_dev: int | None = Field(
+        default=None, ge=1, le=1000
+    )
     quota_warning_threshold: float = Field(default=0.8, gt=0, le=1.0)
     # TASK-108: fila justa por usuário -- camada ortogonal ao backoff por
     # provider (`MissionSource.next_eligible_at`, DEC-046, já existente,
@@ -396,6 +398,16 @@ class Settings(BaseSettings):
     seguem exatamente como antes de cupons existir. O Telegram nunca
     precisa da flag diretamente -- ele só lê um snapshot que só existe no
     payload quando esta flag esteve ligada no momento da decisão."""
+    product_identity_learning_enabled: bool = Field(default=False)
+    """Rodada de aprendizado de identidade (2026-09-12) -- liga a
+    tentativa de `resolve_or_learn_product_variant` (extração assistida
+    por IA via César Core) na Fase B (`_classify`) quando o Product de
+    uma oferta ainda não tem `identity_key` (os 5 extratores regex não
+    reconheceram o título). `False`: comportamento idêntico a antes
+    desta rodada -- título não reconhecido pelos extratores regex
+    continua "não identificado" para sempre, zero chamada de IA nova,
+    zero linha em `product_identity_candidates`. Default `False` (mesmo
+    padrão FASE G) até validação em DEV."""
 
     @field_validator("edge_cdp_url")
     @classmethod

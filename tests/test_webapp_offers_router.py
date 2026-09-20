@@ -295,7 +295,9 @@ def test_offer_never_queries_coupons_when_flag_is_off(
         AsyncMock(return_value=detail),
     )
     query = AsyncMock(side_effect=AssertionError("não deveria consultar cupons"))
-    monkeypatch.setattr("app.webapp.offers_router.get_candidate_coupons_for_offer", query)
+    monkeypatch.setattr(
+        "app.webapp.offers_router.get_candidate_coupons_for_offer", query
+    )
 
     response = client.get(f"/api/v1/offers/{detail.offer.id}", cookies=_cookies())
 
@@ -338,7 +340,9 @@ def test_list_offers_shows_applied_coupon_when_eligible(
     assert response.status_code == 200
     body = response.json()
     assert len(body["items"]) == 1
-    assert body["items"][0]["latest_observation"]["amount"] == "4599.00"  # original intocado
+    assert (
+        body["items"][0]["latest_observation"]["amount"] == "4599.00"
+    )  # original intocado
     assert body["items"][0]["applied_coupon"] == {
         "code": "SITE15",
         "discount_kind": "fixed_amount",
@@ -687,17 +691,32 @@ def test_daily_low_points_query_omits_lower_bound_for_period_all() -> None:
 def test_current_amount_query_resolves_latest_observation_per_offer_before_validity() -> (
     None
 ):
+    """Rodada de frescor: `_resolve_current_amount` agora busca candidatos
+    via `session.execute` (não mais um `MIN()` escalar direto) para poder
+    filtrar cada um por `resolve_offer_freshness` em seguida -- este
+    teste continua verificando só a ESTRUTURA da query de candidatos
+    (mesma garantia de sempre: latest-per-offer antes de checar
+    validade), sem exercitar o loop de frescor (mock devolve zero
+    candidatos)."""
     session = MagicMock()
-    session.scalar = AsyncMock(return_value=Decimal("4599.00"))
+
+    async def fake_execute(statement, *args, **kwargs):
+        return MagicMock(all=lambda: [])
+
+    session.execute = AsyncMock(side_effect=fake_execute)
     product_id, user_id = uuid4(), uuid4()
 
     asyncio.run(
         _resolve_current_amount(
-            session, product_id=product_id, user_id=user_id, reference_currency="BRL"
+            session,
+            product_id=product_id,
+            user_id=user_id,
+            reference_currency="BRL",
+            now=NOW,
         )
     )
 
-    statement = session.scalar.await_args.args[0]
+    statement = session.execute.await_args.args[0]
     sql = str(
         statement.compile(
             dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}

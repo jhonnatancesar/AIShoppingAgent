@@ -7,7 +7,15 @@ from sqlalchemy import CheckConstraint, UniqueConstraint
 
 
 def test_product_table_matches_data_contract() -> None:
-    """Colunas, nulabilidade e limites devem refletir o modelo documentado."""
+    """Colunas, nulabilidade e limites devem refletir o modelo documentado.
+
+    Achado (rodada de 2026-09-12, correção real vs. atualização de
+    teste): `canonical_image_url` (Subtask 4, auditoria GG Oferta,
+    migração `20260830_0001`) já é usado em produção
+    (`app.collection.orchestration._maybe_set_canonical_image`) e é
+    corretamente nullable (nem toda oferta tem imagem canônica
+    resolvida) -- implementação correta, só o teste nunca foi
+    atualizado quando a coluna foi adicionada."""
     table = Product.__table__
 
     assert table.name == "products"
@@ -24,6 +32,7 @@ def test_product_table_matches_data_contract() -> None:
         table.c.family_key,
         table.c.identity_key,
         table.c.identity_version,
+        table.c.canonical_image_url,
         table.c.created_at,
         table.c.updated_at,
     ]
@@ -36,6 +45,7 @@ def test_product_table_matches_data_contract() -> None:
     assert table.c.model.type.length == 160
     assert table.c.display_name.nullable is True
     assert table.c.display_name.type.length == 300
+    assert table.c.canonical_image_url.nullable is True
     assert table.c.created_at.type.timezone is True
     assert table.c.updated_at.type.timezone is True
 
@@ -55,6 +65,7 @@ def test_product_table_rejects_blank_text_by_constraint() -> None:
         "ck_products_display_name_not_blank",
         "ck_products_identity_complete",
         "ck_products_identity_version_positive",
+        "ck_products_canonical_image_url_http",
     }
 
 

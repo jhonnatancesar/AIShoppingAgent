@@ -72,6 +72,7 @@ from app.collection.models import (
     MissionOfferRelevance,
     OfferInstallmentOption,
     PriceObservation,
+    SharedCollectionOffer,
     StoreThrottleState,
     UserCollectionQueueState,
 )
@@ -142,7 +143,12 @@ from app.offers.models import Offer
 from app.products.identity import (
     IDENTITY_VERSION,
     ProductRequestKind,
+    ResolvedProductVariant,
     resolve_product_variant,
+)
+from app.products.identity_learning import (
+    apply_learned_identity,
+    resolve_or_learn_product_variant,
 )
 from app.products.models import Product
 from app.search.cesar_core_fetch import CesarCoreFetchProvider
@@ -1166,6 +1172,7 @@ class CollectionOrchestrator:
         *,
         ai_manager: AIProviderManager,
         ai_profile: UserRole = UserRole.ADMIN,
+        arbiter_ai_manager: AIProviderManager | None = None,
         firecrawl: CesarCoreFetchProvider | None = None,
         settings: Settings | None = None,
         normalizer: PriceNormalizer | None = None,
@@ -1186,8 +1193,9 @@ class CollectionOrchestrator:
         fan_out_task_budget: int = 100,
         fan_out_per_target_task_cap: int = 25,
         fan_out_concurrency: int = 4,
-        shared_collector: "Callable[..., Awaitable[SharedCollectionResult]] | None" = None,
-        fan_out_sweeper: "Callable[..., Awaitable[FanOutSweepSummary]] | None" = None,
+        shared_collector: Callable[..., Awaitable[SharedCollectionResult]]
+        | None = None,
+        fan_out_sweeper: Callable[..., Awaitable[FanOutSweepSummary]] | None = None,
     ) -> None:
         if schedule_interval_minutes <= 0:
             raise ValueError("schedule_interval_minutes must be positive")
@@ -1225,6 +1233,18 @@ class CollectionOrchestrator:
         self._adapter = adapter
         self._ai_manager = ai_manager
         self._ai_profile = ai_profile
+        # Checkpoint 3 (2026-09-13): `app.products.identity_arbiter`
+        # sempre chama a IA com `profile=UserRole.USER`
+        # (`cost_policy="free_only"`) -- quando `ai_manager` acima foi
+        # montado como ADMIN/DEV (produção real, `app.collection.
+        # worker.run_worker`), reusar o MESMO manager para o árbitro
+        # sempre falhava com `AIRequestError` (perfil não bate),
+        # silenciosamente convertido em `INCONCLUSIVE` fail-closed pelo
+        # árbitro -- nunca decidindo de verdade a zona cinzenta.
+        # `arbiter_ai_manager` (produção: `build_user_ai_provider_
+        # manager`) resolve isso; `None` cai de volta em `ai_manager`
+        # (comportamento antigo, coberto pelos testes com manager fake).
+        self._arbiter_ai_manager = arbiter_ai_manager
         # TASK-113: pesquisa de mercado -- `None` (default) desliga por
         # completo o recurso, mesmo comportamento de sempre (nenhum
         # `MarketPriceAssessment` é disparado); produção injeta os dois
@@ -1365,9 +1385,7 @@ class CollectionOrchestrator:
                     self._settings, now=effective_now
                 )
             except Exception:
-                logger.warning(
-                    "coupon_worker_promo_notify_failed", exc_info=True
-                )
+                logger.warning("coupon_worker_promo_notify_failed", exc_info=True)
         old_claims = await self._resolve_identities(batch.old_path)
         old_outcomes, shared_outcomes = await asyncio.gather(
             asyncio.gather(*(self._process(claim) for claim in old_claims)),
@@ -1418,8 +1436,8 @@ class CollectionOrchestrator:
         )
 
     async def _process_shared(
-        self, claim: "_SharedClaim", effective_now: datetime
-    ) -> "SharedCollectionResult":
+        self, claim: _SharedClaim, effective_now: datetime
+    ) -> SharedCollectionResult:
         """Análogo a `self._process` (teto de tempo, TASK-079 item 7) para
         o caminho compartilhado -- o claim em si JÁ aconteceu dentro da
         Fase A (`claim_due_work`); aqui só roda o "rabo" (rede +
@@ -1446,8 +1464,8 @@ class CollectionOrchestrator:
             )
 
     async def _process_shared_claim(
-        self, claim: "_SharedClaim", effective_now: datetime
-    ) -> "SharedCollectionResult":
+        self, claim: _SharedClaim, effective_now: datetime
+    ) -> SharedCollectionResult:
         async with self._semaphore:
             return await self._shared_collector(
                 self._session_factory,
@@ -1615,6 +1633,7 @@ class CollectionOrchestrator:
                 session_factory=self._session_factory,
                 firecrawl=self._firecrawl,
                 settings=self._settings,
+                arbiter_ai_manager=self._arbiter_ai_manager,
             )
             return await _persist_phase_c(
                 self._session_factory,
@@ -1829,6 +1848,15 @@ class _PendingOffer:
     previous_availability: Availability | None
     previous_observed_at: datetime | None
     forced_relevance: OfferRelevance | None = None
+    identity_unresolved: bool = False
+    """Rodada de aprendizado de identidade (2026-09-12): `True` quando o
+    `Product` desta oferta ainda não tem `identity_key` (os 5 extratores
+    regex de `app.products.identity` não reconheceram o título no
+    momento da coleta) -- sinaliza para a Fase B tentar `resolve_or_
+    learn_product_variant` (extração assistida por IA, fora desta
+    transação). `False` não significa "identidade resolvida com
+    sucesso" quando a extração falhar/cair em revisão -- só que a Fase B
+    não tenta de novo até a próxima coleta."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -1865,6 +1893,13 @@ class _AIOutcome:
     continua intacto em `PriceObservation.amount`. `None` quando não há
     cupom aplicável ou a etapa de cupom falhou (nunca derruba a coleta,
     ver `_classify`)."""
+    learned_identity: ResolvedProductVariant | None = None
+    """Rodada de aprendizado de identidade (2026-09-12): resultado de
+    `resolve_or_learn_product_variant` quando `pending.identity_unresolved`
+    era `True` -- `None` quando a extração falhou, não passou no
+    grounding (caiu em revisão humana) ou não foi tentada. A Fase C usa
+    isto para unificar/promover o `Product` ad-hoc desta oferta, nunca
+    a própria Fase B (que não abre transação retida)."""
 
 
 def _deterministic_product_relevance(
@@ -2133,12 +2168,33 @@ async def _persist_phase_a(
                             installment_total_amount=option.installment_total_amount,
                             discount_percent=option.discount_percent,
                             interest_kind=option.interest_kind,
+                            payment_method=option.payment_method,
                             is_highlighted=option.is_highlighted,
                         )
                     )
                 if current_state.installments:
                     await session.flush()
             offer.last_seen_at = item.raw_offer.collected_at
+            # Confirmação compacta (espelha shared_collection.py:508-518,
+            # mesmo formato/semântica -- agora também no caminho legado):
+            # registro durável de que ESTA run confirmou ESTA oferta,
+            # inclusive quando `observation` foi reaproveitada (redundante).
+            # Sem isto, a única marca de reconfirmação era `last_seen_at`
+            # (escalar mutável, sem histórico) -- nenhum jeito de saber
+            # quantas vezes uma oferta foi vista num dia, nem de fechar o
+            # "buraco" que uma coleta redundante deixava no gráfico de
+            # preço. Mesma tabela, sem tabela nova: `shared_collection_
+            # offers` só assume FK para `collection_runs.id`, que aceita
+            # tanto runs `mission_id`-owned (aqui) quanto `monitoring_
+            # item_id`-owned -- nenhum código existente assume que toda
+            # linha da tabela vem do caminho compartilhado.
+            session.add(
+                SharedCollectionOffer(
+                    collection_run_id=run.id,
+                    offer_id=offer.id,
+                    observation_id=observation.id,
+                )
+            )
 
             # Correção arquitetural (dedupe da TASK-093 x contrato de
             # alertas, DEC-097): fonte única de verdade do dedupe, calculada
@@ -2213,6 +2269,7 @@ async def _persist_phase_a(
                     previous_observed_at=(
                         previous.observed_at if previous is not None else None
                     ),
+                    identity_unresolved=product.identity_key is None,
                 )
             )
 
@@ -2236,6 +2293,7 @@ async def _run_phase_b(
     session_factory: async_sessionmaker[AsyncSession] | None = None,
     firecrawl: CesarCoreFetchProvider | None = None,
     settings: Settings | None = None,
+    arbiter_ai_manager: AIProviderManager | None = None,
 ) -> tuple[_AIOutcome, ...]:
     """Fase B (TASK-079): nenhuma transação aberta -- só chamadas de IA
     (e, TASK-113, Firecrawl -- mesma disciplina: nenhum lock retido).
@@ -2353,7 +2411,9 @@ async def _run_phase_b(
                     )
                     applied_coupon = None
             evaluation_amount = (
-                applied_coupon.final_amount if applied_coupon is not None else pending.amount
+                applied_coupon.final_amount
+                if applied_coupon is not None
+                else pending.amount
             )
             market_snapshot = await evaluate_trigger_and_maybe_research(
                 session_factory,
@@ -2370,14 +2430,57 @@ async def _run_phase_b(
                 now=outcome.completed_at,
                 settings=settings,
             )
+        learned_identity: ResolvedProductVariant | None = None
+        if (
+            pending.identity_unresolved
+            and settings is not None
+            and settings.product_identity_learning_enabled
+        ):
+            assert session_factory is not None
+            try:
+                async with session_factory() as identity_session:
+                    learned_identity = await resolve_or_learn_product_variant(
+                        identity_session,
+                        raw_title=pending.raw_title,
+                        ai_manager=ai_manager,
+                        profile=ai_profile,
+                        arbiter_ai_manager=arbiter_ai_manager,
+                        now=outcome.completed_at,
+                    )
+                    await identity_session.commit()
+            except Exception:
+                # Mesma disciplina de `coupon_evaluation_failed` acima:
+                # falha na extração/persistência do candidato (rede,
+                # provedor, corrida rara não coberta pelo retry interno)
+                # NUNCA derruba o processamento normal da oferta -- ela
+                # segue "não identificada" nesta rodada, tenta de novo na
+                # próxima coleta.
+                logger.warning(
+                    "product_identity_learning_failed",
+                    extra={"offer_id": str(pending.offer_id)},
+                    exc_info=True,
+                )
+                learned_identity = None
         return _AIOutcome(
-            pending.offer_id, relevance, display_title, market_snapshot, applied_coupon
+            pending.offer_id,
+            relevance,
+            display_title,
+            market_snapshot,
+            applied_coupon,
+            learned_identity,
         )
 
     to_process = [
         item
         for item in outcome.offers
-        if item.needs_relevance or item.needs_display_name or market_research_enabled
+        if item.needs_relevance
+        or item.needs_display_name
+        or market_research_enabled
+        or (
+            item.identity_unresolved
+            and settings is not None
+            and settings.product_identity_learning_enabled
+        )
     ]
     if not to_process:
         return ()
@@ -2424,6 +2527,23 @@ async def _persist_phase_c(
 
         for pending in outcome.offers:
             ai_outcome = ai_by_offer.get(pending.offer_id)
+            if ai_outcome is not None and ai_outcome.learned_identity is not None:
+                # Rodada de aprendizado de identidade (2026-09-12): produto
+                # ad-hoc (sem identity_key) reresolvido na Fase B -- promove/
+                # unifica AGORA, dentro desta seção crítica, para que a
+                # relevância determinística abaixo (`_deterministic_product_
+                # relevance`, se algum dia rodasse de novo para este Product)
+                # já veja a identidade nova. `product_id` pode ter mudado se
+                # a Offer migrou para um Product canônico já existente --
+                # relido de `Offer.product_id`, nunca de `pending.product_id`
+                # (que reflete o ad-hoc de ANTES desta aplicação).
+                current_product = await session.get(Product, pending.product_id)
+                if current_product is not None and current_product.identity_key is None:
+                    await apply_learned_identity(
+                        session,
+                        product=current_product,
+                        resolved=ai_outcome.learned_identity,
+                    )
             relevance: OfferRelevance | None = pending.forced_relevance
             if pending.forced_relevance is not None:
                 await session.execute(
@@ -2845,6 +2965,45 @@ async def _acquire_creation_locks(session: AsyncSession, keys: frozenset[str]) -
         )
 
 
+async def _supersede_old_unattributed_offer(
+    session: AsyncSession, *, store_id: UUID, seller_id: UUID | None, new_offer: Offer
+) -> None:
+    """Associação inequívoca do MESMO anúncio (`store_id`+`external_id`
+    reais, nunca por título/produto) que antes não tinha vendedor
+    identificado, agora com um vendedor real -- marca a representação
+    ANTIGA (`seller_id IS NULL`) como substituída pela NOVA para
+    apresentação atual (listagem/comparação, ver `_accessible_offer_
+    exists` em `app.offers.query`), IMEDIATAMENTE nesta mesma
+    transação, sem esperar a oferta antiga envelhecer via `resolve_
+    offer_freshness`. Preserva o histórico da antiga intocado (nenhuma
+    `PriceObservation` é movida/reatribuída) e NUNCA atribui esse
+    histórico retrospectivamente ao vendedor novo (a antiga continua
+    com `seller_id IS NULL` para sempre). Só age quando o PRÓPRIO
+    anúncio (mesma loja, mesmo `external_id`) transita de sem-vendedor
+    para com-vendedor -- nunca esconde outras ofertas sem vendedor do
+    mesmo produto (de outras lojas, ou outros anúncios) que não sejam
+    este mesmo `external_id`. Idempotente (`superseded_by_id IS NULL`
+    no filtro): coleta seguinte do mesmo vendedor já identificado não
+    repete o efeito."""
+    if seller_id is None:
+        return
+    external_id = new_offer.external_id
+    if not external_id:
+        return
+    old_offer = await session.scalar(
+        select(Offer).where(
+            Offer.store_id == store_id,
+            Offer.external_id == external_id,
+            Offer.seller_id.is_(None),
+            Offer.id != new_offer.id,
+            Offer.superseded_by_id.is_(None),
+        )
+    )
+    if old_offer is not None:
+        old_offer.superseded_by_id = new_offer.id
+        old_offer.superseded_at = utc_now()
+
+
 async def _resolve_offer(session: AsyncSession, store_id: UUID, item: Any) -> Offer:
     seller = await _resolve_seller(session, store_id, item)
     seller_id = seller.id if seller else None
@@ -2870,6 +3029,9 @@ async def _resolve_offer(session: AsyncSession, store_id: UUID, item: Any) -> Of
             if target_product is not None:
                 _maybe_set_canonical_image(target_product, item.raw_offer.image_url)
         _apply_rating_snapshot(offer, item)
+        await _supersede_old_unattributed_offer(
+            session, store_id=store_id, seller_id=seller_id, new_offer=offer
+        )
         return offer
     product = await _resolve_global_product(session, item.raw_offer.title)
     unresolved_product = product is None
@@ -2893,6 +3055,9 @@ async def _resolve_offer(session: AsyncSession, store_id: UUID, item: Any) -> Of
                 await session.flush()
             session.add(offer)
             await session.flush()
+        await _supersede_old_unattributed_offer(
+            session, store_id=store_id, seller_id=seller_id, new_offer=offer
+        )
     except IntegrityError as error:
         if _constraint_name(error) not in _OFFER_IDENTITY_INDEXES:
             raise
@@ -2905,6 +3070,9 @@ async def _resolve_offer(session: AsyncSession, store_id: UUID, item: Any) -> Of
         )
         if winner is None:
             raise
+        await _supersede_old_unattributed_offer(
+            session, store_id=store_id, seller_id=seller_id, new_offer=winner
+        )
         if item.raw_offer.image_url is not None:
             winner.image_url = item.raw_offer.image_url
             winner_product = await session.get(Product, winner.product_id)
@@ -3716,6 +3884,7 @@ def _installment_snapshot(options: Sequence[Any]) -> frozenset[tuple[Any, ...]]:
             option.installment_total_amount,
             option.discount_percent,
             option.interest_kind,
+            option.payment_method,
             option.is_highlighted,
         )
         for option in options

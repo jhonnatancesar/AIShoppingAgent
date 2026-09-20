@@ -27,15 +27,19 @@ import asyncio
 import sys
 from uuid import uuid4
 
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.core.config import get_settings
-from app.database.session import create_async_database_engine, create_async_session_factory
+from app.database.session import (
+    create_async_database_engine,
+    create_async_session_factory,
+)
 from app.offers.models import Offer
 from app.products.identity import IDENTITY_VERSION, resolve_product_variant
 from app.products.models import Product
-from app.stores.models import Seller  # noqa: F401 -- registra o mapper p/ FK offers.seller_id
+from app.stores.models import (
+    Seller,  # noqa: F401 -- registra o mapper p/ FK offers.seller_id
+)
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 async def _affected_offers(session: AsyncSession) -> list[Offer]:
@@ -75,7 +79,9 @@ async def run(*, apply: bool) -> None:
     session_factory = create_async_session_factory(engine)
     async with session_factory() as session:
         offers = await _affected_offers(session)
-        print(f"Offers com Product category=cpu (identity_key preenchido): {len(offers)}")
+        print(
+            f"Offers com Product category=cpu (identity_key preenchido): {len(offers)}"
+        )
         changed = 0
         for offer in offers:
             raw_title = await _latest_raw_title(session, offer.id)
@@ -103,7 +109,9 @@ async def run(*, apply: bool) -> None:
                 continue
             if new_identity is not None:
                 target = await session.scalar(
-                    select(Product).where(Product.identity_key == new_identity.identity_key)
+                    select(Product).where(
+                        Product.identity_key == new_identity.identity_key
+                    )
                 )
                 if target is None:
                     target = Product(

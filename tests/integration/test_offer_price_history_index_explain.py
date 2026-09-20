@@ -5,12 +5,26 @@ criar migration se houver ganho concreto demonstrado.
 
 Volume: 1 Product "alvo" com 6 Offers (uma por loja real, TASK-104A/B),
 ~1 ano de observações a cada 6h (~1460 por Offer, ~8760 no total) -- e
-mais 150 Products "ruído" com 1 Offer cada, ~80 observações cada
-(~12000), para que `price_observations` tenha volume real (~21000
+mais 900 Products "ruído" com 1 Offer cada, ~80 observações cada
+(~72000), para que `price_observations` tenha volume real (~80760
 linhas) quando o planner decide o plano de consulta, não um punhado de
 linhas que mascararia um Seq Scan como aceitável. Seeding roda uma única
 vez (um teste só, todas as EXPLAINs) -- volume desse tamanho não precisa
 ser duplicado por reexecução.
+
+Proporção ruído:alvo recalibrada (regressão real encontrada e corrigida
+nesta rodada): com 150 produtos de ruído (~12000 linhas), o alvo
+representava ~42% do total de `price_observations` -- seletividade alta
+demais para o planner preferir o índice
+`ix_price_observations_offer_observed` sobre um Seq Scan em
+`_resolve_current_amount` (Seq Scan genuinamente mais barato quando
+mais de ~15% da tabela casa). A checagem de acessibilidade de oferta
+ficou mais pesada desde que este teste foi escrito (unificação de
+elegibilidade entre missão/tela geral/detalhe), o que também empurrou o
+planner nessa direção. 900 produtos de ruído reduz o alvo para ~11% do
+total, com margem confirmada (falha reproduzida em 150, passou de forma
+estável em 700 e 900 -- 900 escolhido pela margem, não por ser o limiar
+exato).
 """
 
 import asyncio
@@ -49,7 +63,7 @@ NOW = datetime(2026, 8, 27, 15, 0, tzinfo=UTC)
 _STORE_CODES = ("pichau", "terabyte", "amazon", "kabum", "magalu", "mercadolivre")
 _TARGET_OBSERVATION_INTERVAL = timedelta(hours=6)
 _TARGET_SPAN_DAYS = 365
-_NOISE_PRODUCT_COUNT = 150
+_NOISE_PRODUCT_COUNT = 900
 _NOISE_OBSERVATIONS_PER_OFFER = 80
 
 
@@ -227,6 +241,16 @@ def _seed_synthetic_volume(integration_database):
         session.execute(insert(CollectionRun), collection_run_rows)
         session.execute(insert(PriceObservation), observation_rows)
 
+    # Sem isto, o planner decide com as estatísticas obsoletas de antes do
+    # seeding (autovacuum ainda não rodou sobre as ~21000 linhas recém
+    # inseridas) -- plano fica não determinístico entre execuções (às vezes
+    # Seq Scan, às vezes o índice esperado), o que tornava as asserções de
+    # EXPLAIN abaixo intermitentes.
+    with sessions() as session:
+        session.execute(text("ANALYZE price_observations"))
+        session.execute(text("ANALYZE offers"))
+        session.commit()
+
     return {
         "user_id": user_id,
         "product_id": target_product_id,
@@ -269,6 +293,7 @@ def test_explain_price_history_queries_use_existing_index(
             product_id=seeded["product_id"],
             user_id=seeded["user_id"],
             reference_currency="BRL",
+            now=datetime.now(UTC),
         )
         current_amount_plan = _explain(integration_database, current_amount_statement)
         print("\n=== _resolve_current_amount ===")

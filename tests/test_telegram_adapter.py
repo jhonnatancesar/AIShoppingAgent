@@ -55,6 +55,13 @@ def _message(**overrides: object) -> TelegramMessage:
     return TelegramMessage(**defaults)  # type: ignore[arg-type]
 
 
+def test_manager_property_exposes_interpreter_manager() -> None:
+    manager = _FakeManager(_response())
+    adapter = TelegramIntentAdapter(IntentInterpreter(manager))
+
+    assert adapter.manager is manager
+
+
 @pytest.mark.anyio
 async def test_interpret_forwards_text_and_uses_local_clock_for_requested_at() -> None:
     """`requested_at` usa o relógio local, não `message.received_at` (TASK-058):

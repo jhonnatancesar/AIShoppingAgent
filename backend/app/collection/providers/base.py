@@ -182,6 +182,13 @@ class PlaywrightStoreProvider:
         """Lê o nome exibido do Seller durante o mesmo enriquecimento."""
         return None
 
+    async def resolve_seller_external_id(self, page: Page) -> str | None:
+        """Identificador estável do Seller (nunca só o nome, que pode se
+        repetir entre vendedores distintos) durante o mesmo enriquecimento.
+        Providers sem identificador estável disponível na página (ex.:
+        Amazon quando o vendedor é a própria plataforma) mantêm o padrão."""
+        return None
+
     async def resolve_offer_rating(self, page: Page) -> tuple[str, str] | None:
         """Lê nota+contagem estruturadas na página já aberta por outro motivo."""
 
@@ -444,11 +451,17 @@ class PlaywrightStoreProvider:
             is not PlaywrightStoreProvider.resolve_seller_name
             and self._marketplace_party_max_candidates > 0
         )
+        seller_external_id_enabled = (
+            type(self).resolve_seller_external_id
+            is not PlaywrightStoreProvider.resolve_seller_external_id
+            and self._marketplace_party_max_candidates > 0
+        )
         if not (
             parties_enabled
             or condition_enabled
             or availability_enabled
             or seller_name_enabled
+            or seller_external_id_enabled
             or installments_enabled
             or self.rating_detail_enabled
         ):
@@ -461,6 +474,8 @@ class PlaywrightStoreProvider:
         if availability_enabled:
             limits.append(self._marketplace_party_max_candidates)
         if seller_name_enabled:
+            limits.append(self._marketplace_party_max_candidates)
+        if seller_external_id_enabled:
             limits.append(self._marketplace_party_max_candidates)
         if installments_enabled:
             limits.append(self._installment_option_max_candidates)
@@ -475,6 +490,7 @@ class PlaywrightStoreProvider:
                 str | None,
                 tuple[RawInstallmentOption, ...] | None,
                 tuple[str, str] | None,
+                str | None,
                 str | None,
                 str | None,
             ],
@@ -533,6 +549,15 @@ class PlaywrightStoreProvider:
                         seller_name = await self.resolve_seller_name(page)
                     except Exception:
                         seller_name = None
+                seller_external_id: str | None = None
+                if (
+                    seller_external_id_enabled
+                    and position < self._marketplace_party_max_candidates
+                ):
+                    try:
+                        seller_external_id = await self.resolve_seller_external_id(page)
+                    except Exception:
+                        seller_external_id = None
                 if (
                     installments_enabled
                     and position < self._installment_option_max_candidates
@@ -553,6 +578,7 @@ class PlaywrightStoreProvider:
                     rating,
                     raw_availability,
                     seller_name,
+                    seller_external_id,
                 )
 
         def enriched(offer: RawCollectedOffer) -> RawCollectedOffer:
@@ -566,6 +592,7 @@ class PlaywrightStoreProvider:
                 rating,
                 availability,
                 seller_name,
+                seller_external_id,
             ) = resolved[offer.url]
             return replace(
                 offer,
@@ -583,6 +610,7 @@ class PlaywrightStoreProvider:
                 ),
                 raw_condition=condition or offer.raw_condition,
                 raw_availability=availability or offer.raw_availability,
+                seller_external_id=seller_external_id or offer.seller_external_id,
                 seller_name=seller_name or offer.seller_name,
                 installment_options=(
                     _merge_installment_options(offer.installment_options, options)
@@ -865,46 +893,60 @@ def _merge_installment_options(
     card_options: tuple[RawInstallmentOption, ...],
     page_options: tuple[RawInstallmentOption, ...],
 ) -> tuple[RawInstallmentOption, ...]:
-    """TASK-089: combina o que já veio do card com o que a página
-    individual acrescentou -- nunca duplica a mesma `installment_count`.
+    """Preserva condições distintas; enriquece somente correspondências inequívocas.
 
-    Mescla campo a campo, nunca substitui a opção inteira: o card às
-    vezes é a ÚNICA fonte de `raw_total_amount` (ex.: Pichau) para a
-    mesma quantidade que a página individual detalha com mais precisão
-    (desconto/juros explícitos, ex.: a tabela "PARCELAMENTO"). Perder o
-    total do card ao "vencer" com a versão da página seria destruir
-    informação real sem necessidade -- cada campo usa a fonte que o tem,
-    preferindo a página quando as duas o informam (mais recente/detalhada).
+    Para a mesma condição, o valor do detalhe prevalece sobre o resumo do
+    card, inclusive quando a loja apresenta diferenças de arredondamento.
+    Modalidades e juros distintos no detalhe continuam separados.
+    """
 
-    `is_highlighted` nunca é reescrito aqui: quando a página confirma a
-    mesma `installment_count` do card, o `replace(...)` abaixo não lista o
-    campo, então o `True` original do card sobrevive intacto -- é
-    exatamente a condição que a própria loja destacou. Contagens que só
-    existem na página entram com o próprio valor do `page_option`, que
-    nunca é `True` (só `_installment_options_from_row` produz `True`)."""
-    by_count = {option.installment_count: option for option in card_options}
-    for page_option in page_options:
-        existing = by_count.get(page_option.installment_count)
-        if existing is None:
-            by_count[page_option.installment_count] = page_option
+    def compatible(left: RawInstallmentOption, right: RawInstallmentOption) -> bool:
+        if left.installment_count != right.installment_count:
+            return False
+        for name in ("discount_percent", "payment_method"):
+            a, b = getattr(left, name), getattr(right, name)
+            if isinstance(a, str) and isinstance(b, str):
+                a, b = "".join(a.split()), "".join(b.split())
+            if a is not None and b is not None and a != b:
+                return False
+        unknown = InstallmentInterestKind.UNKNOWN
+        return left.interest_kind == right.interest_kind or unknown in (
+            left.interest_kind,
+            right.interest_kind,
+        )
+
+    # Todas as alternativas da página precisam estar presentes antes de tentar
+    # associar uma condição incompleta do card a uma modalidade específica.
+    result = list(dict.fromkeys(page_options))
+    for card in card_options:
+        matches = [i for i, option in enumerate(result) if compatible(card, option)]
+        if len(matches) != 1:
+            if not matches:
+                result.append(card)
             continue
-        by_count[page_option.installment_count] = replace(
-            existing,
-            raw_amount=page_option.raw_amount,
-            raw_total_amount=(
-                page_option.raw_total_amount
-                if page_option.raw_total_amount is not None
-                else existing.raw_total_amount
+        index = matches[0]
+        page = result[index]
+        result[index] = replace(
+            page,
+            raw_total_amount=page.raw_total_amount
+            or (
+                card.raw_total_amount
+                if "".join(page.raw_amount.split()) == "".join(card.raw_amount.split())
+                else None
             ),
             discount_percent=(
-                page_option.discount_percent
-                if page_option.discount_percent is not None
-                else existing.discount_percent
+                page.discount_percent
+                if page.discount_percent is not None
+                else card.discount_percent
             ),
+            payment_method=page.payment_method or card.payment_method,
             interest_kind=(
-                page_option.interest_kind
-                if page_option.interest_kind != InstallmentInterestKind.UNKNOWN
-                else existing.interest_kind
+                page.interest_kind
+                if page.interest_kind != InstallmentInterestKind.UNKNOWN
+                else card.interest_kind
             ),
+            is_highlighted=card.is_highlighted or page.is_highlighted,
         )
-    return tuple(by_count[count] for count in sorted(by_count))
+    return tuple(
+        sorted(dict.fromkeys(result), key=lambda option: option.installment_count)
+    )

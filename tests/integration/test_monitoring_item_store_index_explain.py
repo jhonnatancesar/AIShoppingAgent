@@ -13,7 +13,6 @@ due a qualquer instante dado" que o índice precisa servir bem.
 
 import asyncio
 from datetime import UTC, datetime, timedelta
-from uuid import uuid4
 
 import pytest
 from app.missions.models import MonitoringItem, MonitoringItemStore
@@ -27,17 +26,22 @@ _TOTAL_ROWS = 5000
 _DUE_FRACTION = 0.02
 
 
-def test_explain_monitoring_item_store_due_query_uses_index(integration_database, capsys) -> None:
+def test_explain_monitoring_item_store_due_query_uses_index(
+    integration_database, capsys
+) -> None:
     amazon_id = None
     with integration_database.sessions() as session:
         amazon_id = session.scalar(select(Store.id).where(Store.code == "amazon"))
 
     with integration_database.sessions.begin() as session:
-        items = [MonitoringItem(
-            monitoring_key=f"synthetic-explain-{i}",
-            identity_version=1,
-            canonical_identity={"category": "gpu", "model": f"synthetic-{i}"},
-        ) for i in range(_TOTAL_ROWS)]
+        items = [
+            MonitoringItem(
+                monitoring_key=f"synthetic-explain-{i}",
+                identity_version=1,
+                canonical_identity={"category": "gpu", "model": f"synthetic-{i}"},
+            )
+            for i in range(_TOTAL_ROWS)
+        ]
         session.add_all(items)
         session.flush()
         due_count = int(_TOTAL_ROWS * _DUE_FRACTION)
@@ -46,7 +50,9 @@ def test_explain_monitoring_item_store_due_query_uses_index(integration_database
                 monitoring_item_id=item.id,
                 store_id=amazon_id,
                 is_enabled=True,
-                next_run_at=(NOW - timedelta(minutes=1)) if index < due_count else (NOW + timedelta(hours=2)),
+                next_run_at=(NOW - timedelta(minutes=1))
+                if index < due_count
+                else (NOW + timedelta(hours=2)),
             )
             for index, item in enumerate(items)
         ]
@@ -69,7 +75,9 @@ def test_explain_monitoring_item_store_due_query_uses_index(integration_database
     plan = asyncio.run(explain())
     with capsys.disabled():
         print("\n----- EXPLAIN ANALYZE: seleção de candidatos compartilhados -----")
-        print(f"Volume sintético: {_TOTAL_ROWS} MonitoringItemStore, {due_count} due (~{_DUE_FRACTION:.0%}).")
+        print(
+            f"Volume sintético: {_TOTAL_ROWS} MonitoringItemStore, {due_count} due (~{_DUE_FRACTION:.0%})."
+        )
         print(plan)
         print("-------------------------------------------------------------------\n")
 

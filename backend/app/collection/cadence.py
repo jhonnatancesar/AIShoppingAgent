@@ -25,9 +25,11 @@ sofisticada -- pensado para a escala real da V1.2 (dezenas de lojas,
 poucas centenas de itens monitorados), não para milhões de eventos.
 """
 
+from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from enum import StrEnum
 from random import uniform
 from uuid import UUID
 
@@ -37,11 +39,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from app.collection.models import (
+    CollectionRun,
+    CollectionRunStatus,
     MissionOfferRelevance,
     PriceObservation,
     PromotionalWindow,
+    SharedCollectionOffer,
     StoreActivityState,
 )
+from app.collection.normalization import Availability
 from app.missions.models import MissionMonitoringItem
 from app.offers.models import Offer
 from app.stores.models import Store
@@ -68,16 +74,22 @@ class CadenceConfig:
         if self.normal_min_minutes <= 0 or self.promo_min_minutes <= 0:
             raise ValueError("intervalos mínimos devem ser positivos")
         if self.normal_max_minutes < self.normal_min_minutes:
-            raise ValueError("normal_max_minutes não pode ser menor que normal_min_minutes")
+            raise ValueError(
+                "normal_max_minutes não pode ser menor que normal_min_minutes"
+            )
         if self.promo_max_minutes < self.promo_min_minutes:
-            raise ValueError("promo_max_minutes não pode ser menor que promo_min_minutes")
+            raise ValueError(
+                "promo_max_minutes não pode ser menor que promo_min_minutes"
+            )
         # Piso absoluto da V1.2 (§8 do desenho aprovado): nenhum modo,
         # nem promocional, nem uma futura diferenciação de plano pago,
         # pode levar uma mesma necessidade (MonitoringItem, store) a ser
         # pesquisada de novo abaixo de 30 minutos -- risco de bloqueio da
         # infraestrutura compartilhada nunca é comprado por velocidade.
         if self.promo_min_minutes < 30:
-            raise ValueError("promo_min_minutes nunca pode ficar abaixo do piso de 30 minutos")
+            raise ValueError(
+                "promo_min_minutes nunca pode ficar abaixo do piso de 30 minutos"
+            )
         if self.high_activity_window_minutes <= 0:
             raise ValueError("high_activity_window_minutes deve ser positivo")
         if self.high_activity_change_threshold <= 0:
@@ -344,3 +356,520 @@ async def _is_high_activity(
         )
     )
     return True
+
+
+# ---------------------------------------------------------------------------
+# Política de frescor (pedido explícito do dono do produto, 2026-09-11):
+# distingue "disponível confirmado há pouco" de "confirmação envelhecida",
+# separado de "indisponível" (já tratado por `_same_commercial_state`,
+# `orchestration.py` -- mudança de disponibilidade sempre gera observação
+# nova) e de "sumiço silencioso" (a coleta rodou com sucesso, mas esta
+# oferta específica não reapareceu -- diferente de "a coleta falhou").
+# Nunca confunde falha/ausência com indisponibilidade COMPROVADA.
+# ---------------------------------------------------------------------------
+
+
+class OfferFreshnessStatus(StrEnum):
+    CONFIRMED_RECENT = "confirmed_recent"
+    CONFIRMED_STALE = "confirmed_stale"
+    UNAVAILABLE = "unavailable"
+    MISSING_NO_CONFIRMATION = "missing_no_confirmation"
+    COLLECTION_FAILED = "collection_failed"
+    NEVER_CONFIRMED = "never_confirmed"
+
+
+STALE_GRACE_MULTIPLIER = 2
+"""Múltiplo do intervalo MÁXIMO de cadência vigente (`CadenceDecision.
+max_minutes`, recalculado no momento da LEITURA -- não congelado no
+momento da confirmação, ver docstring de `resolve_offer_freshness`)
+usado como limiar de "confirmação antiga". Documentado explicitamente
+(pedido do dono do produto): absorve exatamente UM ciclo perdido ou
+atrasado (fila cheia, backoff aplicado, jitter normal do agendamento --
+`sample_next_run_at` já sorteia dentro de uma faixa, não um horário
+fixo) como situação normal, nunca "antiga"; só a partir do SEGUNDO ciclo
+sem reconfirmação é que o dado passa a ser tratado como potencialmente
+desatualizado. Não é um prazo inventado à parte -- é sempre função da
+cadência real: NORMAL (45-75min) dá 150min de tolerância; PROMO_CALENDAR/
+HIGH_ACTIVITY (30-45min) dá 90min. Ver `test_offer_freshness_reacts_to_
+current_cadence_mode_not_frozen_one` para o comportamento sob mudança de
+modo."""
+
+
+async def resolve_offer_freshness(
+    session: AsyncSession,
+    *,
+    offer_id: UUID,
+    product_id: UUID,
+    store_id: UUID,
+    now: datetime,
+    config: CadenceConfig,
+) -> OfferFreshnessStatus:
+    """Classifica o frescor de UMA Offer a partir da confirmação mais
+    recente (`SharedCollectionOffer` + `CollectionRun`, nunca `Offer.
+    last_seen_at` -- esse é só um escalar mutável sem histórico).
+
+    Deliberado (pedido do dono do produto): o limiar de "antiga" usa a
+    cadência ATUAL (`resolve_product_market_mode` no momento desta
+    chamada), não a cadência vigente quando a oferta foi confirmada. Se a
+    loja entrar em HIGH_ACTIVITY depois de uma confirmação feita sob
+    NORMAL, essa mesma confirmação pode passar a ser considerada "antiga"
+    mais cedo do que se a cadência tivesse ficado em NORMAL -- isso é
+    intencional (dado potencialmente desatualizado importa mais quando o
+    preço está se movendo rápido agora), documentado aqui para nunca ser
+    uma reclassificação silenciosa/indefinida, e coberto por teste
+    dedicado que força a transição de modo entre duas leituras da MESMA
+    confirmação."""
+    confirmation = (
+        await session.execute(
+            select(
+                SharedCollectionOffer.collection_run_id,
+                CollectionRun.started_at,
+                PriceObservation.availability,
+            )
+            .select_from(SharedCollectionOffer)
+            .join(
+                CollectionRun,
+                CollectionRun.id == SharedCollectionOffer.collection_run_id,
+            )
+            .join(
+                PriceObservation,
+                PriceObservation.id == SharedCollectionOffer.observation_id,
+            )
+            .where(SharedCollectionOffer.offer_id == offer_id)
+            .order_by(CollectionRun.started_at.desc())
+            .limit(1)
+        )
+    ).first()
+    has_run_level_confirmation = confirmation is not None
+    if confirmation is None:
+        # Sem NENHUMA linha em `shared_collection_offers` para esta Offer
+        # -- normal para dado coletado ANTES desta confirmação existir
+        # (não há retroatividade, item 7 do design), nunca tratado como
+        # "nunca confirmada" quando já existe `PriceObservation` real.
+        # Cai para a última observação bruta (mesma fonte que o mecanismo
+        # antigo usava) -- só perde a distinção fina falha/sumiço, que
+        # depende de correlação por `CollectionRun` que este dado antigo
+        # não tem; frescor por idade e indisponibilidade continuam
+        # comprovados normalmente.
+        fallback = (
+            await session.execute(
+                select(PriceObservation.observed_at, PriceObservation.availability)
+                .where(PriceObservation.offer_id == offer_id)
+                .order_by(
+                    PriceObservation.observed_at.desc(), PriceObservation.id.desc()
+                )
+                .limit(1)
+            )
+        ).first()
+        if fallback is None:
+            return OfferFreshnessStatus.NEVER_CONFIRMED
+        observed_at, availability = fallback
+        # `Offer.last_seen_at` (TASK-093) avança a CADA coleta bem-
+        # sucedida, inclusive quando o preço não muda e nenhuma
+        # `PriceObservation` nova é gravada (dedupe) -- prova, sozinho,
+        # que aquele MESMO estado (o da última observação) foi
+        # reconfirmado depois, mesmo sem confirmação por run disponível
+        # (registro legado). Nunca o contrário: só usado aqui para
+        # frescor ATUAL de UMA oferta, nunca para reconstruir quantas
+        # confirmações diárias houve no passado (isso continua
+        # exclusivo de `shared_collection_offers`/`PriceObservation`
+        # reais em `_fetch_daily_low_points` -- um único escalar não
+        # reconstrói o histórico intermediário.
+        offer_last_seen_at = await session.scalar(
+            select(Offer.last_seen_at).where(Offer.id == offer_id)
+        )
+        confirmed_at = (
+            max(observed_at, offer_last_seen_at)
+            if offer_last_seen_at is not None
+            else observed_at
+        )
+    else:
+        _run_id, confirmed_at, availability = confirmation
+
+    if availability != Availability.AVAILABLE:
+        # Já tratado como estado próprio na coleta (`_same_commercial_
+        # state`): mudança de disponibilidade sempre gera observação
+        # nova -- nunca prolonga "disponível" silenciosamente. Vence
+        # qualquer idade: indisponibilidade comprovada não "envelhece"
+        # para virar outra coisa.
+        return OfferFreshnessStatus.UNAVAILABLE
+
+    later_failed = (
+        await session.scalar(
+            select(CollectionRun.id)
+            .where(
+                CollectionRun.store_id == store_id,
+                CollectionRun.status == CollectionRunStatus.FAILED,
+                CollectionRun.started_at > confirmed_at,
+            )
+            .limit(1)
+        )
+        if has_run_level_confirmation
+        else None
+    )
+    if later_failed is not None:
+        # Coleta falhou DEPOIS da última confirmação -- não é a mesma
+        # coisa que "oferta indisponível" nem que "sumiço": é a
+        # infraestrutura de coleta com problema agora, sem informação
+        # nova sobre a oferta em si (pode voltar a funcionar e a oferta
+        # ainda estar lá).
+        return OfferFreshnessStatus.COLLECTION_FAILED
+
+    missing = await session.scalar(
+        select(CollectionRun.id)
+        .where(
+            CollectionRun.store_id == store_id,
+            CollectionRun.status == CollectionRunStatus.SUCCEEDED,
+            CollectionRun.started_at > confirmed_at,
+        )
+        .where(
+            ~exists(
+                select(SharedCollectionOffer.collection_run_id).where(
+                    SharedCollectionOffer.collection_run_id == CollectionRun.id,
+                    SharedCollectionOffer.offer_id == offer_id,
+                )
+            )
+        )
+        .limit(1)
+    )
+    if missing is not None:
+        # A coleta RODOU com sucesso depois da última confirmação, mas
+        # esta oferta especificamente não apareceu nela -- sinal mais
+        # forte que "confirmação antiga" simples (a infraestrutura
+        # funciona; especificamente esta oferta não foi mais encontrada).
+        return OfferFreshnessStatus.MISSING_NO_CONFIRMATION
+
+    decision = await resolve_product_market_mode(
+        session, product_id=product_id, now=now, config=config
+    )
+    stale_after = timedelta(minutes=STALE_GRACE_MULTIPLIER * decision.max_minutes)
+    # Pedido explícito do dono do produto (correção sobre a 1a versão
+    # deste teste): o simples INÍCIO de uma janela acelerada
+    # (PROMO_CALENDAR/HIGH_ACTIVITY) nunca pode tornar "antiga",
+    # retroativamente, uma confirmação que já era "recente" sob o modo
+    # anterior -- o worker ainda não teve OPORTUNIDADE de recoletar sob
+    # a cadência nova. O relógio do limiar mais curto só começa a
+    # contar a partir do INÍCIO da janela (`_resolve_mode_window_start`,
+    # agenda real: `PromotionalWindow.starts_at` ou o início inferido da
+    # janela de `StoreActivityState` vigente), nunca da confirmação
+    # original quando ela é anterior à janela.
+    if decision.mode != _MODE_NORMAL:
+        window_start = await _resolve_mode_window_start(
+            session, store_id=store_id, now=now, config=config
+        )
+        if window_start is not None and window_start > confirmed_at:
+            effective_since = window_start
+        else:
+            effective_since = confirmed_at
+    else:
+        effective_since = confirmed_at
+    if now - effective_since <= stale_after:
+        return OfferFreshnessStatus.CONFIRMED_RECENT
+    return OfferFreshnessStatus.CONFIRMED_STALE
+
+
+async def _resolve_mode_window_start(
+    session: AsyncSession, *, store_id: UUID, now: datetime, config: CadenceConfig
+) -> datetime | None:
+    """Instante em que a janela acelerada VIGENTE começou -- agenda real,
+    nunca inferência solta. `PROMO_CALENDAR` tem início exato
+    (`PromotionalWindow.starts_at`); `HIGH_ACTIVITY` não persiste início
+    explícito, só o fim (`StoreActivityState.high_activity_until`), então
+    o início é derivado subtraindo `high_activity_duration_minutes` (o
+    mesmo intervalo que `_is_high_activity` usou para gravar o fim) --
+    aproximação por cima (nunca subestima quanto tempo a janela já está
+    ativa), o que só torna a proteção contra reclassificação prematura
+    mais generosa, nunca menos. Verificação por loja inteira (não por
+    escopo específico) de propósito: é só para dar crédito ao worker,
+    nunca para decidir o modo em si (isso continua sendo
+    `resolve_product_market_mode`, escopado como sempre)."""
+    promo_start = await session.scalar(
+        select(PromotionalWindow.starts_at)
+        .where(PromotionalWindow.starts_at <= now, PromotionalWindow.ends_at > now)
+        .order_by(PromotionalWindow.starts_at.desc())
+        .limit(1)
+    )
+    if promo_start is not None:
+        return promo_start
+    high_activity_until = await session.scalar(
+        select(StoreActivityState.high_activity_until)
+        .where(
+            StoreActivityState.store_id == store_id,
+            StoreActivityState.high_activity_until > now,
+        )
+        .order_by(StoreActivityState.high_activity_until.desc())
+        .limit(1)
+    )
+    if high_activity_until is not None:
+        return high_activity_until - timedelta(
+            minutes=config.high_activity_duration_minutes
+        )
+    return None
+
+
+async def _resolve_mode_window_starts_batch(
+    session: AsyncSession,
+    *,
+    store_ids: Sequence[UUID],
+    now: datetime,
+    config: CadenceConfig,
+) -> dict[UUID, datetime | None]:
+    """Mesma regra de `_resolve_mode_window_start`, para várias lojas de
+    uma vez -- PROMO_CALENDAR já é global (1 consulta serve para todas);
+    HIGH_ACTIVITY usa `store_id IN (...)` (1 consulta para todas as
+    lojas, nunca uma por loja)."""
+    promo_start = await session.scalar(
+        select(PromotionalWindow.starts_at)
+        .where(PromotionalWindow.starts_at <= now, PromotionalWindow.ends_at > now)
+        .order_by(PromotionalWindow.starts_at.desc())
+        .limit(1)
+    )
+    if promo_start is not None:
+        return dict.fromkeys(store_ids, promo_start)
+    rows = (
+        await session.execute(
+            select(
+                StoreActivityState.store_id, StoreActivityState.high_activity_until
+            ).where(
+                StoreActivityState.store_id.in_(store_ids),
+                StoreActivityState.high_activity_until > now,
+            )
+        )
+    ).all()
+    latest_by_store: dict[UUID, datetime] = {}
+    for store_id, high_activity_until in rows:
+        current = latest_by_store.get(store_id)
+        if current is None or high_activity_until > current:
+            latest_by_store[store_id] = high_activity_until
+    return {
+        store_id: (
+            latest_by_store[store_id]
+            - timedelta(minutes=config.high_activity_duration_minutes)
+            if store_id in latest_by_store
+            else None
+        )
+        for store_id in store_ids
+    }
+
+
+async def resolve_offers_freshness_batch(
+    session: AsyncSession,
+    *,
+    offers: Sequence[tuple[UUID, UUID]],
+    product_id: UUID,
+    now: datetime,
+    config: CadenceConfig,
+) -> dict[UUID, OfferFreshnessStatus]:
+    """Versão em lote de `resolve_offer_freshness`: classifica TODAS as
+    `offers` (pares `(offer_id, store_id)`) de um Product numa única
+    passada, com número de consultas que NUNCA escala com a quantidade
+    de ofertas -- só com o número de LOJAS distintas entre elas
+    (pequeno e fixo no V1: Amazon, KaBuM!, Magalu, Mercado Livre,
+    Pichau, Terabyte). Pedido explícito do dono do produto: chamar
+    `resolve_offer_freshness` uma vez por oferta candidata em
+    `_resolve_current_amount` seria exatamente o padrão N+1 que o
+    projeto já proíbe em outros lugares (ver `load_mission_list_extras`,
+    `test_load_mission_list_extras_query_count_does_not_scale_with_
+    page_size`) -- esta função existe para `_resolve_current_amount`
+    nunca cair nisso. Mesma classificação, mesmas regras (frescor,
+    fallback via `last_seen_at`, falha vs. sumiço, janela de cadência
+    sem retroatividade) de `resolve_offer_freshness` -- só reorganizada
+    para consultar em lote."""
+    if not offers:
+        return {}
+    offer_ids = [offer_id for offer_id, _ in offers]
+    store_by_offer = dict(offers)
+    store_ids = list({store_id for _, store_id in offers})
+
+    # 1) confirmação mais recente por oferta -- 1 consulta para todas.
+    confirmation_rank = (
+        func.row_number()
+        .over(
+            partition_by=SharedCollectionOffer.offer_id,
+            order_by=CollectionRun.started_at.desc(),
+        )
+        .label("rn")
+    )
+    confirmation_rows = (
+        await session.execute(
+            select(
+                SharedCollectionOffer.offer_id,
+                CollectionRun.started_at,
+                PriceObservation.availability,
+                confirmation_rank,
+            )
+            .select_from(SharedCollectionOffer)
+            .join(
+                CollectionRun,
+                CollectionRun.id == SharedCollectionOffer.collection_run_id,
+            )
+            .join(
+                PriceObservation,
+                PriceObservation.id == SharedCollectionOffer.observation_id,
+            )
+            .where(SharedCollectionOffer.offer_id.in_(offer_ids))
+        )
+    ).all()
+    confirmed: dict[UUID, tuple[datetime, Availability]] = {
+        offer_id: (started_at, availability)
+        for offer_id, started_at, availability, rank in confirmation_rows
+        if rank == 1
+    }
+
+    # 2) fallback (última PriceObservation + Offer.last_seen_at) só para
+    # quem não tem confirmação por run -- 2 consultas no total, nunca
+    # uma por oferta.
+    unconfirmed_ids = [offer_id for offer_id in offer_ids if offer_id not in confirmed]
+    fallback: dict[UUID, tuple[datetime, Availability]] = {}
+    if unconfirmed_ids:
+        obs_rank = (
+            func.row_number()
+            .over(
+                partition_by=PriceObservation.offer_id,
+                order_by=(
+                    PriceObservation.observed_at.desc(),
+                    PriceObservation.id.desc(),
+                ),
+            )
+            .label("rn")
+        )
+        obs_rows = (
+            await session.execute(
+                select(
+                    PriceObservation.offer_id,
+                    PriceObservation.observed_at,
+                    PriceObservation.availability,
+                    obs_rank,
+                ).where(PriceObservation.offer_id.in_(unconfirmed_ids))
+            )
+        ).all()
+        latest_obs = {
+            offer_id: (observed_at, availability)
+            for offer_id, observed_at, availability, rank in obs_rows
+            if rank == 1
+        }
+        last_seen_rows = (
+            await session.execute(
+                select(Offer.id, Offer.last_seen_at).where(
+                    Offer.id.in_(unconfirmed_ids)
+                )
+            )
+        ).all()
+        last_seen_by_offer = dict(last_seen_rows)
+        for offer_id, (observed_at, availability) in latest_obs.items():
+            last_seen_at = last_seen_by_offer.get(offer_id)
+            confirmed_at = (
+                max(observed_at, last_seen_at)
+                if last_seen_at is not None
+                else observed_at
+            )
+            fallback[offer_id] = (confirmed_at, availability)
+
+    merged: dict[UUID, tuple[datetime, Availability]] = {**fallback, **confirmed}
+
+    result: dict[UUID, OfferFreshnessStatus] = {}
+    pending_ids: list[UUID] = []
+    for offer_id in offer_ids:
+        if offer_id not in merged:
+            result[offer_id] = OfferFreshnessStatus.NEVER_CONFIRMED
+            continue
+        _confirmed_at, availability = merged[offer_id]
+        if availability != Availability.AVAILABLE:
+            result[offer_id] = OfferFreshnessStatus.UNAVAILABLE
+            continue
+        pending_ids.append(offer_id)
+    if not pending_ids:
+        return result
+
+    # 3) runs candidatas (FAILED/SUCCEEDED mais novas que a confirmação)
+    # -- 1 consulta cobrindo TODAS as lojas envolvidas de uma vez,
+    # filtrando pelo menor `confirmed_at` entre elas (o filtro fino por
+    # oferta é feito em Python a seguir, sem nova consulta).
+    stores_pending = {store_by_offer[offer_id] for offer_id in pending_ids}
+    min_confirmed_at = min(merged[offer_id][0] for offer_id in pending_ids)
+    run_rows = (
+        await session.execute(
+            select(
+                CollectionRun.store_id,
+                CollectionRun.started_at,
+                CollectionRun.status,
+                CollectionRun.id,
+            ).where(
+                CollectionRun.store_id.in_(stores_pending),
+                CollectionRun.started_at > min_confirmed_at,
+                CollectionRun.status.in_(
+                    (CollectionRunStatus.FAILED, CollectionRunStatus.SUCCEEDED)
+                ),
+            )
+        )
+    ).all()
+    runs_by_store: dict[UUID, list[tuple[datetime, CollectionRunStatus, UUID]]] = (
+        defaultdict(list)
+    )
+    for store_id, started_at, status, run_id in run_rows:
+        runs_by_store[store_id].append((started_at, status, run_id))
+
+    # 4) confirmações já registradas para essas runs candidatas -- 1
+    # consulta, nunca uma por (run, oferta).
+    candidate_run_ids = {
+        run_id for rows in runs_by_store.values() for *_rest, run_id in rows
+    }
+    confirmed_pairs: set[tuple[UUID, UUID]] = set()
+    if candidate_run_ids:
+        pair_rows = (
+            await session.execute(
+                select(
+                    SharedCollectionOffer.collection_run_id,
+                    SharedCollectionOffer.offer_id,
+                ).where(SharedCollectionOffer.collection_run_id.in_(candidate_run_ids))
+            )
+        ).all()
+        confirmed_pairs = set(pair_rows)
+
+    still_pending: list[UUID] = []
+    for offer_id in pending_ids:
+        store_id = store_by_offer[offer_id]
+        confirmed_at, _ = merged[offer_id]
+        later_runs = [r for r in runs_by_store.get(store_id, ()) if r[0] > confirmed_at]
+        if any(status == CollectionRunStatus.FAILED for _, status, _ in later_runs):
+            result[offer_id] = OfferFreshnessStatus.COLLECTION_FAILED
+            continue
+        if any(
+            status == CollectionRunStatus.SUCCEEDED
+            and (run_id, offer_id) not in confirmed_pairs
+            for _, status, run_id in later_runs
+        ):
+            result[offer_id] = OfferFreshnessStatus.MISSING_NO_CONFIRMATION
+            continue
+        still_pending.append(offer_id)
+    if not still_pending:
+        return result
+
+    # 5) cadência: 1x por Product (já O(1)); início de janela acelerada:
+    # 1 consulta cobrindo todas as lojas envolvidas de uma vez.
+    decision = await resolve_product_market_mode(
+        session, product_id=product_id, now=now, config=config
+    )
+    stale_after = timedelta(minutes=STALE_GRACE_MULTIPLIER * decision.max_minutes)
+    window_starts: dict[UUID, datetime | None] = (
+        await _resolve_mode_window_starts_batch(
+            session, store_ids=store_ids, now=now, config=config
+        )
+        if decision.mode != _MODE_NORMAL
+        else {}
+    )
+    for offer_id in still_pending:
+        store_id = store_by_offer[offer_id]
+        confirmed_at, _ = merged[offer_id]
+        window_start = window_starts.get(store_id)
+        effective_since = (
+            window_start
+            if window_start is not None and window_start > confirmed_at
+            else confirmed_at
+        )
+        result[offer_id] = (
+            OfferFreshnessStatus.CONFIRMED_RECENT
+            if now - effective_since <= stale_after
+            else OfferFreshnessStatus.CONFIRMED_STALE
+        )
+    return result

@@ -21,7 +21,6 @@ compartilhado.
 
 import asyncio
 from datetime import UTC, datetime, timedelta
-from uuid import uuid4
 
 import pytest
 from app.missions.models import Mission, MissionSchedule, MissionSource, MissionStatus
@@ -36,7 +35,9 @@ _TOTAL_ROWS = 5000
 _DUE_FRACTION = 0.02
 
 
-def test_explain_mission_source_due_query_has_no_sequential_scan(integration_database, capsys) -> None:
+def test_explain_mission_source_due_query_has_no_sequential_scan(
+    integration_database, capsys
+) -> None:
     with integration_database.sessions() as session:
         amazon_id = session.scalar(select(Store.id).where(Store.code == "amazon"))
 
@@ -110,7 +111,9 @@ def test_explain_mission_source_due_query_has_no_sequential_scan(integration_dat
     plan = asyncio.run(explain())
     with capsys.disabled():
         print("\n----- EXPLAIN ANALYZE: seleção de MissionSource due (legado) -----")
-        print(f"Volume sintético: {_TOTAL_ROWS} MissionSource, {due_count} due (~{_DUE_FRACTION:.0%}).")
+        print(
+            f"Volume sintético: {_TOTAL_ROWS} MissionSource, {due_count} due (~{_DUE_FRACTION:.0%})."
+        )
         print(plan)
         print("--------------------------------------------------------------------\n")
 

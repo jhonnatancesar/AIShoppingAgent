@@ -26,7 +26,6 @@ pelo `collection_worker` real)."""
 import asyncio
 
 import pytest
-
 from app.collection.browser import EDGE_SESSION_CDP_URL, EDGE_SESSION_PROFILE_DIR
 from app.collection.providers.edge_cdp_supervisor import EdgeCdpSupervisor
 

@@ -14,11 +14,19 @@ from sqlalchemy import Date, and_, cast, exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
+from app.collection.cadence import (
+    CadenceConfig,
+    OfferFreshnessStatus,
+    resolve_offers_freshness_batch,
+)
 from app.collection.contracts import OfferCondition
 from app.collection.models import (
+    CollectionRun,
+    CollectionRunStatus,
     MissionOfferRelevance,
     OfferInstallmentOption,
     PriceObservation,
+    SharedCollectionOffer,
 )
 from app.collection.normalization import Availability
 from app.collection.relevance import OfferRelevance
@@ -173,7 +181,13 @@ def user_offers_statement(
         .join(Store, Store.id == Offer.store_id)
         .outerjoin(Seller, Seller.id == Offer.seller_id)
         .outerjoin(PriceObservation, PriceObservation.id == latest_observation_id)
-        .where(_accessible_offer_exists(user_id=user_id))
+        .where(
+            _accessible_offer_exists(user_id=user_id),
+            # Mesma exclusão de `comparison_offers_statement` -- uma
+            # Offer substituída não aparece na listagem geral (acesso
+            # direto por `offer_id` continua funcionando).
+            Offer.superseded_by_id.is_(None),
+        )
     )
     if search:
         statement = statement.where(
@@ -332,6 +346,14 @@ def comparison_offers_statement(*, product_id: UUID, user_id: UUID):
         .where(
             Offer.product_id == product_id,
             _accessible_offer_exists(user_id=user_id),
+            # Rodada de frescor (2026-09-11): uma Offer substituída
+            # (`_supersede_old_unattributed_offer`, `orchestration.py`)
+            # nunca aparece como alternativa de comparação -- some
+            # IMEDIATAMENTE, não só quando envelhece. Acesso DIRETO por
+            # `offer_id` (`get_offer_detail_for_user`) continua
+            # funcionando normalmente -- só a LISTA de alternativas
+            # exclui a substituída, nunca a autorização em si.
+            Offer.superseded_by_id.is_(None),
         )
         .order_by(Store.code, Offer.id)
     )
@@ -437,9 +459,7 @@ async def list_current_offer_links_for_mission(
             )
             .join(Mission, Mission.id == MissionOfferRelevance.mission_id)
             .outerjoin(MissionCriteria, MissionCriteria.mission_id == Mission.id)
-            .outerjoin(
-                PriceObservation, PriceObservation.id == latest_observation_id
-            )
+            .outerjoin(PriceObservation, PriceObservation.id == latest_observation_id)
             .where(
                 Mission.id == mission_id,
                 Mission.user_id == user_id,
@@ -607,10 +627,21 @@ class OfferPriceHistory:
     metrics: PriceHistoryMetrics | None
 
 
-def _commercial_day_expr():
-    """`(observed_at AT TIME ZONE 'America/Sao_Paulo')::date` -- dia
-    comercial local, nunca UTC (correção pós-plano, item 5)."""
-    return cast(func.timezone("America/Sao_Paulo", PriceObservation.observed_at), Date)
+def _commercial_day_expr(timestamp_column=None):
+    """`(<timestamp> AT TIME ZONE 'America/Sao_Paulo')::date` -- dia
+    comercial local, nunca UTC (correção pós-plano, item 5). Default
+    `PriceObservation.observed_at` por compatibilidade; a série do
+    gráfico (`_fetch_daily_low_points`) passa `CollectionRun.started_at`
+    -- o dia em que a CONFIRMAÇÃO aconteceu, não o dia em que o valor
+    do preço foi originalmente observado (podem divergir quando o
+    mesmo preço é reconfirmado em dias seguintes sem gerar nova
+    `PriceObservation`, TASK-093)."""
+    column = (
+        timestamp_column
+        if timestamp_column is not None
+        else PriceObservation.observed_at
+    )
+    return cast(func.timezone("America/Sao_Paulo", column), Date)
 
 
 async def _resolve_reference_currency(
@@ -645,14 +676,35 @@ async def _resolve_reference_currency(
 
 
 async def _resolve_current_amount(
-    session: AsyncSession, *, product_id: UUID, user_id: UUID, reference_currency: str
+    session: AsyncSession,
+    *,
+    product_id: UUID,
+    user_id: UUID,
+    reference_currency: str,
+    now: datetime,
+    store_ids: frozenset[UUID] | None = None,
+    cadence_config: CadenceConfig | None = None,
 ) -> Decimal | None:
     """Preço ATUAL -- nunca o mínimo do dia (correção pós-plano, item 2).
     Resolve a observação MAIS RECENTE de cada Offer acessível primeiro (sem
     filtro nenhum), só DEPOIS checa se aquela observação específica está
     `NEW`/`AVAILABLE`/na moeda de referência. Uma Offer cuja última
     observação ficou indisponível nunca "ressuscita" um preço antigo válido
-    -- ela simplesmente não contribui para `current_amount`."""
+    -- ela simplesmente não contribui para `current_amount`.
+
+    Pedido explícito do dono do produto (rodada de frescor): "atual" só
+    conta ofertas cuja confirmação mais recente é `CONFIRMED_RECENT`
+    (`resolve_offer_freshness`) -- uma oferta com confirmação antiga,
+    indisponível, sumida ou nunca confirmada nunca contribui, mesmo que a
+    última observação SQL pareça `NEW`/`AVAILABLE` (ela pode só estar
+    parada há muito tempo, sem novas coletas). Efeito colateral desejado:
+    quando um vendedor Amazon antes desconhecido é identificado, a Offer
+    antiga (`seller_id=NULL`) some do "atual" assim que envelhece o
+    bastante, sem precisar de fusão/exclusão manual -- nunca duplica o
+    preço do produto indefinidamente. `store_ids=None` mantém o
+    comportamento anterior (todas as lojas acessíveis); com valor,
+    restringe às lojas selecionadas."""
+    effective_config = cadence_config or CadenceConfig()
     latest_rank = (
         func.row_number()
         .over(
@@ -664,8 +716,16 @@ async def _resolve_current_amount(
         )
         .label("rn")
     )
+    conditions = [
+        Offer.product_id == product_id,
+        _accessible_offer_exists(user_id=user_id),
+    ]
+    if store_ids is not None:
+        conditions.append(Offer.store_id.in_(store_ids))
     latest_cte = (
         select(
+            Offer.id.label("offer_id"),
+            Offer.store_id.label("store_id"),
             PriceObservation.amount,
             PriceObservation.currency,
             PriceObservation.condition,
@@ -674,19 +734,41 @@ async def _resolve_current_amount(
         )
         .select_from(PriceObservation)
         .join(Offer, Offer.id == PriceObservation.offer_id)
-        .where(
-            Offer.product_id == product_id,
-            _accessible_offer_exists(user_id=user_id),
-        )
+        .where(*conditions)
         .cte("latest_observation_per_offer")
     )
-    statement = select(func.min(latest_cte.c.amount)).where(
-        latest_cte.c.rn == 1,
-        latest_cte.c.condition == OfferCondition.NEW,
-        latest_cte.c.availability == Availability.AVAILABLE,
-        latest_cte.c.currency == reference_currency,
+    candidates = (
+        await session.execute(
+            select(
+                latest_cte.c.offer_id, latest_cte.c.store_id, latest_cte.c.amount
+            ).where(
+                latest_cte.c.rn == 1,
+                latest_cte.c.condition == OfferCondition.NEW,
+                latest_cte.c.availability == Availability.AVAILABLE,
+                latest_cte.c.currency == reference_currency,
+            )
+        )
+    ).all()
+    if not candidates:
+        return None
+    # Lote, nunca uma consulta de frescor por oferta (pedido explícito do
+    # dono do produto -- mesma regra de `load_mission_list_extras` contra
+    # N+1): número de consultas escala com lojas distintas, não com
+    # quantas ofertas o Product tem.
+    amount_by_offer = {offer_id: amount for offer_id, _store_id, amount in candidates}
+    freshness_by_offer = await resolve_offers_freshness_batch(
+        session,
+        offers=[(offer_id, store_id) for offer_id, store_id, _amount in candidates],
+        product_id=product_id,
+        now=now,
+        config=effective_config,
     )
-    return await session.scalar(statement)
+    eligible_amounts = [
+        amount_by_offer[offer_id]
+        for offer_id, status in freshness_by_offer.items()
+        if status == OfferFreshnessStatus.CONFIRMED_RECENT
+    ]
+    return min(eligible_amounts) if eligible_amounts else None
 
 
 async def _fetch_daily_low_points(
@@ -697,15 +779,42 @@ async def _fetch_daily_low_points(
     start_utc: datetime | None,
     end_utc: datetime,
     reference_currency: str,
+    store_ids: frozenset[UUID] | None = None,
 ) -> list[tuple[UUID, str, str, date, Decimal, UUID, UUID]]:
-    """Menor `PriceObservation.amount` comercialmente válido por (Store,
-    dia comercial) -- linhas da série exibida no gráfico. Desempate: menor
-    `amount`; empate, observação mais recente; empate ainda, `id` como
-    último critério (correção pós-plano, item 3). `start_utc=None` (period
-    `all`) nunca vira um predicado `>= NULL` -- o filtro de limite inferior
-    simplesmente não entra na query (correção pós-plano, item 1)."""
-    commercial_day = _commercial_day_expr()
-    conditions = [
+    """Menor preço CONFIRMADO por (Store, dia comercial) -- linhas da série
+    exibida no gráfico. Desempate: menor `amount`; empate, confirmação mais
+    recente; empate ainda, `id` da observação como último critério
+    (correção pós-plano, item 3). `start_utc=None` (period `all`) nunca
+    vira um predicado `>= NULL` -- o filtro de limite inferior simplesmente
+    não entra na query (correção pós-plano, item 1). `store_ids=None`
+    mantém todas as lojas acessíveis; com valor, restringe às lojas
+    selecionadas -- as métricas (`_compute_metrics`) herdam esse mesmo
+    filtro automaticamente por operarem sobre estas mesmas linhas (pedido
+    do dono do produto: indicadores acompanham a seleção).
+
+    Fonte da linha (correção de 2026-09-12, pedido explícito do dono do
+    produto): UNION de duas origens, nunca só `PriceObservation.
+    observed_at`.
+
+    (1) `SharedCollectionOffer` JOIN `CollectionRun` -- fonte PRIMÁRIA
+    para dado novo: cada `CollectionRun` bem-sucedida grava exatamente
+    UM `SharedCollectionOffer` por oferta processada
+    (`orchestration._persist_phase_a`), MESMO quando a `PriceObservation`
+    foi reaproveitada por dedupe (TASK-093, preço comercialmente
+    idêntico ao já registrado). É o que permite duas coletas em dias
+    diferentes com o MESMO preço aparecerem como DUAS confirmações
+    distintas (uma por dia real de coleta) sem duplicar o estado
+    comercial (continua existindo só UMA `PriceObservation`) --
+    `CollectionRun.started_at` decide o dia comercial dessas linhas,
+    nunca `PriceObservation.observed_at` (que não muda quando a
+    observação é reaproveitada).
+
+    (2) `PriceObservation.observed_at` direto -- fallback para dado
+    LEGADO anterior a esta correção, sem nenhuma linha em
+    `SharedCollectionOffer` ainda: nunca descartado, só preenche dias
+    que a fonte (1) não cobre. As duas fontes juntas nunca perdem uma
+    confirmação real nem inventam uma que não aconteceu."""
+    legacy_conditions = [
         Offer.product_id == product_id,
         _accessible_offer_exists(user_id=user_id),
         PriceObservation.condition == OfferCondition.NEW,
@@ -713,37 +822,77 @@ async def _fetch_daily_low_points(
         PriceObservation.currency == reference_currency,
         PriceObservation.observed_at <= end_utc,
     ]
+    confirmed_conditions = [
+        Offer.product_id == product_id,
+        _accessible_offer_exists(user_id=user_id),
+        CollectionRun.status == CollectionRunStatus.SUCCEEDED,
+        PriceObservation.condition == OfferCondition.NEW,
+        PriceObservation.availability == Availability.AVAILABLE,
+        PriceObservation.currency == reference_currency,
+        CollectionRun.started_at <= end_utc,
+    ]
+    if store_ids is not None:
+        legacy_conditions.append(Offer.store_id.in_(store_ids))
+        confirmed_conditions.append(Offer.store_id.in_(store_ids))
     if start_utc is not None:
-        conditions.append(PriceObservation.observed_at >= start_utc)
-    daily_rank = (
-        func.row_number()
-        .over(
-            partition_by=(Offer.store_id, commercial_day),
-            order_by=(
-                PriceObservation.amount.asc(),
-                PriceObservation.observed_at.desc(),
-                PriceObservation.id.asc(),
-            ),
-        )
-        .label("rn")
-    )
-    ranked_cte = (
+        legacy_conditions.append(PriceObservation.observed_at >= start_utc)
+        confirmed_conditions.append(CollectionRun.started_at >= start_utc)
+
+    legacy_rows = (
         select(
             Offer.store_id.label("store_id"),
             Store.code.label("store_code"),
             Store.name.label("store_name"),
-            commercial_day.label("commercial_day"),
+            _commercial_day_expr(PriceObservation.observed_at).label("commercial_day"),
             PriceObservation.amount.label("amount"),
             PriceObservation.id.label("observation_id"),
             PriceObservation.offer_id.label("offer_id"),
-            daily_rank,
+            PriceObservation.observed_at.label("confirmed_at"),
         )
         .select_from(PriceObservation)
         .join(Offer, Offer.id == PriceObservation.offer_id)
         .join(Store, Store.id == Offer.store_id)
-        .where(*conditions)
-        .cte("ranked_daily_observations")
+        .where(*legacy_conditions)
     )
+    confirmed_rows = (
+        select(
+            Offer.store_id.label("store_id"),
+            Store.code.label("store_code"),
+            Store.name.label("store_name"),
+            _commercial_day_expr(CollectionRun.started_at).label("commercial_day"),
+            PriceObservation.amount.label("amount"),
+            PriceObservation.id.label("observation_id"),
+            PriceObservation.offer_id.label("offer_id"),
+            CollectionRun.started_at.label("confirmed_at"),
+        )
+        .select_from(SharedCollectionOffer)
+        .join(
+            CollectionRun, CollectionRun.id == SharedCollectionOffer.collection_run_id
+        )
+        .join(
+            PriceObservation,
+            PriceObservation.id == SharedCollectionOffer.observation_id,
+        )
+        .join(Offer, Offer.id == SharedCollectionOffer.offer_id)
+        .join(Store, Store.id == Offer.store_id)
+        .where(*confirmed_conditions)
+    )
+    candidates_cte = legacy_rows.union_all(confirmed_rows).cte(
+        "daily_confirmation_candidates"
+    )
+    daily_rank = (
+        func.row_number()
+        .over(
+            partition_by=(candidates_cte.c.store_id, candidates_cte.c.commercial_day),
+            order_by=(
+                candidates_cte.c.amount.asc(),
+                candidates_cte.c.confirmed_at.desc(),
+                candidates_cte.c.observation_id.asc(),
+            ),
+        )
+        .label("rn")
+    )
+    ranked_cte = select(candidates_cte, daily_rank).cte("ranked_daily_confirmations")
     statement = (
         select(
             ranked_cte.c.store_id,
@@ -812,6 +961,8 @@ async def get_offer_price_history_for_user(
     user_id: UUID,
     period: PriceHistoryPeriod,
     now: datetime,
+    store_ids: frozenset[UUID] | None = None,
+    cadence_config: CadenceConfig | None = None,
 ) -> OfferPriceHistory | None:
     """`None` quando a Offer não é acessível ao usuário -- o router converte
     isso em 403, mesmo mecanismo de autorização já existente para Offer
@@ -858,6 +1009,9 @@ async def get_offer_price_history_for_user(
         product_id=product_id,
         user_id=user_id,
         reference_currency=reference_currency,
+        now=now,
+        store_ids=store_ids,
+        cadence_config=cadence_config,
     )
     rows = await _fetch_daily_low_points(
         session,
@@ -866,6 +1020,7 @@ async def get_offer_price_history_for_user(
         start_utc=period_range.start_utc,
         end_utc=period_range.end_utc,
         reference_currency=reference_currency,
+        store_ids=store_ids,
     )
     series_points: dict[UUID, list[PriceHistoryPoint]] = defaultdict(list)
     store_meta: dict[UUID, tuple[str, str]] = {}

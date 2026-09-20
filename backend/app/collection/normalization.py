@@ -2,7 +2,7 @@
 
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import Decimal, InvalidOperation
 from enum import StrEnum
 
@@ -45,6 +45,7 @@ class NormalizedInstallmentOption:
     discount_percent: Decimal | None
     interest_kind: InstallmentInterestKind
     is_highlighted: bool
+    payment_method: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -177,7 +178,7 @@ class PriceNormalizer:
         try:
             average = Decimal(average_match.group(1).replace(",", "."))
             count = int(re.sub(r"[.\s]", "", count_match.group(1)))
-        except (InvalidOperation, ValueError):
+        except InvalidOperation, ValueError:
             logger.warning("offer_rating_snapshot_normalization_failed")
             return (None, None)
         if not average.is_finite() or not Decimal(0) <= average <= Decimal(5):
@@ -223,9 +224,19 @@ class PriceNormalizer:
                     discount_percent=raw_option.discount_percent,
                     interest_kind=raw_option.interest_kind,
                     is_highlighted=raw_option.is_highlighted,
+                    payment_method=raw_option.payment_method,
                 )
             )
-        return tuple(normalized)
+        unique: dict[NormalizedInstallmentOption, NormalizedInstallmentOption] = {}
+        for option in normalized:
+            key = replace(option, is_highlighted=False)
+            previous = unique.get(key)
+            unique[key] = replace(
+                option,
+                is_highlighted=option.is_highlighted
+                or bool(previous and previous.is_highlighted),
+            )
+        return tuple(unique.values())
 
     def _currency(self, raw_currency: str | None, raw_amount: str | None) -> str:
         declared = raw_currency.strip().upper() if raw_currency else None

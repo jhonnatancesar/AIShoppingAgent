@@ -144,9 +144,7 @@ def test_edge_supervisor_construction_never_launches_edge(monkeypatch) -> None:
             launched = True
             raise AssertionError("lease() must not run during construction")
 
-    monkeypatch.setattr(
-        "app.collection.worker.EdgeCdpSupervisor", RecordingSupervisor
-    )
+    monkeypatch.setattr("app.collection.worker.EdgeCdpSupervisor", RecordingSupervisor)
     settings = Settings(edge_cdp_url="http://127.0.0.1:9223", _env_file=None)
 
     supervisor = build_edge_supervisor(settings)
@@ -200,6 +198,9 @@ def test_worker_once_records_batch_and_disposes(monkeypatch) -> None:
     monkeypatch.setattr("app.collection.worker.build_collection_adapter", MagicMock())
     monkeypatch.setattr(
         "app.collection.worker.build_admin_dev_ai_provider_manager", MagicMock()
+    )
+    monkeypatch.setattr(
+        "app.collection.worker.build_user_ai_provider_manager", MagicMock()
     )
     monkeypatch.setattr(
         "app.collection.worker.CollectionOrchestrator", _capture_orchestrator
@@ -259,6 +260,9 @@ def test_worker_wires_fair_queue_and_store_throttle_settings(monkeypatch) -> Non
     monkeypatch.setattr("app.collection.worker.build_collection_adapter", MagicMock())
     monkeypatch.setattr(
         "app.collection.worker.build_admin_dev_ai_provider_manager", MagicMock()
+    )
+    monkeypatch.setattr(
+        "app.collection.worker.build_user_ai_provider_manager", MagicMock()
     )
     monkeypatch.setattr(
         "app.collection.worker.CollectionOrchestrator", _capture_orchestrator

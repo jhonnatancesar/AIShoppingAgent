@@ -19,12 +19,16 @@ from datetime import UTC, datetime, timedelta
 from threading import Barrier
 from uuid import UUID
 
-import pytest
 import app.collection.shared_collection as shared_collection_module
+import pytest
 from app.ai_provider import AIResponse
 from app.collection.adapter import CollectionAdapter
 from app.collection.cadence import CadenceConfig
-from app.collection.contracts import CollectionRequest, CollectionResult, RawCollectedOffer
+from app.collection.contracts import (
+    CollectionRequest,
+    CollectionResult,
+    RawCollectedOffer,
+)
 from app.collection.models import (
     CollectionRun,
     CollectionRunStatus,
@@ -40,21 +44,27 @@ from app.collection.shared_collection import (
     recover_stale_fan_out_tasks,
     resume_shared_collection_fan_out,
 )
-from sqlalchemy.exc import IntegrityError
 from app.database.session import (
     create_async_session_factory,
     create_collection_async_database_engine,
 )
 from app.events import ConsumptionOutcome, Event, EventType
-from app.events.consumption import claim_unconsumed_events_async, record_consumption_attempt_async
+from app.events.consumption import (
+    claim_unconsumed_events_async,
+    record_consumption_attempt_async,
+)
 from app.missions.models import MissionCommand, MissionCriteria, MissionMonitoringItem
-from app.missions.service import create_mission_from_criteria_async, transition_mission_async
+from app.missions.service import (
+    create_mission_from_criteria_async,
+    transition_mission_async,
+)
 from app.offers.models import Offer
 from app.products.identity import canonical_collection_criteria
 from app.telegram.notifications import TELEGRAM_NOTIFICATION_CONSUMER
 from app.users.models import User, UserRole
 from sqlalchemy import func, select
 from sqlalchemy import text as sa_text
+from sqlalchemy.exc import IntegrityError
 
 pytestmark = pytest.mark.integration
 
@@ -225,7 +235,9 @@ def _transition(integration_database, **kwargs):
     return asyncio.run(run())
 
 
-def _two_missions_sharing_gpu(integration_database, *, label: str, target_a=None, target_b=None):
+def _two_missions_sharing_gpu(
+    integration_database, *, label: str, target_a=None, target_b=None
+):
     user_a = _seed_user(integration_database.sessions, f"{label}-A")
     user_b = _seed_user(integration_database.sessions, f"{label}-B")
     mission_a = _make_mission(
@@ -244,7 +256,9 @@ def _two_missions_sharing_gpu(integration_database, *, label: str, target_a=None
     )
     item_id = _monitoring_item_id_for(integration_database.sessions, mission_a.id)
     assert item_id is not None
-    assert item_id == _monitoring_item_id_for(integration_database.sessions, mission_b.id)
+    assert item_id == _monitoring_item_id_for(
+        integration_database.sessions, mission_b.id
+    )
     return mission_a, mission_b, item_id
 
 
@@ -381,11 +395,16 @@ def test_one_irrelevant_mission_does_not_affect_the_other(integration_database) 
         integration_database, user_a, search_query="RTX 5070 Ti", sources=("amazon",)
     )
     mission_b = _make_mission(
-        integration_database, user_b, search_query="RTX 5070 Ti XPTO", sources=("amazon",)
+        integration_database,
+        user_b,
+        search_query="RTX 5070 Ti XPTO",
+        sources=("amazon",),
     )
     item_id = _monitoring_item_id_for(integration_database.sessions, mission_a.id)
     assert item_id is not None
-    assert item_id == _monitoring_item_id_for(integration_database.sessions, mission_b.id)
+    assert item_id == _monitoring_item_id_for(
+        integration_database.sessions, mission_b.id
+    )
     amazon_id = _amazon_store_id(integration_database)
     provider = _CountingGpuProvider()
     ai_manager = _KeywordAwareAIManager(match_keyword="XPTO")
@@ -454,7 +473,9 @@ def test_fan_out_deterministic_error_goes_terminal_on_first_attempt(
     )
 
     assert result.succeeded is True  # coleta compartilhada nunca falha por causa de A
-    assert result.fan_out_failed_mission_ids == (mission_a.id,)  # terminal já na 1ª tentativa
+    assert result.fan_out_failed_mission_ids == (
+        mission_a.id,
+    )  # terminal já na 1ª tentativa
     assert mission_a.id not in result.fan_out_attention_required_mission_ids
     assert mission_b.id in result.fanned_out_mission_ids
     # B recebeu relevância normalmente, apesar do erro em A.
@@ -530,7 +551,9 @@ def test_fan_out_retryable_error_retries_then_becomes_attention_required(
     )
 
     assert result.succeeded is True  # coleta compartilhada nunca falha por causa de A
-    assert result.fan_out_failed_mission_ids == ()  # 1ª tentativa -- transitório, não terminal
+    assert (
+        result.fan_out_failed_mission_ids == ()
+    )  # 1ª tentativa -- transitório, não terminal
     assert mission_b.id in result.fanned_out_mission_ids  # B nunca afetado por A
     assert len(_relevance_rows(integration_database.sessions, mission_b.id)) == 1
 
@@ -562,11 +585,15 @@ def test_fan_out_retryable_error_retries_then_becomes_attention_required(
                 now=resume_now,
             )
         )
-        assert resume_result.fan_out_failed_mission_ids == ()  # nunca vira terminal_failed
+        assert (
+            resume_result.fan_out_failed_mission_ids == ()
+        )  # nunca vira terminal_failed
         if mission_a.id in resume_result.fan_out_attention_required_mission_ids:
             became_attention_required = True
             break
-    assert became_attention_required  # esgotou de verdade, nunca ficou tentando pra sempre
+    assert (
+        became_attention_required
+    )  # esgotou de verdade, nunca ficou tentando pra sempre
 
     with integration_database.sessions() as session:
         task_a = session.get(SharedFanOutTask, (shared_run.id, mission_a.id))
@@ -639,7 +666,9 @@ def test_paused_mission_does_not_receive_fan_out(integration_database) -> None:
     assert _relevance_rows(integration_database.sessions, mission_b.id) == []
 
 
-def test_mission_without_that_store_does_not_receive_fan_out(integration_database) -> None:
+def test_mission_without_that_store_does_not_receive_fan_out(
+    integration_database,
+) -> None:
     user_a = _seed_user(integration_database.sessions, "nostore-A")
     user_c = _seed_user(integration_database.sessions, "nostore-C")
     mission_a = _make_mission(
@@ -649,7 +678,9 @@ def test_mission_without_that_store_does_not_receive_fan_out(integration_databas
         integration_database, user_c, search_query="RTX 5070 Ti", sources=("kabum",)
     )
     item_id = _monitoring_item_id_for(integration_database.sessions, mission_a.id)
-    assert item_id == _monitoring_item_id_for(integration_database.sessions, mission_c.id)
+    assert item_id == _monitoring_item_id_for(
+        integration_database.sessions, mission_c.id
+    )
     amazon_id = _amazon_store_id(integration_database)
 
     provider = _CountingGpuProvider()
@@ -686,7 +717,9 @@ def test_concurrent_calls_never_run_the_same_item_store_twice(
 
     def _call():
         async def run():
-            engine = create_collection_async_database_engine(integration_database.settings)
+            engine = create_collection_async_database_engine(
+                integration_database.settings
+            )
             sessions = create_async_session_factory(engine)
             ai_manager = _KeywordAwareAIManager(match_keyword=None)
             try:
@@ -734,7 +767,9 @@ def test_canonical_collection_criteria_is_independent_of_raw_mission_text(
         sources=("amazon",),
     )
     item_id = _monitoring_item_id_for(integration_database.sessions, mission_a.id)
-    assert item_id == _monitoring_item_id_for(integration_database.sessions, mission_b.id)
+    assert item_id == _monitoring_item_id_for(
+        integration_database.sessions, mission_b.id
+    )
     amazon_id = _amazon_store_id(integration_database)
 
     with integration_database.sessions() as session:
@@ -833,8 +868,12 @@ def test_shared_persistence_runs_exactly_once_for_three_missions(
     )
     item_id = _monitoring_item_id_for(integration_database.sessions, mission_a.id)
     assert item_id is not None
-    assert item_id == _monitoring_item_id_for(integration_database.sessions, mission_b.id)
-    assert item_id == _monitoring_item_id_for(integration_database.sessions, mission_c.id)
+    assert item_id == _monitoring_item_id_for(
+        integration_database.sessions, mission_b.id
+    )
+    assert item_id == _monitoring_item_id_for(
+        integration_database.sessions, mission_c.id
+    )
     amazon_id = _amazon_store_id(integration_database)
 
     persist_calls = {"n": 0}
@@ -863,7 +902,11 @@ def test_shared_persistence_runs_exactly_once_for_three_missions(
 
     assert len(provider.calls) == 1
     assert persist_calls["n"] == 1
-    assert set(result.fanned_out_mission_ids) == {mission_a.id, mission_b.id, mission_c.id}
+    assert set(result.fanned_out_mission_ids) == {
+        mission_a.id,
+        mission_b.id,
+        mission_c.id,
+    }
     assert _offer_count(integration_database.sessions) == 1
     assert _observation_count(integration_database.sessions) == 1
 
@@ -1066,10 +1109,15 @@ def test_synthetic_scale_fan_out_to_many_missions(integration_database) -> None:
     for index in range(total):
         user_id = _seed_user(integration_database.sessions, f"scale-{index}")
         mission = _make_mission(
-            integration_database, user_id, search_query="RTX 5070 Ti", sources=("amazon",)
+            integration_database,
+            user_id,
+            search_query="RTX 5070 Ti",
+            sources=("amazon",),
         )
         missions.append(mission)
-        current_item = _monitoring_item_id_for(integration_database.sessions, mission.id)
+        current_item = _monitoring_item_id_for(
+            integration_database.sessions, mission.id
+        )
         assert current_item is not None
         item_id = item_id or current_item
         assert current_item == item_id
@@ -1109,7 +1157,9 @@ def test_synthetic_scale_fan_out_to_many_missions(integration_database) -> None:
             )
         )
     assert relevance_count == total  # checkpoint individual, um por Mission
-    assert mission_run_count == total  # uma run própria por Mission, nunca a compartilhada
+    assert (
+        mission_run_count == total
+    )  # uma run própria por Mission, nunca a compartilhada
 
     # Instrumentação simples anti-O(N²) -- não é benchmark, só sinal de
     # desenho ruim: trabalho inteiramente local (sem rede/IA real) para
@@ -1139,7 +1189,9 @@ def test_fan_out_survives_crash_and_resumes_without_recalling_the_provider(
     mission_c = _make_mission(
         integration_database, user_c, search_query="5070 Ti", sources=("amazon",)
     )
-    assert _monitoring_item_id_for(integration_database.sessions, mission_c.id) == item_id
+    assert (
+        _monitoring_item_id_for(integration_database.sessions, mission_c.id) == item_id
+    )
     amazon_id = _amazon_store_id(integration_database)
     provider = _CountingGpuProvider()
     ai_manager = _KeywordAwareAIManager(match_keyword=None)
@@ -1235,7 +1287,9 @@ def test_fan_out_survives_crash_and_resumes_without_recalling_the_provider(
     assert len(provider.calls) == 1  # nunca rechamado durante a retomada
     assert _offer_count(integration_database.sessions) == 1
     assert _observation_count(integration_database.sessions) == 1
-    assert set(resume_result.fanned_out_mission_ids) == all_mission_ids - {processed_first}
+    assert set(resume_result.fanned_out_mission_ids) == all_mission_ids - {
+        processed_first
+    }
     assert processed_first not in resume_result.fanned_out_mission_ids  # A não repete
 
     # checkpoints finais corretos -- as 3 têm relevância persistida, cada
@@ -1322,7 +1376,9 @@ def test_stale_shared_run_is_recovered_and_slot_becomes_eligible_again(
     assert recovered == 1
     with integration_database.sessions() as session:
         recovered_run = session.get(CollectionRun, claim.run_id)
-        assert recovered_run.status is CollectionRunStatus.FAILED  # nunca preso em RUNNING
+        assert (
+            recovered_run.status is CollectionRunStatus.FAILED
+        )  # nunca preso em RUNNING
 
     # "Combinação volta a ficar elegível" -- o slot nunca perde o
     # MonitoringItemStore permanentemente; a recuperação em si não
@@ -1360,7 +1416,10 @@ def test_stale_shared_run_is_recovered_and_slot_becomes_eligible_again(
             )
         )
     assert len(runs) == 2
-    assert {r.status for r in runs} == {CollectionRunStatus.FAILED, CollectionRunStatus.SUCCEEDED}
+    assert {r.status for r in runs} == {
+        CollectionRunStatus.FAILED,
+        CollectionRunStatus.SUCCEEDED,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -1544,11 +1603,12 @@ def test_two_workers_resuming_concurrently_never_process_the_same_task_twice(
     mission_c = _make_mission(
         integration_database, user_c, search_query="5070 Ti", sources=("amazon",)
     )
-    assert _monitoring_item_id_for(integration_database.sessions, mission_c.id) == item_id
+    assert (
+        _monitoring_item_id_for(integration_database.sessions, mission_c.id) == item_id
+    )
     amazon_id = _amazon_store_id(integration_database)
     all_mission_ids = {mission_a.id, mission_b.id, mission_c.id}
     provider = _CountingGpuProvider()
-    ai_manager = _KeywordAwareAIManager(match_keyword=None)
 
     # Deixa as 3 tarefas `pending` sem processar nenhuma -- só a
     # persistência comercial (mesmas peças internas de
@@ -1601,7 +1661,9 @@ def test_two_workers_resuming_concurrently_never_process_the_same_task_twice(
 
     def _resume_worker(_index: int):
         async def run():
-            engine = create_collection_async_database_engine(integration_database.settings)
+            engine = create_collection_async_database_engine(
+                integration_database.settings
+            )
             sessions = create_async_session_factory(engine)
             worker_ai_manager = _KeywordAwareAIManager(match_keyword=None)
             try:
@@ -1747,7 +1809,11 @@ def test_crash_mid_mission_processing_never_duplicates_individual_effects(
     ai_outcomes = _run(
         shared_collection_module._run_phase_b(phase_a, ai_manager, UserRole.ADMIN)
     )
-    ok = _run(shared_collection_module._persist_phase_c(integration_database.async_sessions, phase_a, ai_outcomes))
+    ok = _run(
+        shared_collection_module._persist_phase_c(
+            integration_database.async_sessions, phase_a, ai_outcomes
+        )
+    )
     assert ok is True  # efeitos REALMENTE commitados
 
     # "Simular crash" -- para aqui. Nunca chama _complete_fan_out_task.
@@ -1772,7 +1838,9 @@ def test_crash_mid_mission_processing_never_duplicates_individual_effects(
     async def _recover():
         async with integration_database.async_sessions.begin() as session:
             return await recover_stale_fan_out_tasks(
-                session, now=finished_at + timedelta(minutes=20), stale_after=timedelta(minutes=10)
+                session,
+                now=finished_at + timedelta(minutes=20),
+                stale_after=timedelta(minutes=10),
             )
 
     recovered = _run(_recover())
@@ -2022,7 +2090,9 @@ def test_pending_fan_out_skipped_when_mission_paused_before_processing(
     assert mission_a.id not in resume_result.fanned_out_mission_ids
     assert mission_a.id not in resume_result.fan_out_failed_mission_ids
     assert mission_a.id not in resume_result.fan_out_attention_required_mission_ids
-    assert mission_b.id in resume_result.fanned_out_mission_ids  # controle: B segue normal
+    assert (
+        mission_b.id in resume_result.fanned_out_mission_ids
+    )  # controle: B segue normal
 
     with integration_database.sessions() as session:
         task_a = session.get(SharedFanOutTask, (claim.run_id, mission_a.id))
@@ -2030,7 +2100,9 @@ def test_pending_fan_out_skipped_when_mission_paused_before_processing(
         own_run_a = session.scalar(
             select(CollectionRun).where(CollectionRun.mission_id == mission_a.id)
         )
-        assert own_run_a is None  # zero efeito -- nem a CollectionRun própria chegou a existir
+        assert (
+            own_run_a is None
+        )  # zero efeito -- nem a CollectionRun própria chegou a existir
     assert _relevance_rows(integration_database.sessions, mission_a.id) == []
     with integration_database.sessions() as session:
         events_a = list(
@@ -2074,7 +2146,9 @@ def test_pending_fan_out_skipped_when_mission_cancelled_before_processing(
     )
 
     assert mission_a.id in resume_result.fan_out_skipped_mission_ids
-    assert mission_b.id in resume_result.fanned_out_mission_ids  # controle: B segue normal
+    assert (
+        mission_b.id in resume_result.fanned_out_mission_ids
+    )  # controle: B segue normal
     with integration_database.sessions() as session:
         task_a = session.get(SharedFanOutTask, (claim.run_id, mission_a.id))
         assert task_a.status == SharedFanOutStatus.SKIPPED
@@ -2100,7 +2174,9 @@ def test_pending_fan_out_skipped_when_mission_relinked_to_another_monitoring_ite
     mission_other = _make_mission(
         integration_database, user_other, search_query="RTX 4090", sources=("amazon",)
     )
-    other_item_id = _monitoring_item_id_for(integration_database.sessions, mission_other.id)
+    other_item_id = _monitoring_item_id_for(
+        integration_database.sessions, mission_other.id
+    )
     assert other_item_id is not None
     assert other_item_id != item_id
 
@@ -2120,7 +2196,9 @@ def test_pending_fan_out_skipped_when_mission_relinked_to_another_monitoring_ite
     )
 
     assert mission_a.id in resume_result.fan_out_skipped_mission_ids
-    assert mission_b.id in resume_result.fanned_out_mission_ids  # controle: B segue normal
+    assert (
+        mission_b.id in resume_result.fanned_out_mission_ids
+    )  # controle: B segue normal
     with integration_database.sessions() as session:
         task_a = session.get(SharedFanOutTask, (claim.run_id, mission_a.id))
         assert task_a.status == SharedFanOutStatus.SKIPPED
@@ -2224,9 +2302,11 @@ def test_notification_outbox_never_double_delivers_after_fan_out_crash_and_retry
     ai_outcomes = _run(
         shared_collection_module._run_phase_b(phase_a, ai_manager, UserRole.ADMIN)
     )
-    ok = _run(shared_collection_module._persist_phase_c(
-        integration_database.async_sessions, phase_a, ai_outcomes
-    ))
+    ok = _run(
+        shared_collection_module._persist_phase_c(
+            integration_database.async_sessions, phase_a, ai_outcomes
+        )
+    )
     assert ok is True
 
     with integration_database.sessions() as session:
@@ -2246,7 +2326,9 @@ def test_notification_outbox_never_double_delivers_after_fan_out_crash_and_retry
     async def _recover():
         async with integration_database.async_sessions.begin() as session:
             return await shared_collection_module.recover_stale_fan_out_tasks(
-                session, now=finished_at + timedelta(minutes=20), stale_after=timedelta(minutes=10)
+                session,
+                now=finished_at + timedelta(minutes=20),
+                stale_after=timedelta(minutes=10),
             )
 
     recovered = _run(_recover())

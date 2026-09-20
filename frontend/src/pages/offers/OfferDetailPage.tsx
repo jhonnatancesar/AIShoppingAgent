@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { ArrowLeft, ExternalLink, ShoppingBag } from 'lucide-react'
+import { ArrowLeft, Check, Copy, ExternalLink, ShoppingBag } from 'lucide-react'
 import { Link, useParams } from 'react-router-dom'
 import { ApiError } from '../../api/client'
 import { offersApi } from '../../api/offers'
@@ -13,7 +13,7 @@ import type {
 } from '../../api/types'
 import { ConditionBadge } from '../../components/ConditionBadge'
 import { PageHeader } from '../../components/PageHeader'
-import { PriceHistoryChart } from '../../components/PriceHistoryChart'
+import { PriceHistoryChart, type PriceHistoryStoreOption } from '../../components/PriceHistoryChart'
 import { EmptyState, ErrorState, LoadingState } from '../../components/StatePanel'
 import { StoreName } from '@/components/StoreMark'
 import { Badge } from '../../components/ui/badge'
@@ -43,14 +43,37 @@ function ratingAverage(value: string) {
 }
 
 function installmentLabel(item: OfferInstallment, currency: string) {
-  const base = `${item.installment_count}x de ${money(item.installment_amount, currency)}${item.interest_kind === 'interest_free' ? ' sem juros' : ''}`
+  const interest = item.interest_kind === 'interest_free' ? ' sem juros' : item.interest_kind === 'with_interest' ? ' com juros' : ''
+  const method = item.payment_method ? ` · ${item.payment_method}` : ''
+  const discount = item.discount_percent ? ` · ${item.discount_percent}% de desconto` : ''
+  const base = `${item.installment_count}x de ${money(item.installment_amount, currency)}${interest}${method}${discount}`
   return item.installment_total_amount ? `${base} — total ${money(item.installment_total_amount, currency)}` : base
 }
 
 // Consumo de cupons (2026-09-06): só aparece quando o backend calculou um
 // cupom REALMENTE aplicável (`app.coupons.pricing.best_applicable_coupon`)
 // -- nunca um placeholder, nunca porque um cupom qualquer existe no banco.
-function CouponSection({ coupon }: { coupon: AppliedCoupon }) {
+//
+// Ação única "Resgatar na loja" para cupom SEM código (decisão explícita
+// do usuário, 2026-09-12: simplificação sobre uma versão anterior de
+// design que propunha dois botões -- "nesta oferta"/"na loja" -- nunca
+// implementada; mantém só uma ação, sempre para a mesma loja da oferta
+// ancorada). Cupom COM código ganha copiar (mesmo padrão de `CouponCard`,
+// aba "Cupons" geral) -- resgatar sempre exige levar o código pra loja.
+function CouponSection({ coupon, storeUrl }: { coupon: AppliedCoupon; storeUrl: string }) {
+  const [copied, setCopied] = useState(false)
+
+  async function copyCode() {
+    if (!coupon.code) return
+    try {
+      await navigator.clipboard.writeText(coupon.code)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch {
+      // Clipboard indisponível -- o código já está visível na tela.
+    }
+  }
+
   return (
     <div className="rounded-xl border border-primary/30 bg-primary/5 p-3 text-sm">
       <p className="font-semibold text-primary">
@@ -60,6 +83,16 @@ function CouponSection({ coupon }: { coupon: AppliedCoupon }) {
         Desconto de {money(coupon.discount_amount, coupon.currency)} — preço final{' '}
         <span className="font-semibold text-foreground">{money(coupon.final_amount, coupon.currency)}</span>
       </p>
+      <div className="mt-2 flex gap-2">
+        {coupon.code ? (
+          <Button type="button" size="sm" variant="outline" onClick={copyCode}>
+            {copied ? <Check /> : <Copy />}{copied ? 'Copiado' : 'Copiar código'}
+          </Button>
+        ) : null}
+        <Button asChild size="sm" variant="outline">
+          <a href={storeUrl} target="_blank" rel="noreferrer">Resgatar na loja <ExternalLink /></a>
+        </Button>
+      </div>
     </div>
   )
 }
@@ -82,6 +115,24 @@ function OfferImage({ offer }: { offer: OfferDetail }) {
       )}
     </Card>
   )
+}
+
+// Lojas do filtro do gráfico -- derivadas da MESMA comparação já carregada
+// para a seção "Comparar entre lojas" (nunca uma segunda chamada): quando a
+// comparação ainda não chegou/falhou, a única opção é a loja da própria
+// oferta (o filtro nem aparece, `PriceHistoryChart` esconde com 1 loja só).
+function priceHistoryStoreOptions(
+  offer: OfferDetail,
+  comparison: OfferComparison | null | undefined,
+): PriceHistoryStoreOption[] {
+  const byId = new Map<string, PriceHistoryStoreOption>()
+  byId.set(offer.store.id, { id: offer.store.id, code: offer.store.code, name: offer.store.name })
+  if (comparison?.comparable) {
+    for (const item of comparison.offers) {
+      byId.set(item.store.id, { id: item.store.id, code: item.store.code, name: item.store.name })
+    }
+  }
+  return Array.from(byId.values()).sort((a, b) => a.code.localeCompare(b.code))
 }
 
 export function OfferDetailView({ offer, comparison }: { offer: OfferDetail; comparison?: OfferComparison | null }) {
@@ -110,11 +161,11 @@ export function OfferDetailView({ offer, comparison }: { offer: OfferDetail; com
                   <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Preço à vista</p>
                   <p className="text-3xl font-bold tracking-tight">{money(observation.amount, observation.currency)}</p>
                 </div>
-                {offer.applied_coupon ? <CouponSection coupon={offer.applied_coupon} /> : null}
+                {offer.applied_coupon ? <CouponSection coupon={offer.applied_coupon} storeUrl={offer.original_url} /> : null}
                 {observation.installments.length > 0 ? (
                   <ul className="space-y-1.5 text-sm">
                     {observation.installments.map((item) => (
-                      <li key={item.installment_count} className="flex items-center gap-2">
+                      <li key={JSON.stringify([item.installment_count, item.installment_amount, item.installment_total_amount, item.discount_percent, item.interest_kind, item.payment_method])} className="flex items-center gap-2">
                         {item.is_highlighted ? <Badge>Destaque</Badge> : null}
                         <span className={item.is_highlighted ? 'font-medium' : 'text-muted-foreground'}>{installmentLabel(item, observation.currency)}</span>
                       </li>
@@ -143,7 +194,11 @@ export function OfferDetailView({ offer, comparison }: { offer: OfferDetail; com
       <ComparisonSection comparison={comparison} currentOfferId={offer.id} />
 
       <div className="mt-6">
-        <PriceHistoryChart offerId={offer.id} />
+        <PriceHistoryChart
+          offerId={offer.id}
+          anchorStoreId={offer.store.id}
+          stores={priceHistoryStoreOptions(offer, comparison)}
+        />
       </div>
 
       <div className="mt-6 flex flex-col items-start justify-between gap-3 border-t border-border pt-4 sm:flex-row sm:items-center">

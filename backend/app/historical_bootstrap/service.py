@@ -147,7 +147,13 @@ def _parse_candidate(
         return None
     try:
         amount = Decimal(prices[0].replace(".", "").replace(",", "."))
-    except InvalidOperation:
+    except InvalidOperation:  # pragma: no cover
+        # `_PRICE` só casa `<dígitos>(\.<3 dígitos>)*,<2 dígitos>` --
+        # depois da troca de separadores acima o resultado é sempre
+        # `<dígitos>.<2 dígitos>`, um literal `Decimal` válido por
+        # construção, não importa o tamanho. Guarda defensiva mantida
+        # por segurança (nunca propagar exceção para o chamador), mas
+        # sem entrada real capaz de exercitá-la.
         return None
     historical_date = None
     dates = _DATE.findall(content)

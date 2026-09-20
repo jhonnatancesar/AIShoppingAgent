@@ -157,17 +157,33 @@ def _seed_mission(
     (primeira coleta), qualquer outro valor simula uma cadência já
     estabelecida por um ciclo anterior."""
     with integration_database.sessions.begin() as session:
-        mission = Mission(user_id=user_id, title=f"legacy cadence {label}", status=MissionStatus.ACTIVE)
+        mission = Mission(
+            user_id=user_id,
+            title=f"legacy cadence {label}",
+            status=MissionStatus.ACTIVE,
+        )
         session.add(mission)
         session.flush()
         session.add(
-            MissionCriteria(mission_id=mission.id, search_query=f"item genérico sem identidade {label}")
+            MissionCriteria(
+                mission_id=mission.id,
+                search_query=f"item genérico sem identidade {label}",
+            )
         )
         session.add(
-            MissionSchedule(mission_id=mission.id, interval_minutes=60, next_run_at=NOW, is_enabled=True)
+            MissionSchedule(
+                mission_id=mission.id,
+                interval_minutes=60,
+                next_run_at=NOW,
+                is_enabled=True,
+            )
         )
         for store_id, next_run_at in sources.items():
-            session.add(MissionSource(mission_id=mission.id, store_id=store_id, next_run_at=next_run_at))
+            session.add(
+                MissionSource(
+                    mission_id=mission.id, store_id=store_id, next_run_at=next_run_at
+                )
+            )
         return mission.id
 
 
@@ -176,7 +192,9 @@ def _mission_source(sessions, mission_id: UUID, store_id: UUID) -> MissionSource
         return session.get(MissionSource, (mission_id, store_id))
 
 
-def _make_orchestrator(integration_database, *providers, cadence_config=_DETERMINISTIC_CADENCE) -> CollectionOrchestrator:
+def _make_orchestrator(
+    integration_database, *providers, cadence_config=_DETERMINISTIC_CADENCE
+) -> CollectionOrchestrator:
     return CollectionOrchestrator(
         integration_database.async_sessions,
         CollectionAdapter(providers=providers),
@@ -195,7 +213,9 @@ def _make_orchestrator(integration_database, *providers, cadence_config=_DETERMI
 # ---------------------------------------------------------------------------
 
 
-def test_faster_store_never_accelerates_slower_store_same_mission(integration_database) -> None:
+def test_faster_store_never_accelerates_slower_store_same_mission(
+    integration_database,
+) -> None:
     amazon_id = _store_id(integration_database, "amazon")
     kabum_id = _store_id(integration_database, "kabum")
     user_id = _seed_user(integration_database.sessions, "caso1")
@@ -218,7 +238,9 @@ def test_faster_store_never_accelerates_slower_store_same_mission(integration_da
 
     amazon_provider = _CountingProvider("amazon")
     kabum_provider = _CountingProvider("kabum")
-    orchestrator = _make_orchestrator(integration_database, amazon_provider, kabum_provider)
+    orchestrator = _make_orchestrator(
+        integration_database, amazon_provider, kabum_provider
+    )
 
     # Ciclo 1 @ NOW: só Amazon due.
     result = _run(orchestrator.run_batch(now=NOW))
@@ -226,7 +248,9 @@ def test_faster_store_never_accelerates_slower_store_same_mission(integration_da
     assert amazon_provider.calls == 1
     assert kabum_provider.calls == 0
 
-    amazon_source = _mission_source(integration_database.sessions, mission_id, amazon_id)
+    amazon_source = _mission_source(
+        integration_database.sessions, mission_id, amazon_id
+    )
     assert amazon_source.next_run_at == NOW + timedelta(minutes=30)  # HIGH_ACTIVITY
 
     # Ciclo 2 @ NOW+25min: KaBuM fica due (era NOW+25); Amazon (due em
@@ -272,13 +296,25 @@ def test_high_activity_store_alone_never_drags_others(integration_database) -> N
     amazon_provider = _CountingProvider("amazon")
     kabum_provider = _CountingProvider("kabum")
     pichau_provider = _CountingProvider("pichau")
-    orchestrator = _make_orchestrator(integration_database, amazon_provider, kabum_provider, pichau_provider)
+    orchestrator = _make_orchestrator(
+        integration_database, amazon_provider, kabum_provider, pichau_provider
+    )
 
     _run(orchestrator.run_batch(now=NOW))
-    assert (amazon_provider.calls, kabum_provider.calls, pichau_provider.calls) == (1, 1, 1)
-    assert _mission_source(integration_database.sessions, mission_id, amazon_id).next_run_at == NOW + timedelta(minutes=30)
-    assert _mission_source(integration_database.sessions, mission_id, kabum_id).next_run_at == NOW + timedelta(minutes=60)
-    assert _mission_source(integration_database.sessions, mission_id, pichau_id).next_run_at == NOW + timedelta(minutes=60)
+    assert (amazon_provider.calls, kabum_provider.calls, pichau_provider.calls) == (
+        1,
+        1,
+        1,
+    )
+    assert _mission_source(
+        integration_database.sessions, mission_id, amazon_id
+    ).next_run_at == NOW + timedelta(minutes=30)
+    assert _mission_source(
+        integration_database.sessions, mission_id, kabum_id
+    ).next_run_at == NOW + timedelta(minutes=60)
+    assert _mission_source(
+        integration_database.sessions, mission_id, pichau_id
+    ).next_run_at == NOW + timedelta(minutes=60)
 
     # @ NOW+30min: só Amazon due (HIGH_ACTIVITY expirado desta rodada por
     # falta de mudanças novas -- volta a NORMAL, mas o teste só precisa
@@ -396,7 +432,10 @@ def test_normal_mode_never_notifies_even_with_settings_configured(
     amazon_id = _store_id(integration_database, "amazon")
     user_id = _seed_user(integration_database.sessions, "caso-normal-notify")
     _seed_mission(
-        integration_database, user_id, label="caso-normal-notify", sources={amazon_id: NOW}
+        integration_database,
+        user_id,
+        label="caso-normal-notify",
+        sources={amazon_id: NOW},
     )
 
     notify = AsyncMock()
@@ -439,12 +478,17 @@ def test_high_activity_notify_commits_before_calling(
     amazon_id = _store_id(integration_database, "amazon")
     user_id = _seed_user(integration_database.sessions, "caso-commit-antes")
     mission_id = _seed_mission(
-        integration_database, user_id, label="caso-commit-antes", sources={amazon_id: NOW}
+        integration_database,
+        user_id,
+        label="caso-commit-antes",
+        sources={amazon_id: NOW},
     )
     with integration_database.sessions.begin() as session:
         session.add(
             StoreActivityState(
-                store_id=amazon_id, scope_id=mission_id, high_activity_until=NOW + timedelta(hours=2)
+                store_id=amazon_id,
+                scope_id=mission_id,
+                high_activity_until=NOW + timedelta(hours=2),
             )
         )
 
@@ -492,12 +536,17 @@ def test_high_activity_notify_failure_never_alters_claim(
     amazon_id = _store_id(integration_database, "amazon")
     user_id = _seed_user(integration_database.sessions, "caso-falha-notify")
     mission_id = _seed_mission(
-        integration_database, user_id, label="caso-falha-notify", sources={amazon_id: NOW}
+        integration_database,
+        user_id,
+        label="caso-falha-notify",
+        sources={amazon_id: NOW},
     )
     with integration_database.sessions.begin() as session:
         session.add(
             StoreActivityState(
-                store_id=amazon_id, scope_id=mission_id, high_activity_until=NOW + timedelta(hours=2)
+                store_id=amazon_id,
+                scope_id=mission_id,
+                high_activity_until=NOW + timedelta(hours=2),
             )
         )
 
@@ -505,7 +554,8 @@ def test_high_activity_notify_failure_never_alters_claim(
         raise RuntimeError("Coupon Worker indisponivel (simulado)")
 
     monkeypatch.setattr(
-        "app.collection.orchestration.notify_coupon_worker_high_activity", failing_notify
+        "app.collection.orchestration.notify_coupon_worker_high_activity",
+        failing_notify,
     )
 
     provider = _CountingProvider("amazon")
@@ -528,8 +578,12 @@ def test_high_activity_notify_failure_never_alters_claim(
 
     assert result.legacy_claimed == 1
     assert provider.calls == 1  # claim/coleta seguiram normalmente
-    amazon_source = _mission_source(integration_database.sessions, mission_id, amazon_id)
-    assert amazon_source.next_run_at == NOW + timedelta(minutes=30)  # persistido, intocado
+    amazon_source = _mission_source(
+        integration_database.sessions, mission_id, amazon_id
+    )
+    assert amazon_source.next_run_at == NOW + timedelta(
+        minutes=30
+    )  # persistido, intocado
 
 
 def test_high_activity_notify_not_duplicated_across_attempts_same_batch(
@@ -553,12 +607,16 @@ def test_high_activity_notify_not_duplicated_across_attempts_same_batch(
     with integration_database.sessions.begin() as session:
         session.add(
             StoreActivityState(
-                store_id=amazon_id, scope_id=mission_id, high_activity_until=NOW + timedelta(hours=2)
+                store_id=amazon_id,
+                scope_id=mission_id,
+                high_activity_until=NOW + timedelta(hours=2),
             )
         )
         session.add(
             StoreActivityState(
-                store_id=kabum_id, scope_id=mission_id, high_activity_until=NOW + timedelta(hours=2)
+                store_id=kabum_id,
+                scope_id=mission_id,
+                high_activity_until=NOW + timedelta(hours=2),
             )
         )
 
@@ -598,12 +656,17 @@ def test_high_activity_notify_not_duplicated_across_attempts_same_batch(
 # ---------------------------------------------------------------------------
 
 
-def test_backoff_on_one_store_never_blocks_another_same_mission(integration_database) -> None:
+def test_backoff_on_one_store_never_blocks_another_same_mission(
+    integration_database,
+) -> None:
     amazon_id = _store_id(integration_database, "amazon")
     kabum_id = _store_id(integration_database, "kabum")
     user_id = _seed_user(integration_database.sessions, "caso3")
     mission_id = _seed_mission(
-        integration_database, user_id, label="caso3", sources={amazon_id: NOW, kabum_id: NOW}
+        integration_database,
+        user_id,
+        label="caso3",
+        sources={amazon_id: NOW, kabum_id: NOW},
     )
     with integration_database.sessions.begin() as session:
         source = session.get(MissionSource, (mission_id, amazon_id))
@@ -611,10 +674,14 @@ def test_backoff_on_one_store_never_blocks_another_same_mission(integration_data
 
     amazon_provider = _BlockedProvider("amazon")
     kabum_provider = _CountingProvider("kabum")
-    orchestrator = _make_orchestrator(integration_database, amazon_provider, kabum_provider)
+    orchestrator = _make_orchestrator(
+        integration_database, amazon_provider, kabum_provider
+    )
 
     result = _run(orchestrator.run_batch(now=NOW))
-    assert amazon_provider.calls == 0  # backoff impede o claim -- nunca chega ao provider
+    assert (
+        amazon_provider.calls == 0
+    )  # backoff impede o claim -- nunca chega ao provider
     assert kabum_provider.calls == 1
     assert result.legacy_claimed == 1
 
@@ -625,7 +692,9 @@ def test_backoff_on_one_store_never_blocks_another_same_mission(integration_data
 # ---------------------------------------------------------------------------
 
 
-def test_new_source_never_resets_existing_sources_schedule(integration_database) -> None:
+def test_new_source_never_resets_existing_sources_schedule(
+    integration_database,
+) -> None:
     amazon_id = _store_id(integration_database, "amazon")
     kabum_id = _store_id(integration_database, "kabum")
     user_id = _seed_user(integration_database.sessions, "caso5")
@@ -633,20 +702,28 @@ def test_new_source_never_resets_existing_sources_schedule(integration_database)
         integration_database,
         user_id,
         label="caso5",
-        sources={amazon_id: NOW + timedelta(minutes=40)},  # já estabelecida, não due ainda
+        sources={
+            amazon_id: NOW + timedelta(minutes=40)
+        },  # já estabelecida, não due ainda
     )
     with integration_database.sessions.begin() as session:
-        session.add(MissionSource(mission_id=mission_id, store_id=kabum_id))  # nova, next_run_at=NULL
+        session.add(
+            MissionSource(mission_id=mission_id, store_id=kabum_id)
+        )  # nova, next_run_at=NULL
 
     amazon_provider = _CountingProvider("amazon")
     kabum_provider = _CountingProvider("kabum")
-    orchestrator = _make_orchestrator(integration_database, amazon_provider, kabum_provider)
+    orchestrator = _make_orchestrator(
+        integration_database, amazon_provider, kabum_provider
+    )
 
     _run(orchestrator.run_batch(now=NOW))
     assert kabum_provider.calls == 1  # primeira coleta da nova source
     assert amazon_provider.calls == 0  # agenda antiga preservada, ainda não due
 
-    amazon_source = _mission_source(integration_database.sessions, mission_id, amazon_id)
+    amazon_source = _mission_source(
+        integration_database.sessions, mission_id, amazon_id
+    )
     assert amazon_source.next_run_at == NOW + timedelta(minutes=40)  # intocada
 
 
@@ -656,18 +733,25 @@ def test_new_source_never_resets_existing_sources_schedule(integration_database)
 # ---------------------------------------------------------------------------
 
 
-def test_pause_blocks_and_resume_respects_existing_schedule(integration_database) -> None:
+def test_pause_blocks_and_resume_respects_existing_schedule(
+    integration_database,
+) -> None:
     amazon_id = _store_id(integration_database, "amazon")
     user_id = _seed_user(integration_database.sessions, "caso6")
-    mission_id = _seed_mission(integration_database, user_id, label="caso6", sources={amazon_id: NOW})
+    mission_id = _seed_mission(
+        integration_database, user_id, label="caso6", sources={amazon_id: NOW}
+    )
 
     from app.missions.models import MissionCommand
 
     async def pause():
         async with integration_database.async_sessions() as session, session.begin():
             await transition_mission_async(
-                session, mission_id=mission_id, command=MissionCommand.PAUSE,
-                expected_state_version=0, actor_type="test",
+                session,
+                mission_id=mission_id,
+                command=MissionCommand.PAUSE,
+                expected_state_version=0,
+                actor_type="test",
             )
 
     _run(pause())
@@ -681,12 +765,17 @@ def test_pause_blocks_and_resume_respects_existing_schedule(integration_database
     async def resume():
         async with integration_database.async_sessions() as session, session.begin():
             await transition_mission_async(
-                session, mission_id=mission_id, command=MissionCommand.RESUME,
-                expected_state_version=1, actor_type="test",
+                session,
+                mission_id=mission_id,
+                command=MissionCommand.RESUME,
+                expected_state_version=1,
+                actor_type="test",
             )
 
     _run(resume())
-    amazon_source = _mission_source(integration_database.sessions, mission_id, amazon_id)
+    amazon_source = _mission_source(
+        integration_database.sessions, mission_id, amazon_id
+    )
     assert amazon_source.next_run_at == NOW  # nunca resetado por pause/resume
 
     result = _run(orchestrator.run_batch(now=NOW))
@@ -701,7 +790,9 @@ def test_pause_blocks_and_resume_respects_existing_schedule(integration_database
 # ---------------------------------------------------------------------------
 
 
-def test_user_with_several_due_sources_gets_one_fairness_turn(integration_database) -> None:
+def test_user_with_several_due_sources_gets_one_fairness_turn(
+    integration_database,
+) -> None:
     amazon_id = _store_id(integration_database, "amazon")
     kabum_id = _store_id(integration_database, "kabum")
     pichau_id = _store_id(integration_database, "pichau")
@@ -717,11 +808,18 @@ def test_user_with_several_due_sources_gets_one_fairness_turn(integration_databa
     kabum_provider = _CountingProvider("kabum")
     pichau_provider = _CountingProvider("pichau")
     orchestrator = _make_orchestrator(
-        integration_database, amazon_provider, kabum_provider, pichau_provider,
+        integration_database,
+        amazon_provider,
+        kabum_provider,
+        pichau_provider,
     )
 
     result = _run(orchestrator.run_batch(now=NOW))
-    assert (amazon_provider.calls, kabum_provider.calls, pichau_provider.calls) == (1, 1, 1)
+    assert (amazon_provider.calls, kabum_provider.calls, pichau_provider.calls) == (
+        1,
+        1,
+        1,
+    )
     assert result.legacy_claimed == 3
 
     with integration_database.sessions() as session:
@@ -737,10 +835,14 @@ def test_user_with_several_due_sources_gets_one_fairness_turn(integration_databa
 # ---------------------------------------------------------------------------
 
 
-def test_concurrent_claims_never_double_claim_same_mission_source(integration_database) -> None:
+def test_concurrent_claims_never_double_claim_same_mission_source(
+    integration_database,
+) -> None:
     amazon_id = _store_id(integration_database, "amazon")
     user_id = _seed_user(integration_database.sessions, "caso7")
-    mission_id = _seed_mission(integration_database, user_id, label="caso7", sources={amazon_id: NOW})
+    mission_id = _seed_mission(
+        integration_database, user_id, label="caso7", sources={amazon_id: NOW}
+    )
 
     barrier = Barrier(2)
 
@@ -748,13 +850,18 @@ def test_concurrent_claims_never_double_claim_same_mission_source(integration_da
         from app.collection.orchestration import claim_due_work
 
         async def _claim_async():
-            engine = create_collection_async_database_engine(integration_database.settings)
+            engine = create_collection_async_database_engine(
+                integration_database.settings
+            )
             sessions = create_async_session_factory(engine)
             try:
                 async with sessions() as session, session.begin():
                     barrier.wait(timeout=10)
                     return await claim_due_work(
-                        session, now=NOW, limit=25, max_users=5,
+                        session,
+                        now=NOW,
+                        limit=25,
+                        max_users=5,
                         cadence_config=_DETERMINISTIC_CADENCE,
                     )
             finally:
@@ -772,7 +879,8 @@ def test_concurrent_claims_never_double_claim_same_mission_source(integration_da
         runs = list(
             session.scalars(
                 select(CollectionRun).where(
-                    CollectionRun.mission_id == mission_id, CollectionRun.store_id == amazon_id
+                    CollectionRun.mission_id == mission_id,
+                    CollectionRun.store_id == amazon_id,
                 )
             )
         )
@@ -785,11 +893,13 @@ def test_concurrent_claims_never_double_claim_same_mission_source(integration_da
 # ---------------------------------------------------------------------------
 
 
-def test_claim_due_collections_respects_per_source_cadence(integration_database) -> None:
+def test_claim_due_collections_respects_per_source_cadence(
+    integration_database,
+) -> None:
     amazon_id = _store_id(integration_database, "amazon")
     kabum_id = _store_id(integration_database, "kabum")
     user_id = _seed_user(integration_database.sessions, "caso10")
-    mission_id = _seed_mission(
+    _seed_mission(
         integration_database,
         user_id,
         label="caso10",
@@ -799,9 +909,15 @@ def test_claim_due_collections_respects_per_source_cadence(integration_database)
     async def run(now):
         async with integration_database.async_sessions() as session, session.begin():
             return await claim_due_collections(
-                session, now=now, limit=25, max_users=5, cadence_config=_DETERMINISTIC_CADENCE,
+                session,
+                now=now,
+                limit=25,
+                max_users=5,
+                cadence_config=_DETERMINISTIC_CADENCE,
             )
 
     claims = _run(run(NOW))
     assert len(claims) == 1
-    assert claims[0].store_id == amazon_id  # só a source due -- KaBuM (due em +90min) fica de fora
+    assert (
+        claims[0].store_id == amazon_id
+    )  # só a source due -- KaBuM (due em +90min) fica de fora

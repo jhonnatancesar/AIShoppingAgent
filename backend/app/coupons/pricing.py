@@ -98,6 +98,34 @@ def is_coupon_applicable(coupon: Coupon, offer: Offer) -> bool:
     return False
 
 
+def is_derived_discount_still_valid(coupon: Coupon, reference_amount: Decimal) -> bool:
+    """Um `derived_reference_price` (preço-base usado pelo worker para
+    DERIVAR um desconto que a loja não informa literalmente em R$/%, ex.:
+    economia = "Por: R$X" - "Você paga com o cupom" da Amazon) NUNCA é
+    aplicado automaticamente hoje -- correção real (2026-09-12, achado
+    do dono do produto): a versão anterior desta função só comparava
+    `derived_reference_price` com o preço atual, mas igualdade de
+    preço-base SOZINHA não comprova que vendedor, variante, condição
+    (novo/usado) e elegibilidade continuam os mesmos de quando o worker
+    capturou a evidência -- o Coupon Worker não persiste NENHUM desses
+    campos hoje (só o número do preço-base), então validá-los aqui seria
+    inventar uma suposição sobre dado que não existe. Mesmo princípio já
+    documentado no módulo ("nunca inventa heurística silenciosa: quando
+    o dado não permite decidir com segurança, o cupom é tratado como não
+    aplicável/não calculável, nunca uma suposição").
+
+    Nunca remove o cupom em si (continua visível/resgatável -- ver
+    `app.webapp.coupons_router`/aba "Cupons" geral, e a ação "Resgatar
+    na loja" na oferta) -- só a APLICAÇÃO AUTOMÁTICA de um valor
+    calculado fica desligada até que o worker capture contexto
+    suficiente (vendedor/variante/condição) para validar com segurança.
+
+    `derived_reference_price is None` (cupom sem valor derivado,
+    `discount_value` já veio literal da loja, contexto nenhum a
+    verificar) continua `True` -- nunca afetado por esta restrição."""
+    return coupon.derived_reference_price is None
+
+
 def calculate_final_price(
     reference_amount: Decimal, coupon: Coupon
 ) -> tuple[Decimal, Decimal] | None:
@@ -108,7 +136,10 @@ def calculate_final_price(
     já extraiu com confiança (`fixed_amount`/`percentage`,
     `minimum_purchase_amount`/`maximum_discount_amount` quando
     presentes)."""
-    if coupon.discount_kind not in _KNOWN_DISCOUNT_KINDS or coupon.discount_value is None:
+    if (
+        coupon.discount_kind not in _KNOWN_DISCOUNT_KINDS
+        or coupon.discount_value is None
+    ):
         return None
     if (
         coupon.minimum_purchase_amount is not None
@@ -161,6 +192,8 @@ def _logical_key(coupon: Coupon) -> tuple[UUID, str]:
 def _price_candidate(
     coupon: Coupon, reference_amount: Decimal, currency: str
 ) -> AppliedCoupon | None:
+    if not is_derived_discount_still_valid(coupon, reference_amount):
+        return None
     result = calculate_final_price(reference_amount, coupon)
     if result is None:
         return None
@@ -212,7 +245,9 @@ def _dedupe_priced_candidates(
         )
         if is_better or is_tiebreak:
             best_by_key[key] = (coupon, applied)
-    return tuple(applied for _coupon, applied in best_by_key.values()) + tuple(standalone)
+    return tuple(applied for _coupon, applied in best_by_key.values()) + tuple(
+        standalone
+    )
 
 
 def best_applicable_coupon(

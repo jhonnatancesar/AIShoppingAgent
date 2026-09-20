@@ -75,6 +75,8 @@ class RawInstallmentOption:
     raw_total_amount: str | None = None
     discount_percent: Decimal | None = None
     interest_kind: InstallmentInterestKind = InstallmentInterestKind.UNKNOWN
+    payment_method: str | None = field(default=None, kw_only=True)
+    """Modalidade explicitamente rotulada pela loja; ausente não é inferida."""
     is_highlighted: bool = False
     """Extensão TASK-089 (apresentação Telegram): marca a opção exatamente
     como resumida no card da busca -- a condição que a própria loja
@@ -85,6 +87,12 @@ class RawInstallmentOption:
 
     def __post_init__(self) -> None:
         _require_positive_int(self.installment_count, "installment_count")
+        if self.payment_method is not None:
+            _require_text(self.payment_method, "payment_method")
+            if len(self.payment_method) > 100:
+                raise CollectionContractError(
+                    "payment_method must not exceed 100 characters"
+                )
         _require_text(self.raw_amount, "raw_amount")
         if self.raw_total_amount is not None and not self.raw_total_amount.strip():
             raise CollectionContractError(
@@ -173,11 +181,6 @@ class RawCollectedOffer:
         ):
             raise CollectionContractError(
                 "installment_options must be a tuple of RawInstallmentOption"
-            )
-        counts = [option.installment_count for option in self.installment_options]
-        if len(set(counts)) != len(counts):
-            raise CollectionContractError(
-                "installment_options must not repeat installment_count"
             )
 
 

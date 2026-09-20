@@ -11,6 +11,7 @@ from app.coupons.pricing import (
     best_applicable_coupon,
     calculate_final_price,
     is_coupon_applicable,
+    is_derived_discount_still_valid,
     normalize_offer_url,
 )
 from app.offers.models import Offer
@@ -93,7 +94,9 @@ def test_product_scope_applies_only_with_exact_normalized_url_match():
         scope_kind="product",
         scope_reference="https://www.amazon.com.br/produto/x/?utm_source=ig",
     )
-    assert is_coupon_applicable(coupon, _offer("https://amazon.com.br/produto/x")) is True
+    assert (
+        is_coupon_applicable(coupon, _offer("https://amazon.com.br/produto/x")) is True
+    )
     assert (
         is_coupon_applicable(coupon, _offer("https://amazon.com.br/produto/y")) is False
     )
@@ -190,10 +193,16 @@ def test_same_code_two_applicable_evidences_different_discounts_lower_final_wins
     menor preço final (maior desconto), não a mais recente."""
     offer = _offer()
     worse = _coupon(
-        code="SAME10", evidence="ev-a", discount_value=Decimal("10.00"), last_seen_at=NOW
+        code="SAME10",
+        evidence="ev-a",
+        discount_value=Decimal("10.00"),
+        last_seen_at=NOW,
     )
     better = _coupon(
-        code="SAME10", evidence="ev-b", discount_value=Decimal("80.00"), last_seen_at=NOW
+        code="SAME10",
+        evidence="ev-b",
+        discount_value=Decimal("80.00"),
+        last_seen_at=NOW,
     )
     best = best_applicable_coupon(offer, [worse, better], Decimal("500.00"), "BRL")
     assert best is not None
@@ -206,7 +215,10 @@ def test_more_recent_but_worse_evidence_never_eliminates_older_better_one():
     pode eliminar a evidência mais antiga, que é melhor."""
     offer = _offer()
     older_better = _coupon(
-        code="SAME10", evidence="ev-old", discount_value=Decimal("80.00"), last_seen_at=NOW
+        code="SAME10",
+        evidence="ev-old",
+        discount_value=Decimal("80.00"),
+        last_seen_at=NOW,
     )
     newer_worse = _coupon(
         code="SAME10",
@@ -228,7 +240,10 @@ def test_same_code_same_final_amount_ties_break_by_most_recent_last_seen_at():
     preços finais empatam exatamente."""
     offer = _offer()
     older = _coupon(
-        code="SAME10", evidence="ev-a", discount_value=Decimal("50.00"), last_seen_at=NOW
+        code="SAME10",
+        evidence="ev-a",
+        discount_value=Decimal("50.00"),
+        last_seen_at=NOW,
     )
     newer = _coupon(
         code="SAME10",
@@ -304,7 +319,9 @@ def test_best_applicable_coupon_picks_lowest_final_price_never_sums():
 def test_best_applicable_coupon_none_when_nothing_applies():
     offer = _offer()
     inapplicable = _coupon(scope_kind=None)
-    assert best_applicable_coupon(offer, [inapplicable], Decimal("500.00"), "BRL") is None
+    assert (
+        best_applicable_coupon(offer, [inapplicable], Decimal("500.00"), "BRL") is None
+    )
 
 
 def test_best_applicable_coupon_ignores_expired_and_inapplicable_but_uses_valid():
@@ -318,6 +335,50 @@ def test_best_applicable_coupon_ignores_expired_and_inapplicable_but_uses_valid(
     assert best is not None
     assert best.code == "VALID"
     assert best.final_amount == Decimal("185.00")
+
+
+# ---------------------------------------------------------------------------
+# is_derived_discount_still_valid / derived_reference_price
+# ---------------------------------------------------------------------------
+
+
+def test_derived_discount_valid_without_reference_price():
+    """`derived_reference_price is None` (desconto veio literal da loja,
+    nunca derivado) -- nada a validar, sempre `True`."""
+    coupon = _coupon(derived_reference_price=None)
+    assert is_derived_discount_still_valid(coupon, Decimal("500.00")) is True
+
+
+def test_derived_discount_never_auto_applies_even_when_base_price_still_matches():
+    """Correção real (2026-09-12, achado do dono do produto): igualdade
+    de preço-base SOZINHA nunca basta -- vendedor/variante/condição
+    podem ter mudado sem o preço mudar, e o Coupon Worker não persiste
+    nenhum desses campos hoje. Um desconto derivado nunca é aplicado
+    automaticamente, mesmo quando o preço-base bate exatamente."""
+    coupon = _coupon(derived_reference_price=Decimal("500.00"))
+    assert is_derived_discount_still_valid(coupon, Decimal("500.00")) is False
+
+
+def test_derived_discount_never_auto_applies_when_base_price_changed():
+    coupon = _coupon(derived_reference_price=Decimal("500.00"))
+    assert is_derived_discount_still_valid(coupon, Decimal("450.00")) is False
+
+
+def test_best_applicable_coupon_never_auto_applies_derived_discount():
+    """Integração: `best_applicable_coupon` nunca oferece automaticamente
+    um desconto DERIVADO (`derived_reference_price` não nulo) -- contexto
+    insuficiente (vendedor/variante/condição não capturados) para validar
+    com segurança, mesmo que o cupom continue `active`/aplicável por
+    escopo e o preço-base bata exatamente com o atual."""
+    offer = _offer()
+    derived = _coupon(
+        code="ECONOMIA",
+        discount_kind="fixed_amount",
+        discount_value=Decimal("50.00"),
+        derived_reference_price=Decimal("500.00"),
+    )
+    assert best_applicable_coupon(offer, [derived], Decimal("500.00"), "BRL") is None
+    assert best_applicable_coupon(offer, [derived], Decimal("450.00"), "BRL") is None
 
 
 def test_original_amount_never_overwritten_by_discount():

@@ -498,6 +498,7 @@ async def _persist_shared_offers_and_finish(
                             installment_total_amount=option.installment_total_amount,
                             discount_percent=option.discount_percent,
                             interest_kind=option.interest_kind,
+                            payment_method=option.payment_method,
                             is_highlighted=option.is_highlighted,
                         )
                     )
@@ -1475,7 +1476,7 @@ class FanOutSweepSummary:
     @classmethod
     def aggregate(
         cls, outcomes: Sequence[SharedCollectionResult]
-    ) -> "FanOutSweepSummary":
+    ) -> FanOutSweepSummary:
         return cls(
             targets_processed=len(outcomes),
             attempted_task_count=sum(o.attempted_task_count for o in outcomes),

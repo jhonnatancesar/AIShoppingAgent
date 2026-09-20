@@ -2,6 +2,7 @@
 
 import json
 import re
+from dataclasses import replace
 from datetime import datetime
 from decimal import Decimal
 from html.parser import HTMLParser
@@ -117,6 +118,56 @@ def _parse_pichau_installment_row(text: str) -> RawInstallmentOption | None:
         return None
 
 
+# Achado real (2026-09-12, validação ao vivo via Edge/CDP real): linha do
+# painel "#detalheparcelamento" da página individual da Terabyte -- ex.:
+# "1x de R$ 2.541,07 c/desconto de 10%*", "4x de R$ 705,85 s/juros + Frete
+# Grátis*", "13x de R$ 238,90 c/juros*". Abreviações próprias desta loja
+# (c/, s/), diferentes do texto por extenso da Pichau -- nunca reaproveitar
+# `_PICHAU_INSTALLMENT_ROW`/`_INTEREST_FREE_PATTERN` aqui.
+_TERABYTE_INSTALLMENT_ROW = re.compile(
+    r"^\s*(\d+)x\s+de\s+(R\$\s*[\d.,]+)\s+(.+?)\*?\s*$", re.I
+)
+_TERABYTE_DISCOUNT_PATTERN = re.compile(r"c/desconto de\s*(\d+)\s*%", re.I)
+_TERABYTE_INTEREST_FREE_PATTERN = re.compile(r"s/juros", re.I)
+_TERABYTE_WITH_INTEREST_PATTERN = re.compile(r"c/juros", re.I)
+
+
+def _parse_terabyte_installment_row(text: str) -> RawInstallmentOption | None:
+    match = _TERABYTE_INSTALLMENT_ROW.match(text or "")
+    if match is None:
+        return None
+    count_text, amount, note = match.groups()
+    try:
+        count = int(count_text)
+    except ValueError:
+        return None
+    if count <= 0:
+        return None
+    discount_match = _TERABYTE_DISCOUNT_PATTERN.search(note)
+    discount_percent = Decimal(discount_match.group(1)) if discount_match else None
+    if _TERABYTE_INTEREST_FREE_PATTERN.search(note):
+        interest_kind = InstallmentInterestKind.INTEREST_FREE
+    elif _TERABYTE_WITH_INTEREST_PATTERN.search(note):
+        interest_kind = InstallmentInterestKind.WITH_INTEREST
+    else:
+        interest_kind = InstallmentInterestKind.UNKNOWN
+    total_match = re.search(r"\btotal\s*:?\s*(R\$\s*[\d.,]+)", note, re.I)
+    method_match = re.search(
+        r"\b(cartão(?: de crédito| de débito)?|boleto|pix)\b", note, re.I
+    )
+    try:
+        return RawInstallmentOption(
+            installment_count=count,
+            raw_amount=amount,
+            raw_total_amount=total_match.group(1) if total_match else None,
+            payment_method=method_match.group(1).casefold() if method_match else None,
+            discount_percent=discount_percent,
+            interest_kind=interest_kind,
+        )
+    except Exception:
+        return None
+
+
 _FIXED_NEW_CONDITION = "Novo"
 """Pichau/Terabyte/KaBuM! não vendem usado no escopo atual do GG Oferta --
 decisão de produto (subtask 3 da auditoria GG Oferta) que substitui
@@ -171,15 +222,11 @@ class PichauProvider(PlaywrightStoreProvider):
         ) as page:
             empty_locator = self.empty_result_locator(page)
             try:
-                readiness = await self._wait_for_results_or_empty(
-                    page, empty_locator
-                )
+                readiness = await self._wait_for_results_or_empty(page, empty_locator)
             except Exception as error:
                 raise ProviderBlockedError(self.source_code, None) from error
             if readiness == "empty":
-                return CollectionResult(
-                    self.source_code, started_at, self._clock(), ()
-                )
+                return CollectionResult(self.source_code, started_at, self._clock(), ())
             offers = await self.extract(page, self._clock())
             if not offers:
                 raise ProviderBlockedError(self.source_code, None)
@@ -219,11 +266,11 @@ class PichauProvider(PlaywrightStoreProvider):
             '[class*="installmentsWrapper"] > [class*="installment"]'
         ).all_text_contents()
         options: list[RawInstallmentOption] = []
-        seen: set[int] = set()
+        seen: set[RawInstallmentOption] = set()
         for text in rows:
             option = _parse_pichau_installment_row(text)
-            if option is not None and option.installment_count not in seen:
-                seen.add(option.installment_count)
+            if option is not None and option not in seen:
+                seen.add(option)
                 options.append(option)
         return tuple(options)
 
@@ -298,17 +345,47 @@ class TerabyteProvider(PlaywrightStoreProvider):
             return "Disponível"
         return None
 
-    # Correção (bloqueio Cloudflare, 2026-08-20): `resolve_installment_options`
-    # foi removido de propósito -- a Terabyte não navega mais para a página
-    # individual do produto só para detalhar a tabela de parcelamento
-    # (1x-18x). O parcelamento desta loja agora vem exclusivamente do que
-    # `extract()`/`_apply_installment_summary` já capturam no card da busca
-    # (mesmo caminho comum a Amazon/KaBuM!). Reduz de até 4 navegações
-    # (1 busca + até 3 páginas) para exatamente 1 por execução. A ausência
-    # deste método faz `enrich_installment_options` (`providers/base.py`)
-    # pular a navegação inteira via
-    # `type(self).resolve_installment_options is PlaywrightStoreProvider.resolve_installment_options`
-    # -- não é um "desligamento" condicional, é a ausência estrutural do hook.
+    async def resolve_installment_options(
+        self, page: Page
+    ) -> tuple[RawInstallmentOption, ...]:
+        """Correção real (2026-09-12): o resumo do card ("Em até 12x sem
+        juros") nunca provou as demais faixas de parcelamento -- validação
+        ao vivo via Edge/CDP real (mesmo transporte de produção, zero
+        marcador de bloqueio Cloudflare) confirmou que a página individual
+        tem 1x-3x com desconto real e 13x-18x com juros real, nenhuma das
+        duas capturada pelo resumo do card. A remoção anterior deste hook
+        (`DEC-070`, 2026-08-20, por bloqueio do Playwright gerenciado)
+        predata a confirmação -- na mesma classe, ver docstring acima,
+        2026-08-22 -- de que Edge/CDP loopback alcança a página individual
+        sem bloqueio; ficou desatualizada. O painel "#detalheparcelamento"
+        já existe no DOM ao carregar a página, só precisa ser expandido."""
+        try:
+            await page.locator('a[href="#AAA"]').click(timeout=5000)
+        except Exception:
+            pass
+        panel = page.locator("#detalheparcelamento")
+        if await panel.count() == 0:
+            return ()
+        panel_text = await panel.inner_text()
+        # Rodapé observado na página real (RTX 5050 e RTX 5080): a
+        # modalidade se aplica ao painel inteiro, não aparece em cada linha.
+        credit_panel = bool(
+            re.search(
+                r"^\s*\*\s*Para pagamentos no cartão de crédito\s*$",
+                panel_text,
+                re.I | re.M,
+            )
+        )
+        options: list[RawInstallmentOption] = []
+        seen: set[RawInstallmentOption] = set()
+        for line in panel_text.splitlines():
+            option = _parse_terabyte_installment_row(line)
+            if option is not None and option.payment_method is None and credit_panel:
+                option = replace(option, payment_method="cartão de crédito")
+            if option is not None and option not in seen:
+                seen.add(option)
+                options.append(option)
+        return tuple(options)
 
 
 def _amazon_card_condition(value: object, title: object) -> str | None:
@@ -397,22 +474,66 @@ class AmazonProvider(PlaywrightStoreProvider):
         rows = _apply_installment_summary(rows, text_key="installmentText")
         return self.offers_from_rows(rows, collected_at)
 
+    @staticmethod
+    async def _feature_text(page: Page, feature_name: str) -> str | None:
+        """Texto de um bloco `offer-display-feature-text` real da página de
+        detalhe (achado ao vivo, 2026-09-11): "vendido por" e "entregue
+        por" são blocos SEPARADOS (`desktop-merchant-info` e
+        `desktop-fulfiller-info`), cada um podendo conter mais de um
+        elemento com a classe `offer-display-feature-text-message` (o
+        link visível do perfil do vendedor e um gatilho de popover oculto
+        com o mesmo texto) -- `.first` sempre pega o visível, que vem
+        primeiro no DOM."""
+        value = page.locator(
+            f'.offer-display-feature-text[offer-display-feature-name="{feature_name}"] '
+            ".offer-display-feature-text-message"
+        )
+        if not await value.count():
+            return None
+        text = (await value.first.inner_text()).strip()
+        return text or None
+
+    @staticmethod
+    def _party_kind(text: str | None) -> MarketplacePartyKind:
+        if not text:
+            return MarketplacePartyKind.UNKNOWN
+        if text.casefold() in {"amazon", "amazon.com.br"}:
+            return MarketplacePartyKind.PLATFORM
+        return MarketplacePartyKind.MARKETPLACE_PARTNER
+
     async def resolve_marketplace_parties(
         self, page: Page
     ) -> tuple[MarketplacePartyKind, MarketplacePartyKind]:
-        value = page.locator(
+        """Vendido por (`desktop-merchant-info`) e entregue por
+        (`desktop-fulfiller-info`) nunca compartilham a mesma leitura --
+        são blocos distintos na página real (confirmado ao vivo,
+        2026-09-11: parceiro "JE Accessory Hub" vendendo com entrega pela
+        Amazon mostra os dois nomes, um em cada bloco)."""
+        seller_text = await self._feature_text(page, "desktop-merchant-info")
+        fulfiller_text = await self._feature_text(page, "desktop-fulfiller-info")
+        return (self._party_kind(seller_text), self._party_kind(fulfiller_text))
+
+    async def resolve_seller_name(self, page: Page) -> str | None:
+        return await self._feature_text(page, "desktop-merchant-info")
+
+    async def resolve_seller_external_id(self, page: Page) -> str | None:
+        """Identificador estável do vendedor a partir do link real do
+        perfil (achado ao vivo, 2026-09-11: `.../at-a-glance.html?...
+        &seller=A2I8NJ01N6P55G&...`) -- nunca disponível no card de busca
+        (confirmado: nenhum card expõe esse link), só na página de
+        detalhe. Ausente quando o vendedor é a própria Amazon (sem perfil
+        de vendedor para linkar)."""
+        link = page.locator(
             '.offer-display-feature-text[offer-display-feature-name="desktop-merchant-info"] '
-            ".offer-display-feature-text-message"
+            'a[href*="seller="]'
         )
-        text = (await value.first.inner_text()).strip() if await value.count() else ""
-        if not text:
-            return (MarketplacePartyKind.UNKNOWN, MarketplacePartyKind.UNKNOWN)
-        kind = (
-            MarketplacePartyKind.PLATFORM
-            if text.casefold() in {"amazon", "amazon.com.br"}
-            else MarketplacePartyKind.MARKETPLACE_PARTNER
-        )
-        return (kind, kind)
+        if not await link.count():
+            return None
+        href = await link.first.get_attribute("href")
+        if not href:
+            return None
+        match = re.search(r"[?&]seller=([A-Za-z0-9]+)", href)
+        return match.group(1) if match else None
 
     async def resolve_offer_condition(self, page: Page) -> str | None:
         """Prioriza o campo explícito `Condição` da página já aberta."""
@@ -570,9 +691,7 @@ class MercadoLivreProvider(PlaywrightStoreProvider):
         (`EdgeCdpTransportError`) propaga como qualquer outra falha,
         tratada pelo retry/circuit-breaker já existente em `collect()`."""
         if self._cdp_transport is None:
-            raise EdgeCdpTransportError(
-                "Mercado Livre CDP transport is not configured"
-            )
+            raise EdgeCdpTransportError("Mercado Livre CDP transport is not configured")
         started_at = self._clock()
         offers = await self._cdp_transport.run(
             self.build_url(request.search_query),
@@ -830,9 +949,7 @@ def _magalu_badge_condition(badges: object) -> str | None:
     if not isinstance(badges, list):
         return None
     texts = " ".join(
-        str(badge.get("text") or "")
-        for badge in badges
-        if isinstance(badge, dict)
+        str(badge.get("text") or "") for badge in badges if isinstance(badge, dict)
     ).casefold()
     if re.search(r"recondicionado|refurbished|renewed", texts):
         return "Recondicionado"

@@ -182,6 +182,7 @@ def test_metadata_contains_only_implemented_tables() -> None:
         "web_sessions",
         "admin_api_keys",
         "search_receipts",
+        "search_receipt_products",
         "product_identity_aliases",
         # TASK-112: Shared Monitoring (fases 1-3B).
         "monitoring_items",
@@ -211,4 +212,10 @@ def test_metadata_contains_only_implemented_tables() -> None:
         # no mesmo PostgreSQL do GG Oferta.
         "coupons",
         "coupon_offer_links",
+        # Aprendizado de identidade de produto assistido por IA
+        # (2026-09-12): conceitualmente separada de
+        # `product_identity_aliases` (correção de escrita de valor de
+        # atributo já conhecido) -- aprende família/modelo inteiros novos
+        # a partir de texto livre, com sua própria fila de revisão.
+        "product_identity_candidates",
     }

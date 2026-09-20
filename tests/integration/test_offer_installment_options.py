@@ -234,7 +234,7 @@ def test_foreign_key_rejects_orphan_price_observation_id(
 # --- 5: UNIQUE ---
 
 
-def test_unique_constraint_rejects_duplicate_count_in_same_observation(
+def test_unique_constraint_rejects_duplicate_terms_in_same_observation(
     integration_database,
 ) -> None:
     now = datetime.now(UTC).replace(microsecond=0)
@@ -249,7 +249,7 @@ def test_unique_constraint_rejects_duplicate_count_in_same_observation(
             OfferInstallmentOption(
                 price_observation_id=observation_id,
                 installment_count=12,  # já existe para esta observação
-                installment_amount=Decimal("999.00"),
+                installment_amount=Decimal("158.33"),
             )
         )
         with pytest.raises(IntegrityError, match="(?i)unique"):
@@ -418,3 +418,43 @@ def test_successive_observations_keep_independent_option_sets(
         assert first_options == [12]
         # a observação nova tem só 6x -- "estado atual" é dela, não da antiga
         assert second_options == [6]
+
+
+@pytest.mark.parametrize(
+    "difference",
+    [
+        {"payment_method": "boleto"},
+        {"interest_kind": InstallmentInterestKind.WITH_INTEREST},
+        {"raw_total_amount": "R$ 1.920,00"},
+        {"discount_percent": Decimal("5")},
+    ],
+)
+def test_same_count_distinct_terms_survive_orchestration(
+    integration_database, difference
+):
+    from dataclasses import replace
+
+    first = RawInstallmentOption(
+        12,
+        "R$ 158,33",
+        raw_total_amount="R$ 1.900,00",
+        interest_kind=InstallmentInterestKind.INTEREST_FREE,
+        payment_method="cartão",
+        discount_percent=Decimal("0"),
+    )
+    observation_id = _run_batch_with_options(
+        integration_database,
+        datetime.now(UTC).replace(microsecond=0),
+        (first, replace(first, **difference)),
+    )
+    with integration_database.sessions() as session:
+        rows = list(
+            session.scalars(
+                select(OfferInstallmentOption).where(
+                    OfferInstallmentOption.price_observation_id == observation_id
+                )
+            )
+        )
+        assert len(rows) == 2
+        assert all(row.installment_count == 12 for row in rows)
+        assert any(row.payment_method == "cartão" for row in rows)

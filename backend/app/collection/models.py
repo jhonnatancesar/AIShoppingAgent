@@ -348,7 +348,13 @@ class OfferInstallmentOption(Base):
         UniqueConstraint(
             "price_observation_id",
             "installment_count",
-            name="uq_offer_installment_options_observation_count",
+            "installment_amount",
+            "installment_total_amount",
+            "discount_percent",
+            "interest_kind",
+            "payment_method",
+            name="uq_offer_installment_options_terms",
+            postgresql_nulls_not_distinct=True,
         ),
         Index(
             "ix_offer_installment_options_price_observation_id",
@@ -365,6 +371,7 @@ class OfferInstallmentOption(Base):
         nullable=False,
     )
     installment_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    payment_method: Mapped[str | None] = mapped_column(String(100), nullable=True)
     installment_amount: Mapped[Decimal] = mapped_column(Numeric(19, 4), nullable=False)
     installment_total_amount: Mapped[Decimal | None] = mapped_column(
         Numeric(19, 4), nullable=True
@@ -758,9 +765,7 @@ class PromotionalWindow(Base):
         PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4
     )
     label: Mapped[str] = mapped_column(String(120), nullable=False)
-    starts_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
+    starts_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     ends_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

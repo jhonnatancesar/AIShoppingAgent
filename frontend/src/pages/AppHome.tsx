@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { ArrowRight, Plus, Search, ShieldCheck, ShoppingBag, Target } from 'lucide-react'
+import { ArrowRight, Flame, Plus, Search, ShieldCheck, ShoppingBag, Target } from 'lucide-react'
 import { accountApi } from '@/api/account'
 import { ApiError } from '@/api/client'
 import { missionsApi } from '@/api/missions'
 import { offersApi } from '@/api/offers'
-import type { AccountProfile, AccountQuota, OfferSummary } from '@/api/types'
+import { searchApi } from '@/api/search'
+import type { AccountProfile, AccountQuota, OfferSummary, TrendingSearchedProduct } from '@/api/types'
 import { useAuth } from '../auth/authContextValue'
 import { offerSummaryToCardData } from './offers/offerCardMapping'
 import { OfferCard } from '@/components/OfferCard'
@@ -61,6 +62,11 @@ export function AppHome() {
   // Só para o botão "Tentar novamente" pedir os mesmos dados de novo, sem
   // chamar a busca por referência de dentro do efeito.
   const [retryToken, setRetryToken] = useState(0)
+  // "Veja o que estão pesquisando" é decorativo, não crítico: uma falha
+  // aqui nunca deve derrubar a Home inteira -- por isso é buscado à
+  // parte de `loadHomeData`, com `null` (ausência silenciosa) em vez de
+  // um estado de erro visível.
+  const [trending, setTrending] = useState<TrendingSearchedProduct[] | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -74,20 +80,31 @@ export function AppHome() {
     return () => { cancelled = true }
   }, [retryToken])
 
+  useEffect(() => {
+    let cancelled = false
+    searchApi.trending().then(
+      (response) => { if (!cancelled) setTrending(response?.items ?? []) },
+      () => { /* decorativo -- seção só some, sem afetar o resto da Home */ },
+    )
+    return () => { cancelled = true }
+  }, [])
+
   if (error && !data) return <ErrorState title="Não foi possível carregar sua área" description={error} onRetry={() => setRetryToken((token) => token + 1)} />
   if (!data) return <LoadingState label="Carregando…" />
 
-  return <AppHomeView displayName={user?.display_name} isAdmin={isAdmin} data={data} />
+  return <AppHomeView displayName={user?.display_name} isAdmin={isAdmin} data={data} trending={trending} />
 }
 
 export function AppHomeView({
   displayName,
   isAdmin,
   data,
+  trending,
 }: {
   displayName?: string
   isAdmin: boolean
   data: HomeData
+  trending?: TrendingSearchedProduct[] | null
 }) {
   const isNewUser = data.totalMissions === 0
   const nearLimitItems = [
@@ -122,6 +139,22 @@ export function AppHomeView({
         <p className="mb-6 text-sm text-muted-foreground">
           Você tem acesso administrativo. <Link className="inline-flex items-center gap-1 font-medium text-primary hover:underline" to="/admin"><ShieldCheck className="size-3.5" />Ir para o painel ADMIN</Link>
         </p>
+      ) : null}
+
+      {trending && trending.length > 0 ? (
+        <Card className="mb-6">
+          <CardHeader className="gap-1">
+            <CardTitle className="flex items-center gap-2 text-base"><Flame className="size-4 text-primary" />Veja o que estão pesquisando</CardTitle>
+            <CardDescription>Produtos reconhecidos buscados por vários usuários agora -- nunca identificamos quem pesquisou o quê, nem o texto que cada um digitou.</CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-wrap gap-2">
+            {trending.map((entry) => (
+              <Link key={entry.product_id} to={`/app/search?q=${encodeURIComponent(entry.display_name)}`} className="rounded-full border border-border/70 px-3 py-1.5 text-sm text-foreground transition-colors hover:border-primary/40 hover:bg-primary/5">
+                {entry.display_name}
+              </Link>
+            ))}
+          </CardContent>
+        </Card>
       ) : null}
 
       {isNewUser ? (

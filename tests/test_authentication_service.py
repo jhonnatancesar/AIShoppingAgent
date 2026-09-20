@@ -11,6 +11,7 @@ from app.authentication.models import (
     CredentialActionToken,
     UserAuthSession,
     UserCredential,
+    WebSession,
 )
 from app.authentication.passwords import PasswordPolicyError, hash_password
 from app.authentication.service import (
@@ -265,6 +266,7 @@ def test_password_change_revokes_sessions_atomically(action: CredentialAction) -
         _result(optional=token),
         _result(optional=credential),
         MagicMock(),
+        MagicMock(),
     ]
 
     complete_action(
@@ -278,7 +280,21 @@ def test_password_change_revokes_sessions_atomically(action: CredentialAction) -
     assert token.consumed_at == NOW
     assert credential.password_changed_at == NOW
     assert credential.failed_login_attempts == 0
-    assert session.execute.call_count == 3
+    # Subtask 9 (correção de gap real de segurança, achado no preflight):
+    # troca/recuperação de senha precisa revogar as sessões dos DOIS
+    # canais -- Telegram (`UserAuthSession`) e Web (`WebSession`) --
+    # nunca só um deles; teste original só conhecia a revogação Telegram
+    # e ficou desatualizado quando a revogação Web foi adicionada
+    # (achado da rodada de 2026-09-12, corrigido aqui em vez de
+    # enfraquecer a asserção para só contar chamadas).
+    assert session.execute.call_count == 4
+    updated_tables = {
+        call.args[0].table.name
+        for call in session.execute.call_args_list
+        if hasattr(call.args[0], "table")
+    }
+    assert UserAuthSession.__tablename__ in updated_tables
+    assert WebSession.__tablename__ in updated_tables
 
 
 def test_set_password_requires_confirmation_and_blocks_common_password() -> None:

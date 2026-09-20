@@ -1,15 +1,26 @@
-"""TASK-089 (DEC-069) + DEC-070: captura de opções de parcelamento por
-provider.
+"""TASK-089 (DEC-069) + DEC-070 + correção real de 2026-09-12: captura de
+opções de parcelamento por provider.
 
-Pichau (card + tabela individual com desconto variável por faixa e por
-produto); Terabyte, Amazon e KaBuM! usam só o que já vem no card, nenhuma
-tabela individual é consultada -- nunca inventa opções intermediárias.
+Pichau e (desde 2026-09-12) Terabyte capturam card + tabela/painel
+individual; Amazon e KaBuM! usam só o que já vem no card -- nunca inventa
+opções intermediárias.
+
 Terabyte teve o hook de página individual removido em 2026-08-20
-(`DEC-070`, bloqueio persistente de Cloudflare Bot Management)."""
+(`DEC-070`, bloqueio persistente de Cloudflare Bot Management do
+Playwright gerenciado) e reintroduzido em 2026-09-12 depois de validação
+AO VIVO via Edge/CDP real (mesmo transporte de produção): zero marcador
+de bloqueio ao navegar a página individual, e o painel
+"#detalheparcelamento" revelou faixas (1x-3x com desconto, 13x-18x com
+juros) que o resumo do card nunca capturava. `DEC-070` predatava a
+confirmação (2026-08-22, ver docstring de `TerabyteProvider`) de que
+Edge/CDP loopback alcança a página individual sem bloqueio -- a remoção
+ficou desatualizada."""
 
 import asyncio
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from decimal import Decimal
+from uuid import uuid4
 
 import pytest
 from app.collection import (
@@ -17,14 +28,16 @@ from app.collection import (
     InstallmentInterestKind,
     KabumProvider,
     PichauProvider,
-    RawCollectedOffer,
     RawInstallmentOption,
     TerabyteProvider,
 )
+from app.collection.adapter import CollectionAdapter
+from app.collection.contracts import CollectionRequest
 from app.collection.providers.base import _merge_installment_options
 from app.collection.providers.stores import (
     AmazonProvider,
     _parse_pichau_installment_row,
+    _parse_terabyte_installment_row,
 )
 
 NOW = datetime(2026, 8, 17, 12, tzinfo=UTC)
@@ -178,59 +191,164 @@ def test_terabyte_card_captures_installment_without_total() -> None:
     assert options[0].interest_kind is InstallmentInterestKind.INTEREST_FREE
 
 
-# --- Terabyte: página individual removida (DEC-070, bloqueio Cloudflare) ---
+# --- Terabyte: página individual (painel #detalheparcelamento) ---
 
 
-def test_terabyte_never_visits_individual_page_for_installments() -> None:
-    """DEC-070 (2026-08-20): a Terabyte deixou de implementar
-    `resolve_installment_options` -- bloqueio persistente de Cloudflare
-    Bot Management ao navegar página individual. O parcelamento desta
-    loja passa a vir só do card, mesmo caminho de Amazon/KaBuM!; nenhuma
-    navegação extra pode ser disparada procurando pela tabela detalhada
-    (1x-18x) que a página individual expunha antes."""
-    from app.collection.providers.base import PlaywrightStoreProvider
+def test_terabyte_installment_row_parses_discount_interest_free_and_with_interest() -> (
+    None
+):
+    """Linhas REAIS capturadas em validação ao vivo (2026-09-12, GPU MSI
+    RTX 5050 Gaming, Edge/CDP real, zero bloqueio) -- as três formas que
+    o painel "#detalheparcelamento" usa, nenhuma coberta pelo resumo do
+    card ("Em até 12x sem juros")."""
+    discounted = _parse_terabyte_installment_row("1x de R$ 2.541,07 c/desconto de 10%*")
+    assert discounted is not None
+    assert discounted.installment_count == 1
+    assert discounted.discount_percent == Decimal("10")
+    assert discounted.interest_kind is InstallmentInterestKind.UNKNOWN
 
+    interest_free = _parse_terabyte_installment_row(
+        "4x de R$ 705,85 s/juros + Frete Grátis*"
+    )
+    assert interest_free is not None
+    assert interest_free.installment_count == 4
+    assert interest_free.discount_percent is None
+    assert interest_free.interest_kind is InstallmentInterestKind.INTEREST_FREE
+
+    with_interest = _parse_terabyte_installment_row("13x de R$ 238,90 c/juros*")
+    assert with_interest is not None
+    assert with_interest.installment_count == 13
+    assert with_interest.discount_percent is None
+    assert with_interest.interest_kind is InstallmentInterestKind.WITH_INTEREST
+
+
+def test_terabyte_installment_row_rejects_unparseable_text() -> None:
     assert (
-        TerabyteProvider.resolve_installment_options
-        is PlaywrightStoreProvider.resolve_installment_options
+        _parse_terabyte_installment_row(
+            "Crédito - em até 12x sem juros ou em até 18x com juros"
+        )
+        is None
     )
+    assert _parse_terabyte_installment_row("") is None
 
 
-@pytest.mark.anyio
-async def test_terabyte_enrich_installment_options_never_opens_browser_session(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Prova em tempo de execução (não só por identidade de método): com
-    o hook ausente, `enrich_installment_options` retorna as ofertas
-    intocadas sem sequer abrir uma página de detalhe -- 1 navegação (a
-    busca) por execução, nunca 1 + até 3. TASK-109 (fechamento da migração
-    de browser): `_open_detail_page` nem abre mais `BrowserSession` como
-    fallback -- sem `cdp_transport`, ela lançaria `EdgeCdpTransportError`;
-    a garantia estrutural de que a Terabyte nunca chega lá continua sendo
-    a ausência de `resolve_installment_options` sobrescrito."""
-    provider = TerabyteProvider()
-    offer = RawCollectedOffer(
-        source_code="terabyte",
-        url="https://www.terabyteshop.com.br/produto/1/gpu",
-        title="GPU",
-        collected_at=datetime.now(UTC),
-        external_id="1",
-        raw_price="R$ 1.900,00",
-        raw_currency="BRL",
-        installment_options=(
-            RawInstallmentOption(
-                installment_count=12,
-                raw_amount="R$ 158,33",
-                interest_kind=InstallmentInterestKind.INTEREST_FREE,
-                is_highlighted=True,
-            ),
-        ),
+def test_terabyte_resolves_installment_options_from_individual_page() -> None:
+    """Reproduz literalmente o painel real (18 linhas, RTX 5050 Gaming) --
+    expande via clique no toggle (`a[href="#AAA"]`, mesmo seletor validado
+    ao vivo) antes de ler o texto, nunca assume o painel já expandido."""
+    html = (
+        "<a href=\"#AAA\" onclick=\"document.getElementById('AAA').style.display='block'\">"
+        "VER PARCELAMENTO</a>"
+        '<div id="AAA" style="display:none">'
+        '<div id="detalheparcelamento">'
+        "Crédito - em até 12x sem juros ou em até 18x com juros<br>"
+        "1x de R$ 2.541,07 c/desconto de 10%*<br>"
+        "2x de R$ 1.312,89 c/desconto de 7%*<br>"
+        "3x de R$ 875,26 c/desconto de 7%*<br>"
+        "4x de R$ 705,85 s/juros + Frete Grátis*<br>"
+        "12x de R$ 235,28 s/juros*<br>"
+        "13x de R$ 238,90 c/juros*<br>"
+        "18x de R$ 172,54 c/juros*<br>"
+        "* Para pagamentos no cartão de crédito"
+        "</div></div>"
     )
+    options = asyncio.run(_resolve_installment_options(TerabyteProvider(), html))
 
-    result = await provider.enrich_installment_options((offer,))
+    by_count = {option.installment_count: option for option in options}
+    assert set(by_count) == {1, 2, 3, 4, 12, 13, 18}
+    assert by_count[1].discount_percent == Decimal("10")
+    assert by_count[3].discount_percent == Decimal("7")
+    assert by_count[4].interest_kind is InstallmentInterestKind.INTEREST_FREE
+    assert by_count[12].interest_kind is InstallmentInterestKind.INTEREST_FREE
+    assert by_count[13].interest_kind is InstallmentInterestKind.WITH_INTEREST
+    assert by_count[18].interest_kind is InstallmentInterestKind.WITH_INTEREST
 
-    assert result == (offer,)
-    assert result[0].installment_options == offer.installment_options
+
+def test_terabyte_resolve_installment_options_empty_when_no_panel() -> None:
+    options = asyncio.run(
+        _resolve_installment_options(TerabyteProvider(), "<div>sem parcelamento</div>")
+    )
+    assert options == ()
+
+
+@pytest.mark.parametrize("detail_status", [200, 403, 503])
+def test_terabyte_collector_combines_card_and_single_detail_visit(detail_status):
+    """Fluxo do adapter/provider real sobre HTML controlado, complementar
+    à captura Edge/CDP ao vivo; uma visita também aproveita avaliação.
+    Falha HTTP mantém os dados do card, sem fabricar outras faixas."""
+    card_html = """<div class="product-item" data-tss-estoque="1">
+      <a class="product-item__name" href="https://www.terabyteshop.com.br/produto/123/gpu">GPU teste</a>
+      <div class="product-item__new-price"><span>R$ 900,00</span></div>
+      <div class="product-item__juros">Em até 12x de R$ 100,00 sem juros</div>
+    </div>"""
+    detail_html = """<a href="#AAA">Parcelamento</a>
+      <div id="detalheparcelamento" style="white-space: pre-line">1x de R$ 1.080,00 c/desconto de 10%*
+12x de R$ 100,00 s/juros*
+13x de R$ 101,00 c/juros*</div>
+      <script type="application/ld+json">{"@type":"Product","aggregateRating":
+      {"ratingValue":4.5,"reviewCount":7,"bestRating":5}}</script>"""
+
+    async def run():
+        async with BrowserSession() as browser:
+            page = await browser.new_page()
+            visits = []
+
+            async def handle(route):
+                url = route.request.url
+                visits.append(url)
+                is_detail = "/produto/" in url
+                await route.fulfill(
+                    status=detail_status if is_detail else 200,
+                    content_type="text/html",
+                    body=detail_html if is_detail else card_html,
+                )
+
+            await page.route("https://www.terabyteshop.com.br/**", handle)
+
+            class Transport:
+                async def run(self, url, *, readiness_selector, extract):
+                    await page.goto(url)
+                    return await extract(page)
+
+                @asynccontextmanager
+                async def open_blank_page(self):
+                    yield page
+
+            provider = TerabyteProvider(cdp_transport=Transport(), clock=lambda: NOW)
+            adapter = CollectionAdapter([provider])
+            result = await adapter.collect(
+                CollectionRequest(
+                    source_code="terabyte",
+                    search_query="gpu",
+                    requested_at=NOW,
+                    mission_id=uuid4(),
+                )
+            )
+            assert len(result.offers) == 1
+            card = result.offers[0]
+            assert card.raw_price == "R$ 900,00"
+            assert len(card.installment_options) == 1
+            enriched = (await adapter.enrich_offer_details("terabyte", result.offers))[
+                0
+            ]
+            assert enriched.raw_price == card.raw_price
+            assert len([url for url in visits if "/produto/" in url]) == 1
+            if detail_status != 200:
+                assert enriched == card
+                return
+            by_count = {
+                item.installment_count: item for item in enriched.installment_options
+            }
+            assert set(by_count) == {1, 12, 13}
+            assert by_count[12].is_highlighted
+            assert by_count[1].raw_amount == "R$ 1.080,00"
+            assert by_count[1].discount_percent == Decimal("10")
+            assert by_count[13].interest_kind is InstallmentInterestKind.WITH_INTEREST
+            assert all(item.raw_total_amount is None for item in by_count.values())
+            assert enriched.raw_rating_average == "4.5"
+            assert enriched.raw_review_count == "7"
+
+    asyncio.run(run())
 
 
 # --- Amazon: só o card, contagem variável, nunca tabela individual ---
@@ -326,9 +444,7 @@ def test_kabum_never_visits_individual_page_for_installments() -> None:
     )
 
 
-# --- merge card + página individual (função genérica; só a Pichau usa
-# esse caminho hoje -- Terabyte não navega mais para página individual,
-# DEC-070) ---
+# --- merge card + página individual (Pichau e Terabyte) ---
 
 
 def test_merge_installment_options_page_enriches_without_losing_card_total() -> None:
@@ -360,7 +476,7 @@ def test_merge_installment_options_page_enriches_without_losing_card_total() -> 
     assert by_count[1].raw_total_amount is None
 
 
-def test_merge_installment_options_never_duplicates_count() -> None:
+def test_merge_installment_options_preserves_distinct_amounts() -> None:
     card = (RawInstallmentOption(installment_count=12, raw_amount="R$ 1,00"),)
     page = (
         RawInstallmentOption(installment_count=12, raw_amount="R$ 2,00"),
@@ -369,8 +485,8 @@ def test_merge_installment_options_never_duplicates_count() -> None:
 
     merged = _merge_installment_options(card, page)
 
-    assert len(merged) == 1
-    assert merged[0].installment_count == 12
+    assert [option.raw_amount for option in merged] == ["R$ 2,00", "R$ 3,00"]
+    assert all(option.installment_count == 12 for option in merged)
 
 
 # ---------------------------------------------------------------------------
@@ -432,3 +548,81 @@ def test_card_level_installment_never_sets_discount_percent() -> None:
     options = _installment_options_from_row(row)
     assert len(options) == 1
     assert options[0].discount_percent is None
+
+
+def test_merge_does_not_assign_ambiguous_card_to_payment_method():
+    from dataclasses import replace
+
+    card = RawInstallmentOption(12, "R$ 100,00", is_highlighted=True)
+    methods = (
+        replace(card, payment_method="cartão", is_highlighted=False),
+        replace(card, payment_method="boleto", is_highlighted=False),
+    )
+    merged = _merge_installment_options((card,), methods)
+    assert len(merged) == 2
+    assert not any(option.is_highlighted for option in merged)
+
+
+@pytest.mark.parametrize(
+    "difference",
+    [
+        {"payment_method": "boleto"},
+        {"interest_kind": InstallmentInterestKind.WITH_INTEREST},
+        {"discount_percent": Decimal("5")},
+    ],
+)
+def test_merge_keeps_same_count_when_known_terms_conflict(difference):
+    from dataclasses import replace
+
+    card = RawInstallmentOption(
+        12,
+        "R$ 100,00",
+        raw_total_amount="R$ 1.200,00",
+        payment_method="cartão",
+        interest_kind=InstallmentInterestKind.INTEREST_FREE,
+        discount_percent=Decimal("0"),
+    )
+    assert len(_merge_installment_options((card,), (replace(card, **difference),))) == 2
+
+
+def test_terabyte_only_captures_explicit_method_and_total():
+    option = _parse_terabyte_installment_row(
+        "12x de R$ 100,00 s/juros cartão de crédito total: R$ 1.199,99"
+    )
+    assert option.payment_method == "cartão de crédito"
+    assert option.raw_total_amount == "R$ 1.199,99"
+    unlabeled = _parse_terabyte_installment_row("12x de R$ 100,00 s/juros")
+    assert unlabeled.payment_method is None
+    assert unlabeled.raw_total_amount is None
+
+
+def test_normalization_deduplicates_terms_without_losing_highlight():
+    from app.collection.normalization import PriceNormalizer
+
+    options = (
+        RawInstallmentOption(12, "R$ 100,00"),
+        RawInstallmentOption(12, "R$100,00", is_highlighted=True),
+    )
+    normalized = PriceNormalizer._installment_options(options, "BRL")
+    assert len(normalized) == 1
+    assert normalized[0].is_highlighted
+
+
+def test_real_terabyte_rounding_uses_detail_amount():
+    card = RawInstallmentOption(
+        12,
+        "R$ 235,29",
+        interest_kind=InstallmentInterestKind.INTEREST_FREE,
+        is_highlighted=True,
+    )
+    detail = RawInstallmentOption(
+        12,
+        "R$ 235,28",
+        interest_kind=InstallmentInterestKind.INTEREST_FREE,
+        payment_method="cartão de crédito",
+    )
+    merged = _merge_installment_options((card,), (detail,))
+    assert len(merged) == 1
+    assert merged[0].raw_amount == "R$ 235,28"
+    assert merged[0].is_highlighted
+    assert merged[0].payment_method == "cartão de crédito"

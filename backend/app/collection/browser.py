@@ -30,7 +30,9 @@ from playwright.async_api import Page
 # rodando ao mesmo tempo na mesma máquina. `tests/conftest.py` importa
 # as duas constantes para saber onde/como subir o Edge dedicado.
 EDGE_SESSION_CDP_URL = "http://127.0.0.1:9333"
-EDGE_SESSION_PROFILE_DIR = Path(tempfile.gettempdir()) / "aishoppingagent-test-edge-profile"
+EDGE_SESSION_PROFILE_DIR = (
+    Path(tempfile.gettempdir()) / "aishoppingagent-test-edge-profile"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,7 +68,7 @@ class BrowserSession:
         self._transport_cm = None
         self._page: Page | None = None
 
-    async def __aenter__(self) -> "BrowserSession":
+    async def __aenter__(self) -> BrowserSession:
         if self._transport_cm is not None:
             raise RuntimeError("browser session is already open")
 

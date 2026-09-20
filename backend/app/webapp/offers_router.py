@@ -25,7 +25,10 @@ from app.collection.normalization import Availability
 from app.core.config import Settings, get_settings
 from app.core.errors import ApiError
 from app.coupons.pricing import AppliedCoupon, best_applicable_coupon
-from app.coupons.service import get_active_coupons_by_store, get_candidate_coupons_for_offer
+from app.coupons.service import (
+    get_active_coupons_by_store,
+    get_candidate_coupons_for_offer,
+)
 from app.database.dependency import get_web_async_session
 from app.offers.presentation import (
     resolve_offer_display_title,
@@ -50,6 +53,7 @@ logger = logging.getLogger("app.webapp.offers_router")
 
 
 class StoreOut(BaseModel):
+    id: UUID
     code: str
     name: str
 
@@ -71,6 +75,7 @@ class InstallmentOut(BaseModel):
     discount_percent: Decimal | None
     interest_kind: InstallmentInterestKind
     is_highlighted: bool
+    payment_method: str | None = None
 
 
 class LatestOfferObservationOut(BaseModel):
@@ -215,7 +220,9 @@ async def _deny_offer_unavailable(
     raise AssertionError("unreachable")
 
 
-def _as_applied_coupon_out(applied_coupon: AppliedCoupon | None) -> AppliedCouponOut | None:
+def _as_applied_coupon_out(
+    applied_coupon: AppliedCoupon | None,
+) -> AppliedCouponOut | None:
     if applied_coupon is None:
         return None
     return AppliedCouponOut(
@@ -242,7 +249,9 @@ def _as_response(
         image_fallback_url=image_fallback_url,
         original_url=detail.offer.url,
         last_seen_at=detail.offer.last_seen_at.isoformat(),
-        store=StoreOut(code=detail.store.code, name=detail.store.name),
+        store=StoreOut(
+            id=detail.store.id, code=detail.store.code, name=detail.store.name
+        ),
         seller=SellerOut(name=detail.seller.name) if detail.seller else None,
         rating=(
             OfferRatingOut(
@@ -274,6 +283,7 @@ def _as_response(
                         installment_total_amount=item.installment_total_amount,
                         discount_percent=item.discount_percent,
                         interest_kind=item.interest_kind,
+                        payment_method=item.payment_method,
                         is_highlighted=item.is_highlighted,
                     )
                     for item in detail.installments
@@ -299,7 +309,9 @@ def _as_summary(
         image_url=image_url,
         image_fallback_url=image_fallback_url,
         last_seen_at=detail.offer.last_seen_at.isoformat(),
-        store=StoreOut(code=detail.store.code, name=detail.store.name),
+        store=StoreOut(
+            id=detail.store.id, code=detail.store.code, name=detail.store.name
+        ),
         seller=SellerOut(name=detail.seller.name) if detail.seller else None,
         rating=(
             OfferRatingOut(
@@ -352,7 +364,9 @@ def _as_comparison(comparison: UserOfferComparison) -> OfferComparisonResponse:
                 original_url=item.offer.url,
                 image_url=item_image_url,
                 image_fallback_url=item_image_fallback_url,
-                store=StoreOut(code=item.store.code, name=item.store.name),
+                store=StoreOut(
+                    id=item.store.id, code=item.store.code, name=item.store.name
+                ),
                 seller=SellerOut(name=item.seller.name) if item.seller else None,
                 rating=rating,
                 latest_observation=(
@@ -374,6 +388,7 @@ def _as_comparison(comparison: UserOfferComparison) -> OfferComparisonResponse:
                                 installment_total_amount=option.installment_total_amount,
                                 discount_percent=option.discount_percent,
                                 interest_kind=option.interest_kind,
+                                payment_method=option.payment_method,
                                 is_highlighted=option.is_highlighted,
                             )
                             for option in item.installments
@@ -550,6 +565,16 @@ def _as_price_history(history: OfferPriceHistory) -> PriceHistoryResponse:
 async def get_user_offer_price_history(
     offer_id: UUID,
     period: PriceHistoryPeriod = "1m",
+    store_ids: Annotated[
+        list[UUID] | None,
+        Query(
+            description=(
+                "Restringe série e métricas às lojas selecionadas (ids de"
+                " Store). Omitido/vazio = todas as lojas acessíveis, mesmo"
+                " comportamento anterior."
+            )
+        ),
+    ] = None,
     user: User = Depends(require_web_session),
     session: AsyncSession = Depends(get_web_async_session),
 ) -> PriceHistoryResponse:
@@ -574,6 +599,7 @@ async def get_user_offer_price_history(
         user_id=user.id,
         period=period,
         now=datetime.now(UTC),
+        store_ids=frozenset(store_ids) if store_ids else None,
     )
     if history is None:
         await _deny_offer_unavailable(session, user=user, offer_id=offer_id)

@@ -5,7 +5,9 @@ from unittest.mock import MagicMock
 from uuid import uuid4
 
 import pytest
-from app.admin.service_ops import ManagedService, ServiceState
+from app.admin.service_ops import ManagedService, ServiceOpsUnavailable, ServiceState
+from app.collection.models import CollectionQueueConfig
+from app.core.config import get_settings
 from app.core.errors import ApiError, register_api_error_handler
 from app.database.dependency import get_session
 from app.feedback.models import (
@@ -23,6 +25,8 @@ from app.webapp.admin_router import (
     MissionCommandRequest,
     ServiceActionRequest,
     UpdateUserRequest,
+    _resolved_queue_config_out,
+    _worker_states,
     api_keys_status,
     delete_user,
     list_feedback_endpoint,
@@ -348,3 +352,68 @@ def test_update_feedback_status_endpoint_404_for_missing_feedback() -> None:
         )
 
     assert exc_info.value.status_code == 404
+
+
+def test_worker_states_reports_unavailable_when_ops_controller_not_configured() -> None:
+    """Sem `ops_controller_url`/`ops_controller_secret` configurados,
+    `ControllerServiceOps.status` levanta `ServiceOpsUnavailable` para
+    QUALQUER serviço -- o painel nunca deve propagar essa exceção, e sim
+    reportar `status="unavailable"` por serviço."""
+    settings = get_settings()
+    result = _worker_states(settings)
+
+    assert {summary.service for summary in result} == set(ManagedService)
+    assert all(summary.status == "unavailable" for summary in result)
+    assert all(summary.detail == "Controlador indisponível" for summary in result)
+
+
+def test_worker_states_reports_real_status_per_service(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_status(self, service: ManagedService) -> ServiceState:
+        if service is ManagedService.COLLECTION_WORKER:
+            return ServiceState(service=service, status="running", detail=None)
+        raise ServiceOpsUnavailable("simulado")
+
+    monkeypatch.setattr(
+        "app.webapp.admin_router.ControllerServiceOps.status", fake_status
+    )
+
+    result = _worker_states(get_settings())
+    by_service = {summary.service: summary for summary in result}
+
+    assert by_service[ManagedService.COLLECTION_WORKER].status == "running"
+    assert by_service[ManagedService.TELEGRAM_NOTIFIER].status == "unavailable"
+
+
+def test_resolved_queue_config_out_without_row_uses_settings_defaults() -> None:
+    settings = get_settings()
+    result = _resolved_queue_config_out(None, settings)
+
+    assert result.max_concurrent_user_batches == settings.max_concurrent_user_batches
+    assert result.max_concurrent_user_batches_override is None
+    assert result.user_cooldown_min_seconds_override is None
+    assert result.user_cooldown_max_seconds_override is None
+    assert result.store_min_interval_seconds_override is None
+
+
+def test_resolved_queue_config_out_with_row_surfaces_overrides() -> None:
+    settings = get_settings()
+    config_row = CollectionQueueConfig(
+        id=1,
+        max_concurrent_user_batches_override=7,
+        user_cooldown_min_seconds_override=12.5,
+        user_cooldown_max_seconds_override=30.0,
+        store_min_interval_seconds_override=4.0,
+    )
+
+    result = _resolved_queue_config_out(config_row, settings)
+
+    assert result.max_concurrent_user_batches == 7
+    assert result.max_concurrent_user_batches_override == 7
+    assert result.user_cooldown_min_seconds == 12.5
+    assert result.user_cooldown_min_seconds_override == 12.5
+    assert result.user_cooldown_max_seconds == 30.0
+    assert result.user_cooldown_max_seconds_override == 30.0
+    assert result.store_min_interval_seconds == 4.0
+    assert result.store_min_interval_seconds_override == 4.0

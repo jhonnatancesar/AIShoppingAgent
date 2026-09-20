@@ -57,6 +57,36 @@ export interface MissionListResponse {
   total: number
 }
 
+// Frente 5: "Veja o que estão pesquisando" -- nunca carrega identificador
+// de usuário, só o produto RECONHECIDO agregado e a contagem de
+// pesquisadores distintos.
+export interface TrendingSearchedProduct {
+  product_id: string
+  display_name: string
+  searcher_count: number
+}
+
+export interface TrendingSearchedProductsResponse {
+  items: TrendingSearchedProduct[]
+}
+
+// View DEV "Minhas pesquisas"/"Todas as pesquisas" -- diferente da
+// anterior, expõe `user_id`/`query_text` de propósito (ferramenta
+// interna, não a view comunitária).
+export interface SearchHistoryItem {
+  id: string
+  user_id: string
+  query_text: string | null
+  created_at: string
+}
+
+export interface SearchHistoryResponse {
+  items: SearchHistoryItem[]
+  limit: number
+  offset: number
+  total: number
+}
+
 export interface MissionCriteria {
   search_query: string
   model: string | null
@@ -185,6 +215,7 @@ export interface OfferInstallment {
   discount_percent: string | null
   interest_kind: InstallmentInterestKind
   is_highlighted: boolean
+  payment_method: string | null
 }
 
 export interface LatestOfferObservation {
@@ -217,7 +248,7 @@ export interface OfferDetail {
   image_fallback_url: string | null
   original_url: string
   last_seen_at: string
-  store: { code: string; name: string }
+  store: { id: string; code: string; name: string }
   seller: { name: string } | null
   rating: {
     average: string
@@ -235,7 +266,7 @@ export interface OfferComparisonItem {
   original_url: string
   image_url: string | null
   image_fallback_url: string | null
-  store: { code: string; name: string }
+  store: { id: string; code: string; name: string }
   seller: { name: string } | null
   rating: { average: string; review_count: number; observed_at: string } | null
   latest_observation: LatestOfferObservation | null
@@ -256,7 +287,7 @@ export interface OfferSummary {
   image_url: string | null
   image_fallback_url: string | null
   last_seen_at: string
-  store: { code: string; name: string }
+  store: { id: string; code: string; name: string }
   seller: { name: string } | null
   rating: {
     average: string

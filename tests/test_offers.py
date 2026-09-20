@@ -91,6 +91,8 @@ def test_offer_table_matches_data_contract() -> None:
         table.c.created_at,
         table.c.updated_at,
         table.c.last_seen_at,
+        table.c.superseded_by_id,
+        table.c.superseded_at,
     ]
     assert table.c.product_id.nullable is False
     assert table.c.store_id.nullable is False
@@ -102,6 +104,11 @@ def test_offer_table_matches_data_contract() -> None:
     assert table.c.rating_average.nullable is True
     assert table.c.review_count.nullable is True
     assert table.c.rating_observed_at.nullable is True
+    # Rodada de frescor (2026-09-11): supersessão imediata da Offer
+    # antiga sem vendedor quando um vendedor real é identificado pela
+    # primeira vez para o mesmo anúncio -- nunca fundida/reatribuída.
+    assert table.c.superseded_by_id.nullable is True
+    assert table.c.superseded_at.nullable is True
     assert "price" not in table.columns
     assert "availability" not in table.columns
 
@@ -124,6 +131,11 @@ def test_offer_foreign_keys_restrict_historical_deletion() -> None:
             ("sellers.id", "sellers.store_id"),
             ("RESTRICT", "RESTRICT"),
         ),
+        # Rodada de frescor (2026-09-11): auto-referencial, `SET NULL`
+        # (nunca CASCADE/RESTRICT) -- apagar a Offer nova nunca deveria
+        # impedir a remoção da antiga nem reviver a supersessão como se
+        # apontasse pra outra linha.
+        ("superseded_by_id",): (("offers.id",), ("SET NULL",)),
     }
 
 
@@ -135,6 +147,7 @@ def test_offer_identity_indexes_match_data_contract() -> None:
         "ix_offers_product_id",
         "ix_offers_store_id",
         "ix_offers_seller_id",
+        "ix_offers_superseded_by_id",
         "uq_offers_retailer_external_id",
         "uq_offers_marketplace_external_id",
         "uq_offers_retailer_url",
@@ -174,6 +187,8 @@ def test_offer_table_rejects_blank_identifiers_and_url() -> None:
         "ck_offers_rating_snapshot_complete",
         "ck_offers_review_count_non_negative",
         "ck_offers_url_not_blank",
+        "ck_offers_superseded_by_not_self",
+        "ck_offers_superseded_pair_complete",
     }
 
 

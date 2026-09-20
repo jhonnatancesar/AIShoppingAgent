@@ -18,6 +18,7 @@ from uuid import uuid4
 
 import pytest
 from app.ai_provider import AIResponse
+from app.alerts.evaluator import PriceAlertCandidate
 from app.collection.adapter import CollectionAdapter
 from app.collection.contracts import (
     CollectionResult,
@@ -32,19 +33,39 @@ from app.collection.errors import (
     ProviderCircuitOpenError,
     ProviderNavigationError,
 )
-from app.collection.models import CollectionRunStatus, PriceObservation
+from app.collection.models import (
+    CollectionRunStatus,
+    MissionOfferRelevance,
+    PriceObservation,
+    StoreThrottleState,
+    UserCollectionQueueState,
+)
 from app.collection.normalization import Availability, PriceNormalizer
 from app.collection.orchestration import (
+    _OFFER_IDENTITY_INDEXES,
+    _PRODUCT_IDENTITY_INDEX,
+    _RUNNING_INDEX,
+    _SELLER_IDENTITY_INDEX,
     ClaimedCollection,
     CollectionOrchestrator,
+    PriceObservationComparison,
     _AIOutcome,
+    _apply_rating_snapshot,
     _apply_source_backoff,
+    _ClaimedBatch,
+    _constraint_name,
+    _creation_lock_keys,
+    _current_prelist_candidates,
     _deterministic_product_relevance,
     _evaluate_mission_prelist,
+    _failure_log_context,
+    _filter_deterministic_candidates,
     _find_offer,
     _installment_snapshot,
     _maybe_publish_prelist_errata,
     _maybe_publish_prelist_ready,
+    _maybe_set_canonical_image,
+    _mission_prelist_round_complete,
     _mission_relevance_pending,
     _PendingOffer,
     _persist_phase_a,
@@ -52,28 +73,49 @@ from app.collection.orchestration import (
     _PhaseAOutcome,
     _prelist_commercial_key,
     _PrelistCandidate,
-    PriceObservationComparison,
+    _preview_existing_offer_and_product,
+    _previous_prelist_best_by_store,
+    _product_selected_for_mission,
+    _publish_failure,
     _record_failure,
+    _refresh_legacy_schedule_aggregate,
     _reset_source_backoff,
+    _resolve_global_product,
     _resolve_offer,
     _resolve_seller,
     _run_phase_b,
     _same_commercial_state,
-    _ClaimedBatch,
+    _sanitize_json,
+    _select_due_legacy_sources_for_batch,
+    _supersede_old_unattributed_offer,
+    _title_looks_like_bundle,
     claim_due_collections,
-    claim_due_work,
     ensure_missing_schedules,
+    rank_prelist_candidates,
     recover_stale_runs,
 )
 from app.collection.relevance import OfferRelevance
-from app.collection.shared_collection import FanOutSweepSummary
+from app.collection.shared_claim import _SharedClaim
+from app.collection.shared_collection import FanOutSweepSummary, SharedCollectionResult
 from app.coupons.models import Coupon
 from app.coupons.pricing import AppliedCoupon
-from app.missions.models import MissionStatus, VariantSelectionMode
+from app.events import AggregateType, EventType
+from app.events.catalog import CollectionFailedPayload, PriceDecreasedPayload
+from app.missions.models import (
+    MissionProductSelection,
+    MissionStatus,
+    VariantSelectionMode,
+)
 from app.offers.models import Offer
-from app.products.identity import classify_product_request
+from app.products.identity import (
+    ProductRequestKind,
+    classify_product_request,
+    resolve_product_variant,
+)
 from app.products.models import Product
+from app.stores.models import Seller
 from app.users.models import UserRole
+from sqlalchemy.exc import IntegrityError
 
 NOW = datetime(2026, 8, 12, 12, 0, tzinfo=UTC)
 
@@ -117,7 +159,9 @@ def test_specific_product_rejects_other_variant_before_ai(other_title: str) -> N
         variant=other.variant,
     )
 
-    assert _deterministic_product_relevance(criteria, product) is OfferRelevance.NO_MATCH
+    assert (
+        _deterministic_product_relevance(criteria, product) is OfferRelevance.NO_MATCH
+    )
 
 
 def test_generic_category_does_not_force_product_relevance() -> None:
@@ -125,6 +169,183 @@ def test_generic_category_does_not_force_product_relevance() -> None:
     product = Product(name="Cadeira gamer qualquer")
 
     assert _deterministic_product_relevance(criteria, product) is None
+
+
+def test_product_family_rejects_different_family_key() -> None:
+    criteria = SimpleNamespace(
+        request_kind="product_family",
+        requested_family_key="family:iphone",
+        requested_variant=None,
+    )
+    product = Product(name="Galaxy S24", family_key="family:galaxy")
+
+    assert (
+        _deterministic_product_relevance(criteria, product) is OfferRelevance.NO_MATCH
+    )
+
+
+def test_product_family_rejects_different_variant() -> None:
+    criteria = SimpleNamespace(
+        request_kind="product_family",
+        requested_family_key="family:iphone",
+        requested_variant="pro",
+    )
+    product = Product(name="iPhone 17", family_key="family:iphone", variant="base")
+
+    assert (
+        _deterministic_product_relevance(criteria, product) is OfferRelevance.NO_MATCH
+    )
+
+
+def test_product_family_accepts_matching_family_and_variant() -> None:
+    criteria = SimpleNamespace(
+        request_kind="product_family",
+        requested_family_key="family:iphone",
+        requested_variant="pro",
+    )
+    product = Product(name="iPhone 17 Pro", family_key="family:iphone", variant="pro")
+
+    assert _deterministic_product_relevance(criteria, product) is None
+
+
+def test_product_family_accepts_when_product_family_key_unknown() -> None:
+    """`family_key=None` no `Product` -- ainda não identificado -- nunca
+    é rejeitado deterministicamente; segue fail-soft pra IA."""
+    criteria = SimpleNamespace(
+        request_kind="product_family",
+        requested_family_key="family:iphone",
+        requested_variant=None,
+    )
+    product = Product(name="Produto ainda não identificado", family_key=None)
+
+    assert _deterministic_product_relevance(criteria, product) is None
+
+
+def test_product_selected_for_mission_true_when_not_family_kind() -> None:
+    session = _mock_async_session()
+
+    selected = asyncio.run(
+        _product_selected_for_mission(
+            session,
+            mission_id=uuid4(),
+            product_id=uuid4(),
+            request_kind="generic_category",
+            selection_mode=VariantSelectionMode.NOT_REQUIRED,
+        )
+    )
+
+    assert selected is True
+    session.get.assert_not_awaited()
+
+
+def test_product_selected_for_mission_false_when_product_missing() -> None:
+    session = _mock_async_session()
+    session.get.return_value = None
+
+    selected = asyncio.run(
+        _product_selected_for_mission(
+            session,
+            mission_id=uuid4(),
+            product_id=uuid4(),
+            request_kind="product_family",
+            selection_mode=VariantSelectionMode.ALL,
+        )
+    )
+
+    assert selected is False
+
+
+def test_product_selected_for_mission_false_when_identity_key_unknown() -> None:
+    session = _mock_async_session()
+    session.get.return_value = Product(name="Ainda não identificado", identity_key=None)
+
+    selected = asyncio.run(
+        _product_selected_for_mission(
+            session,
+            mission_id=uuid4(),
+            product_id=uuid4(),
+            request_kind="product_family",
+            selection_mode=VariantSelectionMode.ALL,
+        )
+    )
+
+    assert selected is False
+
+
+def test_product_selected_for_mission_true_when_mode_is_all() -> None:
+    session = _mock_async_session()
+    session.get.return_value = Product(name="iPhone 17", identity_key="v1:abc")
+
+    selected = asyncio.run(
+        _product_selected_for_mission(
+            session,
+            mission_id=uuid4(),
+            product_id=uuid4(),
+            request_kind="product_family",
+            selection_mode=VariantSelectionMode.ALL,
+        )
+    )
+
+    assert selected is True
+
+
+def test_product_selected_for_mission_false_when_mode_not_selected() -> None:
+    session = _mock_async_session()
+    session.get.return_value = Product(name="iPhone 17", identity_key="v1:abc")
+
+    selected = asyncio.run(
+        _product_selected_for_mission(
+            session,
+            mission_id=uuid4(),
+            product_id=uuid4(),
+            request_kind="product_family",
+            selection_mode=VariantSelectionMode.PENDING,
+        )
+    )
+
+    assert selected is False
+
+
+def test_product_selected_for_mission_checks_explicit_selection_row() -> None:
+    mission_id, product_id = uuid4(), uuid4()
+    session = _mock_async_session()
+    product = Product(name="iPhone 17", identity_key="v1:abc")
+    selection_row = MissionProductSelection(
+        mission_id=mission_id, product_id=product_id
+    )
+    session.get.side_effect = [product, selection_row]
+
+    selected = asyncio.run(
+        _product_selected_for_mission(
+            session,
+            mission_id=mission_id,
+            product_id=product_id,
+            request_kind="product_family",
+            selection_mode=VariantSelectionMode.SELECTED,
+        )
+    )
+
+    assert selected is True
+    session.get.assert_awaited_with(MissionProductSelection, (mission_id, product_id))
+
+
+def test_product_selected_for_mission_false_when_no_explicit_selection_row() -> None:
+    mission_id, product_id = uuid4(), uuid4()
+    session = _mock_async_session()
+    product = Product(name="iPhone 17", identity_key="v1:abc")
+    session.get.side_effect = [product, None]
+
+    selected = asyncio.run(
+        _product_selected_for_mission(
+            session,
+            mission_id=mission_id,
+            product_id=product_id,
+            request_kind="product_family",
+            selection_mode=VariantSelectionMode.SELECTED,
+        )
+    )
+
+    assert selected is False
 
 
 def _async_cm(value=None):
@@ -166,6 +387,7 @@ def _raw(
     seller_external_id: str | None = None,
     seller_kind: MarketplacePartyKind | None = None,
     fulfillment_kind: MarketplacePartyKind | None = None,
+    image_url: str | None = None,
 ):
     return RawCollectedOffer(
         source_code=source,
@@ -181,6 +403,7 @@ def _raw(
         seller_external_id=seller_external_id,
         seller_kind=seller_kind,
         fulfillment_kind=fulfillment_kind,
+        image_url=image_url,
     )
 
 
@@ -311,7 +534,9 @@ def test_claim_due_sources_creates_runs_and_advances_each_source(monkeypatch) ->
     )
     monkeypatch.setattr(
         "app.collection.orchestration.sample_next_run_at",
-        lambda started_at, decision: started_at + timedelta(minutes=decision.min_minutes),
+        lambda started_at, decision: (
+            started_at + timedelta(minutes=decision.min_minutes)
+        ),
     )
     monkeypatch.setattr(
         "app.collection.orchestration._refresh_legacy_schedule_aggregate",
@@ -336,6 +561,111 @@ def test_claim_due_sources_creates_runs_and_advances_each_source(monkeypatch) ->
     assert source_b.last_run_at == NOW
     assert source_b.next_run_at == NOW + timedelta(minutes=30)
     session.flush.assert_awaited_once()
+
+
+def test_select_due_legacy_sources_for_batch_returns_execute_rows() -> None:
+    from app.missions.models import MissionSource
+
+    session = _mock_async_session()
+    source = MissionSource(mission_id=uuid4(), store_id=uuid4())
+    rows = MagicMock()
+    rows.all.return_value = [(source, "kabum", uuid4())]
+    session.execute.return_value = rows
+
+    result = asyncio.run(
+        _select_due_legacy_sources_for_batch(session, due_at=NOW, limit=10)
+    )
+
+    assert result == rows.all.return_value
+    session.execute.assert_awaited_once()
+
+
+def test_refresh_legacy_schedule_aggregate_noop_when_schedule_missing() -> None:
+    session = _mock_async_session()
+    session.scalar.return_value = None
+
+    asyncio.run(
+        _refresh_legacy_schedule_aggregate(session, mission_id=uuid4(), now=NOW)
+    )
+
+    session.flush.assert_not_awaited()
+    session.execute.assert_not_awaited()
+
+
+def test_refresh_legacy_schedule_aggregate_noop_when_disabled() -> None:
+    from app.missions.models import MissionSchedule
+
+    session = _mock_async_session()
+    schedule = MissionSchedule(
+        mission_id=uuid4(),
+        interval_minutes=30,
+        next_run_at=NOW,
+        is_enabled=False,
+    )
+    session.scalar.return_value = schedule
+
+    asyncio.run(
+        _refresh_legacy_schedule_aggregate(session, mission_id=uuid4(), now=NOW)
+    )
+
+    session.flush.assert_not_awaited()
+    session.execute.assert_not_awaited()
+
+
+def test_refresh_legacy_schedule_aggregate_noop_when_no_sources() -> None:
+    from app.missions.models import MissionSchedule
+
+    session = _mock_async_session()
+    schedule = MissionSchedule(
+        mission_id=uuid4(),
+        interval_minutes=30,
+        next_run_at=NOW - timedelta(minutes=5),
+        last_run_at=NOW - timedelta(hours=1),
+        is_enabled=True,
+    )
+    session.scalar.return_value = schedule
+    rows = MagicMock()
+    rows.all.return_value = []
+    session.execute.return_value = rows
+
+    asyncio.run(
+        _refresh_legacy_schedule_aggregate(session, mission_id=uuid4(), now=NOW)
+    )
+
+    session.flush.assert_awaited_once()
+    assert schedule.next_run_at == NOW - timedelta(minutes=5)
+    assert schedule.last_run_at == NOW - timedelta(hours=1)
+
+
+def test_refresh_legacy_schedule_aggregate_recomputes_min_and_max() -> None:
+    from app.missions.models import MissionSchedule
+
+    session = _mock_async_session()
+    schedule = MissionSchedule(
+        mission_id=uuid4(),
+        interval_minutes=30,
+        next_run_at=NOW,
+        is_enabled=True,
+    )
+    session.scalar.return_value = schedule
+    rows = MagicMock()
+    rows.all.return_value = [
+        (NOW + timedelta(minutes=30), NOW - timedelta(minutes=10)),
+        (None, None),  # `next_run_at` NULL tratado como já due (`now`)
+        (NOW + timedelta(minutes=10), NOW - timedelta(minutes=5)),
+    ]
+    session.execute.return_value = rows
+
+    asyncio.run(
+        _refresh_legacy_schedule_aggregate(session, mission_id=uuid4(), now=NOW)
+    )
+
+    session.flush.assert_awaited_once()
+    # MIN entre os `next_run_at` (com `NULL` tratado como `now`, já due).
+    assert schedule.next_run_at == NOW
+    # MAIS RECENTE entre os `last_run_at` não nulos.
+    assert schedule.last_run_at == NOW - timedelta(minutes=5)
+    assert schedule.updated_at == NOW
 
 
 def test_claim_due_collections_skips_mission_already_running() -> None:
@@ -366,6 +696,316 @@ def test_claim_due_collections_skips_mission_already_running() -> None:
     )
 
     assert claims == ()
+
+
+def test_claim_due_collections_returns_empty_when_no_rows_due() -> None:
+    session = _mock_async_session()
+    due_rows = MagicMock()
+    due_rows.all.return_value = []
+    session.execute.return_value = due_rows
+
+    claims = asyncio.run(
+        claim_due_collections(
+            session,
+            now=NOW,
+            user_cooldown_min_seconds=0,
+            user_cooldown_max_seconds=0,
+            store_min_interval_seconds=0,
+        )
+    )
+
+    assert claims == ()
+
+
+def test_claim_due_collections_skips_source_without_criteria() -> None:
+    from app.missions.models import MissionSource
+
+    mission_id = uuid4()
+    user_id = uuid4()
+    source = MissionSource(mission_id=mission_id, store_id=uuid4())
+    session = _mock_async_session()
+    due_rows = MagicMock()
+    due_rows.all.return_value = [(source, "kabum", user_id)]
+    session.execute.return_value = due_rows
+    session.scalars.return_value = []
+    session.scalar.side_effect = [None, None]  # não RUNNING, sem criteria
+
+    claims = asyncio.run(
+        claim_due_collections(
+            session,
+            now=NOW,
+            user_cooldown_min_seconds=0,
+            user_cooldown_max_seconds=0,
+            store_min_interval_seconds=0,
+        )
+    )
+
+    assert claims == ()
+
+
+def test_claim_due_collections_skips_source_with_blank_search_query() -> None:
+    from app.missions.models import MissionSource
+
+    mission_id = uuid4()
+    user_id = uuid4()
+    source = MissionSource(mission_id=mission_id, store_id=uuid4())
+    session = _mock_async_session()
+    due_rows = MagicMock()
+    due_rows.all.return_value = [(source, "kabum", user_id)]
+    session.execute.return_value = due_rows
+    session.scalars.return_value = []
+    criteria = SimpleNamespace(search_query="   ")
+    session.scalar.side_effect = [None, criteria]
+
+    claims = asyncio.run(
+        claim_due_collections(
+            session,
+            now=NOW,
+            user_cooldown_min_seconds=0,
+            user_cooldown_max_seconds=0,
+            store_min_interval_seconds=0,
+        )
+    )
+
+    assert claims == ()
+
+
+def test_claim_due_collections_skips_when_store_still_throttled() -> None:
+    from app.missions.models import MissionSource
+
+    mission_id = uuid4()
+    user_id = uuid4()
+    store_id = uuid4()
+    source = MissionSource(mission_id=mission_id, store_id=store_id)
+    session = _mock_async_session()
+    due_rows = MagicMock()
+    due_rows.all.return_value = [(source, "kabum", user_id)]
+    session.execute.return_value = due_rows
+    session.scalars.return_value = []
+    criteria = SimpleNamespace(search_query="GPU")
+    session.scalar.side_effect = [None, criteria]
+    session.get.return_value = StoreThrottleState(
+        store_id=store_id, next_allowed_at=NOW + timedelta(seconds=5)
+    )
+
+    claims = asyncio.run(
+        claim_due_collections(
+            session,
+            now=NOW,
+            user_cooldown_min_seconds=0,
+            user_cooldown_max_seconds=0,
+            store_min_interval_seconds=0,
+        )
+    )
+
+    assert claims == ()
+
+
+def test_claim_due_collections_skips_when_next_run_at_still_future() -> None:
+    from app.missions.models import MissionSource
+
+    mission_id = uuid4()
+    user_id = uuid4()
+    source = MissionSource(
+        mission_id=mission_id,
+        store_id=uuid4(),
+        next_run_at=NOW + timedelta(minutes=5),
+    )
+    session = _mock_async_session()
+    due_rows = MagicMock()
+    due_rows.all.return_value = [(source, "kabum", user_id)]
+    session.execute.return_value = due_rows
+    session.scalars.return_value = []
+    criteria = SimpleNamespace(search_query="GPU")
+    session.scalar.side_effect = [None, criteria]
+    session.get.return_value = None
+
+    claims = asyncio.run(
+        claim_due_collections(
+            session,
+            now=NOW,
+            user_cooldown_min_seconds=0,
+            user_cooldown_max_seconds=0,
+            store_min_interval_seconds=0,
+        )
+    )
+
+    assert claims == ()
+
+
+def test_claim_due_collections_skips_when_next_eligible_at_still_future() -> None:
+    from app.missions.models import MissionSource
+
+    mission_id = uuid4()
+    user_id = uuid4()
+    source = MissionSource(
+        mission_id=mission_id,
+        store_id=uuid4(),
+        next_run_at=None,
+        next_eligible_at=NOW + timedelta(minutes=5),
+    )
+    session = _mock_async_session()
+    due_rows = MagicMock()
+    due_rows.all.return_value = [(source, "kabum", user_id)]
+    session.execute.return_value = due_rows
+    session.scalars.return_value = []
+    criteria = SimpleNamespace(search_query="GPU")
+    session.scalar.side_effect = [None, criteria]
+    session.get.return_value = None
+
+    claims = asyncio.run(
+        claim_due_collections(
+            session,
+            now=NOW,
+            user_cooldown_min_seconds=0,
+            user_cooldown_max_seconds=0,
+            store_min_interval_seconds=0,
+        )
+    )
+
+    assert claims == ()
+
+
+def test_claim_due_collections_skips_on_running_index_conflict(monkeypatch) -> None:
+    from app.missions.models import MissionSource
+
+    mission_id = uuid4()
+    user_id = uuid4()
+    source = MissionSource(
+        mission_id=mission_id, store_id=uuid4(), next_run_at=None, next_eligible_at=None
+    )
+    session = _mock_async_session()
+    due_rows = MagicMock()
+    due_rows.all.return_value = [(source, "kabum", user_id)]
+    session.execute.return_value = due_rows
+    session.scalars.return_value = []
+    criteria = SimpleNamespace(search_query="GPU")
+    session.scalar.side_effect = [None, criteria]
+    session.get.return_value = None
+    monkeypatch.setattr(
+        "app.collection.orchestration.start_collection_run",
+        AsyncMock(side_effect=IntegrityError("stmt", {}, Exception())),
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration._constraint_name",
+        lambda error: _RUNNING_INDEX,
+    )
+
+    claims = asyncio.run(
+        claim_due_collections(
+            session,
+            now=NOW,
+            user_cooldown_min_seconds=0,
+            user_cooldown_max_seconds=0,
+            store_min_interval_seconds=0,
+        )
+    )
+
+    assert claims == ()
+
+
+def test_claim_due_collections_reraises_unrelated_integrity_error(monkeypatch) -> None:
+    from app.missions.models import MissionSource
+
+    mission_id = uuid4()
+    user_id = uuid4()
+    source = MissionSource(
+        mission_id=mission_id, store_id=uuid4(), next_run_at=None, next_eligible_at=None
+    )
+    session = _mock_async_session()
+    due_rows = MagicMock()
+    due_rows.all.return_value = [(source, "kabum", user_id)]
+    session.execute.return_value = due_rows
+    session.scalars.return_value = []
+    criteria = SimpleNamespace(search_query="GPU")
+    session.scalar.side_effect = [None, criteria]
+    session.get.return_value = None
+    error = IntegrityError("stmt", {}, Exception())
+    monkeypatch.setattr(
+        "app.collection.orchestration.start_collection_run",
+        AsyncMock(side_effect=error),
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration._constraint_name",
+        lambda err: "some_other_constraint",
+    )
+
+    try:
+        asyncio.run(
+            claim_due_collections(
+                session,
+                now=NOW,
+                user_cooldown_min_seconds=0,
+                user_cooldown_max_seconds=0,
+                store_min_interval_seconds=0,
+            )
+        )
+    except IntegrityError as caught:
+        assert caught is error
+    else:
+        raise AssertionError("deveria propagar IntegrityError não relacionada")
+
+
+def test_claim_due_collections_sorts_processed_users_by_last_processed_at(
+    monkeypatch,
+) -> None:
+    from app.missions.models import MissionSource
+
+    mission_id = uuid4()
+    user_id = uuid4()
+    store_id = uuid4()
+    source = MissionSource(
+        mission_id=mission_id,
+        store_id=store_id,
+        next_run_at=None,
+        next_eligible_at=None,
+    )
+    session = _mock_async_session()
+    due_rows = MagicMock()
+    due_rows.all.return_value = [(source, "kabum", user_id)]
+    session.execute.return_value = due_rows
+    session.scalars.return_value = [
+        UserCollectionQueueState(
+            user_id=user_id,
+            last_processed_at=NOW - timedelta(hours=1),
+            next_eligible_at=None,
+        )
+    ]
+    criteria = SimpleNamespace(search_query="GPU", model=None)
+    session.scalar.side_effect = [None, criteria]
+    session.get.return_value = None
+    monkeypatch.setattr(
+        "app.collection.orchestration.start_collection_run",
+        AsyncMock(return_value=SimpleNamespace(id=uuid4())),
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration.resolve_collection_cadence",
+        AsyncMock(
+            return_value=SimpleNamespace(min_minutes=45, max_minutes=45, mode="normal")
+        ),
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration.sample_next_run_at",
+        lambda started_at, decision: (
+            started_at + timedelta(minutes=decision.min_minutes)
+        ),
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration._refresh_legacy_schedule_aggregate",
+        AsyncMock(),
+    )
+
+    claims = asyncio.run(
+        claim_due_collections(
+            session,
+            now=NOW,
+            user_cooldown_min_seconds=0,
+            user_cooldown_max_seconds=0,
+            store_min_interval_seconds=0,
+        )
+    )
+
+    assert len(claims) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -431,6 +1071,417 @@ def test_find_offer_filters_by_seller_and_external_id() -> None:
     session.scalar.assert_awaited_once()
 
 
+def test_find_offer_falls_back_to_url_when_external_id_missing() -> None:
+    session = _mock_async_session()
+    session.scalar.return_value = None
+    store_id = uuid4()
+
+    result = asyncio.run(
+        _find_offer(session, store_id, None, None, "https://example.invalid/x")
+    )
+
+    assert result is None
+    compiled = str(
+        session.scalar.await_args.args[0].compile(
+            compile_kwargs={"literal_binds": False}
+        )
+    )
+    assert "offers.url = " in compiled
+    assert "offers.external_id = " not in compiled
+
+
+def test_resolve_seller_returns_existing_without_creating() -> None:
+    session = _mock_async_session()
+    existing = Seller(
+        id=uuid4(), store_id=uuid4(), external_id="seller-1", name="Loja X"
+    )
+    session.scalar.return_value = existing
+    item = PriceNormalizer().normalize_offer(_raw(seller_external_id="seller-1"))
+
+    seller = asyncio.run(_resolve_seller(session, uuid4(), item))
+
+    assert seller is existing
+    session.add.assert_not_called()
+
+
+def test_resolve_seller_reraises_unrelated_integrity_error(monkeypatch) -> None:
+    session = _mock_async_session()
+    session.scalar.return_value = None
+    session.flush.side_effect = IntegrityError("stmt", {}, Exception())
+    monkeypatch.setattr(
+        "app.collection.orchestration._constraint_name",
+        lambda error: "some_other_constraint",
+    )
+    item = PriceNormalizer().normalize_offer(_raw(seller_external_id="seller-1"))
+
+    try:
+        asyncio.run(_resolve_seller(session, uuid4(), item))
+    except IntegrityError:
+        pass
+    else:
+        raise AssertionError("deveria propagar IntegrityError não relacionada")
+
+
+def test_resolve_seller_concurrent_insert_returns_winner(monkeypatch) -> None:
+    session = _mock_async_session()
+    winner = Seller(id=uuid4(), store_id=uuid4(), external_id="seller-1", name="Loja X")
+    session.scalar.side_effect = [None, winner]
+    session.flush.side_effect = IntegrityError("stmt", {}, Exception())
+    monkeypatch.setattr(
+        "app.collection.orchestration._constraint_name",
+        lambda error: _SELLER_IDENTITY_INDEX,
+    )
+    item = PriceNormalizer().normalize_offer(_raw(seller_external_id="seller-1"))
+
+    seller = asyncio.run(_resolve_seller(session, uuid4(), item))
+
+    assert seller is winner
+
+
+def test_resolve_seller_concurrent_insert_without_winner_reraises(monkeypatch) -> None:
+    session = _mock_async_session()
+    session.scalar.side_effect = [None, None]
+    error = IntegrityError("stmt", {}, Exception())
+    session.flush.side_effect = error
+    monkeypatch.setattr(
+        "app.collection.orchestration._constraint_name",
+        lambda err: _SELLER_IDENTITY_INDEX,
+    )
+    item = PriceNormalizer().normalize_offer(_raw(seller_external_id="seller-1"))
+
+    try:
+        asyncio.run(_resolve_seller(session, uuid4(), item))
+    except IntegrityError as caught:
+        assert caught is error
+    else:
+        raise AssertionError("deveria propagar quando não há vencedor concorrente")
+
+
+def test_maybe_set_canonical_image_only_sets_when_absent() -> None:
+    product = Product(name="x")
+    _maybe_set_canonical_image(product, "https://example.invalid/first.jpg")
+    assert product.canonical_image_url == "https://example.invalid/first.jpg"
+
+    _maybe_set_canonical_image(product, "https://example.invalid/second.jpg")
+    assert product.canonical_image_url == "https://example.invalid/first.jpg"
+
+
+def test_supersede_noop_without_seller_or_external_id() -> None:
+    session = _mock_async_session()
+    new_offer = Offer(id=uuid4(), external_id=None)
+
+    asyncio.run(
+        _supersede_old_unattributed_offer(
+            session, store_id=uuid4(), seller_id=None, new_offer=new_offer
+        )
+    )
+    session.scalar.assert_not_awaited()
+
+    new_offer_without_external_id = Offer(id=uuid4(), external_id=None)
+    asyncio.run(
+        _supersede_old_unattributed_offer(
+            session,
+            store_id=uuid4(),
+            seller_id=uuid4(),
+            new_offer=new_offer_without_external_id,
+        )
+    )
+    session.scalar.assert_not_awaited()
+
+
+def test_supersede_marks_old_unattributed_offer_when_found() -> None:
+    session = _mock_async_session()
+    old_offer = Offer(id=uuid4(), external_id="ext-1", superseded_by_id=None)
+    session.scalar.return_value = old_offer
+    new_offer = Offer(id=uuid4(), external_id="ext-1")
+
+    asyncio.run(
+        _supersede_old_unattributed_offer(
+            session, store_id=uuid4(), seller_id=uuid4(), new_offer=new_offer
+        )
+    )
+
+    assert old_offer.superseded_by_id == new_offer.id
+    assert old_offer.superseded_at is not None
+
+
+def test_supersede_is_noop_when_no_old_offer_found() -> None:
+    session = _mock_async_session()
+    session.scalar.return_value = None
+    new_offer = Offer(id=uuid4(), external_id="ext-1")
+
+    asyncio.run(
+        _supersede_old_unattributed_offer(
+            session, store_id=uuid4(), seller_id=uuid4(), new_offer=new_offer
+        )
+    )
+    session.scalar.assert_awaited_once()
+
+
+def test_resolve_global_product_returns_existing_match() -> None:
+    session = _mock_async_session()
+    existing = Product(id=uuid4(), name="Apple iPhone 17 Pro 256 GB")
+    session.scalar.return_value = existing
+
+    product = asyncio.run(
+        _resolve_global_product(session, "Apple iPhone 17 Pro 256 GB")
+    )
+
+    assert product is existing
+    session.add.assert_not_called()
+
+
+def test_resolve_global_product_creates_new_when_absent() -> None:
+    session = _mock_async_session()
+    session.scalar.return_value = None
+
+    product = asyncio.run(
+        _resolve_global_product(session, "Apple iPhone 17 Pro 256 GB")
+    )
+
+    identity = resolve_product_variant("Apple iPhone 17 Pro 256 GB")
+    assert product.identity_key == identity.identity_key
+    assert product.family_key == identity.family_key
+    session.add.assert_called_once_with(product)
+    session.flush.assert_awaited_once()
+
+
+def test_resolve_global_product_reraises_unrelated_integrity_error(monkeypatch) -> None:
+    session = _mock_async_session()
+    session.scalar.return_value = None
+    session.flush.side_effect = IntegrityError("stmt", {}, Exception())
+    monkeypatch.setattr(
+        "app.collection.orchestration._constraint_name",
+        lambda error: "some_other_constraint",
+    )
+
+    try:
+        asyncio.run(_resolve_global_product(session, "Apple iPhone 17 Pro 256 GB"))
+    except IntegrityError:
+        pass
+    else:
+        raise AssertionError("deveria propagar IntegrityError não relacionada")
+
+
+def test_resolve_global_product_concurrent_insert_returns_winner(monkeypatch) -> None:
+    session = _mock_async_session()
+    winner = Product(id=uuid4(), name="Apple iPhone 17 Pro 256 GB")
+    session.scalar.side_effect = [None, winner]
+    session.flush.side_effect = IntegrityError("stmt", {}, Exception())
+    monkeypatch.setattr(
+        "app.collection.orchestration._constraint_name",
+        lambda error: _PRODUCT_IDENTITY_INDEX,
+    )
+
+    product = asyncio.run(
+        _resolve_global_product(session, "Apple iPhone 17 Pro 256 GB")
+    )
+
+    assert product is winner
+
+
+def test_resolve_global_product_concurrent_insert_without_winner_reraises(
+    monkeypatch,
+) -> None:
+    session = _mock_async_session()
+    session.scalar.side_effect = [None, None]
+    error = IntegrityError("stmt", {}, Exception())
+    session.flush.side_effect = error
+    monkeypatch.setattr(
+        "app.collection.orchestration._constraint_name",
+        lambda err: _PRODUCT_IDENTITY_INDEX,
+    )
+
+    try:
+        asyncio.run(_resolve_global_product(session, "Apple iPhone 17 Pro 256 GB"))
+    except IntegrityError as caught:
+        assert caught is error
+    else:
+        raise AssertionError("deveria propagar quando não há vencedor concorrente")
+
+
+def test_resolve_offer_reused_offer_upgrades_unidentified_product(monkeypatch) -> None:
+    session = _mock_async_session()
+    resolved_product = Product(id=uuid4(), name="Apple iPhone 17 Pro 256 GB")
+    current_product = Product(id=uuid4(), name="antigo", identity_key=None)
+    existing_offer = Offer(id=uuid4(), product_id=current_product.id, image_url=None)
+    session.get.return_value = current_product
+    monkeypatch.setattr(
+        "app.collection.orchestration._resolve_seller", AsyncMock(return_value=None)
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration._find_offer",
+        AsyncMock(return_value=existing_offer),
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration._resolve_global_product",
+        AsyncMock(return_value=resolved_product),
+    )
+    item = PriceNormalizer().normalize_offer(
+        _raw(image_url="https://example.invalid/new.jpg")
+    )
+
+    offer = asyncio.run(_resolve_offer(session, uuid4(), item))
+
+    assert offer is existing_offer
+    assert offer.product_id == resolved_product.id
+    assert offer.image_url == "https://example.invalid/new.jpg"
+    assert resolved_product.canonical_image_url == "https://example.invalid/new.jpg"
+
+
+def test_resolve_offer_reused_offer_keeps_already_identified_product(
+    monkeypatch,
+) -> None:
+    session = _mock_async_session()
+    resolved_product = Product(id=uuid4(), name="Apple iPhone 17 Pro 256 GB")
+    current_product = Product(
+        id=uuid4(), name="já identificado", identity_key="v1:already"
+    )
+    existing_offer = Offer(id=uuid4(), product_id=current_product.id, image_url=None)
+    session.get.return_value = current_product
+    monkeypatch.setattr(
+        "app.collection.orchestration._resolve_seller", AsyncMock(return_value=None)
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration._find_offer",
+        AsyncMock(return_value=existing_offer),
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration._resolve_global_product",
+        AsyncMock(return_value=resolved_product),
+    )
+    item = PriceNormalizer().normalize_offer(
+        _raw(image_url="https://example.invalid/new.jpg")
+    )
+
+    offer = asyncio.run(_resolve_offer(session, uuid4(), item))
+
+    assert offer.product_id == current_product.id
+    assert current_product.canonical_image_url == "https://example.invalid/new.jpg"
+
+
+def test_resolve_offer_new_product_sets_canonical_image_when_identity_resolved(
+    monkeypatch,
+) -> None:
+    session = _mock_async_session()
+    session.scalar.return_value = None
+    monkeypatch.setattr(
+        "app.collection.orchestration._resolve_seller", AsyncMock(return_value=None)
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration._find_offer", AsyncMock(return_value=None)
+    )
+    item = PriceNormalizer().normalize_offer(
+        _raw(
+            title="Apple iPhone 17 Pro 256 GB",
+            image_url="https://example.invalid/new.jpg",
+        )
+    )
+
+    offer = asyncio.run(_resolve_offer(session, uuid4(), item))
+
+    assert offer.image_url == "https://example.invalid/new.jpg"
+    added_products = [
+        call.args[0]
+        for call in session.add.call_args_list
+        if isinstance(call.args[0], Product)
+    ]
+    assert len(added_products) == 1
+    assert added_products[0].canonical_image_url == "https://example.invalid/new.jpg"
+
+
+def test_resolve_offer_concurrent_insert_reraises_unrelated_integrity_error(
+    monkeypatch,
+) -> None:
+    session = _mock_async_session()
+    monkeypatch.setattr(
+        "app.collection.orchestration._resolve_seller", AsyncMock(return_value=None)
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration._find_offer", AsyncMock(return_value=None)
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration._resolve_global_product",
+        AsyncMock(return_value=None),
+    )
+    session.flush.side_effect = IntegrityError("stmt", {}, Exception())
+    monkeypatch.setattr(
+        "app.collection.orchestration._constraint_name",
+        lambda error: "some_other_constraint",
+    )
+    item = PriceNormalizer().normalize_offer(_raw())
+
+    try:
+        asyncio.run(_resolve_offer(session, uuid4(), item))
+    except IntegrityError:
+        pass
+    else:
+        raise AssertionError("deveria propagar IntegrityError não relacionada")
+
+
+def test_resolve_offer_concurrent_insert_returns_winner_and_updates_image(
+    monkeypatch,
+) -> None:
+    session = _mock_async_session()
+    winner_product = Product(id=uuid4(), name="ganhador", identity_key="v1:winner")
+    winner_offer = Offer(id=uuid4(), product_id=winner_product.id, image_url=None)
+    monkeypatch.setattr(
+        "app.collection.orchestration._resolve_seller", AsyncMock(return_value=None)
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration._find_offer",
+        AsyncMock(side_effect=[None, winner_offer]),
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration._resolve_global_product",
+        AsyncMock(return_value=None),
+    )
+    session.get.return_value = winner_product
+    session.flush.side_effect = IntegrityError("stmt", {}, Exception())
+    monkeypatch.setattr(
+        "app.collection.orchestration._constraint_name",
+        lambda error: next(iter(_OFFER_IDENTITY_INDEXES)),
+    )
+    item = PriceNormalizer().normalize_offer(
+        _raw(image_url="https://example.invalid/winner.jpg")
+    )
+
+    offer = asyncio.run(_resolve_offer(session, uuid4(), item))
+
+    assert offer is winner_offer
+    assert winner_offer.image_url == "https://example.invalid/winner.jpg"
+    assert winner_product.canonical_image_url == "https://example.invalid/winner.jpg"
+
+
+def test_resolve_offer_concurrent_insert_without_winner_reraises(monkeypatch) -> None:
+    session = _mock_async_session()
+    monkeypatch.setattr(
+        "app.collection.orchestration._resolve_seller", AsyncMock(return_value=None)
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration._find_offer",
+        AsyncMock(side_effect=[None, None]),
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration._resolve_global_product",
+        AsyncMock(return_value=None),
+    )
+    error = IntegrityError("stmt", {}, Exception())
+    session.flush.side_effect = error
+    monkeypatch.setattr(
+        "app.collection.orchestration._constraint_name",
+        lambda err: next(iter(_OFFER_IDENTITY_INDEXES)),
+    )
+    item = PriceNormalizer().normalize_offer(_raw())
+
+    try:
+        asyncio.run(_resolve_offer(session, uuid4(), item))
+    except IntegrityError as caught:
+        assert caught is error
+    else:
+        raise AssertionError("deveria propagar quando não há vencedor concorrente")
+
+
 # ---------------------------------------------------------------------------
 # _persist_phase_a / _run_phase_b / _persist_phase_c
 # ---------------------------------------------------------------------------
@@ -478,7 +1529,7 @@ def test_persist_phase_a_marks_offers_needing_ai(monkeypatch) -> None:
     # previous(=None), latest(=None) (TASK-093)
     session.scalar.side_effect = [run, criteria, None, None, None, None]
     # get: Mission, MissionOfferRelevance cache (None -> needs AI), Product (display_name=None)
-    product = SimpleNamespace(display_name=None)
+    product = SimpleNamespace(display_name=None, identity_key="existing-key")
     session.get.side_effect = [mission, None, product]
     offer = SimpleNamespace(id=offer_id, product_id=product_id)
     monkeypatch.setattr(
@@ -562,8 +1613,15 @@ def test_persist_phase_a_creates_installment_options_tied_to_new_observation(
         target_currency=None,
     )
     session = _mock_async_session()
-    session.scalar.side_effect = [run, criteria, None, None, None, None]  # +offer lock +product lock (Subtask 6) +latest (TASK-093)
-    product = SimpleNamespace(display_name=None)
+    session.scalar.side_effect = [
+        run,
+        criteria,
+        None,
+        None,
+        None,
+        None,
+    ]  # +offer lock +product lock (Subtask 6) +latest (TASK-093)
+    product = SimpleNamespace(display_name=None, identity_key="existing-key")
     session.get.side_effect = [mission, None, product]
     offer = SimpleNamespace(id=offer_id, product_id=product_id)
     monkeypatch.setattr(
@@ -640,8 +1698,15 @@ def test_persist_phase_a_adds_no_installment_row_when_offer_has_none(
         target_currency=None,
     )
     session = _mock_async_session()
-    session.scalar.side_effect = [run, criteria, None, None, None, None]  # +offer lock +product lock (Subtask 6) +latest (TASK-093)
-    product = SimpleNamespace(display_name=None)
+    session.scalar.side_effect = [
+        run,
+        criteria,
+        None,
+        None,
+        None,
+        None,
+    ]  # +offer lock +product lock (Subtask 6) +latest (TASK-093)
+    product = SimpleNamespace(display_name=None, identity_key="existing-key")
     session.get.side_effect = [mission, None, product]
     offer = SimpleNamespace(id=offer_id, product_id=product_id)
     monkeypatch.setattr(
@@ -688,7 +1753,7 @@ def test_persist_phase_a_limits_generic_search_candidates_per_source(
     # (TASK-093) por sobrevivente (5, dentro do pool intermediário de 8
     # da TASK-094)
     session.scalar.side_effect = [run, criteria] + [None] * 16
-    product = SimpleNamespace(display_name="Cadeira")
+    product = SimpleNamespace(display_name="Cadeira", identity_key="existing-key")
     # get: Mission, depois (relevance_cache, product) por sobrevivente.
     session.get.side_effect = [mission] + [None, product] * 5
     offer_stub = SimpleNamespace(id=uuid4(), product_id=uuid4())
@@ -776,7 +1841,7 @@ def test_persist_phase_a_specific_search_not_limited(monkeypatch) -> None:
     session = _mock_async_session()
     # lock (Subtask 6) + previous+latest (TASK-093) por sobrevivente (5, sem corte)
     session.scalar.side_effect = [run, criteria] + [None] * 16
-    product = SimpleNamespace(display_name="RTX 5070 Ti")
+    product = SimpleNamespace(display_name="RTX 5070 Ti", identity_key="existing-key")
     session.get.side_effect = [mission] + [None, product] * 5
     offer_stub = SimpleNamespace(id=uuid4(), product_id=uuid4())
     monkeypatch.setattr(
@@ -807,6 +1872,292 @@ def test_persist_phase_a_specific_search_not_limited(monkeypatch) -> None:
     )
 
     assert len(outcome.offers) == 5
+
+
+def test_persist_phase_a_dedupes_offers_sharing_the_same_identity_key(
+    monkeypatch,
+) -> None:
+    """Dois candidatos com a mesma `(seller_external_id, external_id, url)`
+    (mesmo `store_code`) -- só o primeiro é processado; o segundo é pulado
+    pelo dedupe do próprio loop (`items_by_key`)."""
+    mission_id, run_id, store_id = uuid4(), uuid4(), uuid4()
+    run = SimpleNamespace(
+        id=run_id,
+        mission_id=mission_id,
+        store_id=store_id,
+        status=CollectionRunStatus.RUNNING,
+        started_at=NOW,
+    )
+    mission = SimpleNamespace(id=mission_id)
+    criteria = SimpleNamespace(
+        mission_id=mission_id,
+        search_query="GPU",
+        model=None,
+        target_amount=None,
+        target_currency=None,
+    )
+    session = _mock_async_session()
+    # scalar: run, criteria, preview (find_offer -> None), previous(None), latest(None)
+    session.scalar.side_effect = [run, criteria, None, None, None]
+    product = SimpleNamespace(display_name="RTX", identity_key="existing-key")
+    session.get.side_effect = [mission, None, product]
+    offer_stub = SimpleNamespace(id=uuid4(), product_id=uuid4())
+    resolve_offer = AsyncMock(return_value=offer_stub)
+    monkeypatch.setattr("app.collection.orchestration._resolve_offer", resolve_offer)
+    claim = ClaimedCollection(run_id, mission_id, store_id, "pichau", "GPU", NOW)
+    result = CollectionResult(
+        "pichau",
+        NOW,
+        NOW + timedelta(seconds=2),
+        (
+            _raw(external_id="dup-1", url="https://example.invalid/same-offer"),
+            _raw(external_id="dup-1", url="https://example.invalid/same-offer"),
+        ),
+    )
+    normalized = PriceNormalizer().normalize_result(result)
+
+    outcome = asyncio.run(
+        _persist_phase_a(_session_factory(session), claim, normalized, preselected=True)
+    )
+
+    assert len(outcome.offers) == 1
+    resolve_offer.assert_awaited_once()
+
+
+def test_persist_phase_a_locks_previously_existing_offer_and_product_rows(
+    monkeypatch,
+) -> None:
+    """Subtask 6: Offer/Product já existentes descobertos na pré-visualização
+    são travados (`SELECT ... FOR UPDATE`) antes de `_resolve_offer`."""
+    mission_id, run_id, store_id = uuid4(), uuid4(), uuid4()
+    run = SimpleNamespace(
+        id=run_id,
+        mission_id=mission_id,
+        store_id=store_id,
+        status=CollectionRunStatus.RUNNING,
+        started_at=NOW,
+    )
+    mission = SimpleNamespace(id=mission_id)
+    criteria = SimpleNamespace(
+        mission_id=mission_id,
+        search_query="GPU",
+        model=None,
+        target_amount=None,
+        target_currency=None,
+    )
+    session = _mock_async_session()
+    existing_offer = SimpleNamespace(id=uuid4(), product_id=uuid4())
+    existing_product = SimpleNamespace(id=uuid4())
+    # scalar: run, criteria, preview (find_offer -> existing_offer),
+    # offer lock, product lock, previous(None), latest(None)
+    session.scalar.side_effect = [
+        run,
+        criteria,
+        existing_offer,
+        None,
+        None,
+        None,
+        None,
+    ]
+    resolved_product = SimpleNamespace(display_name=None, identity_key="existing-key")
+    # get: Mission, Product (preview, Subtask 6), relevance cache (None), Product (final)
+    session.get.side_effect = [mission, existing_product, None, resolved_product]
+    offer_stub = SimpleNamespace(id=uuid4(), product_id=uuid4())
+    monkeypatch.setattr(
+        "app.collection.orchestration._resolve_offer",
+        AsyncMock(return_value=offer_stub),
+    )
+    claim = ClaimedCollection(run_id, mission_id, store_id, "pichau", "GPU", NOW)
+    result = CollectionResult("pichau", NOW, NOW + timedelta(seconds=2), (_raw(),))
+    normalized = PriceNormalizer().normalize_result(result)
+
+    outcome = asyncio.run(
+        _persist_phase_a(_session_factory(session), claim, normalized, preselected=True)
+    )
+
+    assert len(outcome.offers) == 1
+    # Todos os 7 `scalar` configurados foram de fato consumidos -- prova
+    # que os dois loops de trava (offer_ids/product_ids) rodaram.
+    assert session.scalar.await_count == 7
+
+
+def test_persist_phase_a_reuses_latest_observation_when_commercial_state_and_installments_match(  # noqa: E501
+    monkeypatch,
+) -> None:
+    """TASK-093: estado comercial (preço, moeda, disponibilidade,
+    fulfillment, parcelamento) idêntico à última `PriceObservation` da
+    mesma Offer -- nenhuma nova `PriceObservation`/`OfferInstallmentOption`
+    é criada; `latest` é reaproveitada como `observation`, e o resultado
+    é marcado como `UNCHANGED_REUSED` (mesma `previous`)."""
+    mission_id, run_id, store_id = uuid4(), uuid4(), uuid4()
+    run = SimpleNamespace(
+        id=run_id,
+        mission_id=mission_id,
+        store_id=store_id,
+        status=CollectionRunStatus.RUNNING,
+        started_at=NOW,
+    )
+    mission = SimpleNamespace(id=mission_id)
+    criteria = SimpleNamespace(
+        mission_id=mission_id,
+        search_query="GPU",
+        model=None,
+        target_amount=None,
+        target_currency=None,
+    )
+    claim = ClaimedCollection(run_id, mission_id, store_id, "pichau", "GPU", NOW)
+    result = CollectionResult("pichau", NOW, NOW + timedelta(seconds=2), (_raw(),))
+    normalized = PriceNormalizer().normalize_result(result)
+    item = normalized.offers[0]
+
+    latest = SimpleNamespace(
+        id=uuid4(),
+        amount=item.amount,
+        currency=item.currency,
+        shipping_amount=item.shipping_amount,
+        total_amount=item.total_amount,
+        fulfillment=item.fulfillment,
+        seller_kind=item.seller_kind,
+        fulfillment_kind=item.fulfillment_kind,
+        condition=item.condition,
+        availability=item.availability,
+        observed_at=NOW,
+    )
+
+    session = _mock_async_session()
+    # scalar: run, criteria, preview (find_offer -> None -- oferta nova),
+    # previous (mesma missão, = latest), latest (última observação global)
+    session.scalar.side_effect = [run, criteria, None, latest, latest]
+    # session.scalars: OfferInstallmentOption ligadas a `latest` -- vazia,
+    # igual a `item.installment_options` (também vazia por padrão em `_raw()`).
+    session.scalars.return_value = []
+    resolved_product = SimpleNamespace(display_name="RTX", identity_key="existing-key")
+    session.get.side_effect = [mission, None, resolved_product]
+    offer_stub = SimpleNamespace(id=uuid4(), product_id=uuid4())
+    resolve_offer = AsyncMock(return_value=offer_stub)
+    monkeypatch.setattr("app.collection.orchestration._resolve_offer", resolve_offer)
+
+    outcome = asyncio.run(
+        _persist_phase_a(_session_factory(session), claim, normalized, preselected=True)
+    )
+
+    assert len(outcome.offers) == 1
+    pending = outcome.offers[0]
+    # Nenhuma nova PriceObservation/OfferInstallmentOption -- `session.add`
+    # só foi usado para o `SharedCollectionOffer` de confirmação.
+    added_types = {type(call.args[0]).__name__ for call in session.add.call_args_list}
+    assert added_types == {"SharedCollectionOffer"}
+    session.flush.assert_not_awaited()
+    assert pending.observation_id == latest.id
+    assert pending.observation_created is False
+    assert pending.alert_comparison is PriceObservationComparison.UNCHANGED_REUSED
+    assert pending.previous_observation_id == latest.id
+
+
+def test_persist_phase_a_raises_when_offer_references_missing_product(
+    monkeypatch,
+) -> None:
+    """Linha defensiva: `offer.product_id` aponta para um `Product` que já
+    não existe -- erro de integridade que nunca deveria acontecer em
+    produção, mas a função levanta `RuntimeError` em vez de seguir com um
+    `product=None`."""
+    mission_id, run_id, store_id = uuid4(), uuid4(), uuid4()
+    run = SimpleNamespace(
+        id=run_id,
+        mission_id=mission_id,
+        store_id=store_id,
+        status=CollectionRunStatus.RUNNING,
+        started_at=NOW,
+    )
+    mission = SimpleNamespace(id=mission_id)
+    criteria = SimpleNamespace(
+        mission_id=mission_id,
+        search_query="GPU",
+        model=None,
+        target_amount=None,
+        target_currency=None,
+    )
+    session = _mock_async_session()
+    # scalar: run, criteria, preview (find_offer -> None), previous(None), latest(None)
+    session.scalar.side_effect = [run, criteria, None, None, None]
+    # get: Mission, relevance cache (None), Product (final) -- ausente
+    session.get.side_effect = [mission, None, None]
+    offer_stub = SimpleNamespace(id=uuid4(), product_id=uuid4())
+    monkeypatch.setattr(
+        "app.collection.orchestration._resolve_offer",
+        AsyncMock(return_value=offer_stub),
+    )
+    claim = ClaimedCollection(run_id, mission_id, store_id, "pichau", "GPU", NOW)
+    result = CollectionResult("pichau", NOW, NOW + timedelta(seconds=2), (_raw(),))
+    normalized = PriceNormalizer().normalize_result(result)
+
+    with pytest.raises(RuntimeError, match="missing product"):
+        asyncio.run(
+            _persist_phase_a(
+                _session_factory(session), claim, normalized, preselected=True
+            )
+        )
+
+
+def test_persist_phase_a_publishes_availability_changed_when_previous_differs(
+    monkeypatch,
+) -> None:
+    """`previous` (última observação da MESMA missão) existe, é diferente
+    da nova `observation` recém-criada (`CHANGED`, não `UNCHANGED_REUSED`)
+    e tem disponibilidade diferente -- publica `AVAILABILITY_CHANGED_V1`
+    já na Fase A, sem esperar a Fase C."""
+    mission_id, run_id, store_id = uuid4(), uuid4(), uuid4()
+    run = SimpleNamespace(
+        id=run_id,
+        mission_id=mission_id,
+        store_id=store_id,
+        status=CollectionRunStatus.RUNNING,
+        started_at=NOW,
+    )
+    mission = SimpleNamespace(id=mission_id)
+    criteria = SimpleNamespace(
+        mission_id=mission_id,
+        search_query="GPU",
+        model=None,
+        target_amount=None,
+        target_currency=None,
+    )
+    previous = SimpleNamespace(
+        id=uuid4(),
+        amount=Decimal("120.00"),
+        currency="BRL",
+        availability=Availability.UNAVAILABLE,
+        observed_at=NOW - timedelta(hours=1),
+    )
+    session = _mock_async_session()
+    # scalar: run, criteria, preview (find_offer -> None), previous, latest (None)
+    session.scalar.side_effect = [run, criteria, None, previous, None]
+    resolved_product = SimpleNamespace(display_name="RTX", identity_key="existing-key")
+    session.get.side_effect = [mission, None, resolved_product]
+    offer_stub = SimpleNamespace(id=uuid4(), product_id=uuid4())
+    monkeypatch.setattr(
+        "app.collection.orchestration._resolve_offer",
+        AsyncMock(return_value=offer_stub),
+    )
+    publish = AsyncMock()
+    monkeypatch.setattr("app.collection.orchestration.publish_event_async", publish)
+    claim = ClaimedCollection(run_id, mission_id, store_id, "pichau", "GPU", NOW)
+    result = CollectionResult("pichau", NOW, NOW + timedelta(seconds=2), (_raw(),))
+    normalized = PriceNormalizer().normalize_result(result)
+
+    outcome = asyncio.run(
+        _persist_phase_a(_session_factory(session), claim, normalized, preselected=True)
+    )
+
+    pending = outcome.offers[0]
+    assert pending.observation_created is True
+    assert pending.alert_comparison is PriceObservationComparison.CHANGED
+    publish.assert_awaited_once()
+    _, kwargs = publish.call_args
+    assert kwargs["event_type"] is EventType.AVAILABILITY_CHANGED_V1
+    payload = kwargs["payload"]
+    assert payload.previous_availability is Availability.UNAVAILABLE
+    assert payload.current_availability is Availability.AVAILABLE
 
 
 def test_run_phase_b_skips_offers_without_pending_ai() -> None:
@@ -863,6 +2214,50 @@ def test_run_phase_b_calls_ai_only_for_pending_flags() -> None:
     assert outcomes[0].display_title is None
 
 
+def test_run_phase_b_normalizes_title_when_needs_display_name() -> None:
+    """`needs_display_name=True` -- `_classify` chama `normalize_offer_title`
+    e o resultado (título curto da IA) é propagado no `_AIOutcome`."""
+    pending = _PendingOffer(
+        offer_id=uuid4(),
+        product_id=uuid4(),
+        observation_id=uuid4(),
+        amount=Decimal("100"),
+        currency="BRL",
+        availability=Availability.AVAILABLE,
+        observed_at=NOW,
+        raw_title="Título bruto muito longo da loja",
+        needs_relevance=False,
+        needs_display_name=True,
+        observation_created=True,
+        alert_comparison=PriceObservationComparison.FIRST_OBSERVATION,
+        forced_relevance=OfferRelevance.MATCH,
+        previous_observation_id=None,
+        previous_amount=None,
+        previous_currency=None,
+        previous_availability=None,
+        previous_observed_at=None,
+    )
+    outcome = _PhaseAOutcome(
+        run_id=uuid4(),
+        mission_id=uuid4(),
+        store_id=uuid4(),
+        mission_search_query="GPU",
+        target_amount=None,
+        target_currency=None,
+        completed_at=NOW,
+        offers=(pending,),
+    )
+    ai_manager = _StubAIManager(
+        {"normalize_offer_title": '{"display_title": "Título curto"}'}
+    )
+
+    outcomes = asyncio.run(_run_phase_b(outcome, ai_manager, UserRole.ADMIN))
+
+    assert ai_manager.calls == ["normalize_offer_title"]
+    assert outcomes[0].relevance is OfferRelevance.MATCH
+    assert outcomes[0].display_title == "Título curto"
+
+
 def test_persist_phase_c_returns_false_when_mission_missing() -> None:
     session = _mock_async_session()
     session.scalar.return_value = None
@@ -898,6 +2293,28 @@ def test_persist_phase_c_returns_false_when_run_no_longer_running() -> None:
     assert result is False
 
 
+def test_persist_phase_c_returns_false_when_criteria_no_longer_exists() -> None:
+    """`MissionCriteria` foi apagada entre a Fase A e a Fase C (mission
+    reconfigurada/cancelada nesse meio-tempo) -- sem critério, não há como
+    validar/gravar relevância; a função aborta sem persistir nada."""
+    mission = SimpleNamespace(id=uuid4())
+    run = SimpleNamespace(status=CollectionRunStatus.RUNNING)
+    session = _mock_async_session()
+    session.scalar.side_effect = [mission, run, None]
+    outcome = _PhaseAOutcome(
+        run_id=uuid4(),
+        mission_id=mission.id,
+        store_id=uuid4(),
+        mission_search_query="GPU",
+        target_amount=None,
+        target_currency=None,
+        completed_at=NOW,
+        offers=(),
+    )
+    result = asyncio.run(_persist_phase_c(_session_factory(session), outcome, ()))
+    assert result is False
+
+
 def test_persist_phase_c_persists_relevance_and_finishes_run(monkeypatch) -> None:
     mission_id, run_id, store_id, offer_id, product_id = (
         uuid4(),
@@ -919,7 +2336,7 @@ def test_persist_phase_c_persists_relevance_and_finishes_run(monkeypatch) -> Non
         variant_selection_mode=VariantSelectionMode.NOT_REQUIRED,
     )
     session.scalar.side_effect = [mission, run, current_criteria]
-    product = SimpleNamespace(display_name=None)
+    product = SimpleNamespace(display_name=None, identity_key="existing-key")
     session.get.return_value = product
     finish = AsyncMock()
     reset_backoff = AsyncMock()
@@ -977,6 +2394,100 @@ def test_persist_phase_c_persists_relevance_and_finishes_run(monkeypatch) -> Non
     assert publish.await_count >= 1
 
 
+def test_persist_phase_c_applies_learned_identity_and_uses_cached_relevance(
+    monkeypatch,
+) -> None:
+    """Rodada de aprendizado de identidade (2026-09-12): `ai_outcome.
+    learned_identity` presente e `Product.identity_key` ainda `None` --
+    aplica a identidade aprendida DENTRO da seção crítica. Também cobre o
+    `else` da decisão de relevância (nem `forced_relevance`, nem
+    `needs_relevance`): usa `MissionOfferRelevance` já cacheada -- aqui,
+    nenhuma (`cached=None`), então a oferta segue sem relevância nesta
+    rodada."""
+    mission_id, run_id, store_id, offer_id, product_id = (
+        uuid4(),
+        uuid4(),
+        uuid4(),
+        uuid4(),
+        uuid4(),
+    )
+    mission = SimpleNamespace(id=mission_id, status=MissionStatus.ACTIVE)
+    run = SimpleNamespace(
+        id=run_id,
+        mission_id=mission_id,
+        store_id=store_id,
+        status=CollectionRunStatus.RUNNING,
+    )
+    current_criteria = SimpleNamespace(
+        request_kind="generic_category",
+        variant_selection_mode=VariantSelectionMode.NOT_REQUIRED,
+    )
+    session = _mock_async_session()
+    session.scalar.side_effect = [mission, run, current_criteria]
+    current_product = SimpleNamespace(identity_key=None)
+    cached_relevance = SimpleNamespace(
+        classification=OfferRelevance.NO_MATCH, last_observation_id=uuid4()
+    )
+    # Product, cached relevance (NO_MATCH -- evita o bloco de alerta, que
+    # só roda para MATCH; ainda cobre `cached.last_observation_id = ...`)
+    session.get.side_effect = [current_product, cached_relevance]
+    apply_identity = AsyncMock()
+    monkeypatch.setattr(
+        "app.collection.orchestration.apply_learned_identity", apply_identity
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration.finish_collection_run", AsyncMock()
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration._reset_source_backoff", AsyncMock()
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration._evaluate_mission_prelist", AsyncMock()
+    )
+    monkeypatch.setattr("app.collection.orchestration.publish_event_async", AsyncMock())
+    pending = _PendingOffer(
+        offer_id=offer_id,
+        product_id=product_id,
+        observation_id=uuid4(),
+        amount=Decimal("100"),
+        currency="BRL",
+        availability=Availability.AVAILABLE,
+        observed_at=NOW,
+        raw_title="Título bruto",
+        needs_relevance=False,
+        needs_display_name=False,
+        observation_created=True,
+        alert_comparison=PriceObservationComparison.UNCHANGED_REUSED,
+        previous_observation_id=None,
+        previous_amount=None,
+        previous_currency=None,
+        previous_availability=None,
+        previous_observed_at=None,
+    )
+    outcome = _PhaseAOutcome(
+        run_id=run_id,
+        mission_id=mission_id,
+        store_id=store_id,
+        mission_search_query="GPU",
+        target_amount=None,
+        target_currency=None,
+        completed_at=NOW,
+        offers=(pending,),
+    )
+    learned = SimpleNamespace(identity_key="v1:learned")
+    ai_outcomes = (_AIOutcome(offer_id, None, None, learned_identity=learned),)
+
+    result = asyncio.run(
+        _persist_phase_c(_session_factory(session), outcome, ai_outcomes)
+    )
+
+    assert result is True
+    apply_identity.assert_awaited_once_with(
+        session, product=current_product, resolved=learned
+    )
+    assert cached_relevance.last_observation_id == pending.observation_id
+
+
 def test_persist_phase_c_uses_coupon_final_amount_for_alert_but_never_the_persisted_row(
     monkeypatch,
 ) -> None:
@@ -1006,7 +2517,7 @@ def test_persist_phase_c_uses_coupon_final_amount_for_alert_but_never_the_persis
         variant_selection_mode=VariantSelectionMode.NOT_REQUIRED,
     )
     session.scalar.side_effect = [mission, run, current_criteria]
-    product = SimpleNamespace(display_name=None)
+    product = SimpleNamespace(display_name=None, identity_key="existing-key")
     session.get.return_value = product
     monkeypatch.setattr(
         "app.collection.orchestration.finish_collection_run", AsyncMock()
@@ -1060,7 +2571,10 @@ def test_persist_phase_c_uses_coupon_final_amount_for_alert_but_never_the_persis
     )
     ai_outcomes = (
         _AIOutcome(
-            offer_id, OfferRelevance.MATCH, "Título normalizado", applied_coupon=applied_coupon
+            offer_id,
+            OfferRelevance.MATCH,
+            "Título normalizado",
+            applied_coupon=applied_coupon,
         ),
     )
 
@@ -1074,6 +2588,231 @@ def test_persist_phase_c_uses_coupon_final_amount_for_alert_but_never_the_persis
     assert current.amount == Decimal("80")  # preço final com cupom, não o original
     # A Fase A já persistiu `pending.amount` original -- nunca sobrescrito aqui.
     assert pending.amount == Decimal("100")
+
+
+def test_persist_phase_c_with_settings_persists_new_checkpoint_on_first_alert(
+    monkeypatch,
+) -> None:
+    """`settings` fornecido (produção, via `CollectionOrchestrator`) --
+    monta `checkpoint`/`realert_window`/`material_policy`, chama o
+    evaluator de verdade e, quando ele gera candidatos, faz upsert de
+    `MissionProductAlertState` (sem checkpoint anterior: `best_notified_
+    amount` nasce do preço atual)."""
+    mission_id, run_id, store_id, offer_id, product_id = (
+        uuid4(),
+        uuid4(),
+        uuid4(),
+        uuid4(),
+        uuid4(),
+    )
+    mission = SimpleNamespace(id=mission_id, status=MissionStatus.ACTIVE)
+    run = SimpleNamespace(
+        id=run_id,
+        mission_id=mission_id,
+        store_id=store_id,
+        status=CollectionRunStatus.RUNNING,
+    )
+    current_criteria = SimpleNamespace(
+        request_kind="generic_category",
+        variant_selection_mode=VariantSelectionMode.NOT_REQUIRED,
+        target_amount=None,
+        target_currency=None,
+    )
+    session = _mock_async_session()
+    session.scalar.side_effect = [mission, run, current_criteria]
+    session.get.return_value = None  # checkpoint_row: nenhum ainda
+    session.execute = AsyncMock()
+    monkeypatch.setattr(
+        "app.collection.orchestration.finish_collection_run", AsyncMock()
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration._reset_source_backoff", AsyncMock()
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration._evaluate_mission_prelist", AsyncMock()
+    )
+    monkeypatch.setattr("app.collection.orchestration.publish_event_async", AsyncMock())
+    monkeypatch.setattr(
+        "app.collection.orchestration.resolve_realert_window",
+        AsyncMock(return_value=timedelta(hours=168)),
+    )
+    candidate = PriceAlertCandidate(
+        event_type=EventType.PRICE_DECREASED_V1,
+        aggregate_type=AggregateType.OFFER,
+        aggregate_id=offer_id,
+        payload=PriceDecreasedPayload(
+            offer_id=offer_id,
+            observation_id=uuid4(),
+            previous_observation_id=uuid4(),
+            previous_total=Decimal("150.00"),
+            current_total=Decimal("100.00"),
+            currency="BRL",
+        ),
+    )
+    evaluator = MagicMock(return_value=(candidate,))
+    monkeypatch.setattr("app.collection.orchestration.evaluate_price_alerts", evaluator)
+    settings = SimpleNamespace(
+        material_improvement_percent=0.01,
+        material_improvement_min_amount=2.00,
+        material_improvement_max_amount=50.00,
+        rearm_rise_percent=0.05,
+    )
+    pending = _PendingOffer(
+        offer_id=offer_id,
+        product_id=product_id,
+        observation_id=uuid4(),
+        amount=Decimal("100.00"),
+        currency="BRL",
+        availability=Availability.AVAILABLE,
+        observed_at=NOW,
+        raw_title="Título bruto",
+        needs_relevance=False,
+        needs_display_name=False,
+        observation_created=True,
+        alert_comparison=PriceObservationComparison.CHANGED,
+        forced_relevance=OfferRelevance.MATCH,
+        previous_observation_id=uuid4(),
+        previous_amount=Decimal("150.00"),
+        previous_currency="BRL",
+        previous_availability=Availability.AVAILABLE,
+        previous_observed_at=NOW - timedelta(days=1),
+    )
+    outcome = _PhaseAOutcome(
+        run_id=run_id,
+        mission_id=mission_id,
+        store_id=store_id,
+        mission_search_query="GPU",
+        target_amount=None,
+        target_currency=None,
+        completed_at=NOW,
+        offers=(pending,),
+    )
+
+    result = asyncio.run(
+        _persist_phase_c(_session_factory(session), outcome, (), settings=settings)
+    )
+
+    assert result is True
+    evaluator.assert_called_once()
+    upsert_params = next(
+        call.args[0].compile().params
+        for call in session.execute.call_args_list
+        if "best_notified_amount" in call.args[0].compile().params
+    )
+    assert upsert_params["best_notified_amount"] == Decimal("100.00")
+    assert upsert_params["last_notified_amount"] == Decimal("100.00")
+
+
+def test_persist_phase_c_with_settings_rearms_checkpoint_when_no_alert_but_should_rearm(
+    monkeypatch,
+) -> None:
+    """Checkpoint já existente, evaluator não gera candidatos desta vez,
+    mas `should_rearm` diz que o preço subiu o suficiente para permitir um
+    futuro re-alert (§33.8) -- só `rearmed_at`/`updated_at` avançam, sem
+    publicar nada nem tocar `best_notified_amount`/`last_notified_amount`."""
+    mission_id, run_id, store_id, offer_id, product_id = (
+        uuid4(),
+        uuid4(),
+        uuid4(),
+        uuid4(),
+        uuid4(),
+    )
+    mission = SimpleNamespace(id=mission_id, status=MissionStatus.ACTIVE)
+    run = SimpleNamespace(
+        id=run_id,
+        mission_id=mission_id,
+        store_id=store_id,
+        status=CollectionRunStatus.RUNNING,
+    )
+    current_criteria = SimpleNamespace(
+        request_kind="generic_category",
+        variant_selection_mode=VariantSelectionMode.NOT_REQUIRED,
+        target_amount=None,
+        target_currency=None,
+    )
+    checkpoint_row = SimpleNamespace(
+        best_notified_amount=Decimal("90.00"),
+        last_notified_amount=Decimal("90.00"),
+        last_notified_at=NOW - timedelta(days=10),
+        rearmed_at=None,
+        updated_at=NOW - timedelta(days=10),
+    )
+    session = _mock_async_session()
+    session.scalar.side_effect = [mission, run, current_criteria]
+    session.get.return_value = checkpoint_row
+    session.execute = AsyncMock()
+    monkeypatch.setattr(
+        "app.collection.orchestration.finish_collection_run", AsyncMock()
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration._reset_source_backoff", AsyncMock()
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration._evaluate_mission_prelist", AsyncMock()
+    )
+    monkeypatch.setattr("app.collection.orchestration.publish_event_async", AsyncMock())
+    monkeypatch.setattr(
+        "app.collection.orchestration.resolve_realert_window",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration.evaluate_price_alerts",
+        MagicMock(return_value=()),
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration.should_rearm", MagicMock(return_value=True)
+    )
+    settings = SimpleNamespace(
+        material_improvement_percent=0.01,
+        material_improvement_min_amount=2.00,
+        material_improvement_max_amount=50.00,
+        rearm_rise_percent=0.05,
+    )
+    pending = _PendingOffer(
+        offer_id=offer_id,
+        product_id=product_id,
+        observation_id=uuid4(),
+        amount=Decimal("110.00"),
+        currency="BRL",
+        availability=Availability.AVAILABLE,
+        observed_at=NOW,
+        raw_title="Título bruto",
+        needs_relevance=False,
+        needs_display_name=False,
+        observation_created=True,
+        alert_comparison=PriceObservationComparison.CHANGED,
+        forced_relevance=OfferRelevance.MATCH,
+        previous_observation_id=uuid4(),
+        previous_amount=Decimal("90.00"),
+        previous_currency="BRL",
+        previous_availability=Availability.AVAILABLE,
+        previous_observed_at=NOW - timedelta(days=1),
+    )
+    outcome = _PhaseAOutcome(
+        run_id=run_id,
+        mission_id=mission_id,
+        store_id=store_id,
+        mission_search_query="GPU",
+        target_amount=None,
+        target_currency=None,
+        completed_at=NOW,
+        offers=(pending,),
+    )
+
+    result = asyncio.run(
+        _persist_phase_c(_session_factory(session), outcome, (), settings=settings)
+    )
+
+    assert result is True
+    assert checkpoint_row.rearmed_at == NOW
+    assert checkpoint_row.updated_at == NOW
+    # Nenhum upsert de MissionProductAlertState -- checkpoint mutado
+    # in-place, sem candidatos, sem novo `best_notified_amount`.
+    assert not any(
+        "best_notified_amount" in call.args[0].compile().params
+        for call in session.execute.call_args_list
+        if hasattr(call.args[0], "compile")
+    )
 
 
 def test_persist_phase_c_without_applicable_coupon_uses_original_amount_for_alert(
@@ -1099,7 +2838,7 @@ def test_persist_phase_c_without_applicable_coupon_uses_original_amount_for_aler
         variant_selection_mode=VariantSelectionMode.NOT_REQUIRED,
     )
     session.scalar.side_effect = [mission, run, current_criteria]
-    product = SimpleNamespace(display_name=None)
+    product = SimpleNamespace(display_name=None, identity_key="existing-key")
     session.get.return_value = product
     monkeypatch.setattr(
         "app.collection.orchestration.finish_collection_run", AsyncMock()
@@ -1184,7 +2923,7 @@ def test_persist_phase_c_passes_coupon_snapshot_matching_current_total_to_evalua
         variant_selection_mode=VariantSelectionMode.NOT_REQUIRED,
     )
     session.scalar.side_effect = [mission, run, current_criteria]
-    product = SimpleNamespace(display_name=None)
+    product = SimpleNamespace(display_name=None, identity_key="existing-key")
     session.get.return_value = product
     monkeypatch.setattr(
         "app.collection.orchestration.finish_collection_run", AsyncMock()
@@ -1239,7 +2978,10 @@ def test_persist_phase_c_passes_coupon_snapshot_matching_current_total_to_evalua
     )
     ai_outcomes = (
         _AIOutcome(
-            offer_id, OfferRelevance.MATCH, "Título normalizado", applied_coupon=applied_coupon
+            offer_id,
+            OfferRelevance.MATCH,
+            "Título normalizado",
+            applied_coupon=applied_coupon,
         ),
     )
 
@@ -1281,7 +3023,7 @@ def test_persist_phase_c_without_coupon_passes_no_snapshot_to_evaluator(
         variant_selection_mode=VariantSelectionMode.NOT_REQUIRED,
     )
     session.scalar.side_effect = [mission, run, current_criteria]
-    product = SimpleNamespace(display_name=None)
+    product = SimpleNamespace(display_name=None, identity_key="existing-key")
     session.get.return_value = product
     monkeypatch.setattr(
         "app.collection.orchestration.finish_collection_run", AsyncMock()
@@ -1472,7 +3214,9 @@ def test_run_phase_b_flags_off_never_touches_coupons_or_historical_bootstrap(
         "app.collection.orchestration.get_candidate_coupons_for_offer", coupon_query
     )
     bootstrap = AsyncMock(side_effect=AssertionError("não deveria rodar o bootstrap"))
-    monkeypatch.setattr("app.collection.orchestration.run_historical_bootstrap", bootstrap)
+    monkeypatch.setattr(
+        "app.collection.orchestration.run_historical_bootstrap", bootstrap
+    )
     trigger = AsyncMock(return_value=None)
     monkeypatch.setattr(
         "app.collection.orchestration.evaluate_trigger_and_maybe_research", trigger
@@ -1502,6 +3246,279 @@ def test_run_phase_b_flags_off_never_touches_coupons_or_historical_bootstrap(
     trigger.assert_awaited_once()
     assert trigger.call_args.kwargs["current_amount"] == Decimal("300.00")
     assert outcomes[0].applied_coupon is None
+
+
+def _phase_b_pending_and_outcome(
+    *, offer_id, product_id, store_id, **overrides
+) -> tuple[_PendingOffer, _PhaseAOutcome]:
+    defaults = dict(
+        offer_id=offer_id,
+        product_id=product_id,
+        observation_id=uuid4(),
+        amount=Decimal("300.00"),
+        currency="BRL",
+        availability=Availability.AVAILABLE,
+        observed_at=NOW,
+        raw_title="Título bruto",
+        needs_relevance=False,
+        needs_display_name=False,
+        observation_created=True,
+        alert_comparison=PriceObservationComparison.FIRST_OBSERVATION,
+        previous_observation_id=None,
+        previous_amount=None,
+        previous_currency=None,
+        previous_availability=None,
+        previous_observed_at=None,
+        forced_relevance=OfferRelevance.MATCH,
+    )
+    defaults.update(overrides)
+    pending = _PendingOffer(**defaults)
+    outcome = _PhaseAOutcome(
+        run_id=uuid4(),
+        mission_id=uuid4(),
+        store_id=store_id,
+        mission_search_query="GPU",
+        target_amount=None,
+        target_currency=None,
+        completed_at=NOW,
+        offers=(pending,),
+    )
+    return pending, outcome
+
+
+def test_run_phase_b_coupon_lookup_failure_keeps_original_amount(monkeypatch) -> None:
+    """Coroa a disciplina de `coupon_evaluation_failed`: uma falha de
+    infraestrutura na consulta de cupons nunca derruba o processamento
+    normal da oferta -- F2 segue com o preço original, como se nenhum
+    cupom tivesse sido encontrado."""
+    offer_id, product_id, store_id = uuid4(), uuid4(), uuid4()
+    pending, outcome = _phase_b_pending_and_outcome(
+        offer_id=offer_id, product_id=product_id, store_id=store_id
+    )
+    offer_row = Offer(
+        id=offer_id,
+        product_id=product_id,
+        store_id=store_id,
+        url="https://loja.example/produto",
+    )
+    session = _mock_async_session()
+    session.get.return_value = offer_row
+    monkeypatch.setattr(
+        "app.collection.orchestration.get_candidate_coupons_for_offer",
+        AsyncMock(side_effect=RuntimeError("timeout no coupon service")),
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration.run_historical_bootstrap", AsyncMock()
+    )
+    trigger = AsyncMock(return_value=None)
+    monkeypatch.setattr(
+        "app.collection.orchestration.evaluate_trigger_and_maybe_research", trigger
+    )
+    settings = SimpleNamespace(
+        historical_bootstrap_revalidation_days=90,
+        market_assessment_lease_seconds=300,
+        market_assessment_failure_backoff_minutes=15,
+        market_assessment_failure_backoff_max_minutes=360,
+        historical_bootstrap_enabled=False,
+        coupons_enabled=True,
+    )
+
+    outcomes = asyncio.run(
+        _run_phase_b(
+            outcome,
+            _StubAIManager(),
+            UserRole.ADMIN,
+            session_factory=_session_factory(session),
+            firecrawl=None,
+            settings=settings,
+        )
+    )
+
+    trigger.assert_awaited_once()
+    assert trigger.call_args.kwargs["current_amount"] == Decimal("300.00")
+    assert outcomes[0].applied_coupon is None
+
+
+def test_run_phase_b_runs_historical_bootstrap_when_enabled(monkeypatch) -> None:
+    offer_id, product_id, store_id = uuid4(), uuid4(), uuid4()
+    pending, outcome = _phase_b_pending_and_outcome(
+        offer_id=offer_id, product_id=product_id, store_id=store_id
+    )
+    session = _mock_async_session()
+    bootstrap = AsyncMock()
+    monkeypatch.setattr(
+        "app.collection.orchestration.run_historical_bootstrap", bootstrap
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration.evaluate_trigger_and_maybe_research",
+        AsyncMock(return_value=None),
+    )
+    settings = SimpleNamespace(
+        historical_bootstrap_revalidation_days=90,
+        market_assessment_lease_seconds=300,
+        market_assessment_failure_backoff_minutes=15,
+        market_assessment_failure_backoff_max_minutes=360,
+        historical_bootstrap_enabled=True,
+        coupons_enabled=False,
+    )
+
+    asyncio.run(
+        _run_phase_b(
+            outcome,
+            _StubAIManager(),
+            UserRole.ADMIN,
+            session_factory=_session_factory(session),
+            firecrawl="firecrawl-stub",
+            settings=settings,
+        )
+    )
+
+    bootstrap.assert_awaited_once()
+    assert bootstrap.call_args.kwargs["product_id"] == product_id
+    assert bootstrap.call_args.kwargs["fetch"] == "firecrawl-stub"
+    assert bootstrap.call_args.kwargs["revalidation_days"] == 90
+
+
+def test_run_phase_b_uses_cached_relevance_when_not_forced_nor_reclassified(
+    monkeypatch,
+) -> None:
+    """Oferta já classificada em ciclo ANTERIOR (nem forçada nesta
+    rodada, nem precisando de reclassificação agora) -- só pode ter
+    virado MATCH via `MissionOfferRelevance` de um ciclo passado; sem
+    reler aqui, pesquisa de mercado nunca dispararia para o caso mais
+    comum (missão rodando há semanas)."""
+    offer_id, product_id, store_id = uuid4(), uuid4(), uuid4()
+    pending, outcome = _phase_b_pending_and_outcome(
+        offer_id=offer_id,
+        product_id=product_id,
+        store_id=store_id,
+        needs_relevance=False,
+        forced_relevance=None,
+    )
+    session = _mock_async_session()
+    session.get.return_value = SimpleNamespace(classification=OfferRelevance.MATCH)
+    monkeypatch.setattr(
+        "app.collection.orchestration.run_historical_bootstrap", AsyncMock()
+    )
+    trigger = AsyncMock(return_value=None)
+    monkeypatch.setattr(
+        "app.collection.orchestration.evaluate_trigger_and_maybe_research", trigger
+    )
+    settings = SimpleNamespace(
+        historical_bootstrap_revalidation_days=90,
+        market_assessment_lease_seconds=300,
+        market_assessment_failure_backoff_minutes=15,
+        market_assessment_failure_backoff_max_minutes=360,
+        historical_bootstrap_enabled=False,
+        coupons_enabled=False,
+    )
+
+    outcomes = asyncio.run(
+        _run_phase_b(
+            outcome,
+            _StubAIManager(),
+            UserRole.ADMIN,
+            session_factory=_session_factory(session),
+            firecrawl=None,
+            settings=settings,
+        )
+    )
+
+    session.get.assert_awaited_once_with(
+        MissionOfferRelevance, (outcome.mission_id, pending.offer_id)
+    )
+    trigger.assert_awaited_once()
+    # `relevance` (persistida em `_AIOutcome`) permanece intocada -- só a
+    # decisão INTERNA de disparar pesquisa de mercado usa o cache.
+    assert outcomes[0].relevance is None
+
+
+def test_run_phase_b_identity_learning_success_updates_outcome(monkeypatch) -> None:
+    offer_id, product_id, store_id = uuid4(), uuid4(), uuid4()
+    pending, outcome = _phase_b_pending_and_outcome(
+        offer_id=offer_id,
+        product_id=product_id,
+        store_id=store_id,
+        identity_unresolved=True,
+    )
+    session = _mock_async_session()
+    session.commit = AsyncMock()
+    learned = SimpleNamespace(identity_key="v1:learned")
+    monkeypatch.setattr(
+        "app.collection.orchestration.resolve_or_learn_product_variant",
+        AsyncMock(return_value=learned),
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration.evaluate_trigger_and_maybe_research",
+        AsyncMock(return_value=None),
+    )
+    settings = SimpleNamespace(
+        historical_bootstrap_revalidation_days=90,
+        market_assessment_lease_seconds=300,
+        market_assessment_failure_backoff_minutes=15,
+        market_assessment_failure_backoff_max_minutes=360,
+        historical_bootstrap_enabled=False,
+        coupons_enabled=False,
+        product_identity_learning_enabled=True,
+    )
+
+    outcomes = asyncio.run(
+        _run_phase_b(
+            outcome,
+            _StubAIManager(),
+            UserRole.ADMIN,
+            session_factory=_session_factory(session),
+            firecrawl=None,
+            settings=settings,
+            arbiter_ai_manager=_StubAIManager(),
+        )
+    )
+
+    assert outcomes[0].learned_identity is learned
+    session.commit.assert_awaited_once()
+
+
+def test_run_phase_b_identity_learning_failure_is_isolated(monkeypatch) -> None:
+    offer_id, product_id, store_id = uuid4(), uuid4(), uuid4()
+    pending, outcome = _phase_b_pending_and_outcome(
+        offer_id=offer_id,
+        product_id=product_id,
+        store_id=store_id,
+        identity_unresolved=True,
+    )
+    session = _mock_async_session()
+    monkeypatch.setattr(
+        "app.collection.orchestration.resolve_or_learn_product_variant",
+        AsyncMock(side_effect=RuntimeError("provider indisponível")),
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration.evaluate_trigger_and_maybe_research",
+        AsyncMock(return_value=None),
+    )
+    settings = SimpleNamespace(
+        historical_bootstrap_revalidation_days=90,
+        market_assessment_lease_seconds=300,
+        market_assessment_failure_backoff_minutes=15,
+        market_assessment_failure_backoff_max_minutes=360,
+        historical_bootstrap_enabled=False,
+        coupons_enabled=False,
+        product_identity_learning_enabled=True,
+    )
+
+    outcomes = asyncio.run(
+        _run_phase_b(
+            outcome,
+            _StubAIManager(),
+            UserRole.ADMIN,
+            session_factory=_session_factory(session),
+            firecrawl=None,
+            settings=settings,
+            arbiter_ai_manager=_StubAIManager(),
+        )
+    )
+
+    assert outcomes[0].learned_identity is None
+    session.commit.assert_not_called()
 
 
 def test_persist_phase_c_reused_observation_skips_evaluator_and_run_succeeds(
@@ -1543,7 +3560,9 @@ def test_persist_phase_c_reused_observation_skips_evaluator_and_run_succeeds(
         "app.collection.orchestration._evaluate_mission_prelist", AsyncMock()
     )
     monkeypatch.setattr("app.collection.orchestration.publish_event_async", AsyncMock())
-    evaluator = MagicMock(side_effect=AssertionError("evaluator não deveria ser chamado"))
+    evaluator = MagicMock(
+        side_effect=AssertionError("evaluator não deveria ser chamado")
+    )
     monkeypatch.setattr("app.collection.orchestration.evaluate_price_alerts", evaluator)
     pending = _PendingOffer(
         offer_id=offer_id,
@@ -1969,9 +3988,7 @@ def test_mission_relevance_pending_false_when_every_current_offer_is_resolved() 
     store_id = uuid4()
     offer_id = uuid4()
     session = _mock_async_session()
-    session.execute.return_value = _fake_execute_result(
-        [(offer_id, store_id, NOW)]
-    )
+    session.execute.return_value = _fake_execute_result([(offer_id, store_id, NOW)])
     session.scalars.return_value = [offer_id]  # já tem MissionOfferRelevance
 
     pending = asyncio.run(_mission_relevance_pending(session, uuid4()))
@@ -1983,9 +4000,7 @@ def test_mission_relevance_pending_true_when_current_offer_lacks_relevance() -> 
     store_id = uuid4()
     offer_id = uuid4()
     session = _mock_async_session()
-    session.execute.return_value = _fake_execute_result(
-        [(offer_id, store_id, NOW)]
-    )
+    session.execute.return_value = _fake_execute_result([(offer_id, store_id, NOW)])
     session.scalars.return_value = []  # nenhuma MissionOfferRelevance ainda
 
     pending = asyncio.run(_mission_relevance_pending(session, uuid4()))
@@ -2028,9 +4043,7 @@ def test_maybe_publish_prelist_errata_uses_commercial_ranking(monkeypatch) -> No
     )
     store = SimpleNamespace(id=uuid4(), code="amazon")
     improved = _prelist_candidate("180.00", store=store)
-    previous = _prelist_candidate(
-        "100.00", condition=OfferCondition.USED, store=store
-    )
+    previous = _prelist_candidate("100.00", condition=OfferCondition.USED, store=store)
     previous_event = SimpleNamespace(id=uuid4())
     session = _mock_async_session()
     session.scalar.return_value = previous_event
@@ -2077,9 +4090,7 @@ def test_prelist_errata_does_not_replace_new_with_cheaper_used(monkeypatch) -> N
     )
     monkeypatch.setattr(
         "app.collection.orchestration._previous_prelist_best_by_store",
-        AsyncMock(
-            return_value={store.id: _prelist_commercial_key(previous)}
-        ),
+        AsyncMock(return_value={store.id: _prelist_commercial_key(previous)}),
     )
     publish = AsyncMock()
     monkeypatch.setattr("app.collection.orchestration.publish_event_async", publish)
@@ -2088,6 +4099,487 @@ def test_prelist_errata_does_not_replace_new_with_cheaper_used(monkeypatch) -> N
 
     assert mission.prelist_errata_sent is False
     publish.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# Cauda de branches de orchestration.py (checkpoint 8, fechamento final)
+# ---------------------------------------------------------------------------
+
+
+def test_apply_rating_snapshot_updates_pair_when_both_fields_present() -> None:
+    offer = SimpleNamespace(
+        rating_average=None, review_count=None, rating_observed_at=None
+    )
+    item = SimpleNamespace(
+        rating_average=Decimal("4.7"),
+        review_count=812,
+        raw_offer=SimpleNamespace(collected_at=NOW),
+    )
+    _apply_rating_snapshot(offer, item)
+    assert offer.rating_average == Decimal("4.7")
+    assert offer.review_count == 812
+    assert offer.rating_observed_at == NOW
+
+
+def test_publish_failure_publishes_collection_failed_event(monkeypatch) -> None:
+    session = _mock_async_session()
+    run = SimpleNamespace(id=uuid4(), store_id=uuid4(), mission_id=uuid4())
+    publish = AsyncMock()
+    monkeypatch.setattr("app.collection.orchestration.publish_event_async", publish)
+
+    asyncio.run(_publish_failure(session, run, "provider_blocked", NOW))
+
+    publish.assert_awaited_once()
+    kwargs = publish.call_args.kwargs
+    assert kwargs["event_type"] is EventType.COLLECTION_FAILED_V1
+    assert kwargs["mission_id"] == run.mission_id
+    payload = kwargs["payload"]
+    assert isinstance(payload, CollectionFailedPayload)
+    assert payload.collection_run_id == run.id
+    assert payload.store_id == run.store_id
+    assert payload.failure_code == "provider_blocked"
+
+
+def test_apply_source_backoff_noop_when_source_missing() -> None:
+    session = _mock_async_session()
+    session.get.return_value = None
+
+    asyncio.run(_apply_source_backoff(session, uuid4(), uuid4(), NOW))
+
+    session.scalar.assert_not_awaited()
+
+
+def test_apply_source_backoff_noop_when_schedule_interval_missing() -> None:
+    session = _mock_async_session()
+    source = SimpleNamespace(consecutive_blocks=0, next_eligible_at=None)
+    session.get.return_value = source
+    session.scalar.return_value = None
+
+    asyncio.run(_apply_source_backoff(session, uuid4(), uuid4(), NOW))
+
+    assert source.consecutive_blocks == 0
+    assert source.next_eligible_at is None
+
+
+def test_reset_source_backoff_noop_when_source_missing() -> None:
+    session = _mock_async_session()
+    session.get.return_value = None
+
+    asyncio.run(_reset_source_backoff(session, uuid4(), uuid4()))
+
+    session.flush.assert_not_awaited()
+
+
+def test_reset_source_backoff_noop_when_already_reset() -> None:
+    session = _mock_async_session()
+    source = SimpleNamespace(consecutive_blocks=0, next_eligible_at=None)
+    session.get.return_value = source
+
+    asyncio.run(_reset_source_backoff(session, uuid4(), uuid4()))
+
+    assert source.consecutive_blocks == 0
+    assert source.next_eligible_at is None
+
+
+def test_evaluate_mission_prelist_noop_when_criteria_missing(monkeypatch) -> None:
+    mission = SimpleNamespace(id=uuid4(), status=MissionStatus.ACTIVE)
+    session = _mock_async_session()
+    session.scalar.side_effect = [mission, None]
+    ready = AsyncMock()
+    errata = AsyncMock()
+    monkeypatch.setattr(
+        "app.collection.orchestration._maybe_publish_prelist_ready", ready
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration._maybe_publish_prelist_errata", errata
+    )
+
+    asyncio.run(_evaluate_mission_prelist(session, mission.id, NOW))
+
+    ready.assert_not_awaited()
+    errata.assert_not_awaited()
+
+
+def test_evaluate_mission_prelist_dispatches_variant_choices_when_pending(
+    monkeypatch,
+) -> None:
+    mission = SimpleNamespace(id=uuid4(), status=MissionStatus.ACTIVE)
+    criteria = SimpleNamespace(
+        request_kind=ProductRequestKind.PRODUCT_FAMILY.value,
+        variant_selection_mode=VariantSelectionMode.PENDING,
+    )
+    session = _mock_async_session()
+    session.scalar.side_effect = [mission, criteria]
+    variant_choices = AsyncMock()
+    monkeypatch.setattr(
+        "app.collection.orchestration._maybe_publish_variant_choices", variant_choices
+    )
+    ready = AsyncMock()
+    monkeypatch.setattr(
+        "app.collection.orchestration._maybe_publish_prelist_ready", ready
+    )
+
+    asyncio.run(_evaluate_mission_prelist(session, mission.id, NOW))
+
+    variant_choices.assert_awaited_once_with(session, mission, criteria, NOW)
+    ready.assert_not_awaited()
+
+
+def test_mission_prelist_round_complete_false_without_any_source() -> None:
+    session = _mock_async_session()
+    session.scalar.return_value = 0
+
+    complete = asyncio.run(_mission_prelist_round_complete(session, uuid4()))
+
+    assert complete is False
+
+
+def test_mission_prelist_round_complete_true_when_every_source_finished() -> None:
+    session = _mock_async_session()
+    session.scalar.side_effect = [2, 2]
+
+    complete = asyncio.run(_mission_prelist_round_complete(session, uuid4()))
+
+    assert complete is True
+
+
+def test_mission_prelist_round_complete_false_when_some_source_still_running() -> None:
+    session = _mock_async_session()
+    session.scalar.side_effect = [2, 1]
+
+    complete = asyncio.run(_mission_prelist_round_complete(session, uuid4()))
+
+    assert complete is False
+
+
+def test_mission_relevance_pending_false_when_no_offer_rows() -> None:
+    session = _mock_async_session()
+    session.execute.return_value = _fake_execute_result([])
+
+    pending = asyncio.run(_mission_relevance_pending(session, uuid4()))
+
+    assert pending is False
+    session.scalars.assert_not_awaited()
+
+
+def test_rank_prelist_candidates_caps_per_store_limit() -> None:
+    store = SimpleNamespace(id=uuid4(), code="amazon")
+    candidates = tuple(
+        _prelist_candidate(f"{100 + index}.00", store=store) for index in range(7)
+    )
+
+    ranked = rank_prelist_candidates(candidates)
+
+    assert len(ranked) == 5
+
+
+def test_current_prelist_candidates_filters_by_family_variant_and_selection() -> None:
+    mission_id = uuid4()
+    store = SimpleNamespace(id=uuid4(), code="amazon")
+    kept_offer = SimpleNamespace(
+        id=uuid4(), store_id=store.id, product_id=uuid4(), last_seen_at=NOW
+    )
+    dropped_offer = SimpleNamespace(
+        id=uuid4(), store_id=store.id, product_id=uuid4(), last_seen_at=NOW
+    )
+    relevance = SimpleNamespace(classification=OfferRelevance.MATCH)
+
+    def _observation(amount: str) -> SimpleNamespace:
+        return SimpleNamespace(
+            id=uuid4(),
+            amount=Decimal(amount),
+            total_amount=Decimal(amount),
+            currency="BRL",
+            condition=OfferCondition.NEW,
+            seller_kind=MarketplacePartyKind.PLATFORM,
+            availability=Availability.AVAILABLE,
+        )
+
+    session = _mock_async_session()
+    session.execute.return_value = _fake_execute_result(
+        [
+            (relevance, _observation("100.00"), kept_offer, store),
+            (relevance, _observation("90.00"), dropped_offer, store),
+        ]
+    )
+    criteria = SimpleNamespace(
+        request_kind=ProductRequestKind.PRODUCT_FAMILY.value,
+        variant_selection_mode=VariantSelectionMode.SELECTED,
+        requested_family_key="family-x",
+        requested_variant="256GB",
+    )
+    session.scalar.return_value = criteria
+    session.scalars.side_effect = [
+        [kept_offer.product_id, dropped_offer.product_id],
+        [kept_offer.product_id],
+    ]
+
+    candidates = asyncio.run(_current_prelist_candidates(session, mission_id))
+
+    assert [candidate.offer.id for candidate in candidates] == [kept_offer.id]
+
+
+def test_maybe_publish_prelist_ready_marks_sent_without_publishing_when_no_candidates(
+    monkeypatch,
+) -> None:
+    mission = SimpleNamespace(
+        id=uuid4(), prelist_sent=False, prelist_lowest_amount=None
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration._mission_prelist_round_complete",
+        AsyncMock(return_value=True),
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration._mission_relevance_pending",
+        AsyncMock(return_value=False),
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration._current_prelist_candidates",
+        AsyncMock(return_value=()),
+    )
+    publish = AsyncMock()
+    monkeypatch.setattr("app.collection.orchestration.publish_event_async", publish)
+
+    asyncio.run(_maybe_publish_prelist_ready(_mock_async_session(), mission, NOW))
+
+    assert mission.prelist_sent is True
+    publish.assert_not_awaited()
+
+
+def test_maybe_publish_prelist_errata_noop_when_no_previous_event() -> None:
+    mission = SimpleNamespace(id=uuid4(), prelist_errata_sent=False)
+    session = _mock_async_session()
+    session.scalar.return_value = None
+
+    asyncio.run(_maybe_publish_prelist_errata(session, mission, NOW))
+
+    assert mission.prelist_errata_sent is False
+    session.get.assert_not_awaited()
+
+
+def test_previous_prelist_best_by_store_skips_malformed_legacy_v1_references() -> None:
+    event = SimpleNamespace(
+        mission_id=uuid4(),
+        event_type=EventType.MISSION_PRELIST_READY_V1.value,
+        payload={
+            "first_offer_id": "not-a-uuid",
+            "first_observation_id": str(uuid4()),
+            "second_offer_id": None,
+        },
+    )
+    session = _mock_async_session()
+
+    result = asyncio.run(_previous_prelist_best_by_store(session, event))
+
+    assert result == {}
+    session.get.assert_not_awaited()
+
+
+def test_failure_log_context_marks_integrity_error_as_persistence_stage() -> None:
+    error = IntegrityError("insert", {}, Exception("duplicate key"))
+
+    context = _failure_log_context(error)
+
+    assert context["failure_stage"] == "persistence"
+
+
+def test_constraint_name_reads_diagnostic_from_orig() -> None:
+    orig = SimpleNamespace(
+        diag=SimpleNamespace(constraint_name="ux_offers_store_seller_external")
+    )
+    error = IntegrityError("insert", {}, orig)
+
+    assert _constraint_name(error) == "ux_offers_store_seller_external"
+
+
+def test_constraint_name_returns_none_without_diagnostic() -> None:
+    error = IntegrityError("insert", {}, Exception("no diag attribute"))
+
+    assert _constraint_name(error) is None
+
+
+def test_sanitize_json_truncates_beyond_max_depth() -> None:
+    nested = {"a": {"b": {"c": {"d": {"e": 1}}}}}
+
+    assert _sanitize_json(nested) == {"a": {"b": {"c": {"d": "truncated"}}}}
+
+
+def test_sanitize_json_passes_through_scalars_and_none() -> None:
+    assert _sanitize_json(None) is None
+    assert _sanitize_json(True) is True
+    assert _sanitize_json(42) == 42
+    assert _sanitize_json(3.14) == 3.14
+
+
+def test_sanitize_json_bounds_sequences_and_falls_back_to_str_repr() -> None:
+    class _Custom:
+        def __str__(self) -> str:
+            return "custom-object-repr"
+
+    assert _sanitize_json([1, 2, 3]) == [1, 2, 3]
+    assert _sanitize_json((1, 2)) == [1, 2]
+    assert _sanitize_json(_Custom()) == "custom-object-repr"
+
+
+# ---------------------------------------------------------------------------
+# CollectionOrchestrator.__init__ -- validação de parâmetros
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"schedule_interval_minutes": 0},
+        {"schedule_stagger_seconds": -1},
+        {"stale_run_minutes": 0},
+        {"max_concurrency": 0},
+        {"max_concurrency": 5},
+        {"claim_deadline_seconds": 0},
+        {"max_concurrent_user_batches": 0},
+        {"user_cooldown_min_seconds": -1},
+        {"user_cooldown_max_seconds": -1},
+        {"user_cooldown_min_seconds": 100, "user_cooldown_max_seconds": 10},
+        {"store_min_interval_seconds": -1},
+        {"candidate_scan_limit": 0},
+        {"fan_out_target_scan_limit": 0},
+        {"fan_out_task_budget": 0},
+        {"fan_out_per_target_task_cap": 0},
+        {"fan_out_concurrency": 0},
+    ],
+)
+def test_orchestrator_init_rejects_invalid_parameters(kwargs: dict) -> None:
+    with pytest.raises(ValueError):
+        CollectionOrchestrator(
+            _session_factory(_mock_async_session()),
+            CollectionAdapter(),
+            ai_manager=_StubAIManager(),
+            **kwargs,
+        )
+
+
+def test_orchestrator_init_accepts_zero_user_cooldown() -> None:
+    """TASK-108: `0` é aceito no cooldown de usuário/throttle de loja só
+    quando o `CollectionOrchestrator` é construído direto (scripts/testes) --
+    `Settings`/override ADMIN exigem `> 0` em outra camada."""
+    orchestrator = CollectionOrchestrator(
+        _session_factory(_mock_async_session()),
+        CollectionAdapter(),
+        ai_manager=_StubAIManager(),
+        user_cooldown_min_seconds=0,
+        user_cooldown_max_seconds=0,
+        store_min_interval_seconds=0,
+    )
+    assert orchestrator is not None
+
+
+# ---------------------------------------------------------------------------
+# _preview_existing_offer_and_product / _creation_lock_keys (Subtask 6)
+# ---------------------------------------------------------------------------
+
+
+def test_preview_existing_offer_and_product_resolves_seller_by_external_id() -> None:
+    """`item.seller_external_id` presente -- busca o `Seller` por
+    `(store_id, external_id)` primeiro, e usa o `seller_id` resolvido (não
+    `None`) na busca subsequente da `Offer`."""
+    store_id = uuid4()
+    seller = SimpleNamespace(id=uuid4())
+    offer = SimpleNamespace(id=uuid4(), product_id=uuid4())
+    product = SimpleNamespace(id=offer.product_id)
+    session = _mock_async_session()
+    session.scalar.side_effect = [seller, offer]
+    session.get.return_value = product
+    item = SimpleNamespace(
+        seller_external_id="seller-123",
+        raw_offer=SimpleNamespace(
+            external_id="ext-1", url="https://example.invalid/offer"
+        ),
+    )
+
+    found_offer, found_product = asyncio.run(
+        _preview_existing_offer_and_product(session, store_id, item)
+    )
+
+    assert found_offer is offer
+    assert found_product is product
+    assert session.scalar.await_count == 2
+
+
+def test_creation_lock_keys_includes_product_key_when_title_resolves_identity() -> None:
+    """Título que `resolve_product_variant` reconhece -- a chave lógica de
+    criação do `Product` (`uq_products_identity_key`) também entra no
+    conjunto, além das chaves de Offer/Seller."""
+    store_id = uuid4()
+    item = SimpleNamespace(
+        seller_external_id="seller-123",
+        raw_offer=SimpleNamespace(
+            external_id="ext-1",
+            url="https://example.invalid/offer",
+            title="Apple iPhone 17 Pro 256 GB",
+        ),
+    )
+
+    keys = _creation_lock_keys(store_id, item)
+
+    identity = resolve_product_variant("Apple iPhone 17 Pro 256 GB")
+    assert identity is not None
+    assert f"product:{identity.identity_key}" in keys
+    assert f"seller:{store_id}:seller-123" in keys
+
+
+# ---------------------------------------------------------------------------
+# _title_looks_like_bundle / _filter_deterministic_candidates (TASK-075)
+# ---------------------------------------------------------------------------
+
+
+def test_title_looks_like_bundle_true_when_signal_word_absent_from_query() -> None:
+    assert (
+        _title_looks_like_bundle("RTX 4070", "PC Gamer completo com RTX 4070") is True
+    )
+
+
+def test_title_looks_like_bundle_false_when_signal_word_also_in_query() -> None:
+    # "kit" também está na própria busca -- não é sinal de pacote maior.
+    assert (
+        _title_looks_like_bundle("kit teclado e mouse", "Kit teclado e mouse RGB")
+        is False
+    )
+
+
+def test_title_looks_like_bundle_false_without_any_signal_word() -> None:
+    assert _title_looks_like_bundle("RTX 4070", "Placa de vídeo RTX 4070 Ti") is False
+
+
+def test_filter_deterministic_candidates_rejects_model_mismatch() -> None:
+    criteria = SimpleNamespace(model="9800X3D", search_query="9800X3D")
+    matching = SimpleNamespace(raw_offer=SimpleNamespace(title="AMD Ryzen 9800X3D"))
+    mismatching = SimpleNamespace(raw_offer=SimpleNamespace(title="AMD Ryzen 7600"))
+
+    survivors = _filter_deterministic_candidates(criteria, (matching, mismatching))
+
+    assert survivors == (matching,)
+
+
+def test_filter_deterministic_candidates_rejects_bundle_signal() -> None:
+    criteria = SimpleNamespace(model=None, search_query="RTX 4070")
+    standalone = SimpleNamespace(raw_offer=SimpleNamespace(title="Placa RTX 4070"))
+    bundled = SimpleNamespace(
+        raw_offer=SimpleNamespace(title="PC Gamer completo com RTX 4070")
+    )
+
+    survivors = _filter_deterministic_candidates(criteria, (standalone, bundled))
+
+    assert survivors == (standalone,)
+
+
+def test_filter_deterministic_candidates_keeps_ambiguous_offers() -> None:
+    """Sem `criteria.model` e sem sinal de bundle -- candidato ambíguo
+    sempre sobrevive, seguindo pro fluxo de relevância existente."""
+    criteria = SimpleNamespace(model=None, search_query="RTX 4070")
+    item = SimpleNamespace(raw_offer=SimpleNamespace(title="Placa de vídeo genérica"))
+
+    survivors = _filter_deterministic_candidates(criteria, (item,))
+
+    assert survivors == (item,)
 
 
 # ---------------------------------------------------------------------------
@@ -2129,6 +4621,138 @@ def test_orchestrator_batch_processes_success_and_failure(monkeypatch) -> None:
     assert (result.claimed, result.succeeded, result.failed) == (2, 1, 1)
 
 
+def test_orchestrator_batch_logs_when_schedules_were_created(
+    monkeypatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    session_factory = _session_factory(_mock_async_session())
+    monkeypatch.setattr(
+        "app.collection.orchestration.ensure_missing_schedules",
+        AsyncMock(return_value=3),
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration.recover_stale_runs", AsyncMock(return_value=0)
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration.claim_due_work",
+        AsyncMock(return_value=_ClaimedBatch(old_path=(), shared=())),
+    )
+    orchestrator = CollectionOrchestrator(
+        session_factory, CollectionAdapter(), ai_manager=_StubAIManager()
+    )
+
+    with caplog.at_level("INFO", logger="app.collection.orchestration"):
+        result = asyncio.run(orchestrator.run_batch(now=NOW))
+
+    assert (result.claimed, result.succeeded, result.failed) == (0, 0, 0)
+    assert any(
+        record.message == "collection_schedules_created" for record in caplog.records
+    )
+
+
+def test_orchestrator_batch_notifies_coupon_worker_on_high_activity(
+    monkeypatch,
+) -> None:
+    session_factory = _session_factory(_mock_async_session())
+    monkeypatch.setattr(
+        "app.collection.orchestration.ensure_missing_schedules",
+        AsyncMock(return_value=0),
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration.recover_stale_runs", AsyncMock(return_value=0)
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration.claim_due_work",
+        AsyncMock(
+            return_value=_ClaimedBatch(
+                old_path=(), shared=(), high_activity_detected=True
+            )
+        ),
+    )
+    notify = AsyncMock(return_value=None)
+    monkeypatch.setattr(
+        "app.collection.orchestration.notify_coupon_worker_high_activity", notify
+    )
+    settings = SimpleNamespace()
+    orchestrator = CollectionOrchestrator(
+        session_factory,
+        CollectionAdapter(),
+        ai_manager=_StubAIManager(),
+        settings=settings,
+    )
+
+    result = asyncio.run(orchestrator.run_batch(now=NOW))
+
+    assert (result.claimed, result.succeeded, result.failed) == (0, 0, 0)
+    notify.assert_awaited_once_with(settings, now=NOW)
+
+
+def test_orchestrator_batch_isolates_coupon_worker_notify_failure(
+    monkeypatch,
+) -> None:
+    session_factory = _session_factory(_mock_async_session())
+    monkeypatch.setattr(
+        "app.collection.orchestration.ensure_missing_schedules",
+        AsyncMock(return_value=0),
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration.recover_stale_runs", AsyncMock(return_value=0)
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration.claim_due_work",
+        AsyncMock(
+            return_value=_ClaimedBatch(
+                old_path=(), shared=(), high_activity_detected=True
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration.notify_coupon_worker_high_activity",
+        AsyncMock(side_effect=RuntimeError("coupon worker indisponível")),
+    )
+    orchestrator = CollectionOrchestrator(
+        session_factory,
+        CollectionAdapter(),
+        ai_manager=_StubAIManager(),
+        settings=SimpleNamespace(),
+    )
+
+    # Nunca deve vazar -- erro na notificação, best-effort, é isolado.
+    result = asyncio.run(orchestrator.run_batch(now=NOW))
+    assert (result.claimed, result.succeeded, result.failed) == (0, 0, 0)
+
+
+def test_orchestrator_batch_skips_coupon_worker_notify_without_settings(
+    monkeypatch,
+) -> None:
+    session_factory = _session_factory(_mock_async_session())
+    monkeypatch.setattr(
+        "app.collection.orchestration.ensure_missing_schedules",
+        AsyncMock(return_value=0),
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration.recover_stale_runs", AsyncMock(return_value=0)
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration.claim_due_work",
+        AsyncMock(
+            return_value=_ClaimedBatch(
+                old_path=(), shared=(), high_activity_detected=True
+            )
+        ),
+    )
+    notify = AsyncMock(return_value=None)
+    monkeypatch.setattr(
+        "app.collection.orchestration.notify_coupon_worker_high_activity", notify
+    )
+    orchestrator = CollectionOrchestrator(
+        session_factory, CollectionAdapter(), ai_manager=_StubAIManager()
+    )
+
+    asyncio.run(orchestrator.run_batch(now=NOW))
+
+    notify.assert_not_awaited()
+
+
 def test_orchestrator_processes_one_source_successfully(monkeypatch) -> None:
     class Provider:
         source_code = "pichau"
@@ -2153,6 +4777,155 @@ def test_orchestrator_processes_one_source_successfully(monkeypatch) -> None:
     assert asyncio.run(orchestrator._process(claim)) is True
     persist_a.assert_awaited_once()
     persist_c.assert_awaited_once()
+
+
+def test_process_claim_enrichment_failure_falls_back_to_selected_raw(
+    monkeypatch,
+) -> None:
+    class EnrichmentFailingProvider:
+        source_code = "pichau"
+
+        async def collect(self, request):
+            return CollectionResult(
+                "pichau",
+                request.requested_at,
+                NOW + timedelta(seconds=2),
+                (_raw(title="Título original"),),
+            )
+
+        async def enrich_offer_details(self, offers):
+            raise RuntimeError("enrichment indisponível")
+
+    persist_a = AsyncMock(return_value="phase-a")
+    monkeypatch.setattr("app.collection.orchestration._persist_phase_a", persist_a)
+    monkeypatch.setattr(
+        "app.collection.orchestration._run_phase_b", AsyncMock(return_value=())
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration._persist_phase_c", AsyncMock(return_value=True)
+    )
+    orchestrator = CollectionOrchestrator(
+        _session_factory(_mock_async_session()),
+        CollectionAdapter((EnrichmentFailingProvider(),)),
+        ai_manager=_StubAIManager(),
+    )
+    claim = ClaimedCollection(uuid4(), uuid4(), uuid4(), "pichau", "GPU", NOW)
+
+    assert asyncio.run(orchestrator._process(claim)) is True
+    normalized = persist_a.call_args.args[2]
+    assert normalized.offers[0].raw_offer.title == "Título original"
+
+
+def test_process_claim_enrichment_cancelled_error_propagates() -> None:
+    class CancellingProvider:
+        source_code = "pichau"
+
+        async def collect(self, request):
+            return CollectionResult(
+                "pichau", request.requested_at, NOW + timedelta(seconds=2), (_raw(),)
+            )
+
+        async def enrich_offer_details(self, offers):
+            raise asyncio.CancelledError()
+
+    orchestrator = CollectionOrchestrator(
+        _session_factory(_mock_async_session()),
+        CollectionAdapter((CancellingProvider(),)),
+        ai_manager=_StubAIManager(),
+    )
+    claim = ClaimedCollection(uuid4(), uuid4(), uuid4(), "pichau", "GPU", NOW)
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(orchestrator._process_claim(claim))
+
+
+def test_process_claim_returns_false_when_phase_a_is_none(monkeypatch) -> None:
+    class Provider:
+        source_code = "pichau"
+
+        async def collect(self, request):
+            return CollectionResult(
+                "pichau", request.requested_at, NOW + timedelta(seconds=2), (_raw(),)
+            )
+
+    run_b = AsyncMock(return_value=())
+    persist_c = AsyncMock(return_value=True)
+    monkeypatch.setattr(
+        "app.collection.orchestration._persist_phase_a", AsyncMock(return_value=None)
+    )
+    monkeypatch.setattr("app.collection.orchestration._run_phase_b", run_b)
+    monkeypatch.setattr("app.collection.orchestration._persist_phase_c", persist_c)
+    orchestrator = CollectionOrchestrator(
+        _session_factory(_mock_async_session()),
+        CollectionAdapter((Provider(),)),
+        ai_manager=_StubAIManager(),
+    )
+    claim = ClaimedCollection(uuid4(), uuid4(), uuid4(), "pichau", "GPU", NOW)
+
+    assert asyncio.run(orchestrator._process(claim)) is False
+    run_b.assert_not_awaited()
+    persist_c.assert_not_awaited()
+
+
+def test_process_claim_integrity_error_logs_and_reraises(
+    monkeypatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    class Provider:
+        source_code = "pichau"
+
+        async def collect(self, request):
+            return CollectionResult(
+                "pichau", request.requested_at, NOW + timedelta(seconds=2), (_raw(),)
+            )
+
+    error = IntegrityError("stmt", {}, Exception())
+    monkeypatch.setattr(
+        "app.collection.orchestration._persist_phase_a",
+        AsyncMock(return_value="phase-a"),
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration._run_phase_b", AsyncMock(return_value=())
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration._persist_phase_c", AsyncMock(side_effect=error)
+    )
+    orchestrator = CollectionOrchestrator(
+        _session_factory(_mock_async_session()),
+        CollectionAdapter((Provider(),)),
+        ai_manager=_StubAIManager(),
+    )
+    claim = ClaimedCollection(uuid4(), uuid4(), uuid4(), "pichau", "GPU", NOW)
+
+    with caplog.at_level("ERROR", logger="app.collection.orchestration"):
+        with pytest.raises(IntegrityError):
+            asyncio.run(orchestrator._process_claim(claim))
+
+    assert any(
+        record.message == "collection_integrity_failure" for record in caplog.records
+    )
+
+
+def test_record_failure_safely_isolates_recording_failure(
+    monkeypatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setattr(
+        "app.collection.orchestration._record_failure",
+        AsyncMock(side_effect=RuntimeError("banco indisponível")),
+    )
+    orchestrator = CollectionOrchestrator(
+        _session_factory(_mock_async_session()),
+        CollectionAdapter(),
+        ai_manager=_StubAIManager(),
+    )
+    claim = ClaimedCollection(uuid4(), uuid4(), uuid4(), "pichau", "GPU", NOW)
+
+    with caplog.at_level("ERROR", logger="app.collection.orchestration"):
+        asyncio.run(orchestrator._record_failure_safely(claim, "some_code"))
+
+    assert any(
+        record.message == "collection_failure_recording_failed"
+        for record in caplog.records
+    )
 
 
 def test_orchestrator_isolates_provider_failure(monkeypatch) -> None:
@@ -2282,6 +5055,108 @@ def test_orchestrator_claim_deadline_exceeded_records_failure_and_returns_false(
     assert record.call_args.args[2] == "claim_deadline_exceeded"
 
 
+def test_process_reraises_cancelled_error(monkeypatch) -> None:
+    orchestrator = CollectionOrchestrator(
+        _session_factory(_mock_async_session()),
+        CollectionAdapter(),
+        ai_manager=_StubAIManager(),
+    )
+    claim = ClaimedCollection(uuid4(), uuid4(), uuid4(), "pichau", "GPU", NOW)
+
+    async def _cancelled(_claim):
+        raise asyncio.CancelledError()
+
+    monkeypatch.setattr(orchestrator, "_process_claim", _cancelled)
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(orchestrator._process(claim))
+
+
+def _shared_claim() -> _SharedClaim:
+    return _SharedClaim(
+        run_id=uuid4(),
+        criteria=SimpleNamespace(search_query="GPU", model=None),
+        store_code="kabum",
+        monitoring_item_id=uuid4(),
+        store_id=uuid4(),
+    )
+
+
+def test_process_shared_claim_calls_shared_collector_within_semaphore() -> None:
+    expected = SharedCollectionResult(
+        claimed=True, provider_called=True, succeeded=True
+    )
+    shared_collector = AsyncMock(return_value=expected)
+    orchestrator = CollectionOrchestrator(
+        _session_factory(_mock_async_session()),
+        CollectionAdapter(),
+        ai_manager=_StubAIManager(),
+        shared_collector=shared_collector,
+    )
+    claim = _shared_claim()
+
+    result = asyncio.run(orchestrator._process_shared_claim(claim, NOW))
+
+    assert result is expected
+    shared_collector.assert_awaited_once()
+    assert shared_collector.call_args.kwargs["claim"] is claim
+
+
+def test_process_shared_returns_shared_collector_result_on_success() -> None:
+    expected = SharedCollectionResult(
+        claimed=True, provider_called=True, succeeded=True
+    )
+    orchestrator = CollectionOrchestrator(
+        _session_factory(_mock_async_session()),
+        CollectionAdapter(),
+        ai_manager=_StubAIManager(),
+        shared_collector=AsyncMock(return_value=expected),
+    )
+    claim = _shared_claim()
+
+    result = asyncio.run(orchestrator._process_shared(claim, NOW))
+
+    assert result is expected
+
+
+def test_process_shared_timeout_returns_fallback_result() -> None:
+    async def _slow_collector(*args, **kwargs):
+        await asyncio.sleep(10)
+        raise AssertionError("nao deveria completar")
+
+    orchestrator = CollectionOrchestrator(
+        _session_factory(_mock_async_session()),
+        CollectionAdapter(),
+        ai_manager=_StubAIManager(),
+        shared_collector=_slow_collector,
+        claim_deadline_seconds=0.05,
+    )
+    claim = _shared_claim()
+
+    result = asyncio.run(orchestrator._process_shared(claim, NOW))
+
+    assert result == SharedCollectionResult(
+        claimed=True, provider_called=False, succeeded=False
+    )
+
+
+def test_process_shared_reraises_cancelled_error(monkeypatch) -> None:
+    orchestrator = CollectionOrchestrator(
+        _session_factory(_mock_async_session()),
+        CollectionAdapter(),
+        ai_manager=_StubAIManager(),
+    )
+    claim = _shared_claim()
+
+    async def _cancelled(_claim, _now):
+        raise asyncio.CancelledError()
+
+    monkeypatch.setattr(orchestrator, "_process_shared_claim", _cancelled)
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(orchestrator._process_shared(claim, NOW))
+
+
 # ---------------------------------------------------------------------------
 # Fase B (TASK-083 SUBETAPA 4): resolução de identidade antes do fan-out
 # ---------------------------------------------------------------------------
@@ -2405,6 +5280,37 @@ def test_scenario_b_resolver_returns_none_keeps_original_query(monkeypatch) -> N
 
 
 # --- C: resolver falha operacionalmente -> batch não cai, query original ---
+
+
+def test_resolve_identity_safely_reraises_cancelled_error() -> None:
+    resolver = _FakeIdentityResolver(error=asyncio.CancelledError())
+    orchestrator = CollectionOrchestrator(
+        _session_factory(_mock_async_session()),
+        CollectionAdapter(),
+        ai_manager=_StubAIManager(),
+        identity_resolver=resolver,
+    )
+    claim = ClaimedCollection(uuid4(), uuid4(), uuid4(), "kabum", "9800X3D", NOW)
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(orchestrator._resolve_identity_safely(claim))
+
+
+def test_promote_resolved_identities_reraises_cancelled_error(monkeypatch) -> None:
+    orchestrator = CollectionOrchestrator(
+        _session_factory(_mock_async_session()),
+        CollectionAdapter(),
+        ai_manager=_StubAIManager(),
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration.promote_confirmed_product_identity_async",
+        AsyncMock(side_effect=asyncio.CancelledError()),
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(
+            orchestrator._promote_resolved_identities({uuid4(): "search query"})
+        )
 
 
 def test_scenario_c_resolver_operational_failure_does_not_break_batch(
@@ -3089,6 +5995,7 @@ def _installment(**overrides):
         installment_total_amount=Decimal("120.00"),
         discount_percent=None,
         interest_kind="interest_free",
+        payment_method=None,
         is_highlighted=False,
     )
     base.update(overrides)

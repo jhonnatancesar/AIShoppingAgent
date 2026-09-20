@@ -5,6 +5,7 @@ export interface AuthContextValue {
   user: WebSessionUser | null
   loading: boolean
   isAdmin: boolean
+  isDev: boolean
   login: (username: string, password: string) => Promise<WebSessionUser | null>
   logout: () => Promise<void>
   refresh: () => Promise<void>

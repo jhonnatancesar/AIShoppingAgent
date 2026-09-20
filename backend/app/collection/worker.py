@@ -9,7 +9,10 @@ from time import perf_counter
 from opentelemetry import trace
 from opentelemetry.trace import SpanKind
 
-from app.ai_provider import build_admin_dev_ai_provider_manager
+from app.ai_provider import (
+    build_admin_dev_ai_provider_manager,
+    build_user_ai_provider_manager,
+)
 from app.collection.adapter import CollectionAdapter
 from app.collection.browser import BrowserSettings
 from app.collection.cadence import CadenceConfig
@@ -262,6 +265,15 @@ async def run_worker(
         session_factory,
         build_collection_adapter(settings, edge_supervisor),
         ai_manager=build_admin_dev_ai_provider_manager(settings),
+        # Achado real confirmado empiricamente (checkpoint 3, 2026-09-13):
+        # `identity_arbiter.arbitrate_same_product` sempre usa
+        # `profile=UserRole.USER` -- reusar o manager ADMIN/DEV acima
+        # para o árbitro faz `CesarCoreAIProviderManager.generate`
+        # rejeitar a requisição (`AIRequestError`, perfil não bate),
+        # silenciosamente virando `INCONCLUSIVE` fail-closed. Um manager
+        # USER dedicado só para o árbitro corrige isso sem mudar
+        # `cost_policy="free_only"`.
+        arbiter_ai_manager=build_user_ai_provider_manager(settings),
         firecrawl=market_research_firecrawl,
         settings=settings,
         # TASK-083: instâncias dedicadas (Kabum -> Amazon), nunca as da

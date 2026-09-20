@@ -34,3 +34,18 @@ export function RequireAdmin() {
   }
   return <Outlet />
 }
+
+export function RequireDev() {
+  const { user, loading, isDev } = useAuth()
+
+  if (loading) {
+    return <div className="mx-auto mt-20 max-w-xl px-4"><LoadingState label="Validando sua sessão…" /></div>
+  }
+  if (!user) {
+    return <Navigate to="/login" replace />
+  }
+  if (!isDev) {
+    return <Navigate to="/app" replace />
+  }
+  return <Outlet />
+}

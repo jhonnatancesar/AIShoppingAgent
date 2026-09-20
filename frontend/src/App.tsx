@@ -1,13 +1,16 @@
 import { Route, Routes } from 'react-router-dom'
 import { AuthProvider } from './auth/AuthContext'
 import { AppLayout } from './components/Layout'
-import { RequireAdmin, RequireAuth } from './components/ProtectedRoute'
+import { RequireAdmin, RequireAuth, RequireDev } from './components/ProtectedRoute'
 import { TooltipProvider } from './components/ui/tooltip'
 import { ToastProvider } from './hooks/useToast'
 import { AdminShell } from './pages/admin/AdminShell'
 import { AdminDashboardPage } from './pages/admin/AdminDashboardPage'
 import { AdminUsersPage } from './pages/admin/AdminUsersPage'
 import { AdminFeedbackPage } from './pages/admin/AdminFeedbackPage'
+import { DevSearchesShell } from './pages/dev/DevSearchesShell'
+import { MySearchesPage } from './pages/dev/MySearchesPage'
+import { AllSearchesPage } from './pages/dev/AllSearchesPage'
 import { AppHome } from './pages/AppHome'
 import { LandingPage } from './pages/LandingPage'
 import { LoginPage } from './pages/LoginPage'
@@ -53,6 +56,13 @@ export default function App() {
                     <Route path="/admin" element={<AdminDashboardPage />} />
                     <Route path="/admin/users" element={<AdminUsersPage />} />
                     <Route path="/admin/feedback" element={<AdminFeedbackPage />} />
+                  </Route>
+                </Route>
+
+                <Route element={<RequireDev />}>
+                  <Route element={<DevSearchesShell />}>
+                    <Route path="/app/dev/pesquisas" element={<MySearchesPage />} />
+                    <Route path="/app/dev/pesquisas/todas" element={<AllSearchesPage />} />
                   </Route>
                 </Route>
               </Route>

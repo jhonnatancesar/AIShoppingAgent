@@ -28,8 +28,10 @@ from app.missions.models import (
     MissionTransition,
 )
 from app.offers.models import Offer, OfferShortLink
+from app.products.identity_candidates import ProductIdentityCandidate
 from app.products.models import Product
 from app.purchase.models import PurchaseConfirmation, PurchaseTrailEntry
+from app.quotas.models import SearchReceipt, SearchReceiptProduct
 from app.stores.models import Seller, Store
 from app.telegram.models import TelegramUpdateReceipt
 from app.users.models import User
@@ -46,6 +48,7 @@ REGISTERED_MODELS = (
     MissionProductAlertState,
     User,
     Product,
+    ProductIdentityCandidate,
     Store,
     Seller,
     Offer,
@@ -69,4 +72,6 @@ REGISTERED_MODELS = (
     TelegramUpdateReceipt,
     WebSession,
     AdminApiKey,
+    SearchReceipt,
+    SearchReceiptProduct,
 )

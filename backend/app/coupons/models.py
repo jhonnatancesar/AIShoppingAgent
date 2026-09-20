@@ -83,6 +83,19 @@ class Coupon(Base):
     raw_rule_text: Mapped[str | None] = mapped_column(Text)
     source_url: Mapped[str | None] = mapped_column(Text)
     evidence: Mapped[str] = mapped_column(Text, nullable=False)
+    evidence_isolation: Mapped[str | None] = mapped_column(String(20))
+    """`"widget"` | `"component"` | `"page"` | `None` -- qualifica quão
+    isolada era a fonte da evidência (worker), nunca prova abrangência
+    (`scope_kind` continua sendo o único campo de escopo). `"page"`
+    (texto de página inteira, deepening) pode ter vazado texto de
+    produto relacionado -- `"widget"`/`"component"` têm isolamento de DOM
+    real. `None` = worker anterior a este campo, sem essa qualificação."""
+    derived_reference_price: Mapped[Decimal | None] = mapped_column(Numeric(19, 4))
+    """Preço-base usado para DERIVAR um desconto que a loja não informa
+    literalmente em R$/% (ex.: economia = "Por: R$X" - "Você paga com o
+    cupom" da Amazon). Sozinho nunca garante que o desconto continua
+    válido -- ver `app.coupons.pricing.is_derived_discount_still_valid`,
+    chamada obrigatoriamente no consumo quando este campo não é `None`."""
     last_seen_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )

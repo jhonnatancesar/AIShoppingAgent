@@ -27,7 +27,15 @@ def test_user_table_matches_data_contract() -> None:
     Achado (auditoria TASK-112 fase 3B): `lifecycle_status`/`deleted_at`
     (tombstone, TASK-102) e os overrides de cota (TASK-107) foram
     adicionados e nunca refletidos aqui -- defasagem já existente antes
-    desta fase, não é regressão."""
+    desta fase, não é regressão.
+
+    Achado (rodada de 2026-09-12, correção real vs. atualização de
+    teste): `email_verified_at` (Subtask 9, auditoria GG Oferta,
+    migração `20260901_0002`) já é usado em produção
+    (`app.webapp.auth_router.confirm_email_verification`) e é
+    corretamente nullable (nem todo usuário verificou o e-mail) --
+    implementação correta, só o teste nunca foi atualizado quando a
+    coluna foi adicionada."""
     table = User.__table__
 
     assert table.name == "users"
@@ -44,6 +52,7 @@ def test_user_table_matches_data_contract() -> None:
         table.c.notify_target_reached,
         table.c.username,
         table.c.email,
+        table.c.email_verified_at,
         table.c.favorite_stores,
         table.c.preferred_categories,
         table.c.registration_step,
@@ -54,6 +63,7 @@ def test_user_table_matches_data_contract() -> None:
         table.c.created_at,
         table.c.updated_at,
     ]
+    assert table.c.email_verified_at.nullable is True
     assert table.c.deleted_at.nullable is True
     assert table.c.max_active_missions_override.nullable is True
     assert table.c.max_store_slots_override.nullable is True

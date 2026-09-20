@@ -14,6 +14,7 @@ isso importamos a classe real do outro repositório."""
 
 from __future__ import annotations
 
+import os
 import sys
 import tempfile
 from pathlib import Path
@@ -23,16 +24,30 @@ from sqlalchemy import select
 
 pytestmark = pytest.mark.integration
 
-_COUPON_WORKER_REPO = Path(r"C:\App\AIShoppingAgentCupom-dev")
+# Caminho configurável (auditoria de checkpoint 3, 2026-09-13): o
+# default precisa ser o caminho CANÔNICO documentado em
+# `docs/installation/integrated-setup.md` (seção 2, "Diretórios/
+# repositórios") -- `C:\AIShoppingAgenteCupom`. Um default antigo
+# (`C:\App\AIShoppingAgentCupom-dev`) apontava para um checkout local
+# de uma máquina específica que nunca foi documentado como topologia
+# oficial, o que quebrava a suíte em qualquer máquina que seguisse a
+# documentação real do projeto. `COUPON_WORKER_DEV_REPO` (sem prefixo
+# `AISHOPPING_` de propósito -- `scripts/run_integration_tests.py:
+# _child_environment` filtra todo `AISHOPPING_*` do processo antes de
+# repassar ao pytest filho, para nunca vazar configuração real de
+# banco/segredo para a suíte isolada; um nome fora desse prefixo
+# atravessa esse filtro sem precisar afrouxá-lo) continua existindo só
+# para quem tiver um checkout real fora do caminho documentado.
+_COUPON_WORKER_REPO = Path(
+    os.environ.get("COUPON_WORKER_DEV_REPO", r"C:\AIShoppingAgenteCupom")
+)
 if str(_COUPON_WORKER_REPO) not in sys.path:
     sys.path.insert(0, str(_COUPON_WORKER_REPO))
 
 
 def _dsn(engine) -> str:
     url = engine.url
-    return (
-        f"postgresql://{url.username}:{url.password}@{url.host}:{url.port}/{url.database}"
-    )
+    return f"postgresql://{url.username}:{url.password}@{url.host}:{url.port}/{url.database}"
 
 
 def _open_store(integration_database):
@@ -40,6 +55,7 @@ def _open_store(integration_database):
 
     fd, sqlite_path = tempfile.mkstemp(suffix=".db")
     import os
+
     os.close(fd)
     store = PostgresCouponStore(_dsn(integration_database.engine), sqlite_path)
     return store, sqlite_path
@@ -47,6 +63,7 @@ def _open_store(integration_database):
 
 def _close_store(store, sqlite_path) -> None:
     import os
+
     store.close()
     os.unlink(sqlite_path)
 
@@ -76,7 +93,9 @@ def _real_coupon_rows(integration_database, *, code: str):
         ]
 
 
-def test_postgres_upsert_enriches_same_row_never_duplicates(integration_database) -> None:
+def test_postgres_upsert_enriches_same_row_never_duplicates(
+    integration_database,
+) -> None:
     """Mesma prova de `test_evidence.py` (SQLite), agora contra o
     PostgreSQL REAL do GG Oferta, usando a classe `PostgresCouponStore`
     de verdade (resolve `store_id` textual -> UUID real via `stores`,
@@ -86,17 +105,32 @@ def test_postgres_upsert_enriches_same_row_never_duplicates(integration_database
     store, sqlite_path = _open_store(integration_database)
     try:
         evidence = "mercadolivre:cards:PGTEST01:https://x.invalid/pg-produto-1"
-        store.upsert(WorkerCoupon(
-            store_id="mercadolivre", code="PGTEST01", discount_kind=None, discount_value=None,
-            evidence=evidence, raw_rule_text="PGTEST01 (só código, 1a coleta)",
-        ))
-        store.upsert(WorkerCoupon(
-            store_id="mercadolivre", code="PGTEST01", discount_kind="fixed_amount", discount_value=30.0,
-            scope_kind="product", scope_reference="https://x.invalid/pg-produto-1",
-            evidence=evidence, raw_rule_text="PGTEST01 -- R$30 OFF",
-        ))
+        store.upsert(
+            WorkerCoupon(
+                store_id="mercadolivre",
+                code="PGTEST01",
+                discount_kind=None,
+                discount_value=None,
+                evidence=evidence,
+                raw_rule_text="PGTEST01 (só código, 1a coleta)",
+            )
+        )
+        store.upsert(
+            WorkerCoupon(
+                store_id="mercadolivre",
+                code="PGTEST01",
+                discount_kind="fixed_amount",
+                discount_value=30.0,
+                scope_kind="product",
+                scope_reference="https://x.invalid/pg-produto-1",
+                evidence=evidence,
+                raw_rule_text="PGTEST01 -- R$30 OFF",
+            )
+        )
         rows = _real_coupon_rows(integration_database, code="PGTEST01")
-        assert len(rows) == 1, "mesma evidence key -- enriquece a MESMA linha real no Postgres do GG, nunca duplica"
+        assert len(rows) == 1, (
+            "mesma evidence key -- enriquece a MESMA linha real no Postgres do GG, nunca duplica"
+        )
         assert rows[0]["discount_kind"] == "fixed_amount"
         assert float(rows[0]["discount_value"]) == 30.0
         assert rows[0]["scope_kind"] == "product"
@@ -105,7 +139,9 @@ def test_postgres_upsert_enriches_same_row_never_duplicates(integration_database
         _close_store(store, sqlite_path)
 
 
-def test_postgres_upsert_never_erases_or_mixes_paired_fields(integration_database) -> None:
+def test_postgres_upsert_never_erases_or_mixes_paired_fields(
+    integration_database,
+) -> None:
     """Prova real, no Postgres do GG: extração incompleta preserva o par
     completo antigo (discount_kind+discount_value); nunca mistura um
     campo novo com o par antigo de outro."""
@@ -114,29 +150,49 @@ def test_postgres_upsert_never_erases_or_mixes_paired_fields(integration_databas
     store, sqlite_path = _open_store(integration_database)
     try:
         evidence = "mercadolivre:cards:PGTEST02:https://x.invalid/pg-produto-2"
-        store.upsert(WorkerCoupon(
-            store_id="mercadolivre", code="PGTEST02", discount_kind="percentage", discount_value=12.0,
-            scope_kind="product", scope_reference="https://x.invalid/pg-produto-2",
-            evidence=evidence, raw_rule_text="PGTEST02 -- 12% OFF",
-        ))
+        store.upsert(
+            WorkerCoupon(
+                store_id="mercadolivre",
+                code="PGTEST02",
+                discount_kind="percentage",
+                discount_value=12.0,
+                scope_kind="product",
+                scope_reference="https://x.invalid/pg-produto-2",
+                evidence=evidence,
+                raw_rule_text="PGTEST02 -- 12% OFF",
+            )
+        )
         # "Upsert malformado" -- só discount_kind vem, discount_value nulo.
-        store.upsert(WorkerCoupon(
-            store_id="mercadolivre", code="PGTEST02", discount_kind="fixed_amount", discount_value=None,
-            scope_kind=None, scope_reference=None,
-            evidence=evidence, raw_rule_text="PGTEST02 (extração parcial)",
-        ))
+        store.upsert(
+            WorkerCoupon(
+                store_id="mercadolivre",
+                code="PGTEST02",
+                discount_kind="fixed_amount",
+                discount_value=None,
+                scope_kind=None,
+                scope_reference=None,
+                evidence=evidence,
+                raw_rule_text="PGTEST02 (extração parcial)",
+            )
+        )
         rows = _real_coupon_rows(integration_database, code="PGTEST02")
         assert len(rows) == 1
-        assert rows[0]["discount_kind"] == "percentage", "nunca mistura discount_kind novo com discount_value antigo, mesmo no Postgres real"
+        assert rows[0]["discount_kind"] == "percentage", (
+            "nunca mistura discount_kind novo com discount_value antigo, mesmo no Postgres real"
+        )
         assert float(rows[0]["discount_value"]) == 12.0
         assert rows[0]["scope_kind"] == "product"
         assert rows[0]["scope_reference"] == "https://x.invalid/pg-produto-2"
-        print("PASS (Postgres real): par discount_kind+discount_value nunca mistura novo com antigo")
+        print(
+            "PASS (Postgres real): par discount_kind+discount_value nunca mistura novo com antigo"
+        )
     finally:
         _close_store(store, sqlite_path)
 
 
-def test_postgres_upsert_creates_new_row_when_evidence_changes(integration_database) -> None:
+def test_postgres_upsert_creates_new_row_when_evidence_changes(
+    integration_database,
+) -> None:
     """Prova real, no Postgres do GG: mudar o texto da evidência (ex.:
     preço-base mudou, achado da Amazon) cria uma linha NOVA -- nunca
     sobrescreve a antiga."""
@@ -144,26 +200,42 @@ def test_postgres_upsert_creates_new_row_when_evidence_changes(integration_datab
 
     store, sqlite_path = _open_store(integration_database)
     try:
-        store.upsert(WorkerCoupon(
-            store_id="mercadolivre", code="PGTEST03", discount_kind="fixed_amount", discount_value=10.0,
-            evidence="mercadolivre:cards:PGTEST03:https://x.invalid/pg-produto-3-v1",
-            raw_rule_text="PGTEST03 -- R$10 OFF (evidência 1)",
-        ))
-        store.upsert(WorkerCoupon(
-            store_id="mercadolivre", code="PGTEST03", discount_kind="fixed_amount", discount_value=15.0,
-            evidence="mercadolivre:cards:PGTEST03:https://x.invalid/pg-produto-3-v2",
-            raw_rule_text="PGTEST03 -- R$15 OFF (evidência 2, preço-base mudou)",
-        ))
+        store.upsert(
+            WorkerCoupon(
+                store_id="mercadolivre",
+                code="PGTEST03",
+                discount_kind="fixed_amount",
+                discount_value=10.0,
+                evidence="mercadolivre:cards:PGTEST03:https://x.invalid/pg-produto-3-v1",
+                raw_rule_text="PGTEST03 -- R$10 OFF (evidência 1)",
+            )
+        )
+        store.upsert(
+            WorkerCoupon(
+                store_id="mercadolivre",
+                code="PGTEST03",
+                discount_kind="fixed_amount",
+                discount_value=15.0,
+                evidence="mercadolivre:cards:PGTEST03:https://x.invalid/pg-produto-3-v2",
+                raw_rule_text="PGTEST03 -- R$15 OFF (evidência 2, preço-base mudou)",
+            )
+        )
         rows = _real_coupon_rows(integration_database, code="PGTEST03")
-        assert len(rows) == 2, "evidence key diferente -- linha NOVA real no Postgres, nunca sobrescreve"
+        assert len(rows) == 2, (
+            "evidence key diferente -- linha NOVA real no Postgres, nunca sobrescreve"
+        )
         values = sorted(float(r["discount_value"]) for r in rows)
         assert values == [10.0, 15.0]
-        print("PASS (Postgres real): evidence key diferente cria linha nova, nunca funde")
+        print(
+            "PASS (Postgres real): evidence key diferente cria linha nova, nunca funde"
+        )
     finally:
         _close_store(store, sqlite_path)
 
 
-def test_postgres_expire_stale_marks_only_unconfirmed_active_rows(integration_database) -> None:
+def test_postgres_expire_stale_marks_only_unconfirmed_active_rows(
+    integration_database,
+) -> None:
     """Prova real, no Postgres do GG: `expire_stale` (chamado pelo worker
     só após rodada `status=='ok'`, `coupons/scanner.py`) marca como
     `expired` só o que não foi reconfirmado, usando `PostgresCouponStore.
@@ -176,15 +248,24 @@ def test_postgres_expire_stale_marks_only_unconfirmed_active_rows(integration_da
     store, sqlite_path = _open_store(integration_database)
     try:
         evidence = "mercadolivre:cards:PGTEST04:https://x.invalid/pg-produto-4"
-        store.upsert(WorkerCoupon(
-            store_id="mercadolivre", code="PGTEST04", discount_kind="fixed_amount", discount_value=8.0,
-            evidence=evidence, raw_rule_text="PGTEST04 -- R$8 OFF", status="active",
-        ))
+        store.upsert(
+            WorkerCoupon(
+                store_id="mercadolivre",
+                code="PGTEST04",
+                discount_kind="fixed_amount",
+                discount_value=8.0,
+                evidence=evidence,
+                raw_rule_text="PGTEST04 -- R$8 OFF",
+                status="active",
+            )
+        )
         cutoff = datetime.now(UTC).isoformat()
         expired = store.expire_stale("mercadolivre", cutoff)
         assert expired >= 1
         rows = _real_coupon_rows(integration_database, code="PGTEST04")
         assert rows[0]["status"] == "expired"
-        print("PASS (Postgres real): expire_stale marca ausência real usando a classe do worker contra o Postgres do GG")
+        print(
+            "PASS (Postgres real): expire_stale marca ausência real usando a classe do worker contra o Postgres do GG"
+        )
     finally:
         _close_store(store, sqlite_path)

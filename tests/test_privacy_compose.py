@@ -33,14 +33,27 @@ def test_api_reaches_cesar_core_via_host_docker_internal() -> None:
     """DEC-121: dentro do container `api`, `127.0.0.1` aponta para o
     próprio container, não para o Windows Server que hospeda o César
     Core -- precisa do mesmo mecanismo host.docker.internal/host-gateway
-    já usado por `ops_controller` (DEC-103), agora também aqui."""
+    já usado por `ops_controller` (DEC-103), agora também aqui.
+
+    Achado (rodada de 2026-09-12, correção real vs. atualização de
+    teste): DEC-127 (achado real de deploy, já documentado no próprio
+    `compose.yaml`) trocou o prefixo desta variável de
+    `AISHOPPING_CESAR_CORE_*` para `GG_API_CESAR_CORE_*` -- o nome
+    antigo colidia com a MESMA variável de Máquina do Windows que
+    `scripts/manage_collection_worker_config.ps1` grava para o
+    `collection_worker` nativo, e uma variável de Máquina é herdada por
+    qualquer processo novo no host (inclusive `docker compose`),
+    reintroduzindo silenciosamente o bug do DEC-121 sem nenhuma
+    mudança de código. Implementação correta (fecha a colisão de
+    raiz); este teste nunca foi atualizado quando o DEC-127 aterrissou."""
     content = COMPOSE.read_text(encoding="utf-8")
 
     assert (
         "AISHOPPING_CESAR_CORE_BASE_URL: "
-        "${AISHOPPING_CESAR_CORE_BASE_URL:-http://host.docker.internal:8100}"
-        in content
+        "${GG_API_CESAR_CORE_BASE_URL:-http://host.docker.internal:8100}" in content
     )
-    assert "AISHOPPING_CESAR_CORE_API_KEY_FILE: /run/secrets/cesar_core_api_key" in content
+    assert (
+        "AISHOPPING_CESAR_CORE_API_KEY_FILE: /run/secrets/cesar_core_api_key" in content
+    )
     assert "- cesar_core_api_key" in content
     assert content.count('"host.docker.internal:host-gateway"') == 2
