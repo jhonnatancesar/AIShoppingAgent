@@ -510,7 +510,20 @@ async def extract_product_identities_via_ai_batch(
     resposta nem é um array JSON) -- TODAS as posições vêm `None`,
     mesmo fail-closed do modo de item único, só que no grão do lote
     inteiro em vez de 1 título; o chamador trata isso como "continua
-    sem identidade nesta rodada", nunca como erro fatal."""
+    sem identidade nesta rodada", nunca como erro fatal.
+
+    Log em duas etapas separadas (achado real em PROD, 2026-09-20,
+    `v1.3.20`: 9 de ~10 lotes falharam num `--dry-run` real e o log
+    antigo, `exc_info=False` sem mais nada, não permitia saber se era
+    rede/provedor -- ex.: OmniRoute/César Core rejeitando ou expirando
+    -- ou o modelo gratuito devolvendo algo fora do contrato para um
+    lote maior): `stage="generate"` é falha da chamada em si (rede,
+    César Core, provedor); `stage="parse"` é resposta recebida mas fora
+    do contrato -- inclui um preview truncado do conteúdo bruto (nunca
+    o payload inteiro, mesma disciplina de truncamento de `raw_title`
+    usada no resto deste módulo) para dar pista real do que o modelo
+    devolveu, sem também gerar exceção não tratada nem vazar payload
+    grande no log."""
     results: list[AIIdentityExtraction | None] = [None] * len(raw_titles)
     if not raw_titles:
         return results
@@ -530,11 +543,33 @@ async def extract_product_identities_via_ai_batch(
     )
     try:
         response = await manager.generate(request)
+    except Exception as exc:
+        logger.warning(
+            "product_identity_ai_batch_extraction_failed",
+            extra={
+                "stage": "generate",
+                "batch_size": len(raw_titles),
+                "error": f"{type(exc).__name__}: {exc}"[:300],
+            },
+            exc_info=False,
+        )
+        return results
+
+    try:
         payload = json.loads(_strip_markdown_code_fence(response.content))
         if not isinstance(payload, list):
-            raise ValueError("expected a JSON array")
-    except Exception:
-        logger.warning("product_identity_ai_batch_extraction_failed", exc_info=False)
+            raise ValueError(f"expected a JSON array, got {type(payload).__name__}")
+    except Exception as exc:
+        logger.warning(
+            "product_identity_ai_batch_extraction_failed",
+            extra={
+                "stage": "parse",
+                "batch_size": len(raw_titles),
+                "error": f"{type(exc).__name__}: {exc}"[:300],
+                "raw_content_preview": response.content[:300],
+            },
+            exc_info=False,
+        )
         return results
 
     expected_keys = {

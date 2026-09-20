@@ -149,6 +149,7 @@ async def run(
         if arbiter_ai_manager is None:
             arbiter_ai_manager = build_user_ai_provider_manager(settings)
 
+        outcome_sink: dict[object, str] = {}
         resolved_count = await reprocess_unresolved_products(
             session,
             ai_manager=ai_manager,
@@ -157,25 +158,26 @@ async def run(
             limit=limit,
             batch_size=_BATCH_SIZE,
             apply=apply,
+            outcome_sink=outcome_sink,
         )
         print(
             f"Resolvidos nesta rodada: {resolved_count} de {len(candidates)} candidatos "
             f"(lote de até {_BATCH_SIZE} títulos por chamada de IA)"
         )
 
+        # Lido de `outcome_sink` (preenchido pelo próprio `reprocess_
+        # unresolved_products` no momento de cada resolução), NUNCA por
+        # `session.get` depois do fato -- achado real em PROD
+        # (2026-09-20): em --dry-run, o rollback de um lote SEGUINTE
+        # desfaz da sessão a resolução de um lote anterior mesmo sem
+        # nada ter sido commitado, então reconsultar o banco depois
+        # relatava "sem identidade" para Products que `resolved_count`
+        # já tinha contado como resolvidos -- contradição real, não
+        # cosmética.
         for product_id in candidate_ids:
-            current = await session.get(Product, product_id)
-            if current is None:
-                print(
-                    f"  {product_id}: Offers migradas para um Product canônico "
-                    "já existente (ad-hoc removido, nenhuma Offer perdida)"
-                )
-            elif current.identity_key is not None:
-                print(
-                    f"  {product_id}: RESOLVIDO -> category={current.category} "
-                    f"brand={current.brand} family={current.family} "
-                    f"model={current.model} variant={current.variant}"
-                )
+            outcome = outcome_sink.get(product_id)
+            if outcome is not None:
+                print(f"  {product_id}: {outcome}")
             else:
                 print(
                     f"  {product_id}: continua sem identidade (extração da IA "

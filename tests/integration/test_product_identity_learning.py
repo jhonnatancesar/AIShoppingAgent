@@ -1026,3 +1026,135 @@ def test_rollback_before_ai_call_survives_idle_in_transaction_session_timeout(
         assert len(candidates) == 1
         assert candidates[0].status == "approved"
         assert candidates[0].category == "monitor"
+
+
+class _FirstBatchSucceedsSecondFailsAIManager:
+    """Primeira chamada de lote sempre sucesso (extração estática
+    válida para cada id recebido); a segunda em diante devolve
+    conteúdo que NÃO é um array JSON -- reproduz o achado real em PROD
+    (2026-09-20, `v1.3.20`): a maioria dos lotes de um `--dry-run` real
+    falhou na extração (`product_identity_ai_batch_extraction_failed`).
+    Neste cenário só é chamada em modo lote (3 produtos novos, sem
+    candidato aprovado ainda -- não há zona cinzenta pra acionar o
+    árbitro)."""
+
+    def __init__(self, extraction: str) -> None:
+        self._extraction = extraction
+        self.calls = 0
+
+    async def generate(self, request):
+        self.calls += 1
+        if self.calls == 1:
+            requested_items = json.loads(request.messages[-1].content)
+            single = json.loads(self._extraction)
+            content = json.dumps(
+                [{"id": item["id"], **single} for item in requested_items]
+            )
+        else:
+            content = "isto não é um array JSON válido"
+        return AIResponse(
+            request_id=request.request_id,
+            provider="stub",
+            model="stub-identity-model",
+            content=content,
+            finished_at=datetime.now(UTC),
+        )
+
+
+def test_dry_run_outcome_report_survives_a_later_batchs_rollback(
+    integration_database,
+) -> None:
+    """Regressão de um achado real em PROD (2026-09-20, `v1.3.20`,
+    relatado pelo Claude que executou o deploy): em `--dry-run`
+    (`apply=False`, nada commitado de propósito) com múltiplos lotes,
+    o `session.rollback()` de um lote SEGUINTE -- disparado
+    incondicionalmente ANTES da chamada de IA daquele lote, MESMO que
+    essa chamada depois falhe -- desfazia da sessão a resolução de um
+    lote ANTERIOR que nunca tinha sido commitada. `resolved_count`
+    (contador Python simples) continuava certo, mas reconsultar o
+    Product via `session.get` depois do fato (como o script fazia
+    antes desta correção) mostrava "sem identidade" pra tudo --
+    contradição real entre o resumo e o detalhe, exatamente o que o
+    operador encontrou e corretamente travou antes de aplicar.
+
+    `outcome_sink` é a correção: populado no MOMENTO de cada resolução
+    bem-sucedida, nunca depende do estado da sessão sobreviver a um
+    rollback posterior."""
+    mobo_extraction = json.dumps(
+        {
+            "category": "motherboard",
+            "brand": "ASUS",
+            "family": "TUF Gaming",
+            "model": "B650-Plus",
+            "variant": "wifi",
+            "store_sku": None,
+            "manufacturer_part_number": None,
+            "attributes": {"socket": "AM5", "chipset": "B650"},
+        }
+    )
+    mobo_title = "Placa-mãe Asus TUF Gaming B650-Plus WiFi DDR5 AM5"
+    titles = [f"{mobo_title} - Loja {i}" for i in range(1, 4)]  # 3 títulos
+
+    with integration_database.sessions.begin() as session:
+        store = session.scalar(select(Store).where(Store.code == "amazon"))
+        products = [Product(id=uuid4(), name=title) for title in titles]
+        session.add_all(products)
+        session.flush()
+        session.add_all(
+            [
+                Offer(
+                    product_id=product.id,
+                    store_id=store.id,
+                    external_id=f"dry-run-batch-rollback-{index}",
+                    url=f"https://example.invalid/dry-run-batch-rollback-{index}",
+                )
+                for index, product in enumerate(products)
+            ]
+        )
+        session.flush()
+        product_ids = [product.id for product in products]
+
+    manager = _FirstBatchSucceedsSecondFailsAIManager(mobo_extraction)
+
+    async def _reprocess():
+        async with integration_database.async_sessions() as session:
+            outcome_sink: dict[object, str] = {}
+            count = await reprocess_unresolved_products(
+                session,
+                ai_manager=manager,
+                profile=UserRole.ADMIN,
+                arbiter_ai_manager=manager,
+                limit=50,
+                batch_size=2,  # 3 produtos -> lotes de [2, 1]
+                apply=False,
+                outcome_sink=outcome_sink,
+            )
+            await session.rollback()  # mesmo fim de `--dry-run` real
+            return count, outcome_sink
+
+    resolved_count, outcome_sink = asyncio.run(_reprocess())
+
+    assert manager.calls == 2, "2 lotes esperados (3 produtos, lote de 2)"
+    assert resolved_count == 2, (
+        "só o primeiro lote (2 produtos) resolve; o segundo falha na IA"
+    )
+    # A correção real: outcome_sink tem exatamente 2 entradas (as do
+    # lote que teve sucesso), SOBREVIVENDO ao rollback do segundo lote
+    # -- nunca 0, que era o sintoma real encontrado em PROD.
+    assert len(outcome_sink) == 2
+    resolved_ids = set(outcome_sink)
+    assert resolved_ids.issubset(set(product_ids))
+    # Os 2 títulos do primeiro lote compartilham a mesma família/modelo
+    # -- um vira RESOLVIDO (promovido), o outro MERGE (Offers migradas).
+    messages = list(outcome_sink.values())
+    assert any(message.startswith("RESOLVIDO ->") for message in messages)
+    assert any("Offers migradas" in message for message in messages)
+
+    # Nada persistido de verdade -- mesma garantia de sempre do dry-run.
+    with integration_database.sessions.begin() as session:
+        still_unresolved = list(
+            session.scalars(select(Product).where(Product.identity_key.is_(None)))
+        )
+        assert {product.id for product in still_unresolved} == set(product_ids), (
+            "dry-run nunca deve persistir nenhuma identidade, mesmo a resolvida"
+        )

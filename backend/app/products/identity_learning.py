@@ -682,7 +682,7 @@ async def resolve_or_learn_product_variant(
 
 async def apply_learned_identity(
     session: AsyncSession, *, product: Product, resolved: ResolvedProductVariant
-) -> None:
+) -> Product:
     """Aplica uma identidade já resolvida a um `Product` ad-hoc
     (`identity_key IS NULL`) -- reaproveitada tanto por `reprocess_
     unresolved_products` (lote) quanto pela Fase C do orquestrador
@@ -695,7 +695,13 @@ async def apply_learned_identity(
     migram para o canônico e o ad-hoc (sem nenhuma Offer restante) é
     removido; quando não existe nenhum ainda, o PRÓPRIO ad-hoc é
     promovido no lugar (ganha os campos de identidade), sem criar uma
-    linha nova.
+    linha nova. Devolve o `Product` CANÔNICO resultante (o mesmo
+    `product` recebido quando promovido no lugar, ou o já existente
+    quando houve merge) -- comparar `.id` com o `product` original
+    recebido diz ao chamador se foi merge ou promoção, sem repetir a
+    consulta (usado por `reprocess_unresolved_products` para reportar
+    o resultado com precisão, mesmo quando um `session.rollback()`
+    posterior no mesmo processo descarta o estado da sessão).
 
     `pg_advisory_xact_lock` por `identity_key` (mesmo padrão de
     `app.collection.orchestration._acquire_creation_locks`) ANTES do
@@ -723,16 +729,37 @@ async def apply_learned_identity(
             .values(product_id=canonical.id)
         )
         await session.delete(product)
-    else:
-        product.category = resolved.category
-        product.brand = resolved.brand
-        product.model = resolved.model
-        product.family = resolved.family
-        product.variant = resolved.variant
-        product.attributes = dict(resolved.attributes)
-        product.family_key = resolved.family_key
-        product.identity_key = resolved.identity_key
-        product.identity_version = IDENTITY_VERSION
+        return canonical
+    product.category = resolved.category
+    product.brand = resolved.brand
+    product.model = resolved.model
+    product.family = resolved.family
+    product.variant = resolved.variant
+    product.attributes = dict(resolved.attributes)
+    product.family_key = resolved.family_key
+    product.identity_key = resolved.identity_key
+    product.identity_version = IDENTITY_VERSION
+    return product
+
+
+def _describe_resolution_outcome(
+    resolved: ResolvedProductVariant, canonical: Product, original_product_id: object
+) -> str:
+    """Mensagem PRONTA pra reportar o resultado de UM produto -- usada
+    para popular `outcome_sink` (ver docstring de `reprocess_unresolved_
+    products`). `canonical.id != original_product_id` é como
+    `apply_learned_identity` sinaliza merge (Offers migradas para um
+    Product diferente) sem precisar de outra consulta."""
+    if canonical.id != original_product_id:
+        return (
+            "Offers migradas para um Product canônico já existente "
+            "(ad-hoc removido, nenhuma Offer perdida)"
+        )
+    return (
+        f"RESOLVIDO -> category={resolved.category} brand={resolved.brand} "
+        f"family={resolved.family} model={resolved.model} "
+        f"variant={resolved.variant}"
+    )
 
 
 async def reprocess_unresolved_products(
@@ -744,6 +771,7 @@ async def reprocess_unresolved_products(
     limit: int = 100,
     batch_size: int = 1,
     apply: bool = False,
+    outcome_sink: dict[object, str] | None = None,
 ) -> int:
     """Tenta resolver de novo `Product`s sem `identity_key` -- fallback
     ad-hoc criado por `app.collection.orchestration._resolve_offer`
@@ -796,7 +824,24 @@ async def reprocess_unresolved_products(
     sobreviver mesmo). Corrigido commitando IMEDIATAMENTE depois de cada
     `apply_learned_identity` bem-sucedido, sempre que `apply=True` -- só
     então o próximo rollback (do próximo Product/lote) nunca mais alcança
-    esse trabalho."""
+    esse trabalho.
+
+    3. RELATÓRIO CONTRADITÓRIO em `--dry-run` (achado real em PROD,
+    2026-09-20, `v1.3.20`): o bug 2 acima só protege `apply=True`. Em
+    `--dry-run` (`apply=False`, de propósito, nada é commitado), um
+    Product resolvido num lote/iteração ainda aparece neste `resolved_
+    count` (contador Python simples), mas o `session.rollback()` de um
+    lote SEGUINTE (mesmo que aquele lote seguinte falhe na própria
+    chamada de IA -- o rollback roda incondicionalmente ANTES da
+    chamada) desfaz esse Product da SESSÃO -- reconsultar via `session.
+    get` depois (como o script fazia) mostra "sem identidade" para um
+    Product que este `resolved_count` já contou como resolvido.
+    Corrigido com `outcome_sink`: quando o chamador passa um `dict`
+    vazio, cada resolução bem-sucedida grava ali uma mensagem PRONTA
+    (`_describe_resolution_outcome`) no momento em que acontece --
+    nunca depende de reconsultar o banco depois de um rollback que pode
+    ter descartado o estado. `outcome_sink=None` (padrão) preserva o
+    comportamento anterior para quem não precisa desse detalhe."""
     unresolved = (
         await session.scalars(
             select(Product).where(Product.identity_key.is_(None)).limit(limit)
@@ -821,8 +866,14 @@ async def reprocess_unresolved_products(
             product = await session.get(Product, product_id)
             if product is None or product.identity_key is not None:
                 continue
-            await apply_learned_identity(session, product=product, resolved=resolved)
+            canonical = await apply_learned_identity(
+                session, product=product, resolved=resolved
+            )
             resolved_count += 1
+            if outcome_sink is not None:
+                outcome_sink[product_id] = _describe_resolution_outcome(
+                    resolved, canonical, product_id
+                )
             if apply:
                 await session.commit()
         return resolved_count
@@ -835,10 +886,14 @@ async def reprocess_unresolved_products(
             if prepared.resolved is not None:
                 product = await session.get(Product, product_id)
                 if product is not None and product.identity_key is None:
-                    await apply_learned_identity(
+                    canonical = await apply_learned_identity(
                         session, product=product, resolved=prepared.resolved
                     )
                     resolved_count += 1
+                    if outcome_sink is not None:
+                        outcome_sink[product_id] = _describe_resolution_outcome(
+                            prepared.resolved, canonical, product_id
+                        )
                     if apply:
                         await session.commit()
             continue
@@ -878,8 +933,14 @@ async def reprocess_unresolved_products(
                 # Product entre a montagem do lote e agora -- nunca
                 # reaplica nem propaga erro, só não conta de novo.
                 continue
-            await apply_learned_identity(session, product=product, resolved=resolved)
+            canonical = await apply_learned_identity(
+                session, product=product, resolved=resolved
+            )
             resolved_count += 1
+            if outcome_sink is not None:
+                outcome_sink[product_id] = _describe_resolution_outcome(
+                    resolved, canonical, product_id
+                )
             if apply:
                 await session.commit()
     return resolved_count
