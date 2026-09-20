@@ -24,12 +24,15 @@ from app.events import (
     MissionPrelistReadyPayload,
     MissionPrelistReadyV2Payload,
     MissionStatusChangedPayload,
+    MissionVariantsReadyPayload,
     PrelistOfferPayload,
     PriceDecreasedPayload,
     PriceTargetReachedPayload,
+    ProductVariantOptionPayload,
     resolve_event_spec,
     validate_event_payload,
 )
+from app.events.catalog import _validate_money, _validate_prelist_offers
 from app.missions.models import MissionStatus
 
 
@@ -350,12 +353,150 @@ def test_prelist_v2_contract_carries_ordered_offer_collection() -> None:
     )
 
     ready = MissionPrelistReadyV2Payload(mission_id, offers)
-    errata = MissionPrelistErrataV2Payload(
-        mission_id, uuid4(), store_id, offers
-    )
+    errata = MissionPrelistErrataV2Payload(mission_id, uuid4(), store_id, offers)
 
     assert ready.offers == offers
     assert errata.offers == offers
     assert resolve_event_spec(EventType.MISSION_PRELIST_READY_V2).payload_type is (
         MissionPrelistReadyV2Payload
     )
+
+
+def test_mission_transition_contract_rejects_non_mission_status_types() -> None:
+    with pytest.raises(EventCatalogError, match="MissionStatus"):
+        MissionStatusChangedPayload(
+            uuid4(),
+            uuid4(),
+            "draft",
+            MissionStatus.ACTIVE,
+            1,  # type: ignore[arg-type]
+        )
+
+
+def test_coupon_payload_rejects_non_string_code() -> None:
+    with pytest.raises(EventCatalogError, match="code must be a string"):
+        AppliedCouponPayload(
+            coupon_id=uuid4(),
+            code=123,  # type: ignore[arg-type]
+            discount_kind="fixed_amount",
+            original_amount=Decimal("100.00"),
+            discount_amount=Decimal("10.00"),
+            final_amount=Decimal("90.00"),
+            currency="BRL",
+        )
+
+
+def test_coupon_snapshot_rejects_non_applied_coupon_type() -> None:
+    with pytest.raises(EventCatalogError, match="AppliedCouponPayload"):
+        PriceDecreasedPayload(
+            uuid4(),
+            uuid4(),
+            uuid4(),
+            Decimal("100.00"),
+            Decimal("90.00"),
+            "BRL",
+            {"final_amount": Decimal("90.00")},  # type: ignore[arg-type]
+        )
+
+
+def test_availability_contract_rejects_non_availability_types() -> None:
+    with pytest.raises(EventCatalogError, match="must use Availability"):
+        AvailabilityChangedPayload(
+            uuid4(),
+            uuid4(),
+            uuid4(),
+            "available",  # type: ignore[arg-type]
+            Availability.UNAVAILABLE,
+        )
+
+
+def _valid_prelist_offer(**overrides: object) -> PrelistOfferPayload:
+    fields: dict[str, object] = {
+        "offer_id": uuid4(),
+        "observation_id": uuid4(),
+        "store_id": uuid4(),
+        "amount": Decimal("100.00"),
+        "total_amount": Decimal("100.00"),
+        "currency": "BRL",
+        "relevance": OfferRelevance.MATCH,
+        "condition": OfferCondition.NEW,
+        "seller_kind": MarketplacePartyKind.PLATFORM,
+        "availability": Availability.AVAILABLE,
+    }
+    fields.update(overrides)
+    return PrelistOfferPayload(**fields)
+
+
+def test_prelist_offer_payload_enforces_all_its_own_invariants() -> None:
+    with pytest.raises(EventCatalogError, match="total_amount"):
+        _valid_prelist_offer(total_amount=Decimal("99.00"))
+    with pytest.raises(EventCatalogError, match="must be relevant"):
+        _valid_prelist_offer(relevance=OfferRelevance.NO_MATCH)
+    with pytest.raises(EventCatalogError, match="OfferCondition"):
+        _valid_prelist_offer(condition="new")  # type: ignore[arg-type]
+    with pytest.raises(EventCatalogError, match="MarketplacePartyKind"):
+        _valid_prelist_offer(seller_kind="platform")  # type: ignore[arg-type]
+    with pytest.raises(EventCatalogError, match="availability must use Availability"):
+        _valid_prelist_offer(availability="available")  # type: ignore[arg-type]
+
+
+def test_validate_prelist_offers_rejects_out_of_range_offer_count() -> None:
+    with pytest.raises(EventCatalogError, match="between 1 and 20"):
+        _validate_prelist_offers(())
+
+
+def test_validate_prelist_offers_rejects_non_prelist_offer_items() -> None:
+    with pytest.raises(EventCatalogError, match="PrelistOfferPayload"):
+        _validate_prelist_offers((_valid_prelist_offer(), "not a payload"))  # type: ignore[arg-type]
+
+
+def test_validate_prelist_offers_rejects_duplicate_offer_ids() -> None:
+    duplicate = _valid_prelist_offer()
+    with pytest.raises(EventCatalogError, match="must be unique"):
+        _validate_prelist_offers((duplicate, duplicate))
+
+
+def test_validate_prelist_offers_rejects_more_than_five_per_store() -> None:
+    store_id = uuid4()
+    offers = tuple(_valid_prelist_offer(store_id=store_id) for _ in range(6))
+    with pytest.raises(EventCatalogError, match="at most five offers per store"):
+        _validate_prelist_offers(offers)
+
+
+def test_validate_prelist_offers_errata_rejects_offer_outside_corrected_store() -> None:
+    with pytest.raises(EventCatalogError, match="corrected_store_id"):
+        _validate_prelist_offers((_valid_prelist_offer(),), one_store=uuid4())
+
+
+def test_product_variant_option_rejects_blank_or_non_string_label() -> None:
+    with pytest.raises(EventCatalogError, match="must not be blank"):
+        ProductVariantOptionPayload(uuid4(), "   ")
+    with pytest.raises(EventCatalogError, match="must not be blank"):
+        ProductVariantOptionPayload(uuid4(), None)  # type: ignore[arg-type]
+
+
+def test_mission_variants_ready_payload_enforces_all_its_own_invariants() -> None:
+    mission_id = uuid4()
+    variant = ProductVariantOptionPayload(uuid4(), "16GB/512GB")
+
+    with pytest.raises(EventCatalogError, match="between 1 and 20"):
+        MissionVariantsReadyPayload(mission_id, (), 1)
+    with pytest.raises(EventCatalogError, match="ProductVariantOptionPayload"):
+        MissionVariantsReadyPayload(
+            mission_id,
+            (variant, "not a variant"),
+            1,  # type: ignore[arg-type]
+        )
+    with pytest.raises(EventCatalogError, match="must be unique"):
+        duplicate_variant = ProductVariantOptionPayload(variant.product_id, "8GB/256GB")
+        MissionVariantsReadyPayload(mission_id, (variant, duplicate_variant), 1)
+    with pytest.raises(EventCatalogError, match="state_version"):
+        MissionVariantsReadyPayload(mission_id, (variant,), -1)
+
+    ready = MissionVariantsReadyPayload(mission_id, (variant,), 1)
+    assert ready.variants == (variant,)
+
+
+def test_validate_money_rejects_negative_amount() -> None:
+    with pytest.raises(EventCatalogError, match="non-negative"):
+        _validate_money(Decimal("-1.00"), "BRL")
