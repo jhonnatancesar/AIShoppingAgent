@@ -321,9 +321,26 @@ class TerabyteProvider(PlaywrightStoreProvider):
         return CollectionResult(self.source_code, started_at, self._clock(), offers)
 
     async def _extract_via_cdp_page(self, page: Page) -> tuple[RawCollectedOffer, ...]:
+        """TASK-122 (achado real, 2026-09-20): NÃO levanta mais
+        `ProviderBlockedError` só por `not offers`. Chegar aqui já prova
+        que a página carregou de verdade -- `EdgeCdpTransport.run()`
+        (chamador desta função) só invoca `extract` depois que o
+        `readiness_selector` respondeu (ou levanta `EdgeCdpTransportError`
+        antes, um código de falha diferente, `provider_unavailable`).
+        Confirmado ao vivo (Edge/CDP real, 2026-09-20): uma busca sem
+        correspondência real (ex.: iPhone numa loja que só vende
+        hardware de PC) pode render cards de sugestão genuinamente
+        indisponíveis (sem preço -- `offers_from_rows` já os descarta) OU
+        cards disponíveis mas irrelevantes (a relevância real é decidida
+        depois, em `_deterministic_product_relevance`/IA, nunca aqui) --
+        nos dois casos, zero ofertas depois da extração real é uma busca
+        que teve sucesso e não achou nada aproveitável, não um bloqueio.
+        `status=None` neste `ProviderBlockedError` NUNCA acionava backoff
+        de bloqueio confirmado mesmo antes desta correção
+        (`_is_confirmed_external_block` só conta 403/429 reais) -- ou
+        seja, a versão antiga também nunca representava um bloqueio
+        comprovado, só marcava a run como falha sem necessidade."""
         offers = await self.extract(page, self._clock())
-        if not offers:
-            raise ProviderBlockedError(self.source_code, None)
         return await self._resolve_unknown_availability(page, offers)
 
     async def extract(
@@ -455,9 +472,26 @@ class AmazonProvider(PlaywrightStoreProvider):
         return CollectionResult(self.source_code, started_at, self._clock(), offers)
 
     async def _extract_via_cdp_page(self, page: Page) -> tuple[RawCollectedOffer, ...]:
+        """TASK-122 (achado real, 2026-09-20): NÃO levanta mais
+        `ProviderBlockedError` só por `not offers`. Chegar aqui já prova
+        que a página carregou de verdade -- `EdgeCdpTransport.run()`
+        (chamador desta função) só invoca `extract` depois que o
+        `readiness_selector` respondeu (ou levanta `EdgeCdpTransportError`
+        antes, um código de falha diferente, `provider_unavailable`).
+        Confirmado ao vivo (Edge/CDP real, 2026-09-20): uma busca sem
+        correspondência real (ex.: iPhone numa loja que só vende
+        hardware de PC) pode render cards de sugestão genuinamente
+        indisponíveis (sem preço -- `offers_from_rows` já os descarta) OU
+        cards disponíveis mas irrelevantes (a relevância real é decidida
+        depois, em `_deterministic_product_relevance`/IA, nunca aqui) --
+        nos dois casos, zero ofertas depois da extração real é uma busca
+        que teve sucesso e não achou nada aproveitável, não um bloqueio.
+        `status=None` neste `ProviderBlockedError` NUNCA acionava backoff
+        de bloqueio confirmado mesmo antes desta correção
+        (`_is_confirmed_external_block` só conta 403/429 reais) -- ou
+        seja, a versão antiga também nunca representava um bloqueio
+        comprovado, só marcava a run como falha sem necessidade."""
         offers = await self.extract(page, self._clock())
-        if not offers:
-            raise ProviderBlockedError(self.source_code, None)
         return await self._resolve_unknown_availability(page, offers)
 
     async def extract(
@@ -589,9 +623,26 @@ class KabumProvider(PlaywrightStoreProvider):
         return CollectionResult(self.source_code, started_at, self._clock(), offers)
 
     async def _extract_via_cdp_page(self, page: Page) -> tuple[RawCollectedOffer, ...]:
+        """TASK-122 (achado real, 2026-09-20): NÃO levanta mais
+        `ProviderBlockedError` só por `not offers`. Chegar aqui já prova
+        que a página carregou de verdade -- `EdgeCdpTransport.run()`
+        (chamador desta função) só invoca `extract` depois que o
+        `readiness_selector` respondeu (ou levanta `EdgeCdpTransportError`
+        antes, um código de falha diferente, `provider_unavailable`).
+        Confirmado ao vivo (Edge/CDP real, 2026-09-20): uma busca sem
+        correspondência real (ex.: iPhone numa loja que só vende
+        hardware de PC) pode render cards de sugestão genuinamente
+        indisponíveis (sem preço -- `offers_from_rows` já os descarta) OU
+        cards disponíveis mas irrelevantes (a relevância real é decidida
+        depois, em `_deterministic_product_relevance`/IA, nunca aqui) --
+        nos dois casos, zero ofertas depois da extração real é uma busca
+        que teve sucesso e não achou nada aproveitável, não um bloqueio.
+        `status=None` neste `ProviderBlockedError` NUNCA acionava backoff
+        de bloqueio confirmado mesmo antes desta correção
+        (`_is_confirmed_external_block` só conta 403/429 reais) -- ou
+        seja, a versão antiga também nunca representava um bloqueio
+        comprovado, só marcava a run como falha sem necessidade."""
         offers = await self.extract(page, self._clock())
-        if not offers:
-            raise ProviderBlockedError(self.source_code, None)
         return await self._resolve_unknown_availability(page, offers)
 
     async def extract(
@@ -701,9 +752,26 @@ class MercadoLivreProvider(PlaywrightStoreProvider):
         return CollectionResult(self.source_code, started_at, self._clock(), offers)
 
     async def _extract_via_cdp_page(self, page: Page) -> tuple[RawCollectedOffer, ...]:
+        """TASK-122 (achado real, 2026-09-20): NÃO levanta mais
+        `ProviderBlockedError` só por `not offers`. Chegar aqui já prova
+        que a página carregou de verdade -- `EdgeCdpTransport.run()`
+        (chamador desta função) só invoca `extract` depois que o
+        `readiness_selector` respondeu (ou levanta `EdgeCdpTransportError`
+        antes, um código de falha diferente, `provider_unavailable`).
+        Confirmado ao vivo (Edge/CDP real, 2026-09-20): uma busca sem
+        correspondência real (ex.: iPhone numa loja que só vende
+        hardware de PC) pode render cards de sugestão genuinamente
+        indisponíveis (sem preço -- `offers_from_rows` já os descarta) OU
+        cards disponíveis mas irrelevantes (a relevância real é decidida
+        depois, em `_deterministic_product_relevance`/IA, nunca aqui) --
+        nos dois casos, zero ofertas depois da extração real é uma busca
+        que teve sucesso e não achou nada aproveitável, não um bloqueio.
+        `status=None` neste `ProviderBlockedError` NUNCA acionava backoff
+        de bloqueio confirmado mesmo antes desta correção
+        (`_is_confirmed_external_block` só conta 403/429 reais) -- ou
+        seja, a versão antiga também nunca representava um bloqueio
+        comprovado, só marcava a run como falha sem necessidade."""
         offers = await self.extract(page, self._clock())
-        if not offers:
-            raise ProviderBlockedError(self.source_code, None)
         return await self._resolve_unknown_availability(page, offers)
 
     async def extract(

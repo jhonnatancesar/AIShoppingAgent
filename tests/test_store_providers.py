@@ -447,6 +447,133 @@ def test_terabyte_uses_cdp_transport_as_primary_and_extracts_multiple_offers(
     assert transport.calls == 1
 
 
+# ---------------------------------------------------------------------------
+# TASK-122 (achado real, 2026-09-20): busca real sem correspondência
+# aproveitável (loja não vende a categoria buscada, ou só tem sugestões
+# indisponíveis/irrelevantes) NÃO é mais bloqueio -- é sucesso com zero
+# ofertas, mesmo tratamento que a Pichau já dava. Confirmado ao vivo via
+# Edge/CDP real (Terabyte, "Apple iPhone 17 Pro" -- loja de hardware de PC,
+# nenhuma correspondência real, run antes marcada failed/provider_blocked
+# sem bloqueio confirmado nenhum). As quatro lojas que usam
+# `EdgeCdpTransport.run()` (Terabyte, Amazon, Kabum, Mercado Livre)
+# compartilhavam a mesma linha `if not offers: raise ProviderBlockedError`,
+# removida das quatro -- um teste por loja abaixo prova que nenhuma
+# reintroduziu o bug isoladamente.
+# ---------------------------------------------------------------------------
+
+
+def test_terabyte_zero_relevant_offers_after_real_page_load_is_empty_success_not_blocked(
+    monkeypatch,
+) -> None:
+    async def fake_extract(self, page, collected_at):
+        return ()
+
+    monkeypatch.setattr(TerabyteProvider, "extract", fake_extract)
+
+    class Transport:
+        async def run(self, url, *, readiness_selector, extract):
+            return await extract("fake-cdp-page")
+
+    provider = TerabyteProvider(clock=lambda: NOW, cdp_transport=Transport())
+
+    result = asyncio.run(
+        provider.collect(
+            CollectionRequest(
+                source_code="terabyte",
+                search_query="Apple iPhone 17 Pro",
+                requested_at=NOW,
+                mission_id=uuid4(),
+            )
+        )
+    )
+
+    assert result.offers == ()
+
+
+def test_amazon_zero_relevant_offers_after_real_page_load_is_empty_success_not_blocked(
+    monkeypatch,
+) -> None:
+    async def fake_extract(self, page, collected_at):
+        return ()
+
+    monkeypatch.setattr(AmazonProvider, "extract", fake_extract)
+
+    class Transport:
+        async def run(self, url, *, readiness_selector, extract):
+            return await extract("fake-cdp-page")
+
+    provider = AmazonProvider(clock=lambda: NOW, cdp_transport=Transport())
+
+    result = asyncio.run(
+        provider.collect(
+            CollectionRequest(
+                source_code="amazon",
+                search_query="Apple iPhone 17 Pro",
+                requested_at=NOW,
+                mission_id=uuid4(),
+            )
+        )
+    )
+
+    assert result.offers == ()
+
+
+def test_kabum_zero_relevant_offers_after_real_page_load_is_empty_success_not_blocked(
+    monkeypatch,
+) -> None:
+    async def fake_extract(self, page, collected_at):
+        return ()
+
+    monkeypatch.setattr(KabumProvider, "extract", fake_extract)
+
+    class Transport:
+        async def run(self, url, *, readiness_selector, extract):
+            return await extract("fake-cdp-page")
+
+    provider = KabumProvider(clock=lambda: NOW, cdp_transport=Transport())
+
+    result = asyncio.run(
+        provider.collect(
+            CollectionRequest(
+                source_code="kabum",
+                search_query="Apple iPhone 17 Pro",
+                requested_at=NOW,
+                mission_id=uuid4(),
+            )
+        )
+    )
+
+    assert result.offers == ()
+
+
+def test_mercado_livre_zero_relevant_offers_after_real_page_load_is_empty_success_not_blocked(
+    monkeypatch,
+) -> None:
+    async def fake_extract(self, page, collected_at):
+        return ()
+
+    monkeypatch.setattr(MercadoLivreProvider, "extract", fake_extract)
+
+    class Transport:
+        async def run(self, url, *, readiness_selector, extract):
+            return await extract("fake-cdp-page")
+
+    provider = MercadoLivreProvider(clock=lambda: NOW, cdp_transport=Transport())
+
+    result = asyncio.run(
+        provider.collect(
+            CollectionRequest(
+                source_code="mercadolivre",
+                search_query="Apple iPhone 17 Pro",
+                requested_at=NOW,
+                mission_id=uuid4(),
+            )
+        )
+    )
+
+    assert result.offers == ()
+
+
 def test_terabyte_never_falls_back_to_blocked_playwright_on_cdp_failure(
     monkeypatch,
 ) -> None:
