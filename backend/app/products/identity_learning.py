@@ -28,6 +28,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai_provider import AIProviderManager
+from app.alerts.models import MissionProductAlertState
 from app.database.time import utc_now
 from app.offers.models import Offer
 from app.products.identity import (
@@ -53,6 +54,7 @@ from app.products.identity_arbiter import (
 )
 from app.products.identity_candidates import ProductIdentityCandidate
 from app.products.models import Product
+from app.purchase.models import PurchaseConfirmation
 from app.users.models import UserRole
 
 logger = logging.getLogger("app.products.identity_learning")
@@ -680,9 +682,64 @@ async def resolve_or_learn_product_variant(
     )
 
 
+async def _merge_mission_product_alert_state(
+    session: AsyncSession, *, from_product_id: object, into_product_id: object
+) -> None:
+    """Funde os checkpoints de alerta (`MissionProductAlertState`) do
+    Product ad-hoc pro canônico -- achado real em PROD (2026-09-20):
+    diferente de `Offer`/`PurchaseConfirmation`, esta tabela NÃO é
+    protegida pelo invariante "só existe linha se `identity_key IS NOT
+    NULL`" -- alertas disparam por relevância de oferta na Mission
+    (`app.alerts.evaluator`), independente do Product já ter identidade
+    resolvida (ver docstring de `app.alerts.models`). Por isso a MESMA
+    Mission pode legitimamente já ter um checkpoint em cada um dos dois
+    Products ao mesmo tempo -- um `UPDATE` cego de `product_id` colide
+    na PK composta `(mission_id, product_id)` (`RestrictViolation`
+    reproduzida ao vivo em PROD ao tentar `DELETE` o ad-hoc com essa
+    colisão pendente).
+
+    Por Mission com checkpoint nos dois lados: preserva o MENOR
+    `best_notified_amount` -- nunca pode "esquecer" um preço mais baixo
+    já alertado, é exatamente essa garantia que impede alerta duplicado
+    pro usuário (ver docstring de `MissionProductAlertState`) -- e os
+    campos do alerta MAIS RECENTE (`last_notified_amount/at`,
+    `rearmed_at`, `last_alert_event_id`) do lado com `last_notified_at`
+    mais novo. A linha perdedora é removida, nunca as duas ficam.
+
+    Por Mission com checkpoint só no ad-hoc: reaponta a linha existente
+    pro canônico (`UPDATE product_id`), sem criar nem perder nada --
+    caminho simples, sem conflito."""
+    from_rows = (
+        await session.scalars(
+            select(MissionProductAlertState).where(
+                MissionProductAlertState.product_id == from_product_id
+            )
+        )
+    ).all()
+    for from_row in from_rows:
+        into_row = await session.scalar(
+            select(MissionProductAlertState).where(
+                MissionProductAlertState.mission_id == from_row.mission_id,
+                MissionProductAlertState.product_id == into_product_id,
+            )
+        )
+        if into_row is None:
+            from_row.product_id = into_product_id
+            continue
+        if from_row.best_notified_amount < into_row.best_notified_amount:
+            into_row.best_notified_amount = from_row.best_notified_amount
+            into_row.best_notified_currency = from_row.best_notified_currency
+        if from_row.last_notified_at > into_row.last_notified_at:
+            into_row.last_notified_amount = from_row.last_notified_amount
+            into_row.last_notified_at = from_row.last_notified_at
+            into_row.rearmed_at = from_row.rearmed_at
+            into_row.last_alert_event_id = from_row.last_alert_event_id
+        await session.delete(from_row)
+
+
 async def apply_learned_identity(
     session: AsyncSession, *, product: Product, resolved: ResolvedProductVariant
-) -> Product:
+) -> Product | None:
     """Aplica uma identidade já resolvida a um `Product` ad-hoc
     (`identity_key IS NULL`) -- reaproveitada tanto por `reprocess_
     unresolved_products` (lote) quanto pela Fase C do orquestrador
@@ -692,16 +749,45 @@ async def apply_learned_identity(
     Nunca duplica `Product`: quando a identidade resolvida já
     corresponde a um Product CANÔNICO existente (outra oferta já
     resolveu o mesmo `identity_key` antes), todas as `Offer`s do ad-hoc
-    migram para o canônico e o ad-hoc (sem nenhuma Offer restante) é
-    removido; quando não existe nenhum ainda, o PRÓPRIO ad-hoc é
-    promovido no lugar (ganha os campos de identidade), sem criar uma
-    linha nova. Devolve o `Product` CANÔNICO resultante (o mesmo
-    `product` recebido quando promovido no lugar, ou o já existente
-    quando houve merge) -- comparar `.id` com o `product` original
-    recebido diz ao chamador se foi merge ou promoção, sem repetir a
-    consulta (usado por `reprocess_unresolved_products` para reportar
-    o resultado com precisão, mesmo quando um `session.rollback()`
-    posterior no mesmo processo descarta o estado da sessão).
+    migram para o canônico, os checkpoints de alerta
+    (`MissionProductAlertState`) são MESCLADOS (nunca sobrescritos --
+    ver `_merge_mission_product_alert_state`) e o ad-hoc (sem nenhuma
+    referência restante) é removido; quando não existe nenhum canônico
+    ainda, o PRÓPRIO ad-hoc é promovido no lugar (ganha os campos de
+    identidade), sem criar uma linha nova. Devolve o `Product`
+    CANÔNICO resultante (o mesmo `product` recebido quando promovido no
+    lugar, ou o já existente quando houve merge) -- comparar `.id` com
+    o `product` original recebido diz ao chamador se foi merge ou
+    promoção, sem repetir a consulta (usado por `reprocess_unresolved_
+    products` para reportar o resultado com precisão, mesmo quando um
+    `session.rollback()` posterior no mesmo processo descarta o estado
+    da sessão).
+
+    Devolve `None` (nunca levanta exceção) quando o merge é IMPOSSÍVEL
+    porque o ad-hoc tem `PurchaseConfirmation` -- tabela IMUTÁVEL por
+    trigger de banco (`block_purchase_trail_mutation`, achado real ao
+    testar: nem um `UPDATE` de `product_id` é aceito, então o `DELETE`
+    do ad-hoc nunca seria possível). O chamador trata `None` como "não
+    resolvido nesta rodada", igual a qualquer outra falha de extração --
+    nunca como erro. Decisão do usuário (2026-09-20): sem ocorrência
+    real hoje (a Mission encerra e para de coletar assim que a compra é
+    confirmada), registrado como proteção preventiva.
+
+    Achado real em PROD (2026-09-20, `v1.3.24`): esta função só migrava
+    `Offer` -- `products.id` também é referenciado com `ON DELETE
+    RESTRICT` por `mission_product_alert_state`, `purchase_confirmations`,
+    `market_price_assessments`, `historical_bootstraps`,
+    `external_price_references` e `mission_product_selections`. As
+    últimas quatro nunca têm linha para um ad-hoc (protegidas por
+    `Product.identity_key IS NOT NULL` no próprio ponto de inserção, ver
+    `market_research/service.py`, `historical_bootstrap/service.py`,
+    `missions/service.py`) -- só `mission_product_alert_state` e
+    `purchase_confirmations` precisavam de tratamento aqui; o primeiro
+    reproduziu o crash real (`RestrictViolation` num `DELETE FROM
+    products`) porque NÃO tem essa mesma proteção (alertas disparam por
+    relevância de oferta, não por identidade resolvida); o segundo
+    reproduziu um segundo crash (`purchase_confirmations is immutable`)
+    ao tentar sequer migrar a linha antes do delete.
 
     `pg_advisory_xact_lock` por `identity_key` (mesmo padrão de
     `app.collection.orchestration._acquire_creation_locks`) ANTES do
@@ -723,10 +809,38 @@ async def apply_learned_identity(
         select(Product).where(Product.identity_key == resolved.identity_key)
     )
     if canonical is not None and canonical.id != product.id:
+        # `purchase_confirmations` é IMUTÁVEL por trigger de banco
+        # (`block_purchase_trail_mutation`, achado real ao testar --
+        # nem um UPDATE de `product_id` é aceito, muito menos o DELETE
+        # do ad-hoc que ficaria com essa linha referenciando ele). Um
+        # ad-hoc com compra confirmada NUNCA pode ser apagado -- fail-
+        # closed: não migra nada, não apaga, devolve `None` (o
+        # chamador trata como "não resolvido nesta rodada", nunca
+        # como erro). Decisão do usuário (2026-09-20): cenário sem
+        # ocorrência real hoje (Mission encerra e para de coletar
+        # assim que a compra é confirmada), registrado como proteção
+        # preventiva, não como caso a resolver agora.
+        has_purchase_confirmation = await session.scalar(
+            select(func.count())
+            .select_from(PurchaseConfirmation)
+            .where(PurchaseConfirmation.product_id == product.id)
+        )
+        if has_purchase_confirmation:
+            logger.warning(
+                "product_identity_merge_blocked_by_immutable_purchase_confirmation",
+                extra={
+                    "product_id": str(product.id),
+                    "canonical_id": str(canonical.id),
+                },
+            )
+            return None
         await session.execute(
             update(Offer)
             .where(Offer.product_id == product.id)
             .values(product_id=canonical.id)
+        )
+        await _merge_mission_product_alert_state(
+            session, from_product_id=product.id, into_product_id=canonical.id
         )
         await session.delete(product)
         return canonical
@@ -740,6 +854,12 @@ async def apply_learned_identity(
     product.identity_key = resolved.identity_key
     product.identity_version = IDENTITY_VERSION
     return product
+
+
+_BLOCKED_BY_PURCHASE_CONFIRMATION = (
+    "BLOQUEADO -- ad-hoc tem PurchaseConfirmation imutável, não pode "
+    "ser removido (nenhuma alteração feita, continua sem identidade)"
+)
 
 
 def _describe_resolution_outcome(
@@ -841,7 +961,21 @@ async def reprocess_unresolved_products(
     (`_describe_resolution_outcome`) no momento em que acontece --
     nunca depende de reconsultar o banco depois de um rollback que pode
     ter descartado o estado. `outcome_sink=None` (padrão) preserva o
-    comportamento anterior para quem não precisa desse detalhe."""
+    comportamento anterior para quem não precisa desse detalhe.
+
+    4. CRASH REAL EM PROD (`--apply --limit 100`, `v1.3.24`):
+    `apply_learned_identity` migrava só `Offer` antes de apagar o
+    ad-hoc -- `products.id` também é referenciado com `ON DELETE
+    RESTRICT` por outras 6 tabelas; `mission_product_alert_state` (não
+    protegida por `identity_key IS NOT NULL`, diferente das demais)
+    reproduziu o crash de verdade. Corrigido: `_merge_mission_product_
+    alert_state` funde os checkpoints (nunca sobrescreve às cegas, ver
+    sua própria docstring) antes do delete. `purchase_confirmations`
+    também referencia `products.id` com RESTRICT mas é IMUTÁVEL por
+    trigger de banco (nem `UPDATE` é aceito) -- `apply_learned_identity`
+    agora devolve `None` (nunca crasha) quando um ad-hoc tem
+    `PurchaseConfirmation`; `outcome_sink` recebe uma mensagem
+    `BLOQUEADO` explícita, `resolved_count` não conta esse item."""
     unresolved = (
         await session.scalars(
             select(Product).where(Product.identity_key.is_(None)).limit(limit)
@@ -869,6 +1003,10 @@ async def reprocess_unresolved_products(
             canonical = await apply_learned_identity(
                 session, product=product, resolved=resolved
             )
+            if canonical is None:
+                if outcome_sink is not None:
+                    outcome_sink[product_id] = _BLOCKED_BY_PURCHASE_CONFIRMATION
+                continue
             resolved_count += 1
             if outcome_sink is not None:
                 outcome_sink[product_id] = _describe_resolution_outcome(
@@ -889,13 +1027,17 @@ async def reprocess_unresolved_products(
                     canonical = await apply_learned_identity(
                         session, product=product, resolved=prepared.resolved
                     )
-                    resolved_count += 1
-                    if outcome_sink is not None:
-                        outcome_sink[product_id] = _describe_resolution_outcome(
-                            prepared.resolved, canonical, product_id
-                        )
-                    if apply:
-                        await session.commit()
+                    if canonical is None:
+                        if outcome_sink is not None:
+                            outcome_sink[product_id] = _BLOCKED_BY_PURCHASE_CONFIRMATION
+                    else:
+                        resolved_count += 1
+                        if outcome_sink is not None:
+                            outcome_sink[product_id] = _describe_resolution_outcome(
+                                prepared.resolved, canonical, product_id
+                            )
+                        if apply:
+                            await session.commit()
             continue
         pending.append((product_id, raw_title, prepared))
 
@@ -936,6 +1078,10 @@ async def reprocess_unresolved_products(
             canonical = await apply_learned_identity(
                 session, product=product, resolved=resolved
             )
+            if canonical is None:
+                if outcome_sink is not None:
+                    outcome_sink[product_id] = _BLOCKED_BY_PURCHASE_CONFIRMATION
+                continue
             resolved_count += 1
             if outcome_sink is not None:
                 outcome_sink[product_id] = _describe_resolution_outcome(

@@ -206,11 +206,63 @@ resolvido (uma memória RAM) não teve falha de lote -- caiu no caminho
 normal de "não passou grounding/foi para revisão humana", comportamento
 esperado, não bug.
 
-**Item 1 (backfill) tecnicamente pronto para `--apply` real em PROD**
--- mecanismo de lote validado ponta a ponta com dado real. Decisão de
-rodar `--apply` de verdade (backlog de ~372, em rodadas de `--limit
-100`) e de ligar `product_identity_learning_enabled` (item 2) seguem
-pendentes de autorização explícita do usuário, conforme sempre.
+**Sétima rodada em PROD -- primeiro `--apply --limit 100` REAL,
+autorizado pelo usuário, crashou de verdade (2026-09-20):** o
+mecanismo de EXTRAÇÃO estava correto (validado na rodada 6), mas o
+mecanismo de MERGE de duplicatas tinha um bug real, preexistente,
+nunca antes exercitado contra Product com histórico de uso:
+
+```
+sqlalchemy.exc.IntegrityError: (psycopg.errors.RestrictViolation) update or delete on table "products"
+violates RESTRICT setting of foreign key constraint "fk_mission_product_alert_state_product_id_products"
+```
+
+`apply_learned_identity` só migrava `Offer` antes de apagar o Product
+ad-hoc fundido -- `products.id` também é referenciado com `ON DELETE
+RESTRICT` por outras 6 tabelas. Investigação completa (mapeamento de
+todas as FKs, semântica de merge de cada tabela, confirmação de que o
+caminho AO VIVO do orquestrador tem o MESMO risco) mostrou:
+`market_price_assessments`/`historical_bootstraps`/
+`external_price_references`/`mission_product_selections` nunca têm
+linha para um ad-hoc (protegidas por `identity_key IS NOT NULL` no
+próprio ponto de inserção) -- só `mission_product_alert_state` (não
+tem essa proteção, alertas disparam por relevância de oferta) e
+`purchase_confirmations` precisavam de tratamento real.
+
+**Corrigido em `v1.3.25`:**
+- `mission_product_alert_state`: `_merge_mission_product_alert_state`
+  funde de verdade quando a MESMA Mission já tem checkpoint nos dois
+  Products (mesma PK composta `(mission_id, product_id)`, colisão real
+  -- é o que crashava) -- preserva o MENOR `best_notified_amount`
+  (nunca esquece um preço mais baixo já alertado, é a garantia que
+  impede alerta duplicado) e os campos do alerta MAIS RECENTE
+  (`last_notified_at` maior). Sem conflito, só reaponta a linha.
+- `purchase_confirmations`: achado um SEGUNDO crash ao tentar corrigir
+  como as demais -- a tabela é IMUTÁVEL por trigger de banco
+  (`block_purchase_trail_mutation`, "evidência permanente de compra
+  confirmada"), nem um `UPDATE` de `product_id` é aceito. Decisão do
+  usuário: sem ocorrência real hoje (a Mission encerra e para de
+  coletar assim que a compra é confirmada) -- em vez de tentar migrar
+  (impossível), `apply_learned_identity` agora devolve `None` (nunca
+  crasha) quando o ad-hoc tem `PurchaseConfirmation`; o chamador trata
+  como "não resolvido nesta rodada", registra `outcome_sink` com uma
+  mensagem `BLOQUEADO` explícita, nunca conta como resolvido nem
+  propaga exceção.
+
+Regressão coberta por 2 testes de integração reais em
+`tests/integration/test_apply_learned_identity_merge.py`: o cenário
+exato do primeiro crash (merge com conflito de alerta em 2 Missions,
+uma delas colidindo) e do segundo (bloqueio seguro sem alterar nada).
+70 testes de integração relevantes passando.
+
+**Item 1 (backfill) pronto para `--apply` real em PROD de novo** --
+mecanismo de extração (rodada 6) E de merge (esta correção) validados.
+PROD permanece parado/intocado desde o crash da rodada 7 -- nada foi
+perdido (a transação reverteu limpo, backlog confirmado intacto em 372
+pelo próprio operador antes de reportar). Decisão de retomar `--apply`
+(backlog de ~372, em rodadas de `--limit 100`) e de ligar
+`product_identity_learning_enabled` (item 2) seguem pendentes de nova
+autorização explícita do usuário.
 
 **Item 2 (flag ao vivo) não iniciado** -- depende do item 1 estar
 validado contra dado real primeiro, conforme sequência já registrada

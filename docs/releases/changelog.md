@@ -1,5 +1,31 @@
 # Changelog
 
+## `v1.3.25` — TASK-123: corrige crash real no merge de duplicatas (`apply_learned_identity`)
+
+O primeiro `--apply --limit 100` real, autorizado pelo usuário,
+crashou (`RestrictViolation` num `DELETE FROM products`):
+`apply_learned_identity` só migrava `Offer` antes de apagar o Product
+ad-hoc fundido, mas `products.id` também é referenciado com `ON DELETE
+RESTRICT` por outras 6 tabelas. Investigação completa mostrou que 4
+delas nunca têm linha para um ad-hoc (protegidas por `identity_key IS
+NOT NULL` no ponto de inserção); só `mission_product_alert_state`
+(reproduziu o crash -- não tem essa proteção, alertas disparam por
+relevância de oferta) e `purchase_confirmations` precisavam de
+tratamento real.
+
+Corrigido: `mission_product_alert_state` agora é MESCLADO de verdade
+quando a mesma Mission já tem checkpoint nos dois Products (preserva o
+menor preço já alertado e os dados do alerta mais recente -- nunca
+sobrescreve às cegas). `purchase_confirmations` é IMUTÁVEL por trigger
+de banco (achado ao tentar migrar -- nem `UPDATE` é aceito) --
+`apply_learned_identity` agora devolve `None` (nunca crasha) nesse
+caso; decisão do usuário: sem ocorrência real hoje, registrado como
+proteção preventiva. Regressão coberta por 2 testes de integração
+reais reproduzindo os dois cenários exatos. PROD permanece parado
+desde o crash -- nada foi perdido, backlog confirmado intacto (372)
+pelo próprio operador. Retomada de `--apply` pendente de nova
+autorização do usuário.
+
 ## `v1.3.24` — TASK-123: permite `max_tokens` maior por chamada (causa raiz real do lote em PROD)
 
 Depois da correção de mensagem (`v1.3.23`) não resolver -- uma quinta
