@@ -989,7 +989,12 @@ def test_run_market_research_in_progress_returns_none_without_research(monkeypat
 def test_run_market_research_success_persists_and_returns_snapshot(monkeypatch):
     async def _scenario():
         product = _product()
-        settings = _settings()
+        # `market_research_external_reference_enabled` deixou de nascer
+        # `False` (2026-09-21, decisão explícita do usuário) -- este
+        # teste prova especificamente o caminho SEM referência externa
+        # (2 chamadas de busca: mercado + histórico ao vivo), então
+        # precisa desligar a flag explicitamente agora.
+        settings = _settings(market_research_external_reference_enabled=False)
         monkeypatch.setattr(
             "app.market_research.service.claim_assessment",
             AsyncMock(return_value=ClaimResult(ClaimStatus.WON, None)),

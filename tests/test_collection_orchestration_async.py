@@ -3248,6 +3248,178 @@ def test_run_phase_b_flags_off_never_touches_coupons_or_historical_bootstrap(
     assert outcomes[0].applied_coupon is None
 
 
+def test_run_phase_b_triggers_market_research_when_coupon_found_despite_unchanged_price(
+    monkeypatch,
+) -> None:
+    """Achado real em PROD (2026-09-21, caso do 9800X3D/Kabum/CPUPROMO):
+    preço BRUTO anunciado idêntico ao ciclo anterior (`UNCHANGED_REUSED`)
+    não pode mais bloquear o gatilho de pesquisa de mercado (F2/F3) quando
+    um cupom novo torna o preço EFETIVO mais baixo -- extensão do mesmo
+    caso já coberto para a Fase C (evaluator), agora também para a Fase B
+    (`evaluate_trigger_and_maybe_research`, caminho C/reoportunidade)."""
+    offer_id, product_id, store_id = uuid4(), uuid4(), uuid4()
+    observation_id = uuid4()
+    pending = _PendingOffer(
+        offer_id=offer_id,
+        product_id=product_id,
+        observation_id=observation_id,
+        amount=Decimal("300.00"),
+        currency="BRL",
+        availability=Availability.AVAILABLE,
+        observed_at=NOW,
+        raw_title="Título bruto",
+        needs_relevance=False,
+        needs_display_name=False,
+        observation_created=False,
+        alert_comparison=PriceObservationComparison.UNCHANGED_REUSED,
+        previous_observation_id=observation_id,
+        previous_amount=Decimal("300.00"),
+        previous_currency="BRL",
+        previous_availability=Availability.AVAILABLE,
+        previous_observed_at=NOW,
+        forced_relevance=OfferRelevance.MATCH,
+    )
+    outcome = _PhaseAOutcome(
+        run_id=uuid4(),
+        mission_id=uuid4(),
+        store_id=store_id,
+        mission_search_query="CPU",
+        target_amount=None,
+        target_currency=None,
+        completed_at=NOW,
+        offers=(pending,),
+    )
+    offer_row = Offer(
+        id=offer_id,
+        product_id=product_id,
+        store_id=store_id,
+        url="https://loja.example/produto",
+    )
+    session = _mock_async_session()
+    session.get.return_value = offer_row
+    coupon = Coupon(
+        id=uuid4(),
+        store_id=store_id,
+        code="CPUPROMO",
+        discount_kind="fixed_amount",
+        discount_value=Decimal("51.00"),
+        scope_kind="store_wide",
+        evidence="ev",
+        status="active",
+        last_seen_at=NOW,
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration.get_candidate_coupons_for_offer",
+        AsyncMock(return_value=(coupon,)),
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration.run_historical_bootstrap", AsyncMock()
+    )
+    trigger = AsyncMock(return_value=None)
+    monkeypatch.setattr(
+        "app.collection.orchestration.evaluate_trigger_and_maybe_research", trigger
+    )
+    settings = SimpleNamespace(
+        historical_bootstrap_revalidation_days=90,
+        market_assessment_lease_seconds=300,
+        market_assessment_failure_backoff_minutes=15,
+        market_assessment_failure_backoff_max_minutes=360,
+        historical_bootstrap_enabled=False,
+        coupons_enabled=True,
+    )
+
+    outcomes = asyncio.run(
+        _run_phase_b(
+            outcome,
+            _StubAIManager(),
+            UserRole.ADMIN,
+            session_factory=_session_factory(session),
+            firecrawl=None,
+            settings=settings,
+        )
+    )
+
+    trigger.assert_awaited_once()
+    assert trigger.call_args.kwargs["current_amount"] == Decimal("249.00")
+    assert outcomes[0].applied_coupon is not None
+    assert outcomes[0].applied_coupon.final_amount == Decimal("249.00")
+
+
+def test_run_phase_b_skips_market_research_when_unchanged_price_and_no_coupon(
+    monkeypatch,
+) -> None:
+    """Contraprova da correção acima: `UNCHANGED_REUSED` sem nenhum cupom
+    aplicável continua SEM disparar F2/F3 -- a exceção é só para quando o
+    cupom de fato muda o preço efetivo, preservando o controle de custo de
+    IA já existente (nenhum gatilho extra em todo ciclo parado)."""
+    offer_id, product_id, store_id = uuid4(), uuid4(), uuid4()
+    observation_id = uuid4()
+    pending = _PendingOffer(
+        offer_id=offer_id,
+        product_id=product_id,
+        observation_id=observation_id,
+        amount=Decimal("300.00"),
+        currency="BRL",
+        availability=Availability.AVAILABLE,
+        observed_at=NOW,
+        raw_title="Título bruto",
+        needs_relevance=False,
+        needs_display_name=False,
+        observation_created=False,
+        alert_comparison=PriceObservationComparison.UNCHANGED_REUSED,
+        previous_observation_id=observation_id,
+        previous_amount=Decimal("300.00"),
+        previous_currency="BRL",
+        previous_availability=Availability.AVAILABLE,
+        previous_observed_at=NOW,
+        forced_relevance=OfferRelevance.MATCH,
+    )
+    outcome = _PhaseAOutcome(
+        run_id=uuid4(),
+        mission_id=uuid4(),
+        store_id=store_id,
+        mission_search_query="CPU",
+        target_amount=None,
+        target_currency=None,
+        completed_at=NOW,
+        offers=(pending,),
+    )
+    session = _mock_async_session()
+    monkeypatch.setattr(
+        "app.collection.orchestration.get_candidate_coupons_for_offer",
+        AsyncMock(return_value=()),
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration.run_historical_bootstrap", AsyncMock()
+    )
+    trigger = AsyncMock(return_value=None)
+    monkeypatch.setattr(
+        "app.collection.orchestration.evaluate_trigger_and_maybe_research", trigger
+    )
+    settings = SimpleNamespace(
+        historical_bootstrap_revalidation_days=90,
+        market_assessment_lease_seconds=300,
+        market_assessment_failure_backoff_minutes=15,
+        market_assessment_failure_backoff_max_minutes=360,
+        historical_bootstrap_enabled=False,
+        coupons_enabled=True,
+    )
+
+    outcomes = asyncio.run(
+        _run_phase_b(
+            outcome,
+            _StubAIManager(),
+            UserRole.ADMIN,
+            session_factory=_session_factory(session),
+            firecrawl=None,
+            settings=settings,
+        )
+    )
+
+    trigger.assert_not_awaited()
+    assert outcomes[0].applied_coupon is None
+
+
 def _phase_b_pending_and_outcome(
     *, offer_id, product_id, store_id, **overrides
 ) -> tuple[_PendingOffer, _PhaseAOutcome]:

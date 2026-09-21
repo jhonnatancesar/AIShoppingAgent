@@ -2379,37 +2379,62 @@ async def _run_phase_b(
         if (
             market_research_enabled
             and effective_relevance is OfferRelevance.MATCH
-            and pending.alert_comparison
-            is not PriceObservationComparison.UNCHANGED_REUSED
+            and settings is not None
+            and settings.coupons_enabled
+        ):
+            # Achado real em PROD (2026-09-21): a consulta de cupom NÃO
+            # pode ficar condicionada a `alert_comparison is not
+            # UNCHANGED_REUSED` -- um cupom pode surgir/mudar num ciclo
+            # em que o preço BRUTO anunciado continua idêntico (o caso
+            # relatado: 9800X3D na Kabum, preço "de/por" igual, cupom
+            # CPUPROMO novo), e isso sozinho pode tornar o preço EFETIVO
+            # mais baixo, merecendo alerta -- mas o bloco antigo nem
+            # chegava a checar se havia cupom nesse cenário. A pesquisa
+            # de mercado (F2/F3, abaixo) recebe a MESMA exceção, para o
+            # caminho C (reoportunidade, via `MarketPriceAssessment`)
+            # também poder considerar o preço com cupom aplicado -- por
+            # decisão explícita do usuário em 2026-09-21.
+            assert session_factory is not None
+            try:
+                async with session_factory() as coupon_session:
+                    offer_row = await coupon_session.get(Offer, pending.offer_id)
+                    if offer_row is not None:
+                        candidates = await get_candidate_coupons_for_offer(
+                            coupon_session,
+                            offer_id=pending.offer_id,
+                            store_id=outcome.store_id,
+                        )
+                        applied_coupon = best_applicable_coupon(
+                            offer_row, candidates, pending.amount, pending.currency
+                        )
+            except Exception:
+                # Falha na etapa de cupom (infraestrutura/integração) NUNCA
+                # derruba o processamento normal da oferta -- segue com o
+                # preço original, como se nenhum cupom tivesse sido
+                # encontrado. Distinto de "consulta válida com zero
+                # candidatos" (que não cai aqui, só devolve `None` de
+                # `best_applicable_coupon` normalmente).
+                logger.warning(
+                    "coupon_evaluation_failed",
+                    extra={"offer_id": str(pending.offer_id)},
+                    exc_info=True,
+                )
+                applied_coupon = None
+        has_new_coupon_despite_unchanged_price = (
+            pending.alert_comparison is PriceObservationComparison.UNCHANGED_REUSED
+            and applied_coupon is not None
+        )
+        if (
+            market_research_enabled
+            and effective_relevance is OfferRelevance.MATCH
+            and (
+                pending.alert_comparison
+                is not PriceObservationComparison.UNCHANGED_REUSED
+                or has_new_coupon_despite_unchanged_price
+            )
         ):
             assert session_factory is not None
             assert settings is not None
-            if settings.coupons_enabled:
-                try:
-                    async with session_factory() as coupon_session:
-                        offer_row = await coupon_session.get(Offer, pending.offer_id)
-                        if offer_row is not None:
-                            candidates = await get_candidate_coupons_for_offer(
-                                coupon_session,
-                                offer_id=pending.offer_id,
-                                store_id=outcome.store_id,
-                            )
-                            applied_coupon = best_applicable_coupon(
-                                offer_row, candidates, pending.amount, pending.currency
-                            )
-                except Exception:
-                    # Falha na etapa de cupom (infraestrutura/integração) NUNCA
-                    # derruba o processamento normal da oferta -- segue com o
-                    # preço original, como se nenhum cupom tivesse sido
-                    # encontrado. Distinto de "consulta válida com zero
-                    # candidatos" (que não cai aqui, só devolve `None` de
-                    # `best_applicable_coupon` normalmente).
-                    logger.warning(
-                        "coupon_evaluation_failed",
-                        extra={"offer_id": str(pending.offer_id)},
-                        exc_info=True,
-                    )
-                    applied_coupon = None
             evaluation_amount = (
                 applied_coupon.final_amount
                 if applied_coupon is not None
@@ -2614,10 +2639,18 @@ async def _persist_phase_c(
                 if product is not None and product.display_name is None:
                     product.display_name = ai_outcome.display_title
 
+            has_new_coupon_despite_unchanged_price = (
+                pending.alert_comparison is PriceObservationComparison.UNCHANGED_REUSED
+                and ai_outcome is not None
+                and ai_outcome.applied_coupon is not None
+            )
             if (
                 relevance is OfferRelevance.MATCH
-                and pending.alert_comparison
-                is not PriceObservationComparison.UNCHANGED_REUSED
+                and (
+                    pending.alert_comparison
+                    is not PriceObservationComparison.UNCHANGED_REUSED
+                    or has_new_coupon_despite_unchanged_price
+                )
                 and await _product_selected_for_mission(
                     session,
                     mission_id=mission.id,
@@ -2626,14 +2659,22 @@ async def _persist_phase_c(
                     selection_mode=current_criteria.variant_selection_mode,
                 )
             ):
-                # UNCHANGED_REUSED nunca chega aqui (guard acima): a Fase A
-                # já disse explicitamente que não há nova comparação a
-                # fazer -- estado comercial reconfirmado idêntico ao já
-                # avaliado antes para esta missão. Resultado normal, zero
-                # alertas, sem chamar o evaluator. Só FIRST_OBSERVATION e
-                # CHANGED chegam aqui, e ambos garantem `current.id !=
-                # previous.id` (quando previous existe), preservando o
-                # guard de distinção do evaluator (app/alerts/evaluator.py).
+                # Achado real em PROD (2026-09-21): `UNCHANGED_REUSED`
+                # normalmente significa "estado comercial reconfirmado
+                # idêntico ao já avaliado antes para esta missão -- zero
+                # alertas, sem chamar o evaluator" (FIRST_OBSERVATION e
+                # CHANGED continuam sendo os únicos casos estruturais que
+                # garantem `current.id != previous.id`, ver abaixo). A
+                # ÚNICA exceção é `has_new_coupon_despite_unchanged_price`
+                # (guard acima): o preço BRUTO pode ficar idêntico entre
+                # dois ciclos enquanto um CUPOM novo/diferente aparece --
+                # o preço EFETIVO muda mesmo sem nenhuma nova
+                # `PriceObservation`. Sem esta exceção, um cupom
+                # (`CPUPROMO` na Kabum, caso relatado pelo usuário) nunca
+                # disparava alerta nem entrava no snapshot que alimenta o
+                # gráfico enquanto o preço anunciado da loja continuasse
+                # o mesmo.
+                #
                 # Consumo de cupons (2026-09-06): quando a Fase B calculou
                 # um cupom aplicável, a decisão de alerta usa o preço FINAL
                 # com cupom como "candidato" -- nunca o `PriceObservation`
@@ -2681,8 +2722,30 @@ async def _persist_phase_c(
                 )
                 previous = None
                 if pending.previous_observation_id is not None:
+                    previous_id = pending.previous_observation_id
+                    if previous_id == current.id:
+                        # Só acontece em UNCHANGED_REUSED+cupom (guard
+                        # acima): a Fase A reaproveitou a MESMA linha
+                        # como `observation`/`previous` desta missão (não
+                        # há uma segunda `PriceObservation` real distinta
+                        # -- é exatamente por isso que normalmente nem
+                        # entraria aqui). O evaluator exige `current.id !=
+                        # previous.id` (`app/alerts/evaluator.py::
+                        # _validate_entities`); sintetiza um id novo só
+                        # para satisfazer essa distinção -- NUNCA
+                        # dereferenciado por ninguém (confirmado: só
+                        # `current.id`/`observation_id` é relido via
+                        # `session.get` pelo Telegram, `previous_
+                        # observation_id` só é gravado no payload do
+                        # evento, nunca relido). Os VALORES usados na
+                        # comparação continuam sempre reais --
+                        # `pending.previous_amount` (preço bruto antes do
+                        # cupom, idêntico a `pending.amount` neste
+                        # cenário) é o que prova que o cupom tornou o
+                        # preço efetivo mais baixo.
+                        previous_id = uuid4()
                     previous = PriceObservation(
-                        id=pending.previous_observation_id,
+                        id=previous_id,
                         offer_id=pending.offer_id,
                         amount=pending.previous_amount,
                         currency=pending.previous_currency,

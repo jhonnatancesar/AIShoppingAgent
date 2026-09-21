@@ -372,25 +372,33 @@ class Settings(BaseSettings):
     historical_bootstrap_revalidation_days: int = Field(default=90, ge=1, le=3650)
     # FASE G (2026-09-06): feature flags que controlam a ativação das
     # fases F1/F3/cupons -- mesmo padrão já usado em TASK-118F/G/H
-    # (`AISHOPPING_<NOME>_ENABLED`, `bool`, default `False`), nenhum
-    # sistema de flags novo. Com todas em `False`, o comportamento é
-    # idêntico ao fluxo anterior a esta iniciativa inteira (F2 -- o
-    # gatilho de oportunidade de `TASK-113`, `should_trigger_market_
-    # research` -- é reaproveitado sem nenhuma mudança e continua sempre
-    # ativo, nunca atrás de flag; só as capacidades NOVAS construídas em
-    # cima dele são flageadas).
-    historical_bootstrap_enabled: bool = Field(default=False)
+    # (`AISHOPPING_<NOME>_ENABLED`, `bool`).
+    #
+    # Achado real + correção enfática do usuário (2026-09-21): as três
+    # flags abaixo nasceram com `default=False` numa sessão anterior
+    # (DEC-116) por decisão UNILATERAL do assistente (reaproveitando um
+    # padrão que ele mesmo tinha criado antes, nunca um pedido real do
+    # usuário) -- isso deixou incerto por dias se `coupons_enabled`
+    # sequer estava ativa em PROD, mascarando um bug real (cupom
+    # coletado pelo worker mas nunca consumido pelo GG) atrás de uma
+    # pergunta de configuração que ninguém tinha decidido de fato.
+    # Regra a partir de agora, explícita do usuário: o assistente NUNCA
+    # decide sozinho se uma flag nova nasce ativa ou não -- sempre
+    # pergunta antes, mesmo quando parece óbvio qual é "a melhor forma
+    # de fazer". As três nasceram `default=True` por decisão EXPLÍCITA
+    # do usuário nesta correção, não presumida.
+    historical_bootstrap_enabled: bool = Field(default=True)
     """F1 -- liga `run_historical_bootstrap` (histórico externo one-shot
     por produto). `False`: a chamada nem acontece -- zero dependência de
     Search/IA introduzida por F1, zero linha nova em `historical_
     bootstraps`/`external_price_references`."""
-    market_research_external_reference_enabled: bool = Field(default=False)
+    market_research_external_reference_enabled: bool = Field(default=True)
     """F3 -- liga o uso de `ExternalPriceReference` (coletada pela F1)
     dentro de `evaluate_trigger_and_maybe_research`/`run_market_research`.
     `False`: a avaliação de mercado volta a se comportar exatamente como
     antes da F3 (TASK-113 original -- só histórico interno e pesquisa ao
     vivo quando necessário, nunca consulta as referências externas)."""
-    coupons_enabled: bool = Field(default=False)
+    coupons_enabled: bool = Field(default=True)
     """Consumo de cupons -- liga o cálculo de aplicabilidade/preço com
     cupom na coleta (`_classify`, Fase B) e na página do usuário
     (`get_user_offer`). `False`: nenhuma consulta a `coupons`/`coupon_

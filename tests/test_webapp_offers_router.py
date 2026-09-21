@@ -130,13 +130,40 @@ def client_with_coupons_enabled(
     session: MagicMock, monkeypatch: pytest.MonkeyPatch
 ) -> TestClient:
     """FASE G (2026-09-06): mesmo client de sempre, só com a flag
-    `coupons_enabled` ligada -- a `client` normal acima usa o default de
-    produção (`False`), que é exatamente o que as demais provam."""
+    `coupons_enabled` explicitamente ligada -- desde 2026-09-21
+    `coupons_enabled` já nasce `True` por decisão explícita do usuário
+    (nunca mais presumida), então esta fixture é redundante com a
+    `client` normal, mas mantida para deixar a intenção explícita nos
+    testes que a usam."""
     app = FastAPI()
     register_api_error_handler(app)
     app.include_router(router)
     app.dependency_overrides[get_web_async_session] = lambda: session
     app.dependency_overrides[get_settings] = lambda: Settings(coupons_enabled=True)
+    owner = _user()
+    monkeypatch.setattr(
+        "app.webapp.dependency.get_web_session_user", lambda *a, **k: owner
+    )
+    return TestClient(app)
+
+
+@pytest.fixture
+def client_with_coupons_disabled(
+    session: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> TestClient:
+    """Mesmo client de sempre, com `coupons_enabled` explicitamente
+    desligada -- achado real + correção do usuário (2026-09-21):
+    `coupons_enabled` deixou de nascer `False` por padrão (decisão
+    unilateral do assistente numa sessão anterior, nunca um pedido do
+    usuário) e passou a nascer `True`; os testes que provam o
+    comportamento "flag desligada" (TASK-113 original, sem cupom)
+    precisam desligar explicitamente agora, a `client` normal não
+    representa mais esse cenário."""
+    app = FastAPI()
+    register_api_error_handler(app)
+    app.include_router(router)
+    app.dependency_overrides[get_web_async_session] = lambda: session
+    app.dependency_overrides[get_settings] = lambda: Settings(coupons_enabled=False)
     owner = _user()
     monkeypatch.setattr(
         "app.webapp.dependency.get_web_session_user", lambda *a, **k: owner
@@ -284,11 +311,11 @@ def test_offer_coupon_lookup_failure_never_breaks_offer_display(
 
 
 def test_offer_never_queries_coupons_when_flag_is_off(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch
+    client_with_coupons_disabled: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """FASE G: `coupons_enabled=False` (default de produção, `client`
-    normal) -- comportamento idêntico ao existente antes de cupons: nem
-    tenta consultar, `applied_coupon` sempre `None`."""
+    """FASE G: `coupons_enabled=False` (explícito -- deixou de ser o
+    default em 2026-09-21) -- comportamento idêntico ao existente antes
+    de cupons: nem tenta consultar, `applied_coupon` sempre `None`."""
     detail = _detail()
     monkeypatch.setattr(
         "app.webapp.offers_router.get_offer_detail_for_user",
@@ -299,7 +326,9 @@ def test_offer_never_queries_coupons_when_flag_is_off(
         "app.webapp.offers_router.get_candidate_coupons_for_offer", query
     )
 
-    response = client.get(f"/api/v1/offers/{detail.offer.id}", cookies=_cookies())
+    response = client_with_coupons_disabled.get(
+        f"/api/v1/offers/{detail.offer.id}", cookies=_cookies()
+    )
 
     assert response.status_code == 200
     assert response.json()["applied_coupon"] is None
@@ -355,11 +384,12 @@ def test_list_offers_shows_applied_coupon_when_eligible(
 
 
 def test_list_offers_never_queries_coupons_when_flag_is_off(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch
+    client_with_coupons_disabled: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """FASE G: `coupons_enabled=False` (default de produção) -- a
-    listagem nem tenta consultar cupons, `applied_coupon` sempre
-    `None`, sem regressão no comportamento anterior a esta correção."""
+    """FASE G: `coupons_enabled=False` (explícito -- deixou de ser o
+    default em 2026-09-21) -- a listagem nem tenta consultar cupons,
+    `applied_coupon` sempre `None`, sem regressão no comportamento
+    anterior a esta correção."""
     summary = _summary()
     monkeypatch.setattr(
         "app.webapp.offers_router.list_user_offers",
@@ -368,7 +398,7 @@ def test_list_offers_never_queries_coupons_when_flag_is_off(
     batch = AsyncMock(side_effect=AssertionError("não deveria consultar cupons"))
     monkeypatch.setattr("app.webapp.offers_router.get_active_coupons_by_store", batch)
 
-    response = client.get("/api/v1/offers", cookies=_cookies())
+    response = client_with_coupons_disabled.get("/api/v1/offers", cookies=_cookies())
 
     assert response.status_code == 200
     assert response.json()["items"][0]["applied_coupon"] is None

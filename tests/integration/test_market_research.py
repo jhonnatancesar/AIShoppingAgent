@@ -59,10 +59,22 @@ NOW = datetime(2026, 8, 27, 12, 0, tzinfo=UTC)
 _SETTINGS = Settings(_env_file=None)
 # FASE G (2026-09-06): flag da F3 -- só os testes que exercitam o reuso da
 # referência externa (FASE F1) precisam dela ligada; os demais continuam
-# com o default (`False`), provando que o comportamento sem a flag é
-# idêntico ao original da TASK-113.
+# com o default, provando que o comportamento sem a flag é idêntico ao
+# original da TASK-113.
 _SETTINGS_WITH_EXTERNAL_REFERENCE = Settings(
     _env_file=None, market_research_external_reference_enabled=True
+)
+# Achado real + correção do usuário (2026-09-21): `historical_bootstrap_
+# enabled`/`market_research_external_reference_enabled`/`coupons_enabled`
+# passaram a nascer `default=True` (decisão explícita do usuário, nunca
+# mais presumida) -- `_SETTINGS` sozinho não representa mais "flags
+# desligadas". Os 2 testes que provam o comportamento ORIGINAL da
+# TASK-113 (sem F1/F3/cupons) precisam desligar as três explicitamente.
+_SETTINGS_FLAGS_OFF = Settings(
+    _env_file=None,
+    historical_bootstrap_enabled=False,
+    market_research_external_reference_enabled=False,
+    coupons_enabled=False,
 )
 
 
@@ -628,9 +640,10 @@ def test_external_reference_flag_off_preserves_task_113_behavior(
     integration_database, monkeypatch
 ) -> None:
     """FASE G: com `market_research_external_reference_enabled=False`
-    (default), uma `ExternalPriceReference` já coletada pela F1 é
-    IGNORADA -- `run_market_research` busca histórico ao vivo exatamente
-    como fazia antes da F3 existir (comportamento original da TASK-113)."""
+    (explícito -- deixou de ser o default em 2026-09-21), uma
+    `ExternalPriceReference` já coletada pela F1 é IGNORADA --
+    `run_market_research` busca histórico ao vivo exatamente como fazia
+    antes da F3 existir (comportamento original da TASK-113)."""
     product = _gpu_product(
         integration_database.sessions, title="NVIDIA GeForce RTX 5070 Super"
     )
@@ -654,7 +667,7 @@ def test_external_reference_flag_off_preserves_task_113_behavior(
             reference_currency="BRL",
             profile=UserRole.ADMIN,
             now=NOW,
-            settings=_SETTINGS,
+            settings=_SETTINGS_FLAGS_OFF,
         )
     )
 
@@ -1160,8 +1173,9 @@ def test_phase_g_integrated_flow_flags_off_preserves_legacy_behavior(
 ) -> None:
     """Mesmo cenário do teste anterior (cupom aplicável + referência
     externa já coletada), mas com as 3 flags da FASE G desligadas
-    (default de produção) -- o alerta usa o preço ORIGINAL, sem cupom, e
-    F3 busca histórico ao vivo como sempre fez (TASK-113 original)."""
+    EXPLICITAMENTE (deixaram de ser o default em 2026-09-21) -- o
+    alerta usa o preço ORIGINAL, sem cupom, e F3 busca histórico ao
+    vivo como sempre fez (TASK-113 original)."""
     from app.collection.shared_collection import collect_monitoring_item_store
     from app.coupons.models import Coupon
     from app.events import Event, EventType
@@ -1209,7 +1223,7 @@ def test_phase_g_integrated_flow_flags_off_preserves_legacy_behavior(
             store_id=amazon_id,
             now=NOW,
             firecrawl=firecrawl,
-            settings=_SETTINGS,
+            settings=_SETTINGS_FLAGS_OFF,
         )
     )
     assert result.succeeded is True
