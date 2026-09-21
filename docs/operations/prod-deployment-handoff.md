@@ -141,6 +141,55 @@ religados (depois da seção 7, antes de declarar o deploy concluído):
 **Sem os dois passos, TASK-123 fica sem efeito real em PROD** -- o
 código sozinho não muda nada até alguém rodar o script e ligar a flag.
 
+## TASK-124 — ação obrigatória no deploy (não é automática)
+
+Corrige o cupom que não avisava/atualizava histórico quando o preço de
+tabela ficava igual (`UNCHANGED_REUSED` bloqueava a consulta de cupom,
+o gatilho de pesquisa de mercado E o avaliador de alerta) e muda o
+default de `historical_bootstrap_enabled`/`market_research_external_
+reference_enabled`/`coupons_enabled` de `false` para `true` (decisão
+explícita do usuário, 2026-09-21 — ver seção 6 acima para o achado
+completo). Detalhe técnico: `docs/tasks/TASK-124.md`.
+
+**As três flags sobem ATIVAS automaticamente com o código — não é
+preciso nenhum passo manual para elas.** PROD hoje não tem nenhuma
+variável de ambiente sobrescrevendo `AISHOPPING_HISTORICAL_BOOTSTRAP_
+ENABLED`/`AISHOPPING_MARKET_RESEARCH_EXTERNAL_REFERENCE_ENABLED`/
+`AISHOPPING_COUPONS_ENABLED` — elas herdam o novo default assim que o
+container `api`/worker nativo sobem com este código.
+
+**O que precisa de sequência manual não são as flags, é a PROD ficar
+parada até o backfill do TASK-123 terminar** — ordem obrigatória,
+decisão explícita do usuário:
+
+1. Sobe o código (container `api` + worker nativo, passo 8 da seção
+   "Ordem de deploy") — as três flags já vêm ativas.
+2. **Não inicie a Scheduled Task `AIShoppingAgent-CollectionWorker`
+   ainda** (pule a sub-etapa 5 do passo 8 por enquanto) — sem isso
+   rodando, nenhuma missão coleta de verdade, então nada usa as flags
+   novas ainda, mesmo elas já estando `true`.
+3. Rode o backfill/dedup do TASK-123
+   (`docker compose run --rm api python -m scripts.
+   reprocess_unresolved_product_identity --apply --limit 100`, em
+   rodadas, seção "TASK-123" acima) até zerar o backlog conhecido.
+4. **Só então** complete a sub-etapa 5 do passo 8 (inicia/confirma a
+   Scheduled Task) — a partir daqui a PROD volta a coletar
+   normalmente, já com F1/F3/cupons ativas desde o passo 1.
+
+Importante: **não é** "manter as flags desligadas até o passo 3" — as
+flags já sobem ativas no passo 1. É "manter a PROD (worker de coleta)
+parada até o passo 3" que exige o passo manual.
+
+**Gap de cobertura conhecido, registrado honestamente**: os testes da
+TASK-124 são unitários (Fase B e Fase C do pipeline, cada uma mockada
+separadamente) + integração dos módulos de cupom/pesquisa de mercado
+isolados — não existe um teste de integração com banco real cobrindo o
+pipeline inteiro (Fase A→B→C) com cupom + `UNCHANGED_REUSED` juntos,
+ponta a ponta. Não bloqueia o deploy, mas só será possível confirmar
+esse caminho específico com certeza total observando um ciclo real de
+coleta em PROD depois da ativação (passo 4 acima) — anote o resultado
+real quando isso acontecer.
+
 ## 2. O que fazer primeiro (antes de qualquer deploy)
 
 **Só dois repositórios têm checkout git em PROD: GG Oferta e Coupon
@@ -230,9 +279,9 @@ estar aplicada **antes** de reiniciar o Coupon Worker com o código novo
 |---|---|
 | `AISHOPPING_DEFAULT_MAX_ACTIVE_MISSIONS` | Cota de missões ativas USER — default de código `5`, não precisa de variável explícita a menos que se queira outro valor |
 | `AISHOPPING_DEFAULT_MAX_ACTIVE_MISSIONS_ADMIN_DEV` | Cota de missões ativas ADMIN/DEV — **valor decidido: `50`**. Sem esta variável, ADMIN/DEV herda o default do USER (`5`) |
-| `AISHOPPING_HISTORICAL_BOOTSTRAP_ENABLED` | Flag F1 — default `false` |
-| `AISHOPPING_MARKET_RESEARCH_EXTERNAL_REFERENCE_ENABLED` | Flag F3 — default `false` |
-| `AISHOPPING_COUPONS_ENABLED` | Flag de consumo de cupons — default `false` |
+| `AISHOPPING_HISTORICAL_BOOTSTRAP_ENABLED` | Flag F1 — default `true` desde 2026-09-21 (TASK-124, decisão explícita do usuário — ver seção "TASK-124" abaixo). Sem variável definida em PROD hoje, então herda `true` automaticamente no deploy, sem passo manual |
+| `AISHOPPING_MARKET_RESEARCH_EXTERNAL_REFERENCE_ENABLED` | Flag F3 — default `true` desde 2026-09-21 (TASK-124), mesma observação acima |
+| `AISHOPPING_COUPONS_ENABLED` | Flag de consumo de cupons — default `true` desde 2026-09-21 (TASK-124), mesma observação acima |
 | `AISHOPPING_CESAR_CORE_BASE_URL` | URL do César Core visto pelo container `api` -- **`http://host.docker.internal:8100`**, já é o default em `compose.yaml` desde `DEC-121` (ver "Portas/URLs aprovadas para PROD" abaixo; `127.0.0.1` não funciona daqui) |
 | `AISHOPPING_CESAR_CORE_API_KEY_FILE` | Arquivo com o Bearer do GG Oferta → César Core -- já aponta para `/run/secrets/cesar_core_api_key` em `compose.yaml`; só é preciso gravar o arquivo host (`.secrets/cesar_core_api_key`, mesmo valor de `deploy/prod/cesar-core/.secrets/ggoferta-core-client`) |
 | `AISHOPPING_TELEGRAM_BOT_TOKEN_FILE` / `AISHOPPING_TELEGRAM_WEBHOOK_SECRET_FILE` | Secrets do bot (já existentes, sem mudança nesta rodada) |
@@ -731,26 +780,31 @@ responder `HTTP 200` com `provider_gateway: "omniroute"` e
 
 | Flag | Onde | Default | OFF (comportamento) | ON (comportamento) |
 |---|---|---|---|---|
-| `AISHOPPING_HISTORICAL_BOOTSTRAP_ENABLED` | GG Oferta | `false` | Idêntico ao fluxo anterior à FASE G — sem bootstrap histórico externo | `run_historical_bootstrap` (F1) roda: busca referência histórica externa uma vez por produto elegível, com retry/backoff exponencial e lease contra dupla execução, revalidando a cada 90 dias |
-| `AISHOPPING_MARKET_RESEARCH_EXTERNAL_REFERENCE_ENABLED` | GG Oferta | `false` | Avaliação de mercado (F2) usa só histórico interno, como antes | Avaliação de mercado (F3) também considera a referência histórica externa buscada pelo F1 |
-| `AISHOPPING_COUPONS_ENABLED` | GG Oferta | `false` | Preço exibido/alertado nunca considera cupom, mesmo que existam cupons coletados no banco | Ofertas elegíveis (Web e alerta) calculam o melhor cupom aplicável em tempo real (`best_applicable_coupon`) e mostram o preço com desconto |
+| `AISHOPPING_HISTORICAL_BOOTSTRAP_ENABLED` | GG Oferta | `true` (desde 2026-09-21, TASK-124) | Idêntico ao fluxo anterior à FASE G — sem bootstrap histórico externo | `run_historical_bootstrap` (F1) roda: busca referência histórica externa uma vez por produto elegível, com retry/backoff exponencial e lease contra dupla execução, revalidando a cada 90 dias |
+| `AISHOPPING_MARKET_RESEARCH_EXTERNAL_REFERENCE_ENABLED` | GG Oferta | `true` (desde 2026-09-21, TASK-124) | Avaliação de mercado (F2) usa só histórico interno, como antes | Avaliação de mercado (F3) também considera a referência histórica externa buscada pelo F1 |
+| `AISHOPPING_COUPONS_ENABLED` | GG Oferta | `true` (desde 2026-09-21, TASK-124) | Preço exibido/alertado nunca considera cupom, mesmo que existam cupons coletados no banco | Ofertas elegíveis (Web e alerta) calculam o melhor cupom aplicável em tempo real (`best_applicable_coupon`) e mostram o preço com desconto |
 | `CESAR_CORE_AI_ENABLED` | César Core | `false` | `/v1/ai/generate` responde "não configurado" | AI real via OmniRoute, resolvida por `ai_profile` |
 | `CESAR_CORE_SEARCH_ENABLED` | César Core | `false` | `/v1/search` responde "não configurado" | Search real via SearXNG |
 
-**Ordem segura de ativação** (cada uma é independente das outras —
-ative uma de cada vez, prove antes de ativar a próxima):
+**Achado + correção (TASK-124, 2026-09-21):** as três flags de GG
+Oferta acima nasceram `default=False` numa sessão anterior (FASE G,
+`DEC-116`) por decisão unilateral do assistente, nunca pedida pelo
+usuário — isso deixou incerto por dias se `coupons_enabled` sequer
+estava ativa em PROD, mascarando um bug real (cupom coletado pelo
+worker mas nunca considerado pelo GG, ver seção "TASK-124" abaixo).
+Corrigido: as três agora nascem `true` no código
+(`backend/app/core/config.py`), por decisão explícita do usuário.
+**Regra permanente**: nenhuma flag nova nasce ativa ou desativada por
+decisão do assistente — sempre perguntar antes.
+
+**Ordem segura de ativação — só se aplica às duas flags do César Core
+agora** (as três de GG Oferta acima já sobem ativas junto com o
+deploy do container/worker, sem etapa de ativação manual separada):
 
 1. `CESAR_CORE_AI_ENABLED` + `CESAR_CORE_SEARCH_ENABLED` (dependem do
-   provisionamento da seção 5 já estar feito e verificado).
-2. `AISHOPPING_HISTORICAL_BOOTSTRAP_ENABLED` (F1) — não depende de
-   nenhuma outra flag.
-3. `AISHOPPING_MARKET_RESEARCH_EXTERNAL_REFERENCE_ENABLED` (F3) —
-   funciona melhor com F1 já ativo há um tempo (referência histórica
-   populada), mas não trava se F1 estiver OFF (só não tem o que
-   referenciar ainda).
-4. `AISHOPPING_COUPONS_ENABLED` — independente das anteriores; precisa
-   do Coupon Worker (seção 9) já rodando e gravando cupons reais para
-   ter efeito visível.
+   provisionamento da seção 5 já estar feito e verificado) — únicas
+   flags que ainda seguem o fluxo antigo de "OFF no deploy, ativação
+   manual depois, uma de cada vez, com prova real entre elas".
 
 ## 7. Ordem de deploy
 
@@ -789,8 +843,13 @@ ative uma de cada vez, prove antes de ativar a próxima):
    (`POST /api/combos/test` para os 2 combos; `POST /v1/search`/
    `POST /v1/fetch` reais para Search/Fetch) antes de prosseguir.
 8. **GG Oferta — container `api` + `telegram_notifier`** (`docker
-   compose up -d`) — com todas as flags da seção 6 **ainda OFF** neste
-   ponto. Confirmar `GET /health` e `GET /ready`. Confirmar também
+   compose up -d`) — as duas flags do César Core (seção 6) seguem
+   **OFF** neste ponto (ativação manual, passo 13 abaixo); as três
+   flags de GG Oferta (F1/F3/cupons) já sobem **ATIVAS** junto com o
+   container, sem etapa manual (TASK-124, 2026-09-21 — ver seção
+   "TASK-124" no início deste documento para a sequência obrigatória
+   com o backfill do TASK-123 antes de deixar o worker nativo coletar
+   de verdade). Confirmar `GET /health` e `GET /ready`. Confirmar também
    (`DEC-121`, blocker real do preflight anterior): dentro do container
    `api`, `curl http://host.docker.internal:8100/health` responde
    (prova que o `extra_hosts` resolve o Windows Server) e uma mensagem
@@ -819,7 +878,10 @@ ative uma de cada vez, prove antes de ativar a próxima):
    5. **Só então** iniciar/confirmar a Scheduled Task
       `AIShoppingAgent-CollectionWorker` (`manage_collection_worker_task.ps1`)
       — ela lê as variáveis de Máquina frescas a cada disparo, sem
-      precisar de reboot.
+      precisar de reboot. **Nesta rodada (TASK-124), NÃO complete esta
+      sub-etapa ainda** — deixe a Scheduled Task parada até rodar o
+      backfill do TASK-123 (ver seção "TASK-124" no início deste
+      documento); só depois disso inicie/confirme a task de verdade.
 9. **Coupon Worker — primeira instalação em PROD** (seção 9) — diretório,
    `.env` (`AUTH_TOKEN` + `COUPONS_POSTGRES_DSN` apontando para o
    Postgres de PROD), instalar o agendamento (Windows Scheduled Task).
@@ -827,11 +889,14 @@ ative uma de cada vez, prove antes de ativar a próxima):
    César Core.
 10. **Health/readiness dos três** — confirmar antes de tocar em
     qualquer flag (tabela na seção 8 abaixo).
-11. **Flags OFF, prova básica** — com tudo no ar e flags ainda
-    desligadas, confirmar que o comportamento é idêntico ao anterior a
-    este deploy inteiro (nenhuma regressão visível com tudo desligado).
-12. **Ativação gradual** — seguir a ordem da seção 6, uma flag por vez,
-    com prova real entre cada uma.
+11. **Flags do César Core OFF, prova básica** — com tudo no ar e as
+    duas flags do César Core ainda desligadas, confirmar que o
+    comportamento é idêntico ao anterior a este deploy inteiro (F1/F3/
+    cupons já estão ativas desde o passo 8, isso é esperado — a prova
+    aqui é só sobre AI/Search do César Core).
+12. **Ativação gradual do César Core** — seguir o item único restante
+    da lista da seção 6 (`CESAR_CORE_AI_ENABLED` +
+    `CESAR_CORE_SEARCH_ENABLED`), com prova real depois de ativar.
 13. **Gate Gemini** (seção 11) — antes especificamente da política de
     providers AI valer para tráfego real, não só para as flags de
     F1/F3/cupons.

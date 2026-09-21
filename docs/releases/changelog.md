@@ -1,5 +1,38 @@
 # Changelog
 
+## `v1.3.26` — TASK-124: cupom não avisava quando o preço de tabela ficava igual + flags F1/F3/cupom sobem ativas
+
+Achado real reportado pelo usuário: o 9800X3D saiu por R$ 2.249 na
+Kabum com o cupom `CPUPROMO` (recorde histórico), o Coupon Worker
+coletou o cupom normalmente, mas o GG nunca avisou nem aplicou o
+desconto -- o preço de tabela (sem cupom) tinha ficado idêntico ao
+ciclo anterior (`UNCHANGED_REUSED`), e três pontos do pipeline
+(`orchestration.py`) estavam condicionados a esse estado sem nenhuma
+exceção para cupom: a busca de cupom em si (Fase B), o gatilho de
+pesquisa de mercado F2/F3 (Fase B, caminho de reoportunidade) e o
+avaliador de alerta (Fase C, caminhos B e C).
+
+Corrigido: as três frentes agora consideram cupom mesmo com preço de
+tabela inalterado -- a busca de cupom deixou de depender de
+`UNCHANGED_REUSED`; o gatilho F2/F3 e o avaliador passam a rodar
+quando um cupom novo é encontrado mesmo nesse cenário (usando
+`applied_coupon.final_amount` como preço efetivo). Regressão coberta
+por 2 testes novos provando o cenário exato relatado.
+
+Investigação paralela revelou que as três flags relacionadas
+(`historical_bootstrap_enabled`, `market_research_external_reference_
+enabled`, `coupons_enabled`) nasceram `default=False` numa sessão
+anterior (FASE G) por decisão unilateral do assistente, nunca pedida
+pelo usuário -- mascarando se `coupons_enabled` sequer estava ativa em
+PROD. Corrigido por decisão explícita do usuário: as três agora nascem
+`true`. Regra registrada como padrão permanente: nenhuma flag nova
+nasce ativa/inativa por decisão do assistente, sempre pergunta antes.
+
+Sequência de deploy (ver `docs/operations/prod-deployment-handoff.md`,
+seção "TASK-124"): as flags sobem ativas automaticamente com o código;
+quem precisa ficar pausado até o backfill do TASK-123 terminar é a
+PROD (worker de coleta), não as flags.
+
 ## `v1.3.25` — TASK-123: corrige crash real no merge de duplicatas (`apply_learned_identity`)
 
 O primeiro `--apply --limit 100` real, autorizado pelo usuário,
