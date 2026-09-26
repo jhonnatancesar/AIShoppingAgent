@@ -120,26 +120,18 @@ religados (depois da seção 7, antes de declarar o deploy concluído):
    identity_key no banco: 0" -- só então o backlog está zerado. Cada
    rodada `--apply` chama IA de verdade (custo real) -- não rode em
    loop automatizado sem supervisão, acompanhe a saída de cada rodada.
-2. **Ligar a flag para cobrir itens novos dali em diante** -- variável
-   de ambiente de **Máquina** do Windows lida pelo `collection_worker`
-   nativo (`Settings.product_identity_learning_enabled`,
-   `backend/app/core/config.py:401`, `env_prefix="AISHOPPING_"`).
-   **Ainda não gerenciada por `scripts\manage_collection_worker_config.ps1`**
-   (confirmado nesta rodada -- só as variáveis já existentes do
-   wiring do César Core estão lá) -- defina diretamente:
-   ```powershell
-   [Environment]::SetEnvironmentVariable("AISHOPPING_PRODUCT_IDENTITY_LEARNING_ENABLED", "true", "Machine")
-   ```
-   Igual às demais variáveis de Máquina deste processo (seção "GG
-   Oferta — worker nativo" abaixo): o Task Scheduler lê variáveis de
-   Máquina frescas a cada disparo, sem precisar de logoff/reboot/restart
-   manual da tarefa. Sem esse passo, o backfill do passo 1 resolve o
-   que já existe hoje, mas qualquer produto novo sem extrator
-   determinístico volta a acumular sem identidade a partir da próxima
-   coleta.
+2. **Itens novos (flag `product_identity_learning_enabled`) -- NÃO é
+   mais passo manual.** Desde 2026-09-25 a flag nasce `true` no código
+   (decisão do usuário: "todas as flags sobem ativas sempre") -- sobe
+   ativa junto com o deploy, igual às 3 flags da TASK-124. Não defina
+   `AISHOPPING_PRODUCT_IDENTITY_LEARNING_ENABLED` em PROD (se alguém já
+   tiver definido como `false` numa rodada anterior, remova:
+   `[Environment]::SetEnvironmentVariable("AISHOPPING_PRODUCT_IDENTITY_LEARNING_ENABLED", $null, "Machine")`).
+   Mesma regra de sequência da TASK-124: quem fica parada até o backfill
+   do passo 1 terminar é a Scheduled Task de coleta, não a flag.
 
-**Sem os dois passos, TASK-123 fica sem efeito real em PROD** -- o
-código sozinho não muda nada até alguém rodar o script e ligar a flag.
+**Sem o passo 1, o backlog já parado no banco continua sem identidade**
+-- a flag só cobre produtos que passam por uma coleta nova.
 
 ## TASK-124 — ação obrigatória no deploy (não é automática)
 
@@ -189,6 +181,25 @@ ponta a ponta. Não bloqueia o deploy, mas só será possível confirmar
 esse caminho específico com certeza total observando um ciclo real de
 coleta em PROD depois da ativação (passo 4 acima) — anote o resultado
 real quando isso acontecer.
+
+## TASK-126/127 — o que muda em PROD (sem passo manual obrigatório)
+
+- **TASK-127 — container `api` passa a chamar Search e Fetch do César
+  Core** (até aqui, o `api` só usava a capacidade de IA). O botão
+  "Buscar preço histórico" do detalhe da oferta roda a busca em segundo
+  plano dentro do próprio `api` — mesma credencial
+  (`AISHOPPING_CESAR_CORE_API_KEY_FILE`) e mesma URL
+  (`AISHOPPING_CESAR_CORE_BASE_URL`) já configuradas, nenhuma variável
+  nova. **Nunca exercitado em PROD** — depois do deploy, validar
+  clicando no botão numa oferta sem preço de referência e conferir que
+  o bloco sai de "Buscando…" com um preço ou com "nenhum preço de
+  referência encontrado" (nunca "a busca falhou" por credencial/rede).
+  Se a credencial não existir, o botão simplesmente não aparece.
+- O botão não funciona para produtos sem identidade reconhecida — o
+  backlog da TASK-123 (placas-mãe etc.) só passa a ter o botão depois
+  do backfill da seção "TASK-123" acima.
+- **TASK-126**: nenhuma configuração — filtro DEV-only na tela de
+  Ofertas, desligado por padrão.
 
 ## 2. O que fazer primeiro (antes de qualquer deploy)
 
@@ -278,7 +289,8 @@ estar aplicada **antes** de reiniciar o Coupon Worker com o código novo
 | Variável | Papel |
 |---|---|
 | `AISHOPPING_DEFAULT_MAX_ACTIVE_MISSIONS` | Cota de missões ativas USER — default de código `5`, não precisa de variável explícita a menos que se queira outro valor |
-| `AISHOPPING_DEFAULT_MAX_ACTIVE_MISSIONS_ADMIN_DEV` | Cota de missões ativas ADMIN/DEV — **valor decidido: `50`**. Sem esta variável, ADMIN/DEV herda o default do USER (`5`) |
+| `AISHOPPING_DEFAULT_MAX_ACTIVE_MISSIONS_ADMIN_DEV` | Cota de missões ativas ADMIN/DEV — **`50` já é o default do código desde 2026-09-25** (antes só existia via esta variável e o código caía nos `5` do USER). Não precisa mais ser definida |
+| `AISHOPPING_DEFAULT_MAX_STORE_SLOTS_ADMIN_DEV` | Vagas de loja ADMIN/DEV — default de código **`300`** (50 missões × 6 lojas da V1). Achado real 2026-09-25: só a cota de missões tinha valor próprio, as vagas continuavam 18 (as do USER) e o DEV travava em 3 missões. Não precisa ser definida |
 | `AISHOPPING_HISTORICAL_BOOTSTRAP_ENABLED` | Flag F1 — default `true` desde 2026-09-21 (TASK-124, decisão explícita do usuário — ver seção "TASK-124" abaixo). Sem variável definida em PROD hoje, então herda `true` automaticamente no deploy, sem passo manual |
 | `AISHOPPING_MARKET_RESEARCH_EXTERNAL_REFERENCE_ENABLED` | Flag F3 — default `true` desde 2026-09-21 (TASK-124), mesma observação acima |
 | `AISHOPPING_COUPONS_ENABLED` | Flag de consumo de cupons — default `true` desde 2026-09-21 (TASK-124), mesma observação acima |

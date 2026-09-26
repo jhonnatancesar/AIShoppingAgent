@@ -1,6 +1,41 @@
 # Changelog
 
-## `v1.3.26` — TASK-124: cupom não avisava quando o preço de tabela ficava igual + flags F1/F3/cupom sobem ativas
+## `v1.3.26` — TASK-124/126/127: cupom com preço de tabela igual, visão DEV de todos os itens e preço histórico com busca manual
+
+### TASK-127 — preço histórico visível para todos + botão "Buscar preço histórico"
+
+O detalhe da oferta ganhou o bloco "Preço histórico", logo acima do
+gráfico: menor preço já registrado pelo GG e menor preço histórico de
+referência (hardwarebarato.com + busca genérica, via César Core), com
+fonte e data. Tudo lido direto do banco -- o que já foi coletado aparece
+na hora, sem ninguém clicar. O botão dispara a busca fora do fluxo de
+coleta (funciona para missão pausada/encerrada e para produtos que o
+fluxo automático pula por já terem histórico interno suficiente): sem
+busca recente, qualquer usuário busca; dentro dos 90 dias, só DEV força,
+com confirmação. A busca roda em segundo plano (pode levar minutos) e a
+tela acompanha o estado. **Deploy**: o container `api` passa a chamar
+Search/Fetch do César Core (antes só IA) -- validar em PROD.
+
+### TASK-126 — DEV vê todos os itens pesquisados, de todos os usuários
+
+Filtro DEV-only "Ver de todos os usuários, incluindo descartados" na
+própria tela de Ofertas (desligado por padrão), mostrando também os
+itens `NO_MATCH`. Corrigido junto com a TASK-127: DEV agora também abre
+o detalhe, a comparação e o gráfico dessas ofertas (antes dava "você
+não tem acesso"). USER inalterado.
+
+### Cotas do DEV e flag de identidade (2026-09-25)
+
+O DEV podia ter 50 missões, mas a tela mostrava as vagas de loja
+limitadas a 18: só a cota de MISSÕES tinha valor próprio para ADMIN/DEV
+-- a de vagas continuava a do USER, e como cada missão ocupa até 6 lojas
+o DEV travava em 3 missões. Agora ADMIN/DEV tem 50 missões e 300 vagas
+(50 × 6) direto no código, sem variável de ambiente; USER inalterado
+(5 missões, 18 vagas). A flag `product_identity_learning_enabled`
+(identidade via IA para produto novo durante a coleta) passa a nascer
+ativa, por decisão do usuário: "todas as flags sobem ativas sempre".
+
+### TASK-124 — cupom não avisava quando o preço de tabela ficava igual + flags F1/F3/cupom sobem ativas
 
 Achado real reportado pelo usuário: o 9800X3D saiu por R$ 2.249 na
 Kabum com o cupom `CPUPROMO` (recorde histórico), o Coupon Worker
