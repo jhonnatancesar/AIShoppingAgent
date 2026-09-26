@@ -402,9 +402,11 @@ Na próxima rodada de deploy em PROD, fazer os dois passos abaixo
 juntos, nesta ordem, como parte do mesmo prompt/sessão de deploy (não
 como TASKs separadas):
 
-1. **Ligar `product_identity_learning_enabled=true`** em PROD (variável
-   de ambiente do `collection_worker` nativo) -- cobre itens novos a
-   partir da próxima coleta.
+1. **Ligar `product_identity_learning_enabled=true`** em PROD --
+   **automático desde 2026-09-25**: a flag passou a nascer `true` no
+   código (decisão do usuário, "todas as flags sobem ativas sempre"),
+   sem variável de ambiente. A PROD (Scheduled Task de coleta) continua
+   parada até o backfill abaixo terminar, mesmo modelo da TASK-124.
 2. **Rodar `python -m scripts.reprocess_unresolved_product_identity
    --count-only`** primeiro (zero custo de IA) para saber o tamanho
    real do backlog antes de decidir o ritmo.

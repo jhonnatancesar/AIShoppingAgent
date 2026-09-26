@@ -71,11 +71,46 @@ def test_resolve_quota_limits_prefers_user_override() -> None:
 def test_resolve_quota_limits_admin_dev_falls_back_to_user_default_when_unconfigured(
     role: UserRole,
 ) -> None:
-    """Sem `default_max_active_missions_admin_dev` configurado, ADMIN/DEV
-    preserva o comportamento anterior à separação (mesmo default do USER)."""
-    limits = resolve_quota_limits(_user(role=role), _settings())
+    """Com os defaults ADMIN/DEV explicitamente desligados (`None`), ADMIN/
+    DEV volta a herdar os mesmos defaults do USER."""
+    settings = Settings(
+        _env_file=None,
+        default_max_active_missions_admin_dev=None,
+        default_max_store_slots_admin_dev=None,
+    )
+
+    limits = resolve_quota_limits(_user(role=role), settings)
 
     assert limits.max_active_missions == 5
+    assert limits.max_store_slots == 18
+
+
+@pytest.mark.parametrize("role", [UserRole.ADMIN, UserRole.DEV])
+def test_admin_dev_defaults_let_all_50_missions_use_every_store(
+    role: UserRole,
+) -> None:
+    """Achado real (2026-09-25): o DEV tinha 50 missões, mas as vagas de
+    loja continuavam 18 (as de USER) -- travava em 3 missões de 6 lojas.
+    Agora os dois defaults ADMIN/DEV já vêm no código: 50 missões e
+    300 vagas (50 x 6 lojas da V1)."""
+    limits = resolve_quota_limits(_user(role=role), _settings())
+
+    assert limits.max_active_missions == 50
+    assert limits.max_store_slots == 300
+    assert limits.max_store_slots >= limits.max_active_missions * 6
+
+
+def test_user_keeps_18_store_slots_regardless_of_admin_dev_default() -> None:
+    limits = resolve_quota_limits(_user(role=UserRole.USER), _settings())
+
+    assert limits.max_active_missions == 5
+    assert limits.max_store_slots == 18
+
+
+def test_store_slots_override_still_wins_for_admin_dev() -> None:
+    user = _user(role=UserRole.DEV, max_store_slots_override=12)
+
+    assert resolve_quota_limits(user, _settings()).max_store_slots == 12
 
 
 @pytest.mark.parametrize("role", [UserRole.ADMIN, UserRole.DEV])

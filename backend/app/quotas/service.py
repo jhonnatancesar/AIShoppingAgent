@@ -80,6 +80,19 @@ def _default_max_active_missions_for_role(user: User, settings: Settings) -> int
     )
 
 
+def _default_max_store_slots_for_role(user: User, settings: Settings) -> int:
+    """Mesma regra de `_default_max_active_missions_for_role`, para vagas
+    de loja -- sem isto, o DEV com 50 missões ficava preso nas 18 vagas do
+    USER (achado real, 2026-09-25)."""
+    if user.role is UserRole.USER:
+        return settings.default_max_store_slots
+    return (
+        settings.default_max_store_slots_admin_dev
+        if settings.default_max_store_slots_admin_dev is not None
+        else settings.default_max_store_slots
+    )
+
+
 def resolve_quota_limits(user: User, settings: Settings) -> QuotaLimits:
     """`NULL` no override do usuário usa o default do sistema -- nenhum
     plano/tier novo, só um valor pontual por usuário (`DEC-094`). O
@@ -94,7 +107,7 @@ def resolve_quota_limits(user: User, settings: Settings) -> QuotaLimits:
         max_store_slots=(
             user.max_store_slots_override
             if user.max_store_slots_override is not None
-            else settings.default_max_store_slots
+            else _default_max_store_slots_for_role(user, settings)
         ),
         max_daily_searches=(
             user.max_daily_searches_override

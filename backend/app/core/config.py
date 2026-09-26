@@ -243,16 +243,18 @@ class Settings(BaseSettings):
     default_max_active_missions: int = Field(default=5, ge=1, le=1000)
     default_max_store_slots: int = Field(default=18, ge=1, le=10000)
     default_max_daily_searches: int = Field(default=30, ge=1, le=100000)
-    # Cota de missões ativas dedicada a ADMIN/DEV, independente da de USER
-    # (reaproveita o `role` já existente em `User`, nunca `service_class`
-    # nem outro sinal indireto). `None` preserva o comportamento anterior
-    # -- ADMIN/DEV cai no mesmo `default_max_active_missions` do USER --
-    # até que um valor real seja decidido explicitamente e configurado
-    # aqui. `max_active_missions_override` por usuário continua tendo
-    # prioridade sobre este default, igual ao de USER.
-    default_max_active_missions_admin_dev: int | None = Field(
-        default=None, ge=1, le=1000
-    )
+    # Cotas dedicadas a ADMIN/DEV, independentes das de USER (reaproveita o
+    # `role` já existente em `User`, nunca `service_class` nem outro sinal
+    # indireto). `50` missões é o valor decidido pelo usuário (`DEC-118`) --
+    # antes só existia como variável de ambiente em PROD e o código caía no
+    # default de USER (5). Achado real (2026-09-25): só a cota de MISSÕES
+    # tinha valor próprio; a de vagas de loja continuava 18 para todo mundo,
+    # e como cada missão ocupa até 6 lojas o DEV travava em 3 missões. `300`
+    # = 50 missões x 6 lojas da V1, para que o único limite real do DEV seja
+    # o das 50 missões. `None` ainda significa "herda o default de USER";
+    # override por usuário continua tendo prioridade sobre os dois.
+    default_max_active_missions_admin_dev: int | None = Field(default=50, ge=1, le=1000)
+    default_max_store_slots_admin_dev: int | None = Field(default=300, ge=1, le=10000)
     quota_warning_threshold: float = Field(default=0.8, gt=0, le=1.0)
     # TASK-108: fila justa por usuário -- camada ortogonal ao backoff por
     # provider (`MissionSource.next_eligible_at`, DEC-046, já existente,
@@ -406,7 +408,7 @@ class Settings(BaseSettings):
     seguem exatamente como antes de cupons existir. O Telegram nunca
     precisa da flag diretamente -- ele só lê um snapshot que só existe no
     payload quando esta flag esteve ligada no momento da decisão."""
-    product_identity_learning_enabled: bool = Field(default=False)
+    product_identity_learning_enabled: bool = Field(default=True)
     """Rodada de aprendizado de identidade (2026-09-12) -- liga a
     tentativa de `resolve_or_learn_product_variant` (extração assistida
     por IA via César Core) na Fase B (`_classify`) quando o Product de
@@ -414,8 +416,10 @@ class Settings(BaseSettings):
     reconheceram o título). `False`: comportamento idêntico a antes
     desta rodada -- título não reconhecido pelos extratores regex
     continua "não identificado" para sempre, zero chamada de IA nova,
-    zero linha em `product_identity_candidates`. Default `False` (mesmo
-    padrão FASE G) até validação em DEV."""
+    zero linha em `product_identity_candidates`. Nasce `True` por decisão
+    explícita do usuário (2026-09-25: "todas as flags sobem ativas
+    sempre") -- o `False` original (2026-09-12, "até validação em DEV")
+    tinha sido decisão do assistente, nunca do usuário."""
 
     @field_validator("edge_cdp_url")
     @classmethod
