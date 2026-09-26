@@ -22,7 +22,17 @@ porque é Postgres, não cache em processo."""
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import CheckConstraint, DateTime, Index, String, Text, func
+from sqlalchemy import (
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    SmallInteger,
+    String,
+    Text,
+    func,
+    text,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PostgreSQLUUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -53,13 +63,21 @@ class ProductIdentityCandidate(Base):
     `identity_key`/`family_key`, então nunca funde produtos) e
     `"awaiting_page"` (nem a categoria saiu do título; o worker lê a
     página e a IA tenta de novo). Nos dois, o mesmo título nunca chama a
-    IA outra vez só pelo título."""
+    IA outra vez só pelo título.
+
+    TASK-128 etapa 2: `"unrecognized"` é TERMINAL -- o worker leu a
+    página (ou a loja não abre página de produto, ou 3 leituras falharam)
+    e nem assim deu para categorizar; nunca é tentado de novo (nunca um
+    laço de chamadas de IA). Quando a página resolve, a linha
+    `awaiting_page` é SUBSTITUÍDA pela decisão nova (approved/
+    pending_review/partial), com `page_context` guardando os dados da
+    página usados no grounding."""
 
     __tablename__ = "product_identity_candidates"
     __table_args__ = (
         CheckConstraint(
             "status IN ('approved', 'pending_review', 'rejected', 'partial', "
-            "'awaiting_page')",
+            "'awaiting_page', 'unrecognized')",
             name="ck_product_identity_candidates_status_values",
         ),
         CheckConstraint(
@@ -77,6 +95,14 @@ class ProductIdentityCandidate(Base):
         CheckConstraint(
             "status <> 'awaiting_page' OR (category IS NULL AND identity_key IS NULL)",
             name="ck_product_identity_candidates_awaiting_page_shape",
+        ),
+        CheckConstraint(
+            "status <> 'unrecognized' OR (category IS NULL AND identity_key IS NULL)",
+            name="ck_product_identity_candidates_unrecognized_shape",
+        ),
+        CheckConstraint(
+            "page_attempts >= 0",
+            name="ck_product_identity_candidates_page_attempts_non_negative",
         ),
         CheckConstraint(
             "btrim(raw_title) <> ''",
@@ -103,6 +129,12 @@ class ProductIdentityCandidate(Base):
         ),
         Index("ix_product_identity_candidates_status", "status"),
         Index("ix_product_identity_candidates_identity_key", "identity_key"),
+        Index(
+            "ix_product_identity_candidates_awaiting_page",
+            "page_attempts",
+            "created_at",
+            postgresql_where=text("status = 'awaiting_page'"),
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(
@@ -158,3 +190,23 @@ class ProductIdentityCandidate(Base):
     reviewed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    source_product_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("products.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    """TASK-128 etapa 2: Product que originou o "não entendi" -- é por
+    uma Offer dele que o worker abre a página do produto. `SET NULL` se
+    o Product for fundido/removido (a leitura então conta como falha)."""
+    page_context: Mapped[str | None] = mapped_column(Text, nullable=True)
+    """Dados da página do próprio produto usados pela IA e pelo grounding
+    quando o título sozinho não bastou -- guardados para que o vínculo
+    lido do cache depois (`_link_from_candidate`) use a MESMA evidência."""
+    page_attempts: Mapped[int] = mapped_column(
+        SmallInteger, nullable=False, default=0, server_default="0"
+    )
+    page_read_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    """Última tentativa de leitura da página -- também serve de "reserva"
+    curta para que dois ciclos não abram a mesma página ao mesmo tempo."""

@@ -113,6 +113,7 @@ from app.products.identity import (
     resolve_product_variant,
 )
 from app.products.identity_ai import PartialProductLink
+from app.products.identity_page import AwaitingPageSweepSummary
 from app.products.models import Product
 from app.stores.models import Seller
 from app.users.models import UserRole
@@ -4939,7 +4940,7 @@ def test_orchestrator_batch_notifies_coupon_worker_on_high_activity(
     monkeypatch.setattr(
         "app.collection.orchestration.notify_coupon_worker_high_activity", notify
     )
-    settings = SimpleNamespace()
+    settings = SimpleNamespace(product_identity_learning_enabled=False)
     orchestrator = CollectionOrchestrator(
         session_factory,
         CollectionAdapter(),
@@ -4980,7 +4981,7 @@ def test_orchestrator_batch_isolates_coupon_worker_notify_failure(
         session_factory,
         CollectionAdapter(),
         ai_manager=_StubAIManager(),
-        settings=SimpleNamespace(),
+        settings=SimpleNamespace(product_identity_learning_enabled=False),
     )
 
     # Nunca deve vazar -- erro na notificação, best-effort, é isolado.
@@ -6284,3 +6285,66 @@ def test_installment_snapshot_differs_when_a_condition_is_added() -> None:
     right = [_installment(installment_count=12), _installment(installment_count=6)]
 
     assert _installment_snapshot(left) != _installment_snapshot(right)
+
+
+# ---------------------------------------------------------------------------
+# TASK-128 etapa 2 -- varredura de "não entendi" no início do ciclo
+# ---------------------------------------------------------------------------
+
+
+def _page_sweep_orchestrator(settings) -> CollectionOrchestrator:
+    return CollectionOrchestrator(
+        _session_factory(_mock_async_session()),
+        CollectionAdapter(),
+        ai_manager=_StubAIManager(),
+        settings=settings,
+    )
+
+
+def test_page_read_sweep_is_skipped_without_flag_or_budget(monkeypatch) -> None:
+    sweep = AsyncMock()
+    monkeypatch.setattr(
+        "app.collection.orchestration.resolve_awaiting_page_titles", sweep
+    )
+    for settings in (
+        None,
+        SimpleNamespace(product_identity_learning_enabled=False),
+        SimpleNamespace(
+            product_identity_learning_enabled=True, identity_page_read_budget=0
+        ),
+    ):
+        asyncio.run(
+            _page_sweep_orchestrator(settings)._resolve_awaiting_page_titles(NOW)
+        )
+    sweep.assert_not_awaited()
+
+
+def test_page_read_sweep_uses_the_worker_adapter_and_never_breaks_the_cycle(
+    monkeypatch,
+) -> None:
+    sweep = AsyncMock(
+        side_effect=[
+            AwaitingPageSweepSummary(claimed=2, linked=1, unrecognized=1),
+            AwaitingPageSweepSummary(),
+            RuntimeError("banco fora"),
+            asyncio.CancelledError(),
+        ]
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration.resolve_awaiting_page_titles", sweep
+    )
+    orchestrator = _page_sweep_orchestrator(
+        SimpleNamespace(
+            product_identity_learning_enabled=True, identity_page_read_budget=4
+        )
+    )
+
+    for _ in range(3):
+        asyncio.run(orchestrator._resolve_awaiting_page_titles(NOW))
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(orchestrator._resolve_awaiting_page_titles(NOW))
+
+    kwargs = sweep.await_args.kwargs
+    assert kwargs["page_reader"] == orchestrator._adapter.read_product_page
+    assert (kwargs["budget"], kwargs["now"]) == (4, NOW)
+    assert kwargs["ai_manager"] is orchestrator._ai_manager

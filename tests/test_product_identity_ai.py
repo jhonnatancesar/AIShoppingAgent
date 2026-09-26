@@ -18,6 +18,7 @@ from app.products.identity_ai import (
     evaluate_ai_identity_extraction,
     extract_product_identities_via_ai_batch,
     extract_product_identity_via_ai,
+    grounding_evidence,
     normalized_title_hash,
     values_match_ignoring_punctuation,
 )
@@ -657,3 +658,96 @@ def test_partial_link_truncates_long_category_label() -> None:
     link = build_partial_link("Produto", category="x" * 200, brand=None, family=None)
     assert link is not None
     assert link.category == "x" * 80
+
+
+# ---------------------------------------------------------------------------
+# TASK-128 etapa 2 -- título + dados da página do produto
+# ---------------------------------------------------------------------------
+
+_HEADSET_TITLE = "Headset Gamer Preto P2"
+_HEADSET_PAGE = "Marca: HyperX\nModelo: Cloud Stinger"
+
+
+@pytest.mark.anyio
+async def test_extraction_with_page_context_sends_title_and_page_data() -> None:
+    manager = _CapturingAIManager(
+        '{"category": "headset", "brand": "HyperX", "family": "Cloud", '
+        '"model": "Stinger", "variant": null, "store_sku": null, '
+        '"manufacturer_part_number": null, "attributes": {}}'
+    )
+
+    result = await extract_product_identity_via_ai(
+        manager,
+        raw_title=_HEADSET_TITLE,
+        profile=UserRole.ADMIN,
+        page_context=_HEADSET_PAGE,
+    )
+
+    assert result.brand == "HyperX"
+    system, user = manager.requests[0].messages
+    assert "DADOS DA PÁGINA" in system.content
+    assert user.content == (
+        "Título do anúncio: Headset Gamer Preto P2\n\n"
+        "Dados da página do produto:\nMarca: HyperX\nModelo: Cloud Stinger"
+    )
+
+
+@pytest.mark.anyio
+async def test_blank_page_context_keeps_the_title_only_prompt() -> None:
+    manager = _CapturingAIManager("não é json")
+
+    await extract_product_identity_via_ai(
+        manager, raw_title=_HEADSET_TITLE, profile=UserRole.ADMIN, page_context="  "
+    )
+
+    system, user = manager.requests[0].messages
+    assert "DADOS DA PÁGINA" not in system.content
+    assert user.content == _HEADSET_TITLE
+
+
+def test_grounding_evidence_is_title_plus_page_only_when_the_page_was_read() -> None:
+    assert grounding_evidence("Título") == "Título"
+    assert grounding_evidence("Título", " ") == "Título"
+    assert grounding_evidence("Título", "Marca: X") == "Título\nMarca: X"
+
+
+def test_page_data_grounds_fields_the_title_never_mentions() -> None:
+    """O título genérico sozinho não aterra marca/modelo; com os dados da
+    página do PRÓPRIO produto, a mesma extração vira identidade exata."""
+    extraction = AIIdentityExtraction(
+        category="headset",
+        brand="HyperX",
+        family="Cloud",
+        model="Stinger",
+        variant=None,
+        store_sku=None,
+        manufacturer_part_number=None,
+        attributes={},
+        ai_provider="stub",
+        ai_model="stub-model",
+    )
+
+    title_only = evaluate_ai_identity_extraction(_HEADSET_TITLE, extraction)
+    with_page = evaluate_ai_identity_extraction(
+        _HEADSET_TITLE, extraction, page_context=_HEADSET_PAGE
+    )
+
+    assert title_only.status == "pending_review"
+    assert with_page.status == "approved"
+    assert with_page.resolved.brand == "hyperx"
+
+
+def test_partial_link_grounds_brand_in_page_data() -> None:
+    assert build_partial_link(
+        "Cadeira Gamer Reclinável",
+        category="cadeira gamer",
+        brand="ThunderX3",
+        family=None,
+    ) == PartialProductLink(category="cadeira-gamer", brand=None, family=None)
+    assert build_partial_link(
+        "Cadeira Gamer Reclinável",
+        category="cadeira gamer",
+        brand="ThunderX3",
+        family=None,
+        page_context="Marca: ThunderX3",
+    ) == PartialProductLink(category="cadeira-gamer", brand="thunderx3", family=None)

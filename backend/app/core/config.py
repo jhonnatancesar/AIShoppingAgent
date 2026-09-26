@@ -420,6 +420,12 @@ class Settings(BaseSettings):
     explícita do usuário (2026-09-25: "todas as flags sobem ativas
     sempre") -- o `False` original (2026-09-12, "até validação em DEV")
     tinha sido decisão do assistente, nunca do usuário."""
+    identity_page_read_budget: int = Field(default=3, ge=0, le=20)
+    """TASK-128 etapa 2: quantos títulos "não entendi" (`awaiting_page`)
+    o worker tenta resolver por ciclo lendo a página do produto -- em
+    sequência, no início do ciclo, atrás da mesma flag
+    `product_identity_learning_enabled`. Cada título custa no máximo uma
+    navegação e uma chamada de IA. `0` desliga só a leitura de página."""
 
     @field_validator("edge_cdp_url")
     @classmethod

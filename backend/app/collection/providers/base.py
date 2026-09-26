@@ -20,6 +20,8 @@ from app.collection.contracts import (
     CollectionResult,
     InstallmentInterestKind,
     MarketplacePartyKind,
+    ProductPageRead,
+    ProductPageReadStatus,
     RawCollectedOffer,
     RawInstallmentOption,
 )
@@ -30,6 +32,10 @@ from app.collection.errors import (
     ProviderNavigationError,
 )
 from app.collection.normalization import PriceNormalizer
+from app.collection.product_page import (
+    PRODUCT_PAGE_SCRIPT,
+    format_product_page_context,
+)
 from app.collection.providers.edge_cdp_transport import (
     EdgeCdpTransport,
     EdgeCdpTransportError,
@@ -37,6 +43,7 @@ from app.collection.providers.edge_cdp_transport import (
 from app.core.resilience import (
     CIRCUITS,
     CircuitOpenError,
+    CircuitState,
     OperationSafety,
     RetryPolicy,
     retry_operation,
@@ -265,6 +272,30 @@ class PlaywrightStoreProvider:
             )
         async with self._cdp_transport.open_blank_page() as page:
             yield page
+
+    async def read_product_page(self, url: str) -> ProductPageRead:
+        """TASK-128 (etapa 2): abre a página de UM produto na mesma aba
+        de detalhe do enriquecimento (Edge/CDP) e devolve só os dados do
+        próprio produto (`app.collection.product_page`). Sem transporte
+        de detalhe a loja não suporta (definitivo); circuito da loja fora
+        de `CLOSED` ou resposta de bloqueio/erro é falha passageira --
+        nunca insiste contra proteção anti-bot nem mexe no circuito da
+        busca (só lê o estado dele)."""
+        if self._cdp_transport is None:
+            return ProductPageRead(ProductPageReadStatus.UNSUPPORTED)
+        if self._circuit.state is not CircuitState.CLOSED:
+            return ProductPageRead(ProductPageReadStatus.FAILED)
+        async with self._open_detail_page() as page:
+            response = await page.goto(url, wait_until="domcontentloaded")
+            if response is None or response.status >= 400:
+                return ProductPageRead(ProductPageReadStatus.FAILED)
+            payload = await page.evaluate(PRODUCT_PAGE_SCRIPT)
+        context = format_product_page_context(
+            payload if isinstance(payload, dict) else {}
+        )
+        if context is None:
+            return ProductPageRead(ProductPageReadStatus.EMPTY)
+        return ProductPageRead(ProductPageReadStatus.READ, context)
 
     async def _pace_before_next_detail_request(self, position: int) -> None:
         """Sem atraso na primeira navegação; um intervalo curto e variável

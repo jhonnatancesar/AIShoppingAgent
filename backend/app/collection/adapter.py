@@ -1,12 +1,15 @@
 """Despacho de coletas sem conhecimento de navegador ou marketplace."""
 
 import asyncio
+import logging
 from collections.abc import Iterable
 
 from app.collection.contracts import (
     CollectionProvider,
     CollectionRequest,
     CollectionResult,
+    ProductPageRead,
+    ProductPageReadStatus,
     RawCollectedOffer,
 )
 from app.collection.errors import (
@@ -14,6 +17,9 @@ from app.collection.errors import (
     DuplicateProviderError,
     UnsupportedSourceError,
 )
+from app.core.urls import normalize_http_url
+
+logger = logging.getLogger("app.collection.adapter")
 
 
 class CollectionAdapter:
@@ -116,6 +122,33 @@ class CollectionAdapter:
                 "detail enrichment must preserve offer count and order"
             )
         return enriched
+
+    async def read_product_page(self, source_code: str, url: str) -> ProductPageRead:
+        """TASK-128 (etapa 2): lê a página de um produto pelo provider da
+        loja, quando ele oferece a extensão opcional. Fonte sem provider
+        ou sem a extensão = `UNSUPPORTED`; qualquer erro da navegação vira
+        `FAILED` (passageiro) -- nunca derruba o ciclo do worker."""
+        provider = self._providers.get(source_code)
+        read = getattr(provider, "read_product_page", None)
+        if read is None:
+            return ProductPageRead(ProductPageReadStatus.UNSUPPORTED)
+        if normalize_http_url(url) is None:
+            return ProductPageRead(ProductPageReadStatus.FAILED)
+        try:
+            result = await read(url)
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            logger.warning(
+                "product_page_read_failed",
+                extra={"source_code": source_code, "error": type(error).__name__},
+            )
+            return ProductPageRead(ProductPageReadStatus.FAILED)
+        if not isinstance(result, ProductPageRead):
+            raise CollectionContractError(
+                "product page read must return a ProductPageRead"
+            )
+        return result
 
     async def collect_selected(
         self, requests: Iterable[CollectionRequest]

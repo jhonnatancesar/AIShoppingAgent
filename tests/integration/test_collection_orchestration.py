@@ -24,6 +24,8 @@ from app.collection.contracts import (
     InstallmentInterestKind,
     MarketplacePartyKind,
     OfferCondition,
+    ProductPageRead,
+    ProductPageReadStatus,
     RawCollectedOffer,
     RawInstallmentOption,
 )
@@ -3926,6 +3928,111 @@ def test_partial_identity_link_flows_through_the_real_orchestrator_phases(
     assert ai_manager.identity_calls == 1, (
         "vínculo parcial vem do cache -- o mesmo título nunca paga IA de novo"
     )
+
+
+class _PageReadingOfferProvider(_CommercialStateOfferProvider):
+    """TASK-128 etapa 2: além da busca, o provider abre a página do
+    produto (no worker real, a aba de detalhe Edge/CDP)."""
+
+    def __init__(self, *args, page_context: str, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.page_context = page_context
+        self.pages_read: list[str] = []
+
+    async def read_product_page(self, url: str) -> ProductPageRead:
+        self.pages_read.append(url)
+        return ProductPageRead(ProductPageReadStatus.READ, self.page_context)
+
+
+class _TitleThenPageIdentityAIManager(_IdentityLearningPipelineAIManager):
+    """Só o título: "não entendi" (nem categoria). Título + dados da
+    página: identidade completa."""
+
+    def __init__(self, page_content: str) -> None:
+        super().__init__(
+            '{"category": "", "brand": "", "family": "", "model": "", '
+            '"variant": null, "store_sku": null, '
+            '"manufacturer_part_number": null, "attributes": {}}'
+        )
+        self.page_content = page_content
+
+    async def generate(self, request):
+        if (
+            request.purpose == "extract_product_identity"
+            and "Dados da página do produto:" in request.messages[-1].content
+        ):
+            self.identity_calls += 1
+            return AIResponse(
+                request_id=request.request_id,
+                provider="stub",
+                model="stub",
+                content=self.page_content,
+                finished_at=datetime.now(UTC),
+            )
+        return await super().generate(request)
+
+
+def test_not_understood_title_is_resolved_by_reading_the_product_page(
+    integration_database,
+) -> None:
+    """TASK-128 etapa 2 pelo pipeline REAL: na 1ª coleta a IA não entende
+    nem a categoria -> o GG registra "não entendi" com o Product da
+    oferta; no ciclo seguinte do worker, a varredura abre a página dessa
+    oferta pelo provider da loja, a IA fecha a identidade com os dados da
+    página e o Product é promovido -- sem nenhuma ação manual."""
+    now = datetime.now(UTC).replace(microsecond=0)
+    settings = Settings(_env_file=None, product_identity_learning_enabled=True)
+    ai_manager = _TitleThenPageIdentityAIManager(
+        '{"category": "headset", "brand": "HyperX", "family": "Cloud", '
+        '"model": "Stinger 2", "variant": null, "store_sku": null, '
+        '"manufacturer_part_number": null, "attributes": {}}'
+    )
+    mission_id, amazon_id = _seed_due_mission_for_store(
+        integration_database.sessions, now, store_code="amazon"
+    )
+    provider = _PageReadingOfferProvider(
+        "amazon",
+        "R$ 299,90",
+        title="Headset Gamer Preto P2 com Microfone",
+        url="https://example.invalid/identity-pipeline-page-read",
+        external_id="identity-pipeline-page-read",
+        page_context="Nome: Headset HyperX Cloud Stinger 2\nMarca: HyperX",
+    )
+    orchestrator = CollectionOrchestrator(
+        integration_database.async_sessions,
+        CollectionAdapter((provider,)),
+        ai_manager=ai_manager,
+        settings=settings,
+    )
+
+    asyncio.run(orchestrator.run_batch(now=now))
+
+    with integration_database.sessions.begin() as session:
+        offer = session.scalar(
+            select(Offer).where(Offer.external_id == "identity-pipeline-page-read")
+        )
+        [candidate] = list(session.scalars(select(ProductIdentityCandidate)))
+        assert candidate.status == "awaiting_page"
+        assert candidate.source_product_id == offer.product_id
+    assert provider.pages_read == []
+
+    due_at = now + timedelta(minutes=30)
+    _rearm_schedule(integration_database.sessions, mission_id, amazon_id, due_at)
+    asyncio.run(orchestrator.run_batch(now=due_at))
+
+    assert provider.pages_read == [
+        "https://example.invalid/identity-pipeline-page-read"
+    ]
+    assert ai_manager.identity_calls == 2
+    with integration_database.sessions.begin() as session:
+        offer = session.scalar(
+            select(Offer).where(Offer.external_id == "identity-pipeline-page-read")
+        )
+        product = session.get(Product, offer.product_id)
+        [candidate] = list(session.scalars(select(ProductIdentityCandidate)))
+        assert candidate.status == "approved"
+        assert product.identity_key == candidate.identity_key
+        assert product.category == "headset"
 
 
 def test_identity_learning_reuses_across_stores_through_the_real_orchestrator(

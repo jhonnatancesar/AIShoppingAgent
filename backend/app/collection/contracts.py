@@ -212,6 +212,35 @@ class CollectionProvider(Protocol):
     async def collect(self, request: CollectionRequest) -> CollectionResult: ...
 
 
+class ProductPageReadStatus(StrEnum):
+    """TASK-128 (etapa 2): resultado da leitura da página de UM produto
+    pelo worker, quando só o título não bastou para a IA entender.
+    `UNSUPPORTED` é definitivo (a loja nunca abre página de produto --
+    ex.: Magalu, que só usa o documento da busca); `FAILED` é passageiro
+    (bloqueio, timeout, circuito da loja aberto) e pode ser tentado de
+    novo mais tarde; `EMPTY` é página aberta sem nenhum dado do produto."""
+
+    READ = "read"
+    EMPTY = "empty"
+    UNSUPPORTED = "unsupported"
+    FAILED = "failed"
+
+
+@dataclass(frozen=True, slots=True)
+class ProductPageRead:
+    status: ProductPageReadStatus
+    context: str | None = None
+    """Texto compacto com os dados do PRÓPRIO produto na página (dados
+    estruturados, trilha de categorias, descrição) -- só em `READ`."""
+
+    def __post_init__(self) -> None:
+        has_context = bool(self.context and self.context.strip())
+        if (self.status is ProductPageReadStatus.READ) != has_context:
+            raise CollectionContractError(
+                "context is required exactly when the product page was read"
+            )
+
+
 @dataclass(frozen=True, slots=True)
 class ResolvedProductIdentity:
     """TASK-083: identidade de um `model` cru confirmada por um provider de

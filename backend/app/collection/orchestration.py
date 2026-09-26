@@ -152,6 +152,7 @@ from app.products.identity_learning import (
     apply_partial_link,
     resolve_or_learn_product_variant,
 )
+from app.products.identity_page import resolve_awaiting_page_titles
 from app.products.models import Product
 from app.search.cesar_core_fetch import CesarCoreFetchProvider
 from app.search.manager import build_web_search_manager
@@ -1297,6 +1298,40 @@ class CollectionOrchestrator:
         self._shared_collector = shared_collector
         self._fan_out_sweeper = fan_out_sweeper
 
+    async def _resolve_awaiting_page_titles(self, now: datetime) -> None:
+        settings = self._settings
+        if (
+            settings is None
+            or not settings.product_identity_learning_enabled
+            or settings.identity_page_read_budget <= 0
+        ):
+            return
+        try:
+            summary = await resolve_awaiting_page_titles(
+                self._session_factory,
+                page_reader=self._adapter.read_product_page,
+                ai_manager=self._ai_manager,
+                profile=self._ai_profile,
+                arbiter_ai_manager=self._arbiter_ai_manager,
+                budget=settings.identity_page_read_budget,
+                now=now,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning("identity_page_read_sweep_failed", exc_info=True)
+            return
+        if summary.claimed:
+            logger.info(
+                "identity_page_read_sweep",
+                extra={
+                    "claimed": summary.claimed,
+                    "linked": summary.linked,
+                    "unrecognized": summary.unrecognized,
+                    "retry_later": summary.retry_later,
+                },
+            )
+
     async def run_batch(
         self, *, now: datetime | None = None, limit: int = 25
     ) -> CollectionBatchResult:
@@ -1320,6 +1355,11 @@ class CollectionOrchestrator:
             firecrawl=self._firecrawl,
             settings=self._settings,
         )
+
+        # TASK-128 etapa 2: títulos "não entendi" (`awaiting_page`) ganham
+        # a leitura da página do produto ANTES das coletas novas -- em
+        # sequência, orçamento pequeno, nunca derruba o ciclo.
+        await self._resolve_awaiting_page_titles(effective_now)
 
         # Fase A: transação curta, só dados locais -- nenhum Playwright,
         # HTTP ou IA acontece dentro deste bloco. `claim_due_work`
@@ -2476,6 +2516,7 @@ async def _run_phase_b(
                         profile=ai_profile,
                         arbiter_ai_manager=arbiter_ai_manager,
                         now=outcome.completed_at,
+                        source_product_id=pending.product_id,
                     )
                     await identity_session.commit()
             except Exception:

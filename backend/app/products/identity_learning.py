@@ -22,9 +22,9 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
-from uuid import uuid4
+from uuid import UUID, uuid4
 
-from sqlalchemy import ColumnElement, and_, func, select, update
+from sqlalchemy import ColumnElement, and_, delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -125,8 +125,34 @@ def _link_from_candidate(
             category=candidate.category,
             brand=candidate.brand,
             family=candidate.family,
+            page_context=candidate.page_context,
         )
     return None
+
+
+async def _insert_candidate(
+    session: AsyncSession,
+    candidate: ProductIdentityCandidate,
+    *,
+    replace_awaiting_page: bool,
+) -> None:
+    """INSERT de um candidato num SAVEPOINT próprio (quem chama trata o
+    `IntegrityError` de corrida). TASK-128 etapa 2: com
+    `replace_awaiting_page`, a linha `awaiting_page` do MESMO título sai
+    no mesmo savepoint -- a decisão tomada com a página substitui o
+    "não entendi" de forma atômica, e o DELETE só acontece depois de
+    toda chamada de IA (nunca uma transação aberta durante I/O)."""
+    async with session.begin_nested():
+        if replace_awaiting_page:
+            await session.execute(
+                delete(ProductIdentityCandidate).where(
+                    ProductIdentityCandidate.normalized_title_hash
+                    == candidate.normalized_title_hash,
+                    ProductIdentityCandidate.status == "awaiting_page",
+                )
+            )
+        session.add(candidate)
+        await session.flush()
 
 
 def _has_unrecognized_model_suffix(
@@ -511,6 +537,8 @@ async def _finish_resolution_with_extraction(
     ai_manager: AIProviderManager,
     arbiter_ai_manager: AIProviderManager | None,
     now: datetime | None = None,
+    page_context: str | None = None,
+    replace_awaiting_page: bool = False,
 ) -> ResolvedProductVariant | PartialProductLink | None:
     """Continuação de `_prepare_resolution` depois que uma extração de
     IA (item único ou uma posição de um lote) já existe -- zona
@@ -578,22 +606,26 @@ async def _finish_resolution_with_extraction(
                 ai_provider=extraction.ai_provider,
                 ai_model=extraction.ai_model,
                 reviewer_note="arbitered_same_product",
+                page_context=page_context,
                 created_at=now or utc_now(),
             )
             try:
-                async with session.begin_nested():
-                    session.add(alias)
-                    await session.flush()
+                await _insert_candidate(
+                    session, alias, replace_awaiting_page=replace_awaiting_page
+                )
             except IntegrityError:
                 pass
             return _resolved_from_candidate(candidate)
 
-    evaluated = evaluate_ai_identity_extraction(raw_title, extraction)
+    evaluated = evaluate_ai_identity_extraction(
+        raw_title, extraction, page_context=page_context
+    )
     partial_link = build_partial_link(
         raw_title,
         category=extraction.category,
         brand=extraction.brand,
         family=extraction.family,
+        page_context=page_context,
     )
     if evaluated.resolved is None:
         # Caso degenerado (ex.: campos só com símbolos, slug vazio) --
@@ -612,6 +644,8 @@ async def _finish_resolution_with_extraction(
             ai_provider=extraction.ai_provider,
             ai_model=extraction.ai_model,
             now=now,
+            page_context=page_context,
+            replace_awaiting_page=replace_awaiting_page,
         )
 
     candidate = ProductIdentityCandidate(
@@ -632,12 +666,13 @@ async def _finish_resolution_with_extraction(
         grounded=evaluated.grounded,
         ai_provider=evaluated.raw.ai_provider,
         ai_model=evaluated.raw.ai_model,
+        page_context=page_context,
         created_at=now or utc_now(),
     )
     try:
-        async with session.begin_nested():
-            session.add(candidate)
-            await session.flush()
+        await _insert_candidate(
+            session, candidate, replace_awaiting_page=replace_awaiting_page
+        )
     except IntegrityError:
         # Corrida real: outra coleta concorrente já aprendeu o MESMO
         # título entre a consulta acima e este INSERT -- nunca duplica
@@ -666,11 +701,23 @@ async def _record_uncertain_extraction(
     ai_provider: str | None,
     ai_model: str | None,
     now: datetime | None = None,
+    source_product_id: UUID | None = None,
+    page_context: str | None = None,
+    replace_awaiting_page: bool = False,
 ) -> ResolvedProductVariant | PartialProductLink | None:
     """TASK-128: grava no cache um resultado sem identidade exata --
     `partial` quando há vínculo parcial, `awaiting_page` quando a IA não
-    entendeu nem a categoria (o worker vai ler a página, etapa 2). Em
-    corrida com outra coleta, relê a decisão que venceu."""
+    entendeu nem a categoria (o worker lê a página depois, a partir de
+    `source_product_id`). Se a página JÁ foi lida (`replace_awaiting_
+    page`) e mesmo assim nada saiu, o resultado é TERMINAL
+    (`unrecognized`) -- nunca um laço de leituras/IA. Em corrida com
+    outra coleta, relê a decisão que venceu."""
+    if link is not None:
+        status = "partial"
+    elif replace_awaiting_page:
+        status = "unrecognized"
+    else:
+        status = "awaiting_page"
     candidate = ProductIdentityCandidate(
         id=uuid4(),
         raw_title=raw_title[:2000],
@@ -678,16 +725,18 @@ async def _record_uncertain_extraction(
         category=link.category if link is not None else None,
         brand=link.brand if link is not None else None,
         family=link.family if link is not None else None,
-        status="partial" if link is not None else "awaiting_page",
+        status=status,
         grounded=False,
         ai_provider=ai_provider,
         ai_model=ai_model,
+        source_product_id=source_product_id if status == "awaiting_page" else None,
+        page_context=page_context,
         created_at=now or utc_now(),
     )
     try:
-        async with session.begin_nested():
-            session.add(candidate)
-            await session.flush()
+        await _insert_candidate(
+            session, candidate, replace_awaiting_page=replace_awaiting_page
+        )
     except IntegrityError:
         winner = await _find_candidate(session, title_hash)
         if winner is None:
@@ -707,11 +756,15 @@ async def _resolve_from_extraction(
     ai_manager: AIProviderManager,
     arbiter_ai_manager: AIProviderManager | None,
     now: datetime | None = None,
+    source_product_id: UUID | None = None,
+    page_context: str | None = None,
+    replace_awaiting_page: bool = False,
 ) -> ResolvedProductVariant | PartialProductLink | None:
     """Único ponto que transforma o resultado da IA (item único ou uma
     posição de lote) em resolução -- exata, parcial ou "aguardando
     página". `None` só quando nem o cache foi possível (corrida sem
-    vencedor) ou quando o título aguarda a leitura da página."""
+    vencedor) ou quando o título aguarda a leitura da página (ou, já com
+    a página lida, ficou terminal `unrecognized`)."""
     assert prepared.title_hash is not None  # sempre setado quando done=False
     if isinstance(extraction, AIIdentityExtraction):
         return await _finish_resolution_with_extraction(
@@ -723,6 +776,8 @@ async def _resolve_from_extraction(
             ai_manager=ai_manager,
             arbiter_ai_manager=arbiter_ai_manager,
             now=now,
+            page_context=page_context,
+            replace_awaiting_page=replace_awaiting_page,
         )
     link = (
         build_partial_link(
@@ -730,6 +785,7 @@ async def _resolve_from_extraction(
             category=extraction.category,
             brand=extraction.brand,
             family=extraction.family,
+            page_context=page_context,
         )
         if isinstance(extraction, AIPartialExtraction)
         else None
@@ -742,6 +798,9 @@ async def _resolve_from_extraction(
         ai_provider=extraction.ai_provider,
         ai_model=extraction.ai_model,
         now=now,
+        source_product_id=source_product_id,
+        page_context=page_context,
+        replace_awaiting_page=replace_awaiting_page,
     )
 
 
@@ -753,6 +812,7 @@ async def resolve_or_learn_product_variant(
     profile: UserRole = UserRole.ADMIN,
     arbiter_ai_manager: AIProviderManager | None = None,
     now: datetime | None = None,
+    source_product_id: UUID | None = None,
 ) -> ResolvedProductVariant | PartialProductLink | None:
     """Resolve a identidade de um título, aprendendo uma proposta nova
     via IA quando necessário -- SEMPRE tenta o motor determinístico
@@ -828,6 +888,7 @@ async def resolve_or_learn_product_variant(
         ai_manager=ai_manager,
         arbiter_ai_manager=arbiter_ai_manager,
         now=now,
+        source_product_id=source_product_id,
     )
 
 
@@ -1208,6 +1269,7 @@ async def reprocess_unresolved_products(
                 ai_manager=ai_manager,
                 profile=profile,
                 arbiter_ai_manager=arbiter_ai_manager,
+                source_product_id=product_id,
             )
             if resolved is None:
                 if apply:
@@ -1268,6 +1330,7 @@ async def reprocess_unresolved_products(
                 extraction=extraction,
                 ai_manager=ai_manager,
                 arbiter_ai_manager=arbiter_ai_manager,
+                source_product_id=product_id,
             )
             if resolved is None:
                 if apply:

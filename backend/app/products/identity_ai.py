@@ -107,6 +107,29 @@ _SYSTEM_PROMPT = (
     '"attributes": {string: string}}\n\n'
 ) + _FIELD_INSTRUCTIONS
 
+_PAGE_CONTEXT_ADDENDUM = (
+    "\n\nTASK-128 -- DADOS DA PÁGINA: além do título, você recebe dados "
+    "da página do PRÓPRIO produto na loja (dados estruturados, trilha de "
+    'categorias, título da página, descrição). Neste caso, "presente no '
+    'título" passa a significar "presente no título OU nesses dados da '
+    'página" -- use-os para identificar categoria, marca, família e '
+    "modelo que o título sozinho não deixava claros. Continua proibido "
+    "inventar ou usar conhecimento externo; se nem com os dados da página "
+    'der para identificar, devolva strings vazias ("").'
+)
+
+_PAGE_SYSTEM_PROMPT = _SYSTEM_PROMPT + _PAGE_CONTEXT_ADDENDUM
+
+
+def grounding_evidence(raw_title: str, page_context: str | None = None) -> str:
+    """TASK-128 (etapa 2): texto contra o qual o grounding anti-invenção
+    confere marca/família/modelo -- só o título, ou título + dados da
+    página do próprio produto quando o worker precisou ler a página."""
+    if page_context and page_context.strip():
+        return f"{raw_title}\n{page_context}"
+    return raw_title
+
+
 _BATCH_SYSTEM_PROMPT = (
     "Você recebe uma LISTA de títulos brutos de anúncios de e-commerce de "
     'lojas diferentes, cada um identificado por um "id" numérico, e '
@@ -208,7 +231,12 @@ AIExtractionResult = AIIdentityExtraction | AIPartialExtraction | AIUnrecognized
 
 
 def build_partial_link(
-    raw_title: str, *, category: str | None, brand: str | None, family: str | None
+    raw_title: str,
+    *,
+    category: str | None,
+    brand: str | None,
+    family: str | None,
+    page_context: str | None = None,
 ) -> PartialProductLink | None:
     """Categoria é um RÓTULO de classificação (a IA normaliza, ex.:
     "gpu" para "Placa de Vídeo"). Marca e família são FATOS do anúncio:
@@ -226,7 +254,9 @@ def build_partial_link(
     label = _slug(category or "")[:80]
     if not label:
         return None
-    title_normalized = normalize_for_grounding(raw_title)
+    title_normalized = normalize_for_grounding(
+        grounding_evidence(raw_title, page_context)
+    )
 
     def _grounded(value: str | None) -> str | None:
         cleaned = (value or "").strip()
@@ -440,7 +470,10 @@ def _is_grounded(
 
 
 def evaluate_ai_identity_extraction(
-    raw_title: str, extraction: AIIdentityExtraction
+    raw_title: str,
+    extraction: AIIdentityExtraction,
+    *,
+    page_context: str | None = None,
 ) -> EvaluatedIdentityExtraction:
     """Núcleo determinístico: decide se uma extração da IA é confiável
     o bastante para `status="approved"` -- nunca a própria IA decide
@@ -453,7 +486,9 @@ def evaluate_ai_identity_extraction(
     Qualquer uma dessas condições falhando -> `status="pending_review"`
     e `resolved=None` -- a extração fica registrada para revisão humana,
     mas NUNCA é usada para resolver identidade automaticamente."""
-    raw_title_normalized = normalize_for_grounding(raw_title)
+    raw_title_normalized = normalize_for_grounding(
+        grounding_evidence(raw_title, page_context)
+    )
     grounded = _is_grounded(
         raw_title_normalized,
         brand=extraction.brand,
@@ -487,6 +522,7 @@ async def extract_product_identity_via_ai(
     raw_title: str,
     profile: UserRole,
     requested_at: datetime | None = None,
+    page_context: str | None = None,
 ) -> AIExtractionResult | None:
     """Chama a IA (via `AIProviderManager` -> César Core) para
     estruturar um título bruto -- `None` em qualquer falha de rede/
@@ -499,15 +535,29 @@ async def extract_product_identity_via_ai(
     disciplina de Fase B do `CollectionOrchestrator` (TASK-079); quem
     integra esta função ao pipeline de coleta deve chamá-la de uma fase
     sem transação ativa, nunca de dentro de `_resolve_offer`/`_persist_
-    phase_a`."""
+    phase_a`.
+
+    TASK-128 (etapa 2): com `page_context` (dados da página do próprio
+    produto, lida pelo worker depois de um "não entendi"), a IA recebe
+    título + página e o prompt admite campos presentes em qualquer um
+    dos dois -- o grounding de quem chama precisa usar a MESMA evidência
+    (`grounding_evidence`)."""
     moment = requested_at or datetime.now(UTC)
+    if page_context and page_context.strip():
+        system_prompt = _PAGE_SYSTEM_PROMPT
+        user_message = (
+            f"Título do anúncio: {raw_title}\n\n"
+            f"Dados da página do produto:\n{page_context}"
+        )
+    else:
+        system_prompt, user_message = _SYSTEM_PROMPT, raw_title
     request = AIRequest(
         request_id=uuid4(),
         profile=profile,
         purpose=EXTRACT_IDENTITY_PURPOSE,
         messages=(
-            AIMessage(AIMessageRole.SYSTEM, _SYSTEM_PROMPT),
-            AIMessage(AIMessageRole.USER, raw_title),
+            AIMessage(AIMessageRole.SYSTEM, system_prompt),
+            AIMessage(AIMessageRole.USER, user_message),
         ),
         requested_at=moment,
     )

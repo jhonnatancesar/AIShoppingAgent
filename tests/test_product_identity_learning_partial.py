@@ -20,6 +20,7 @@ from app.products.identity_ai import (
 from app.products.identity_candidates import ProductIdentityCandidate
 from app.products.identity_learning import (
     _apply_resolution,
+    _insert_candidate,
     _link_from_candidate,
     _PreparedResolution,
     _record_uncertain_extraction,
@@ -45,6 +46,7 @@ def _session() -> MagicMock:
     session.commit = AsyncMock()
     session.rollback = AsyncMock()
     session.scalars = AsyncMock()
+    session.execute = AsyncMock()
     session.begin_nested = MagicMock(side_effect=lambda: _noop_cm())
     return session
 
@@ -451,3 +453,66 @@ def test_one_by_one_backfill_commits_awaiting_page_before_the_next_title(
     assert count == 1
     session.commit.assert_awaited_once()
     assert apply_resolution.await_args.kwargs["resolution"] is link
+
+
+# ---------------------------------------------------------------------------
+# TASK-128 etapa 2 -- página lida pelo worker
+# ---------------------------------------------------------------------------
+
+
+def test_review_candidate_read_with_the_page_grounds_against_the_page_too() -> None:
+    link = _link_from_candidate(
+        _candidate(
+            "pending_review",
+            raw_title="Cadeira Gamer Reclinável",
+            category="cadeira-gamer",
+            brand="thunderx3",
+            family="tgc12",
+            page_context="Marca: ThunderX3",
+        )
+    )
+    assert link == PartialProductLink("cadeira-gamer", "thunderx3", None)
+
+
+def test_record_after_reading_the_page_is_terminal_or_partial() -> None:
+    """Com a página já lida (`replace_awaiting_page`), "não entendi" vira
+    TERMINAL (`unrecognized`) -- nunca volta a `awaiting_page`."""
+    product_id = uuid4()
+    cases = (
+        (None, False, "awaiting_page", product_id),
+        (None, True, "unrecognized", None),
+        (PartialProductLink("cpu", None, None), True, "partial", None),
+    )
+    for link, replace, status, source in cases:
+        session = _session()
+        asyncio.run(
+            _record_uncertain_extraction(
+                session,
+                raw_title="Kit 3 em 1",
+                title_hash="hash",
+                link=link,
+                ai_provider="stub",
+                ai_model="m",
+                source_product_id=product_id,
+                page_context="Marca: X" if replace else None,
+                replace_awaiting_page=replace,
+            )
+        )
+        [row] = [call.args[0] for call in session.add.call_args_list]
+        assert (row.status, row.source_product_id) == (status, source)
+        assert row.page_context == ("Marca: X" if replace else None)
+        assert session.execute.await_count == (1 if replace else 0)
+
+
+def test_insert_candidate_replaces_awaiting_page_only_when_asked() -> None:
+    row = _candidate("partial", category="cpu")
+    for replace in (False, True):
+        session = _session()
+        session.execute = AsyncMock()
+        asyncio.run(_insert_candidate(session, row, replace_awaiting_page=replace))
+        assert session.execute.await_count == (1 if replace else 0)
+        session.add.assert_called_once_with(row)
+        session.flush.assert_awaited_once()
+        if replace:
+            statement = str(session.execute.await_args.args[0])
+            assert statement.startswith("DELETE FROM product_identity_candidates")
