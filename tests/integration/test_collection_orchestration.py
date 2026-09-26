@@ -3861,6 +3861,73 @@ def test_identity_learning_is_wired_through_the_real_orchestrator_phases(
     )
 
 
+_PIPELINE_GENERIC_CHAIR_EXTRACTION = (
+    '{"category": "cadeira gamer", "brand": "", "family": "", "model": "", '
+    '"variant": null, "store_sku": null, "manufacturer_part_number": null, '
+    '"attributes": {}}'
+)
+
+
+def test_partial_identity_link_flows_through_the_real_orchestrator_phases(
+    integration_database,
+) -> None:
+    """TASK-128: produto genérico ("cadeira gamer") -- a IA só fecha a
+    categoria. Pelo pipeline REAL (Fase A -> B -> C), a coleta termina
+    normalmente, o Product da oferta ganha o vínculo parcial (categoria,
+    NUNCA `identity_key`) e a segunda coleta resolve pelo cache, sem nova
+    chamada de identidade. Antes da correção da Fase C, o parcial ia para
+    `apply_learned_identity` e a coleta ao vivo quebrava."""
+    now = datetime.now(UTC).replace(microsecond=0)
+    settings = Settings(_env_file=None, product_identity_learning_enabled=True)
+    ai_manager = _IdentityLearningPipelineAIManager(_PIPELINE_GENERIC_CHAIR_EXTRACTION)
+
+    mission_id, amazon_id = _seed_due_mission_for_store(
+        integration_database.sessions, now, store_code="amazon"
+    )
+    provider = _CommercialStateOfferProvider(
+        "amazon",
+        "R$ 599,90",
+        title="Cadeira Gamer Reclinável Preta com Almofada",
+        url="https://example.invalid/identity-pipeline-chair",
+        external_id="identity-pipeline-chair",
+    )
+    orchestrator = CollectionOrchestrator(
+        integration_database.async_sessions,
+        CollectionAdapter((provider,)),
+        ai_manager=ai_manager,
+        settings=settings,
+    )
+    asyncio.run(orchestrator.run_batch(now=now))
+
+    assert ai_manager.identity_calls == 1
+
+    with integration_database.sessions.begin() as session:
+        offer = session.scalar(
+            select(Offer).where(Offer.external_id == "identity-pipeline-chair")
+        )
+        assert offer is not None
+        run = session.scalar(
+            select(CollectionRun)
+            .where(CollectionRun.mission_id == mission_id)
+            .order_by(CollectionRun.started_at.desc())
+        )
+        assert run is not None and run.status is CollectionRunStatus.SUCCEEDED
+        product = session.get(Product, offer.product_id)
+        assert product is not None
+        assert product.category == "cadeira-gamer"
+        assert product.identity_key is None
+        assert product.family_key is None
+        [candidate] = list(session.scalars(select(ProductIdentityCandidate)))
+        assert candidate.status == "partial"
+
+    due_at = now + timedelta(minutes=30)
+    _rearm_schedule(integration_database.sessions, mission_id, amazon_id, due_at)
+    asyncio.run(orchestrator.run_batch(now=due_at))
+    assert ai_manager.identity_calls == 1, (
+        "vínculo parcial vem do cache -- o mesmo título nunca paga IA de novo"
+    )
+
+
 def test_identity_learning_reuses_across_stores_through_the_real_orchestrator(
     integration_database,
 ) -> None:

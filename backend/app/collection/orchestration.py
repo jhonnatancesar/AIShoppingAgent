@@ -146,8 +146,10 @@ from app.products.identity import (
     ResolvedProductVariant,
     resolve_product_variant,
 )
+from app.products.identity_ai import PartialProductLink
 from app.products.identity_learning import (
     apply_learned_identity,
+    apply_partial_link,
     resolve_or_learn_product_variant,
 )
 from app.products.models import Product
@@ -1893,13 +1895,16 @@ class _AIOutcome:
     continua intacto em `PriceObservation.amount`. `None` quando não há
     cupom aplicável ou a etapa de cupom falhou (nunca derruba a coleta,
     ver `_classify`)."""
-    learned_identity: ResolvedProductVariant | None = None
+    learned_identity: ResolvedProductVariant | PartialProductLink | None = None
     """Rodada de aprendizado de identidade (2026-09-12): resultado de
     `resolve_or_learn_product_variant` quando `pending.identity_unresolved`
-    era `True` -- `None` quando a extração falhou, não passou no
-    grounding (caiu em revisão humana) ou não foi tentada. A Fase C usa
-    isto para unificar/promover o `Product` ad-hoc desta oferta, nunca
-    a própria Fase B (que não abre transação retida)."""
+    era `True` -- identidade exata, ou (TASK-128) `PartialProductLink`
+    quando a IA só fechou categoria/marca/família ou o grounding falhou
+    (proposta em revisão humana); `None` quando a extração falhou por
+    motivo passageiro, o título aguarda a leitura da página ou nada foi
+    tentado. A Fase C usa isto para unificar/promover (exata) ou só
+    vincular (parcial) o `Product` ad-hoc desta oferta, nunca a própria
+    Fase B (que não abre transação retida)."""
 
 
 def _deterministic_product_relevance(
@@ -2455,7 +2460,7 @@ async def _run_phase_b(
                 now=outcome.completed_at,
                 settings=settings,
             )
-        learned_identity: ResolvedProductVariant | None = None
+        learned_identity: ResolvedProductVariant | PartialProductLink | None = None
         if (
             pending.identity_unresolved
             and settings is not None
@@ -2564,11 +2569,17 @@ async def _persist_phase_c(
                 # (que reflete o ad-hoc de ANTES desta aplicação).
                 current_product = await session.get(Product, pending.product_id)
                 if current_product is not None and current_product.identity_key is None:
-                    await apply_learned_identity(
-                        session,
-                        product=current_product,
-                        resolved=ai_outcome.learned_identity,
-                    )
+                    if isinstance(ai_outcome.learned_identity, PartialProductLink):
+                        # TASK-128: vínculo parcial só preenche categoria/
+                        # marca/família vazias -- nunca `identity_key`,
+                        # então nunca funde este Product com outro.
+                        apply_partial_link(current_product, ai_outcome.learned_identity)
+                    else:
+                        await apply_learned_identity(
+                            session,
+                            product=current_product,
+                            resolved=ai_outcome.learned_identity,
+                        )
             relevance: OfferRelevance | None = pending.forced_relevance
             if pending.forced_relevance is not None:
                 await session.execute(

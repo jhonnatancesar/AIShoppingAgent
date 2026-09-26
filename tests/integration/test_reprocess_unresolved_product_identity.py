@@ -225,6 +225,30 @@ def test_count_only_reports_total_without_any_ai_call(integration_database) -> N
         )
 
 
+def test_count_only_excludes_products_with_a_partial_link(
+    integration_database, capsys
+) -> None:
+    """TASK-128: backlog = produto sem vínculo NENHUM. Um produto com
+    vínculo parcial (categoria, sem `identity_key`) já saiu do backlog --
+    a contagem do script usa o MESMO critério que o processamento
+    (`identity_learning.unlinked_product_criteria`), nunca diverge."""
+    module = _load_script_module()
+    _seed_unresolved_motherboard(integration_database)
+    partial_id, _offer_id, _observation_id = _seed_unresolved_product(
+        integration_database, "Cadeira Gamer Reclinável Preta"
+    )
+    with integration_database.sessions.begin() as session:
+        session.get(Product, partial_id).category = "cadeira gamer"
+
+    _run(module.run(apply=False, limit=50, count_only=True))
+
+    output = capsys.readouterr().out
+    assert (
+        "Total REAL de Products sem vínculo nenhum (nem identity_key nem "
+        "categoria) no banco: 1"
+    ) in output
+
+
 def test_apply_resolves_identity_without_losing_offer_or_observation(
     integration_database,
 ) -> None:

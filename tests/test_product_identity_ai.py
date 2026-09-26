@@ -11,6 +11,10 @@ from app.products.identity import build_resolved_variant_from_fields
 from app.products.identity_ai import (
     BATCH_EXTRACT_IDENTITY_PURPOSE,
     AIIdentityExtraction,
+    AIPartialExtraction,
+    AIUnrecognizedTitle,
+    PartialProductLink,
+    build_partial_link,
     evaluate_ai_identity_extraction,
     extract_product_identities_via_ai_batch,
     extract_product_identity_via_ai,
@@ -396,9 +400,11 @@ async def test_extract_product_identity_none_on_unexpected_shape() -> None:
 
 
 @pytest.mark.anyio
-async def test_extract_product_identity_none_when_ai_signals_uncertainty() -> None:
+async def test_extract_product_identity_partial_when_ai_signals_uncertainty() -> None:
     """Campo vazio ("") é a própria IA dizendo "não sei" -- nunca tratado
-    como um valor real que por acaso falha grounding depois."""
+    como um valor real que por acaso falha grounding depois. TASK-128:
+    o que ela conseguiu (categoria/família) vira resultado PARCIAL, nunca
+    é descartado como `None` (que agora significa só falha passageira)."""
     manager = _StaticAIManager(
         '{"category": "monitor", "brand": "", "family": "UltraGear", '
         '"model": "27GP850", "variant": null, "store_sku": null, '
@@ -407,7 +413,28 @@ async def test_extract_product_identity_none_when_ai_signals_uncertainty() -> No
     result = await extract_product_identity_via_ai(
         manager, raw_title="Monitor Gamer LG UltraGear 27GP850", profile=UserRole.ADMIN
     )
-    assert result is None
+    assert result == AIPartialExtraction(
+        category="monitor",
+        brand=None,
+        family="UltraGear",
+        ai_provider="stub",
+        ai_model="stub-model",
+    )
+
+
+@pytest.mark.anyio
+async def test_extract_product_identity_unrecognized_when_ai_has_no_category() -> None:
+    """Nem a categoria: "não entendi" -- DIFERENTE de `None` (esse vai
+    para o cache como `awaiting_page`, o worker lê a página depois)."""
+    manager = _StaticAIManager(
+        '{"category": " ", "brand": "", "family": "", "model": "", '
+        '"variant": null, "store_sku": null, '
+        '"manufacturer_part_number": null, "attributes": {}}'
+    )
+    result = await extract_product_identity_via_ai(
+        manager, raw_title="Kit Promo Especial 3 em 1", profile=UserRole.ADMIN
+    )
+    assert result == AIUnrecognizedTitle(ai_provider="stub", ai_model="stub-model")
 
 
 @pytest.mark.anyio
@@ -498,18 +525,30 @@ async def test_batch_rejects_items_with_wrong_types_or_blank_required_fields() -
             _batch_item(5, attributes={"hz": 165}),
             _batch_item(6, model="  "),
             _batch_item(7, store_sku=" SKU-1 ", manufacturer_part_number=" 27GP850-B "),
+            _batch_item(8, category="", brand="", family="", model=""),
         ]
     )
 
     results = await extract_product_identities_via_ai_batch(
         _StaticAIManager(content),
-        raw_titles=[f"título {n}" for n in range(8)],
+        raw_titles=[f"título {n}" for n in range(9)],
         profile=UserRole.ADMIN,
     )
 
-    assert results[:7] == [None] * 7
+    # Tipo errado = fora do contrato = falha passageira (`None`).
+    assert results[:6] == [None] * 6
+    # TASK-128: campo obrigatório em branco = a IA não fechou identidade
+    # exata -- vira parcial (categoria + o que veio) ou "não entendi".
+    assert results[6] == AIPartialExtraction(
+        category="monitor",
+        brand="LG",
+        family="UltraGear",
+        ai_provider="stub",
+        ai_model="stub-model",
+    )
     assert results[7].store_sku == "SKU-1"
     assert results[7].manufacturer_part_number == "27GP850-B"
+    assert results[8] == AIUnrecognizedTitle(ai_provider="stub", ai_model="stub-model")
 
 
 @pytest.mark.anyio
@@ -542,3 +581,79 @@ async def test_batch_with_no_titles_never_calls_ai() -> None:
         == []
     )
     assert manager.calls == 0
+
+
+# ---------------------------------------------------------------------------
+# build_partial_link -- vínculo parcial da TASK-128
+# ---------------------------------------------------------------------------
+
+
+def test_partial_link_keeps_only_brand_and_family_present_in_title() -> None:
+    """Categoria é rótulo (normalizado); marca/família são fatos do
+    anúncio -- só entram se aparecem no título, nunca inventadas."""
+    link = build_partial_link(
+        "Processador AMD Ryzen 7 Box",
+        category="  CPU  ",
+        brand="AMD",
+        family="Threadripper",
+    )
+    assert link == PartialProductLink(category="cpu", brand="amd", family=None)
+
+
+def test_partial_link_for_generic_product_is_category_only() -> None:
+    link = build_partial_link(
+        "Cadeira Gamer Reclinável Preta",
+        category="Cadeira Gamer",
+        brand=None,
+        family=None,
+    )
+    assert link == PartialProductLink(category="cadeira-gamer", brand=None, family=None)
+
+
+def test_partial_link_grounds_accent_and_case_like_the_exact_path() -> None:
+    link = build_partial_link(
+        "MOUSE GAMER LOGITECH G203 LIGHTSYNC",
+        category="mouse",
+        brand="logitech",
+        family="Lightsync",
+    )
+    assert link == PartialProductLink(
+        category="mouse", brand="logitech", family="lightsync"
+    )
+
+
+def test_partial_link_is_identical_from_raw_ai_fields_and_from_slugged_cache() -> None:
+    """Regressão (suíte de integração, 2026-09-26): o mesmo título
+    devolvia "HyperX" na primeira resolução (campos crus da IA) e
+    "hyperx" depois (candidato `pending_review`, que guarda slug). Os dois
+    caminhos precisam dar o MESMO vínculo, no slug da identidade exata."""
+    title = "Headset Gamer HyperX Cloud Stinger P2"
+
+    from_ai = build_partial_link(
+        title, category="Headset", brand="HyperX", family="Cloud Stinger"
+    )
+    from_cache = build_partial_link(
+        title, category="headset", brand="hyperx", family="cloud-stinger"
+    )
+
+    assert (
+        from_ai
+        == from_cache
+        == PartialProductLink(
+            category="headset", brand="hyperx", family="cloud-stinger"
+        )
+    )
+
+
+@pytest.mark.parametrize("category", [None, "", "   "])
+def test_partial_link_is_none_without_category(category) -> None:
+    assert (
+        build_partial_link("Mouse Gamer", category=category, brand="x", family="y")
+        is None
+    )
+
+
+def test_partial_link_truncates_long_category_label() -> None:
+    link = build_partial_link("Produto", category="x" * 200, brand=None, family=None)
+    assert link is not None
+    assert link.category == "x" * 80

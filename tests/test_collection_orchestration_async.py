@@ -112,6 +112,7 @@ from app.products.identity import (
     classify_product_request,
     resolve_product_variant,
 )
+from app.products.identity_ai import PartialProductLink
 from app.products.models import Product
 from app.stores.models import Seller
 from app.users.models import UserRole
@@ -2486,6 +2487,100 @@ def test_persist_phase_c_applies_learned_identity_and_uses_cached_relevance(
         session, product=current_product, resolved=learned
     )
     assert cached_relevance.last_observation_id == pending.observation_id
+
+
+def test_persist_phase_c_applies_partial_link_without_touching_identity_key(
+    monkeypatch,
+) -> None:
+    """TASK-128: `learned_identity` pode ser um `PartialProductLink`
+    (categoria + marca/família aterradas) -- a Fase C só preenche os
+    campos vazios do Product ad-hoc e NUNCA chama `apply_learned_identity`
+    (que promoveria/fundiria por `identity_key`). Antes da correção, o
+    parcial ia direto para `apply_learned_identity` e quebrava a coleta."""
+    mission_id, run_id, store_id, offer_id, product_id = (
+        uuid4(),
+        uuid4(),
+        uuid4(),
+        uuid4(),
+        uuid4(),
+    )
+    mission = SimpleNamespace(id=mission_id, status=MissionStatus.ACTIVE)
+    run = SimpleNamespace(
+        id=run_id,
+        mission_id=mission_id,
+        store_id=store_id,
+        status=CollectionRunStatus.RUNNING,
+    )
+    current_criteria = SimpleNamespace(
+        request_kind="generic_category",
+        variant_selection_mode=VariantSelectionMode.NOT_REQUIRED,
+    )
+    session = _mock_async_session()
+    session.scalar.side_effect = [mission, run, current_criteria]
+    current_product = SimpleNamespace(
+        identity_key=None, category=None, brand="Marca Já Gravada", family=None
+    )
+    cached_relevance = SimpleNamespace(
+        classification=OfferRelevance.NO_MATCH, last_observation_id=uuid4()
+    )
+    session.get.side_effect = [current_product, cached_relevance]
+    apply_identity = AsyncMock()
+    monkeypatch.setattr(
+        "app.collection.orchestration.apply_learned_identity", apply_identity
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration.finish_collection_run", AsyncMock()
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration._reset_source_backoff", AsyncMock()
+    )
+    monkeypatch.setattr(
+        "app.collection.orchestration._evaluate_mission_prelist", AsyncMock()
+    )
+    monkeypatch.setattr("app.collection.orchestration.publish_event_async", AsyncMock())
+    pending = _PendingOffer(
+        offer_id=offer_id,
+        product_id=product_id,
+        observation_id=uuid4(),
+        amount=Decimal("100"),
+        currency="BRL",
+        availability=Availability.AVAILABLE,
+        observed_at=NOW,
+        raw_title="Processador AMD Ryzen Box",
+        needs_relevance=False,
+        needs_display_name=False,
+        observation_created=True,
+        alert_comparison=PriceObservationComparison.UNCHANGED_REUSED,
+        previous_observation_id=None,
+        previous_amount=None,
+        previous_currency=None,
+        previous_availability=None,
+        previous_observed_at=None,
+    )
+    outcome = _PhaseAOutcome(
+        run_id=run_id,
+        mission_id=mission_id,
+        store_id=store_id,
+        mission_search_query="CPU",
+        target_amount=None,
+        target_currency=None,
+        completed_at=NOW,
+        offers=(pending,),
+    )
+    link = PartialProductLink(category="cpu", brand="AMD", family="Ryzen")
+    ai_outcomes = (_AIOutcome(offer_id, None, None, learned_identity=link),)
+
+    result = asyncio.run(
+        _persist_phase_c(_session_factory(session), outcome, ai_outcomes)
+    )
+
+    assert result is True
+    apply_identity.assert_not_awaited()
+    assert current_product.identity_key is None
+    assert current_product.category == "cpu"
+    # O primeiro vínculo vence: campo já preenchido nunca é sobrescrito.
+    assert current_product.brand == "Marca Já Gravada"
+    assert current_product.family == "Ryzen"
 
 
 def test_persist_phase_c_uses_coupon_final_amount_for_alert_but_never_the_persisted_row(

@@ -35,6 +35,7 @@ from uuid import uuid4
 from app.ai_provider import AIMessage, AIMessageRole, AIProviderManager, AIRequest
 from app.products.identity import (
     ResolvedProductVariant,
+    _slug,
     build_resolved_variant_from_fields,
     normalize_for_grounding,
 )
@@ -163,6 +164,93 @@ class AIIdentityExtraction:
     attributes: dict[str, str]
     ai_provider: str
     ai_model: str
+
+
+@dataclass(frozen=True, slots=True)
+class AIPartialExtraction:
+    """TASK-128: a IA respondeu dentro do contrato, mas SEM marca +
+    família + modelo completos -- devolve só o que ela conseguiu
+    (categoria sempre; marca/família quando vieram). Ainda passa por
+    `build_partial_link` (grounding de marca/família) antes de virar
+    vínculo. Decisão do usuário: "ela não pode não resolver"."""
+
+    category: str
+    brand: str | None
+    family: str | None
+    ai_provider: str
+    ai_model: str
+
+
+@dataclass(frozen=True, slots=True)
+class AIUnrecognizedTitle:
+    """TASK-128: resposta válida, mas nem a categoria -- "não entendi".
+    DIFERENTE de `None` (falha de rede/provedor/contrato, passageira e
+    re-tentável): este resultado vai para o cache como `awaiting_page`,
+    para o worker ler a página do produto e a IA tentar de novo."""
+
+    ai_provider: str
+    ai_model: str
+
+
+@dataclass(frozen=True, slots=True)
+class PartialProductLink:
+    """Vínculo parcial de um produto (TASK-128) -- categoria + marca/
+    família quando aparecem no título. NUNCA vira `identity_key`/
+    `family_key` (o índice único de `identity_key` é a chave de fusão de
+    duplicatas: um vínculo genérico ali fundiria produtos diferentes)."""
+
+    category: str
+    brand: str | None
+    family: str | None
+
+
+AIExtractionResult = AIIdentityExtraction | AIPartialExtraction | AIUnrecognizedTitle
+
+
+def build_partial_link(
+    raw_title: str, *, category: str | None, brand: str | None, family: str | None
+) -> PartialProductLink | None:
+    """Categoria é um RÓTULO de classificação (a IA normaliza, ex.:
+    "gpu" para "Placa de Vídeo"). Marca e família são FATOS do anúncio:
+    só entram se aparecerem no título (mesmo `tokens_present` do
+    grounding exato); senão ficam `None`, nunca inventadas. `None` quando
+    nem categoria existe.
+
+    Os três campos saem no MESMO slug da identidade exata (`_slug`, o de
+    `build_resolved_variant_from_fields`: "HyperX" -> "hyperx", "Cadeira
+    Gamer" -> "cadeira-gamer") -- achado real na suíte de integração
+    (2026-09-26): sem isso o mesmo título devolvia "HyperX" na primeira
+    resolução e "hyperx" depois, lido do candidato `pending_review` (que
+    guarda slug); e um vínculo parcial "cpu/amd" nunca casaria com os
+    produtos de identidade exata da mesma marca."""
+    label = _slug(category or "")[:80]
+    if not label:
+        return None
+    title_normalized = normalize_for_grounding(raw_title)
+
+    def _grounded(value: str | None) -> str | None:
+        cleaned = (value or "").strip()
+        if cleaned and tokens_present(title_normalized, cleaned):
+            return _slug(cleaned)[:160] or None
+        return None
+
+    return PartialProductLink(
+        category=label, brand=_grounded(brand), family=_grounded(family)
+    )
+
+
+def _incomplete_result(
+    *, category: str, brand: str, family: str, provider: str, model: str
+) -> AIPartialExtraction | AIUnrecognizedTitle:
+    if category.strip():
+        return AIPartialExtraction(
+            category=category.strip(),
+            brand=brand.strip() or None,
+            family=family.strip() or None,
+            ai_provider=provider,
+            ai_model=model,
+        )
+    return AIUnrecognizedTitle(ai_provider=provider, ai_model=model)
 
 
 @dataclass(frozen=True, slots=True)
@@ -399,10 +487,12 @@ async def extract_product_identity_via_ai(
     raw_title: str,
     profile: UserRole,
     requested_at: datetime | None = None,
-) -> AIIdentityExtraction | None:
+) -> AIExtractionResult | None:
     """Chama a IA (via `AIProviderManager` -> César Core) para
     estruturar um título bruto -- `None` em qualquer falha de rede/
-    provedor ou resposta fora do contrato esperado (mesmo padrão de
+    provedor ou resposta fora do contrato esperado (TASK-128: resposta
+    válida mas incompleta devolve `AIPartialExtraction`/
+    `AIUnrecognizedTitle`, nunca `None`) (mesmo padrão de
     `app.collection.relevance.normalize_offer_title`: o chamador nunca
     recebe um resultado parcialmente inválido). Roda sempre FORA de
     qualquer transação de banco aberta (é I/O de rede) -- mesma
@@ -466,8 +556,16 @@ async def extract_product_identity_via_ai(
             category.strip() and brand.strip() and family.strip() and model.strip()
         ):
             # A própria IA sinalizou incerteza (campo vazio) -- nunca
-            # tratamos isso como grounding "acidentalmente" verdadeiro.
-            return None
+            # tratamos isso como grounding "acidentalmente" verdadeiro;
+            # TASK-128: o que ela conseguiu (categoria/marca/família) vira
+            # vínculo parcial, nunca é descartado.
+            return _incomplete_result(
+                category=category,
+                brand=brand,
+                family=family,
+                provider=response.provider,
+                model=response.model,
+            )
         return AIIdentityExtraction(
             category=category.strip(),
             brand=brand.strip(),
@@ -493,7 +591,7 @@ async def extract_product_identities_via_ai_batch(
     raw_titles: list[str],
     profile: UserRole,
     requested_at: datetime | None = None,
-) -> list[AIIdentityExtraction | None]:
+) -> list[AIExtractionResult | None]:
     """Mesmo contrato de `extract_product_identity_via_ai`, mas manda um
     LOTE de títulos numa única chamada de IA (`request.purpose=
     BATCH_EXTRACT_IDENTITY_PURPOSE`) -- criada para TASK-123 (achado
@@ -524,7 +622,7 @@ async def extract_product_identities_via_ai_batch(
     usada no resto deste módulo) para dar pista real do que o modelo
     devolveu, sem também gerar exceção não tratada nem vazar payload
     grande no log."""
-    results: list[AIIdentityExtraction | None] = [None] * len(raw_titles)
+    results: list[AIExtractionResult | None] = [None] * len(raw_titles)
     if not raw_titles:
         return results
     moment = requested_at or datetime.now(UTC)
@@ -649,6 +747,13 @@ async def extract_product_identities_via_ai_batch(
         if not (
             category.strip() and brand.strip() and family.strip() and model.strip()
         ):
+            results[item_id] = _incomplete_result(
+                category=category,
+                brand=brand,
+                family=family,
+                provider=response.provider,
+                model=response.model,
+            )
             continue
         results[item_id] = AIIdentityExtraction(
             category=category.strip(),

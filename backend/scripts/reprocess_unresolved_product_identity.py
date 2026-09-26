@@ -6,8 +6,10 @@ implementada e testada nos checkpoints 3-11 -- nunca tinha nenhum
 chamador em todo o repositório.
 
 Determinístico e auditável na parte que decide O QUE processar (mesma
-consulta de `reprocess_unresolved_products`: `Product.identity_key IS
-NULL`, sem scan de todo o banco); a extração em si usa IA (sempre com
+consulta de `reprocess_unresolved_products`, `identity_learning.
+unlinked_product_criteria`: desde a TASK-128, `Product.identity_key IS
+NULL AND Product.category IS NULL` -- produto com vínculo parcial já saiu
+do backlog -- sem scan de todo o banco); a extração em si usa IA (sempre com
 grounding anti-alucinação, `identity_ai._is_grounded` -- nunca inventa
 campo ausente do título). Nunca duplica `Product`: quando a identidade
 resolvida já corresponde a um `Product` canônico existente, todas as
@@ -77,7 +79,10 @@ from app.database.session import (
     create_async_database_engine,
     create_async_session_factory,
 )
-from app.products.identity_learning import reprocess_unresolved_products
+from app.products.identity_learning import (
+    reprocess_unresolved_products,
+    unlinked_product_criteria,
+)
 from app.products.models import Product
 from app.users.models import UserRole
 from sqlalchemy import func, select
@@ -91,7 +96,7 @@ async def _total_unresolved_count(session: AsyncSession) -> int:
     """Total REAL do backlog, sem `limit` -- nunca capado, ao contrário
     da lista de candidatos abaixo. Zero custo de IA: só `COUNT(*)`."""
     return await session.scalar(
-        select(func.count()).select_from(Product).where(Product.identity_key.is_(None))
+        select(func.count()).select_from(Product).where(unlinked_product_criteria())
     )
 
 
@@ -101,7 +106,7 @@ async def _unresolved_candidates(session: AsyncSession, limit: int) -> list[Prod
     (a função original não expõe essa lista, só o total resolvido)."""
     rows = (
         await session.scalars(
-            select(Product).where(Product.identity_key.is_(None)).limit(limit)
+            select(Product).where(unlinked_product_criteria()).limit(limit)
         )
     ).all()
     return list(rows)
@@ -125,7 +130,10 @@ async def run(
     session_factory = create_async_session_factory(engine)
     async with session_factory() as session:
         total = await _total_unresolved_count(session)
-        print(f"Total REAL de Products sem identity_key no banco: {total}")
+        print(
+            "Total REAL de Products sem vínculo nenhum (nem identity_key nem "
+            f"categoria) no banco: {total}"
+        )
         if count_only:
             print("--count-only: nenhuma tentativa de resolver, zero chamada de IA.")
             await session.rollback()
@@ -181,9 +189,9 @@ async def run(
                 print(f"  {product_id}: {outcome}")
             else:
                 print(
-                    f"  {product_id}: continua sem identidade (extração da IA "
-                    "falhou, não passou no grounding, ou foi para revisão "
-                    "humana -- ver product_identity_candidates.status)"
+                    f"  {product_id}: continua sem vínculo (falha passageira da "
+                    "IA, ou título aguardando a leitura da página -- ver "
+                    "product_identity_candidates.status)"
                 )
 
         if apply:

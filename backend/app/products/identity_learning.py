@@ -5,7 +5,8 @@ identity_ai`) e a persistência (`app.products.identity_candidates`).
 
 `resolve_or_learn_product_variant` é chamada pela Fase B do
 `CollectionOrchestrator` (`app.collection.orchestration._classify`,
-atrás da flag `product_identity_learning_enabled`, default `False`) --
+atrás da flag `product_identity_learning_enabled`, default `True`
+desde 2026-09-25) --
 mesma disciplina de sessão curta/sem transação aberta durante a
 chamada de IA (I/O de rede). `apply_learned_identity` é aplicada na
 Fase C, dentro da seção crítica por `mission_id`; como essa seção NÃO
@@ -23,7 +24,7 @@ from datetime import datetime
 from enum import StrEnum
 from uuid import uuid4
 
-from sqlalchemy import func, select, update
+from sqlalchemy import ColumnElement, and_, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -39,7 +40,11 @@ from app.products.identity import (
     resolve_product_variant,
 )
 from app.products.identity_ai import (
+    AIExtractionResult,
     AIIdentityExtraction,
+    AIPartialExtraction,
+    PartialProductLink,
+    build_partial_link,
     evaluate_ai_identity_extraction,
     extract_product_identities_via_ai_batch,
     extract_product_identity_via_ai,
@@ -58,6 +63,15 @@ from app.purchase.models import PurchaseConfirmation
 from app.users.models import UserRole
 
 logger = logging.getLogger("app.products.identity_learning")
+
+
+def unlinked_product_criteria() -> ColumnElement[bool]:
+    """TASK-128: backlog = `Product` SEM vínculo nenhum -- nem identidade
+    exata (`identity_key`), nem vínculo parcial (`category`). Único
+    ponto do critério: `reprocess_unresolved_products` e o script de
+    backfill (`--count-only`/lista de candidatos) usam esta mesma
+    expressão, para a contagem nunca divergir do que é processado."""
+    return and_(Product.identity_key.is_(None), Product.category.is_(None))
 
 
 async def _find_candidate(
@@ -89,6 +103,30 @@ def _resolved_from_candidate(
         identity_key=candidate.identity_key,
         label=f"{candidate.brand.title()} {candidate.family.title()} {candidate.model.upper()}".strip(),
     )
+
+
+def _link_from_candidate(
+    candidate: ProductIdentityCandidate,
+) -> PartialProductLink | None:
+    """TASK-128: o que um candidato NÃO aprovado ainda garante de
+    vínculo -- `partial` guarda o vínculo já validado; `pending_review`/
+    `rejected` guardam uma extração completa que não passou no grounding,
+    então só a parte que aparece no título vira vínculo (mesma
+    `build_partial_link`); `awaiting_page` ainda não tem nada."""
+    if candidate.status == "partial":
+        return PartialProductLink(
+            category=candidate.category,
+            brand=candidate.brand,
+            family=candidate.family,
+        )
+    if candidate.status in ("pending_review", "rejected"):
+        return build_partial_link(
+            candidate.raw_title,
+            category=candidate.category,
+            brand=candidate.brand,
+            family=candidate.family,
+        )
+    return None
 
 
 def _has_unrecognized_model_suffix(
@@ -370,7 +408,7 @@ class _PreparedResolution:
     lote)."""
 
     done: bool
-    resolved: ResolvedProductVariant | None
+    resolved: ResolvedProductVariant | PartialProductLink | None
     title_hash: str | None = None
     arbitration_candidates: tuple[_ArbitrationCandidate, ...] = ()
 
@@ -396,7 +434,11 @@ async def _prepare_resolution(
     existing = await _find_candidate(session, title_hash)
     if existing is not None:
         if existing.status != "approved":
-            return _PreparedResolution(done=True, resolved=None)
+            # TASK-128: cache também para o que não fechou identidade
+            # exata -- nunca chama a IA de novo pelo mesmo título.
+            return _PreparedResolution(
+                done=True, resolved=_link_from_candidate(existing)
+            )
         return _PreparedResolution(
             done=True, resolved=_resolved_from_candidate(existing)
         )
@@ -469,7 +511,7 @@ async def _finish_resolution_with_extraction(
     ai_manager: AIProviderManager,
     arbiter_ai_manager: AIProviderManager | None,
     now: datetime | None = None,
-) -> ResolvedProductVariant | None:
+) -> ResolvedProductVariant | PartialProductLink | None:
     """Continuação de `_prepare_resolution` depois que uma extração de
     IA (item único ou uma posição de um lote) já existe -- zona
     cinzenta (árbitro) + avaliação de grounding + persistência do
@@ -547,15 +589,30 @@ async def _finish_resolution_with_extraction(
             return _resolved_from_candidate(candidate)
 
     evaluated = evaluate_ai_identity_extraction(raw_title, extraction)
+    partial_link = build_partial_link(
+        raw_title,
+        category=extraction.category,
+        brand=extraction.brand,
+        family=extraction.family,
+    )
     if evaluated.resolved is None:
         # Caso degenerado (ex.: campos só com símbolos, slug vazio) --
         # não há como calcular family_key/identity_key para persistir
-        # como candidato; registra e desiste, nunca inventa.
+        # como candidato exato; TASK-128: guarda o vínculo parcial (ou
+        # "aguardando página") no cache, nunca inventa identidade.
         logger.warning(
             "product_identity_ai_extraction_unresolvable",
             extra={"raw_title": raw_title[:200]},
         )
-        return None
+        return await _record_uncertain_extraction(
+            session,
+            raw_title=raw_title,
+            title_hash=title_hash,
+            link=partial_link,
+            ai_provider=extraction.ai_provider,
+            ai_model=extraction.ai_model,
+            now=now,
+        )
 
     candidate = ProductIdentityCandidate(
         id=uuid4(),
@@ -586,13 +643,106 @@ async def _finish_resolution_with_extraction(
         # título entre a consulta acima e este INSERT -- nunca duplica
         # nem propaga o erro; relê a decisão que já venceu.
         winner = await _find_candidate(session, title_hash)
-        if winner is None or winner.status != "approved":
+        if winner is None:
             return None
+        if winner.status != "approved":
+            return _link_from_candidate(winner)
         return _resolved_from_candidate(winner)
 
     if evaluated.status != "approved":
-        return None
+        # `pending_review` (grounding falhou): a proposta completa fica na
+        # fila de revisão, mas o produto já ganha o vínculo parcial com a
+        # parte que aparece no título (TASK-128, "não pode não resolver").
+        return partial_link
     return evaluated.resolved
+
+
+async def _record_uncertain_extraction(
+    session: AsyncSession,
+    *,
+    raw_title: str,
+    title_hash: str,
+    link: PartialProductLink | None,
+    ai_provider: str | None,
+    ai_model: str | None,
+    now: datetime | None = None,
+) -> ResolvedProductVariant | PartialProductLink | None:
+    """TASK-128: grava no cache um resultado sem identidade exata --
+    `partial` quando há vínculo parcial, `awaiting_page` quando a IA não
+    entendeu nem a categoria (o worker vai ler a página, etapa 2). Em
+    corrida com outra coleta, relê a decisão que venceu."""
+    candidate = ProductIdentityCandidate(
+        id=uuid4(),
+        raw_title=raw_title[:2000],
+        normalized_title_hash=title_hash,
+        category=link.category if link is not None else None,
+        brand=link.brand if link is not None else None,
+        family=link.family if link is not None else None,
+        status="partial" if link is not None else "awaiting_page",
+        grounded=False,
+        ai_provider=ai_provider,
+        ai_model=ai_model,
+        created_at=now or utc_now(),
+    )
+    try:
+        async with session.begin_nested():
+            session.add(candidate)
+            await session.flush()
+    except IntegrityError:
+        winner = await _find_candidate(session, title_hash)
+        if winner is None:
+            return None
+        if winner.status == "approved":
+            return _resolved_from_candidate(winner)
+        return _link_from_candidate(winner)
+    return link
+
+
+async def _resolve_from_extraction(
+    session: AsyncSession,
+    *,
+    raw_title: str,
+    prepared: _PreparedResolution,
+    extraction: AIExtractionResult,
+    ai_manager: AIProviderManager,
+    arbiter_ai_manager: AIProviderManager | None,
+    now: datetime | None = None,
+) -> ResolvedProductVariant | PartialProductLink | None:
+    """Único ponto que transforma o resultado da IA (item único ou uma
+    posição de lote) em resolução -- exata, parcial ou "aguardando
+    página". `None` só quando nem o cache foi possível (corrida sem
+    vencedor) ou quando o título aguarda a leitura da página."""
+    assert prepared.title_hash is not None  # sempre setado quando done=False
+    if isinstance(extraction, AIIdentityExtraction):
+        return await _finish_resolution_with_extraction(
+            session,
+            raw_title=raw_title,
+            title_hash=prepared.title_hash,
+            arbitration_candidates=prepared.arbitration_candidates,
+            extraction=extraction,
+            ai_manager=ai_manager,
+            arbiter_ai_manager=arbiter_ai_manager,
+            now=now,
+        )
+    link = (
+        build_partial_link(
+            raw_title,
+            category=extraction.category,
+            brand=extraction.brand,
+            family=extraction.family,
+        )
+        if isinstance(extraction, AIPartialExtraction)
+        else None
+    )
+    return await _record_uncertain_extraction(
+        session,
+        raw_title=raw_title,
+        title_hash=prepared.title_hash,
+        link=link,
+        ai_provider=extraction.ai_provider,
+        ai_model=extraction.ai_model,
+        now=now,
+    )
 
 
 async def resolve_or_learn_product_variant(
@@ -603,7 +753,7 @@ async def resolve_or_learn_product_variant(
     profile: UserRole = UserRole.ADMIN,
     arbiter_ai_manager: AIProviderManager | None = None,
     now: datetime | None = None,
-) -> ResolvedProductVariant | None:
+) -> ResolvedProductVariant | PartialProductLink | None:
     """Resolve a identidade de um título, aprendendo uma proposta nova
     via IA quando necessário -- SEMPRE tenta o motor determinístico
     primeiro (`resolve_product_variant`, os 5 extratores regex
@@ -667,14 +817,13 @@ async def resolve_or_learn_product_variant(
         ai_manager, raw_title=raw_title, profile=profile
     )
     if extraction is None:
+        # Falha de rede/provedor/contrato -- passageira, nunca vai para o
+        # cache (a próxima coleta tenta de novo).
         return None
-
-    assert prepared.title_hash is not None  # sempre setado quando done=False
-    return await _finish_resolution_with_extraction(
+    return await _resolve_from_extraction(
         session,
         raw_title=raw_title,
-        title_hash=prepared.title_hash,
-        arbitration_candidates=prepared.arbitration_candidates,
+        prepared=prepared,
         extraction=extraction,
         ai_manager=ai_manager,
         arbiter_ai_manager=arbiter_ai_manager,
@@ -862,6 +1011,69 @@ _BLOCKED_BY_PURCHASE_CONFIRMATION = (
 )
 
 
+def apply_partial_link(product: Product, link: PartialProductLink) -> bool:
+    """TASK-128: grava o vínculo parcial no Product -- só em produto SEM
+    identidade exata, só nos campos ainda vazios (o primeiro vínculo
+    vence, nunca oscila) e NUNCA em `identity_key`/`family_key`. Devolve
+    se o produto terminou vinculado."""
+    if product.identity_key is not None:
+        return False
+    if product.category is None:
+        product.category = link.category
+    if product.brand is None and link.brand is not None:
+        product.brand = link.brand
+    if product.family is None and link.family is not None:
+        product.family = link.family
+    return product.category is not None
+
+
+def _describe_partial_link(link: PartialProductLink) -> str:
+    return (
+        f"VINCULO PARCIAL -> category={link.category} "
+        f"brand={link.brand or '-'} family={link.family or '-'}"
+    )
+
+
+async def _apply_resolution(
+    session: AsyncSession,
+    *,
+    product_id: object,
+    resolution: ResolvedProductVariant | PartialProductLink,
+    apply: bool,
+    outcome_sink: dict[object, str] | None,
+) -> bool:
+    """Aplica UMA resolução (exata ou parcial) a um Product do backlog --
+    antes repetido em três pontos de `reprocess_unresolved_products`,
+    mesmo comportamento para o caso exato."""
+    product = await session.get(Product, product_id)
+    if product is None or product.identity_key is not None:
+        # Corrida: outro processo já resolveu/removeu este Product --
+        # nunca reaplica nem propaga erro, só não conta de novo.
+        return False
+    if isinstance(resolution, PartialProductLink):
+        if not apply_partial_link(product, resolution):
+            return False
+        if outcome_sink is not None:
+            outcome_sink[product_id] = _describe_partial_link(resolution)
+        if apply:
+            await session.commit()
+        return True
+    canonical = await apply_learned_identity(
+        session, product=product, resolved=resolution
+    )
+    if canonical is None:
+        if outcome_sink is not None:
+            outcome_sink[product_id] = _BLOCKED_BY_PURCHASE_CONFIRMATION
+        return False
+    if outcome_sink is not None:
+        outcome_sink[product_id] = _describe_resolution_outcome(
+            resolution, canonical, product_id
+        )
+    if apply:
+        await session.commit()
+    return True
+
+
 def _describe_resolution_outcome(
     resolved: ResolvedProductVariant, canonical: Product, original_product_id: object
 ) -> str:
@@ -976,9 +1188,11 @@ async def reprocess_unresolved_products(
     agora devolve `None` (nunca crasha) quando um ad-hoc tem
     `PurchaseConfirmation`; `outcome_sink` recebe uma mensagem
     `BLOQUEADO` explícita, `resolved_count` não conta esse item."""
+    # TASK-128: backlog = produto SEM vínculo nenhum (nem identidade
+    # exata, nem categoria) -- vínculo parcial já resolveu o "sem nada".
     unresolved = (
         await session.scalars(
-            select(Product).where(Product.identity_key.is_(None)).limit(limit)
+            select(Product).where(unlinked_product_criteria()).limit(limit)
         )
     ).all()
     # Capturados como valores simples AQUI, antes de qualquer rollback --
@@ -996,24 +1210,21 @@ async def reprocess_unresolved_products(
                 arbiter_ai_manager=arbiter_ai_manager,
             )
             if resolved is None:
+                if apply:
+                    # "aguardando página" (TASK-128) também é trabalho a
+                    # preservar -- sem este commit, o rollback antes da
+                    # chamada de IA do PRÓXIMO produto apagaria o cache
+                    # (mesma regra do caminho em lote abaixo).
+                    await session.commit()
                 continue
-            product = await session.get(Product, product_id)
-            if product is None or product.identity_key is not None:
-                continue
-            canonical = await apply_learned_identity(
-                session, product=product, resolved=resolved
-            )
-            if canonical is None:
-                if outcome_sink is not None:
-                    outcome_sink[product_id] = _BLOCKED_BY_PURCHASE_CONFIRMATION
-                continue
-            resolved_count += 1
-            if outcome_sink is not None:
-                outcome_sink[product_id] = _describe_resolution_outcome(
-                    resolved, canonical, product_id
-                )
-            if apply:
-                await session.commit()
+            if await _apply_resolution(
+                session,
+                product_id=product_id,
+                resolution=resolved,
+                apply=apply,
+                outcome_sink=outcome_sink,
+            ):
+                resolved_count += 1
         return resolved_count
 
     resolved_count = 0
@@ -1021,23 +1232,14 @@ async def reprocess_unresolved_products(
     for product_id, raw_title in items:
         prepared = await _prepare_resolution(session, raw_title)
         if prepared.done:
-            if prepared.resolved is not None:
-                product = await session.get(Product, product_id)
-                if product is not None and product.identity_key is None:
-                    canonical = await apply_learned_identity(
-                        session, product=product, resolved=prepared.resolved
-                    )
-                    if canonical is None:
-                        if outcome_sink is not None:
-                            outcome_sink[product_id] = _BLOCKED_BY_PURCHASE_CONFIRMATION
-                    else:
-                        resolved_count += 1
-                        if outcome_sink is not None:
-                            outcome_sink[product_id] = _describe_resolution_outcome(
-                                prepared.resolved, canonical, product_id
-                            )
-                        if apply:
-                            await session.commit()
+            if prepared.resolved is not None and await _apply_resolution(
+                session,
+                product_id=product_id,
+                resolution=prepared.resolved,
+                apply=apply,
+                outcome_sink=outcome_sink,
+            ):
+                resolved_count += 1
             continue
         pending.append((product_id, raw_title, prepared))
 
@@ -1057,36 +1259,28 @@ async def reprocess_unresolved_products(
             chunk, extractions, strict=True
         ):
             if extraction is None:
+                # Falha passageira do lote/item -- nunca vai para o cache.
                 continue
-            resolved = await _finish_resolution_with_extraction(
+            resolved = await _resolve_from_extraction(
                 session,
                 raw_title=raw_title,
-                title_hash=prepared.title_hash,
-                arbitration_candidates=prepared.arbitration_candidates,
+                prepared=prepared,
                 extraction=extraction,
                 ai_manager=ai_manager,
                 arbiter_ai_manager=arbiter_ai_manager,
             )
             if resolved is None:
+                if apply:
+                    # "aguardando página" também é trabalho a preservar
+                    # (o cache evita pagar IA de novo por este título).
+                    await session.commit()
                 continue
-            product = await session.get(Product, product_id)
-            if product is None or product.identity_key is not None:
-                # Corrida: outro processo já resolveu/removeu este
-                # Product entre a montagem do lote e agora -- nunca
-                # reaplica nem propaga erro, só não conta de novo.
-                continue
-            canonical = await apply_learned_identity(
-                session, product=product, resolved=resolved
-            )
-            if canonical is None:
-                if outcome_sink is not None:
-                    outcome_sink[product_id] = _BLOCKED_BY_PURCHASE_CONFIRMATION
-                continue
-            resolved_count += 1
-            if outcome_sink is not None:
-                outcome_sink[product_id] = _describe_resolution_outcome(
-                    resolved, canonical, product_id
-                )
-            if apply:
-                await session.commit()
+            if await _apply_resolution(
+                session,
+                product_id=product_id,
+                resolution=resolved,
+                apply=apply,
+                outcome_sink=outcome_sink,
+            ):
+                resolved_count += 1
     return resolved_count
