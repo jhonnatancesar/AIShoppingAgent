@@ -1,12 +1,14 @@
 """Contrato e ownership da página USER de oferta (TASK-095)."""
 
 import asyncio
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
+from app.alerts.internal_history import InternalHistoricalBest
 from app.collection.contracts import (
     InstallmentInterestKind,
     MarketplacePartyKind,
@@ -14,12 +16,22 @@ from app.collection.contracts import (
 )
 from app.collection.models import OfferInstallmentOption, PriceObservation
 from app.collection.normalization import Availability
+from app.collection.relevance import OfferRelevance
 from app.core.config import Settings, get_settings
 from app.core.errors import register_api_error_handler
 from app.coupons.models import Coupon
-from app.database.dependency import get_web_async_session
+from app.database.dependency import (
+    get_web_async_session,
+    get_web_async_session_factory,
+)
+from app.historical_bootstrap.models import (
+    ExternalPriceReference,
+    HistoricalBootstrap,
+    HistoricalBootstrapStatus,
+)
 from app.offers.models import Offer
 from app.offers.query import (
+    AllOfferSummaryDev,
     OfferPriceHistory,
     PriceHistoryMetrics,
     PriceHistoryPoint,
@@ -38,6 +50,7 @@ from app.offers.query import (
 from app.products.models import Product
 from app.stores.models import Seller, Store
 from app.users.models import User, UserRole
+from app.webapp.csrf import CSRF_COOKIE_NAME
 from app.webapp.dependency import WEB_SESSION_COOKIE_NAME
 from app.webapp.offers_router import _as_comparison, router
 from fastapi import FastAPI
@@ -167,6 +180,25 @@ def client_with_coupons_disabled(
     owner = _user()
     monkeypatch.setattr(
         "app.webapp.dependency.get_web_session_user", lambda *a, **k: owner
+    )
+    return TestClient(app)
+
+
+@pytest.fixture
+def client_as_dev(session: MagicMock, monkeypatch: pytest.MonkeyPatch) -> TestClient:
+    """TASK-126: mesmo client de sempre, usuário logado é DEV --
+    `authorize(session, user, Permission.DEV_PANEL_ACCESS)` é chamado
+    inline (mesmo padrão de `Permission.MISSION_READ` já usado neste
+    router), direto com a sessão async injetada -- nunca precisa de um
+    `get_session` síncrono separado (diferente de `require_dev_web_
+    session`, a dependência do FastAPI, que este endpoint não usa)."""
+    app = FastAPI()
+    register_api_error_handler(app)
+    app.include_router(router)
+    app.dependency_overrides[get_web_async_session] = lambda: session
+    dev_user = User(id=uuid4(), display_name="DEV", role=UserRole.DEV, username="dev")
+    monkeypatch.setattr(
+        "app.webapp.dependency.get_web_session_user", lambda *a, **k: dev_user
     )
     return TestClient(app)
 
@@ -454,6 +486,76 @@ def test_list_offers_omits_coupon_for_offer_without_observation(
     body = response.json()
     assert body["items"][0]["applied_coupon"] is None
     assert body["items"][0]["latest_observation"] is None
+
+
+# --- TASK-126: `all_users` (DEV-only, inclui NO_MATCH) -----------------
+
+
+def test_list_offers_all_users_requires_dev_role(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`client` (fixture normal) é USER -- barrado antes de chamar
+    `list_all_offers_dev`, mesmo achado real desta TASK: a listagem
+    normal (`list_user_offers`) nunca deveria ser trocada sem checar
+    DEV primeiro."""
+    dev_query = AsyncMock(side_effect=AssertionError("não deveria chamar a query DEV"))
+    monkeypatch.setattr("app.webapp.offers_router.list_all_offers_dev", dev_query)
+
+    response = client.get("/api/v1/offers?all_users=true", cookies=_cookies())
+
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "dev_access_denied"
+    dev_query.assert_not_called()
+
+
+def test_list_offers_all_users_as_dev_exposes_no_match_classification(
+    client_as_dev: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Prova o achado da TASK-126: com `all_users=true` e usuário DEV, a
+    listagem usa `list_all_offers_dev` (todos os usuários, `NO_MATCH`
+    incluso) em vez de `list_user_offers`, e o item devolvido expõe
+    `classification` -- `None` nunca aparece quando o dado existe."""
+    summary = _summary()
+    all_users_item = AllOfferSummaryDev(
+        offer=summary.offer,
+        product=summary.product,
+        store=summary.store,
+        seller=summary.seller,
+        observation=summary.observation,
+        classification=OfferRelevance.NO_MATCH,
+    )
+    all_users_query = AsyncMock(return_value=((all_users_item,), 1))
+    monkeypatch.setattr("app.webapp.offers_router.list_all_offers_dev", all_users_query)
+    user_query = AsyncMock(
+        side_effect=AssertionError("não deveria chamar a query USER")
+    )
+    monkeypatch.setattr("app.webapp.offers_router.list_user_offers", user_query)
+
+    response = client_as_dev.get("/api/v1/offers?all_users=true", cookies=_cookies())
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["items"][0]["classification"] == "no_match"
+    all_users_query.assert_awaited_once()
+    user_query.assert_not_called()
+
+
+def test_list_offers_default_never_exposes_classification(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Sem `all_users` (comportamento de sempre) -- `classification`
+    nunca aparece, mesmo para USER normal, nunca um vazamento de dado
+    DEV-only pelo caminho comum."""
+    summary = _summary()
+    monkeypatch.setattr(
+        "app.webapp.offers_router.list_user_offers",
+        AsyncMock(return_value=((summary,), 1)),
+    )
+
+    response = client.get("/api/v1/offers", cookies=_cookies())
+
+    assert response.status_code == 200
+    assert response.json()["items"][0]["classification"] is None
 
 
 def test_other_user_cannot_access_offer(
@@ -842,3 +944,393 @@ def test_comparison_response_preserves_source_bound_data() -> None:
     assert response.offers[0].rating is not None
     assert response.offers[0].latest_observation is not None
     assert response.offers[0].latest_observation.total_amount == Decimal("4619.00")
+
+
+# --- TASK-127: preço histórico + botão (e furo da TASK-126) ------------
+
+_CSRF = "task127-csrf"
+
+
+def _historical_settings(**overrides) -> Settings:
+    values = {"cesar_core_api_key_file": Path("fake-core-key")}
+    values.update(overrides)
+    return Settings(**values)
+
+
+def _historical_client(
+    session: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    role: UserRole,
+    settings: Settings | None = None,
+) -> TestClient:
+    app = FastAPI()
+    register_api_error_handler(app)
+    app.include_router(router)
+    app.dependency_overrides[get_web_async_session] = lambda: session
+    app.dependency_overrides[get_web_async_session_factory] = lambda: "factory"
+    effective = settings if settings is not None else _historical_settings()
+    app.dependency_overrides[get_settings] = lambda: effective
+    viewer = User(id=uuid4(), display_name=role.value, role=role, username="viewer")
+    monkeypatch.setattr(
+        "app.webapp.dependency.get_web_session_user", lambda *a, **k: viewer
+    )
+    return TestClient(app)
+
+
+def _post_cookies() -> dict[str, str]:
+    return {WEB_SESSION_COOKIE_NAME: "task127-session", CSRF_COOKIE_NAME: _CSRF}
+
+
+def _identified_detail() -> UserOfferDetail:
+    detail = _detail()
+    detail.product.identity_key = "smartphone:samsung:galaxy-s24-ultra"
+    return detail
+
+
+def _mock_historical_reads(
+    monkeypatch: pytest.MonkeyPatch,
+    detail: UserOfferDetail,
+    *,
+    bootstrap=None,
+    internal=None,
+    reference=None,
+) -> None:
+    monkeypatch.setattr(
+        "app.webapp.offers_router.get_offer_detail_for_user",
+        AsyncMock(return_value=detail),
+    )
+    monkeypatch.setattr(
+        "app.webapp.offers_router.get_internal_historical_best",
+        AsyncMock(return_value=internal),
+    )
+    monkeypatch.setattr(
+        "app.webapp.offers_router.get_external_price_reference_evidence",
+        AsyncMock(return_value=reference),
+    )
+    state = (
+        bootstrap
+        if isinstance(bootstrap, AsyncMock)
+        else AsyncMock(return_value=bootstrap)
+    )
+    monkeypatch.setattr(
+        "app.webapp.offers_router.get_historical_bootstrap_state", state
+    )
+
+
+def _mock_search_machinery(monkeypatch: pytest.MonkeyPatch, *, claimed="claimed"):
+    claim = AsyncMock(return_value=claimed)
+    runner = AsyncMock()
+    user_ai = MagicMock(return_value="user-ai")
+    admin_ai = MagicMock(return_value="admin-dev-ai")
+    monkeypatch.setattr(
+        "app.webapp.offers_router.claim_manual_historical_bootstrap", claim
+    )
+    monkeypatch.setattr(
+        "app.webapp.offers_router._run_manual_historical_search", runner
+    )
+    monkeypatch.setattr(
+        "app.webapp.offers_router.build_user_ai_provider_manager", user_ai
+    )
+    monkeypatch.setattr(
+        "app.webapp.offers_router.build_admin_dev_ai_provider_manager", admin_ai
+    )
+    monkeypatch.setattr("app.webapp.offers_router.CesarCoreFetchProvider", MagicMock())
+    return claim, runner, user_ai, admin_ai
+
+
+def _recent_bootstrap(days_ago: int = 10) -> HistoricalBootstrap:
+    return HistoricalBootstrap(
+        product_id=uuid4(),
+        condition="new",
+        currency="BRL",
+        status=HistoricalBootstrapStatus.COMPLETED_WITH_REFERENCES,
+        completed_at=datetime.now(UTC) - timedelta(days=days_ago),
+    )
+
+
+def _search(client: TestClient, offer_id, *, force: bool = False):
+    return client.post(
+        f"/api/v1/offers/{offer_id}/historical-price/search",
+        json={"force": force},
+        cookies=_post_cookies(),
+        headers={"X-CSRF-Token": _CSRF},
+    )
+
+
+def test_historical_price_shows_already_collected_values_without_any_click(
+    session: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Pedido explícito do usuário: o que já foi coletado aparece na hora,
+    nunca um campo vazio esperando alguém clicar no botão."""
+    detail = _identified_detail()
+    reference = ExternalPriceReference(
+        amount=Decimal("2199.00"),
+        currency="BRL",
+        source="hardware_barato",
+        safe_url="https://www.hardwarebarato.com/produtos/s24-ultra",
+        store_name=None,
+        historical_date=date(2026, 3, 12),
+        collected_at=NOW,
+    )
+    _mock_historical_reads(
+        monkeypatch,
+        detail,
+        internal=InternalHistoricalBest(amount=Decimal("2249.00"), currency="BRL"),
+        reference=reference,
+    )
+    client = _historical_client(session, monkeypatch, role=UserRole.USER)
+
+    response = client.get(
+        f"/api/v1/offers/{detail.offer.id}/historical-price", cookies=_cookies()
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["internal"] == {"amount": "2249.00", "currency": "BRL"}
+    assert body["reference"]["amount"] == "2199.00"
+    assert body["reference"]["source_url"] == reference.safe_url
+    assert body["reference"]["historical_date"] == "2026-03-12"
+    assert body["search"]["availability"] == "available"
+
+
+def test_historical_price_search_is_disabled_without_core_credential(
+    session: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    detail = _identified_detail()
+    _mock_historical_reads(monkeypatch, detail)
+    client = _historical_client(
+        session,
+        monkeypatch,
+        role=UserRole.USER,
+        settings=_historical_settings(cesar_core_api_key_file=None),
+    )
+
+    response = client.get(
+        f"/api/v1/offers/{detail.offer.id}/historical-price", cookies=_cookies()
+    )
+
+    assert response.json()["search"]["availability"] == "disabled"
+
+
+def test_user_search_without_price_claims_and_runs_in_background(
+    session: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    detail = _identified_detail()
+    in_progress = HistoricalBootstrap(
+        product_id=detail.product.id,
+        condition="new",
+        currency="BRL",
+        status=HistoricalBootstrapStatus.PROCESSING,
+        lease_until=datetime.now(UTC) + timedelta(minutes=5),
+    )
+    _mock_historical_reads(
+        monkeypatch, detail, bootstrap=AsyncMock(side_effect=[None, in_progress])
+    )
+    claim, runner, _user_ai, admin_ai = _mock_search_machinery(monkeypatch)
+    client = _historical_client(session, monkeypatch, role=UserRole.USER)
+
+    response = _search(client, detail.offer.id)
+
+    assert response.status_code == 202
+    assert response.json()["search"]["availability"] == "in_progress"
+    assert claim.await_args.kwargs["force"] is False
+    runner.assert_awaited_once()
+    assert runner.await_args.kwargs["profile"] is UserRole.USER
+    assert runner.await_args.kwargs["ai"] == "user-ai"
+    admin_ai.assert_not_called()
+
+
+def test_user_cannot_search_again_within_window_even_asking_to_force(
+    session: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    detail = _identified_detail()
+    _mock_historical_reads(monkeypatch, detail, bootstrap=_recent_bootstrap())
+    claim, runner, _user_ai, _admin_ai = _mock_search_machinery(monkeypatch)
+    client = _historical_client(session, monkeypatch, role=UserRole.USER)
+
+    for force in (False, True):
+        response = _search(client, detail.offer.id, force=force)
+        assert response.status_code == 409
+        assert response.json()["error"]["code"] == "historical_price_recently_searched"
+    claim.assert_not_called()
+    runner.assert_not_called()
+
+
+def test_dev_within_window_needs_confirmation_then_forces(
+    session: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    detail = _identified_detail()
+    _mock_historical_reads(monkeypatch, detail, bootstrap=_recent_bootstrap())
+    claim, runner, user_ai, _admin_ai = _mock_search_machinery(monkeypatch)
+    client = _historical_client(session, monkeypatch, role=UserRole.DEV)
+
+    refused = _search(client, detail.offer.id)
+    assert refused.status_code == 409
+    assert refused.json()["error"]["code"] == "historical_price_force_required"
+    assert refused.json()["error"]["details"]["search"]["next_allowed_at"]
+    claim.assert_not_called()
+
+    forced = _search(client, detail.offer.id, force=True)
+    assert forced.status_code == 202
+    assert claim.await_args.kwargs["force"] is True
+    assert runner.await_args.kwargs["ai"] == "admin-dev-ai"
+    user_ai.assert_not_called()
+
+
+def test_search_refused_for_product_without_identity(
+    session: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    detail = _detail()  # identity_key None
+    _mock_historical_reads(monkeypatch, detail)
+    claim, _runner, _user_ai, _admin_ai = _mock_search_machinery(monkeypatch)
+    client = _historical_client(session, monkeypatch, role=UserRole.DEV)
+
+    response = _search(client, detail.offer.id, force=True)
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "historical_price_no_identity"
+    claim.assert_not_called()
+
+
+def test_search_race_never_starts_a_second_search(
+    session: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    detail = _identified_detail()
+    _mock_historical_reads(monkeypatch, detail)
+    _claim, runner, _user_ai, _admin_ai = _mock_search_machinery(
+        monkeypatch, claimed=None
+    )
+    client = _historical_client(session, monkeypatch, role=UserRole.USER)
+
+    response = _search(client, detail.offer.id)
+
+    assert response.status_code == 409
+    runner.assert_not_called()
+
+
+def test_dev_opens_offer_outside_own_missions_user_still_denied(
+    session: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Furo da TASK-126: DEV vê a oferta na listagem "todos os usuários" e
+    precisa conseguir abrir o detalhe; USER continua exatamente igual."""
+    detail = _detail()
+    monkeypatch.setattr(
+        "app.webapp.offers_router.get_offer_detail_for_user",
+        AsyncMock(return_value=None),
+    )
+    dev_lookup = AsyncMock(return_value=detail)
+    monkeypatch.setattr("app.webapp.offers_router.get_offer_detail_for_dev", dev_lookup)
+
+    as_user = _historical_client(session, monkeypatch, role=UserRole.USER)
+    denied = as_user.get(f"/api/v1/offers/{detail.offer.id}", cookies=_cookies())
+    assert denied.status_code == 403
+    dev_lookup.assert_not_called()
+
+    as_dev = _historical_client(session, monkeypatch, role=UserRole.DEV)
+    response = as_dev.get(f"/api/v1/offers/{detail.offer.id}", cookies=_cookies())
+    assert response.status_code == 200
+    assert response.json()["title"] == "Galaxy S24 Ultra"
+
+
+# --- TASK-126 (furo): comparação e gráfico também abrem para DEV --------
+
+
+def _comparison_of(detail: UserOfferDetail) -> UserOfferComparison:
+    return UserOfferComparison(
+        product=detail.product,
+        offers=(
+            UserComparisonOffer(
+                detail.offer, detail.store, detail.seller, detail.observation, ()
+            ),
+        ),
+    )
+
+
+def _empty_history(product_id) -> OfferPriceHistory:
+    return OfferPriceHistory(
+        product_id=product_id,
+        comparable=False,
+        reason="unresolved_product_identity",
+        period="1m",
+        currency=None,
+        period_from=None,
+        period_to=NOW,
+        series=(),
+        metrics=None,
+    )
+
+
+@pytest.mark.parametrize(
+    ("role", "expected_status"), [(UserRole.USER, 403), (UserRole.DEV, 200)]
+)
+def test_comparison_falls_back_to_dev_view_only_for_dev(
+    session: MagicMock, monkeypatch: pytest.MonkeyPatch, role, expected_status
+) -> None:
+    detail = _detail()
+    monkeypatch.setattr(
+        "app.webapp.offers_router.get_offer_comparison_for_user",
+        AsyncMock(return_value=None),
+    )
+    dev_lookup = AsyncMock(return_value=_comparison_of(detail))
+    monkeypatch.setattr(
+        "app.webapp.offers_router.get_offer_comparison_for_dev", dev_lookup
+    )
+    client = _historical_client(session, monkeypatch, role=role)
+
+    response = client.get(
+        f"/api/v1/offers/{detail.offer.id}/comparison", cookies=_cookies()
+    )
+
+    assert response.status_code == expected_status
+    if role is UserRole.DEV:
+        assert response.json()["offers"][0]["id"] == str(detail.offer.id)
+    else:
+        dev_lookup.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("role", "expected_status"), [(UserRole.USER, 403), (UserRole.DEV, 200)]
+)
+def test_price_history_falls_back_to_dev_view_only_for_dev(
+    session: MagicMock, monkeypatch: pytest.MonkeyPatch, role, expected_status
+) -> None:
+    detail = _detail()
+    monkeypatch.setattr(
+        "app.webapp.offers_router.get_offer_price_history_for_user",
+        AsyncMock(return_value=None),
+    )
+    dev_lookup = AsyncMock(return_value=_empty_history(detail.product.id))
+    monkeypatch.setattr(
+        "app.webapp.offers_router.get_offer_price_history_for_dev", dev_lookup
+    )
+    client = _historical_client(session, monkeypatch, role=role)
+
+    response = client.get(
+        f"/api/v1/offers/{detail.offer.id}/price-history?period=1m",
+        cookies=_cookies(),
+    )
+
+    assert response.status_code == expected_status
+    if role is UserRole.DEV:
+        assert response.json()["reason"] == "unresolved_product_identity"
+        assert dev_lookup.await_args.kwargs["period"] == "1m"
+    else:
+        dev_lookup.assert_not_called()
+
+
+def test_historical_price_denied_for_offer_the_user_cannot_see(
+    session: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "app.webapp.offers_router.get_offer_detail_for_user",
+        AsyncMock(return_value=None),
+    )
+    client = _historical_client(session, monkeypatch, role=UserRole.USER)
+
+    response = client.get(
+        f"/api/v1/offers/{uuid4()}/historical-price", cookies=_cookies()
+    )
+
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "offer_access_denied"

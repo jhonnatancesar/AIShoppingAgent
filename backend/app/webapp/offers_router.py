@@ -1,20 +1,28 @@
 """Detalhe de oferta da área USER (TASK-095)."""
 
 import logging
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Annotated, Literal, NoReturn
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, status
-from pydantic import BaseModel
-from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import APIRouter, BackgroundTasks, Depends, Query, status
+from pydantic import BaseModel, ConfigDict
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.ai_provider.contracts import AIProviderManager
+from app.ai_provider.manager import (
+    build_admin_dev_ai_provider_manager,
+    build_user_ai_provider_manager,
+)
+from app.alerts.internal_history import get_internal_historical_best
 from app.authorization import (
     AuthorizationDenied,
     Permission,
+    ai_profile_for_user,
     authorize,
     deny_resource_unavailable,
+    permissions_for_role,
 )
 from app.collection.contracts import (
     InstallmentInterestKind,
@@ -22,6 +30,7 @@ from app.collection.contracts import (
     OfferCondition,
 )
 from app.collection.normalization import Availability
+from app.collection.relevance import OfferRelevance
 from app.core.config import Settings, get_settings
 from app.core.errors import ApiError
 from app.coupons.pricing import AppliedCoupon, best_applicable_coupon
@@ -29,7 +38,20 @@ from app.coupons.service import (
     get_active_coupons_by_store,
     get_candidate_coupons_for_offer,
 )
-from app.database.dependency import get_web_async_session
+from app.database.dependency import (
+    get_web_async_session,
+    get_web_async_session_factory,
+)
+from app.historical_bootstrap.models import HistoricalBootstrapStatus
+from app.historical_bootstrap.service import (
+    ClaimedHistoricalBootstrap,
+    ManualSearchAvailability,
+    claim_manual_historical_bootstrap,
+    get_external_price_reference_evidence,
+    get_historical_bootstrap_state,
+    manual_search_availability,
+    run_claimed_historical_bootstrap,
+)
 from app.offers.presentation import (
     resolve_offer_display_title,
     resolve_offer_image_chain,
@@ -40,12 +62,19 @@ from app.offers.query import (
     UserOfferComparison,
     UserOfferDetail,
     UserOfferSummary,
+    get_offer_comparison_for_dev,
     get_offer_comparison_for_user,
+    get_offer_detail_for_dev,
     get_offer_detail_for_user,
+    get_offer_price_history_for_dev,
     get_offer_price_history_for_user,
+    list_all_offers_dev,
     list_user_offers,
 )
-from app.users.models import User
+from app.products.models import Product
+from app.search.cesar_core_fetch import CesarCoreFetchProvider
+from app.search.manager import build_web_search_manager
+from app.users.models import User, UserRole
 from app.webapp.dependency import require_web_session
 
 router = APIRouter(prefix="/api/v1/offers", tags=["offers"])
@@ -138,6 +167,10 @@ class OfferSummaryOut(BaseModel):
     rating: OfferRatingOut | None
     applied_coupon: AppliedCouponOut | None = None
     latest_observation: OfferSummaryObservationOut | None
+    classification: OfferRelevance | None = None
+    """TASK-126: só populado em `all_users=true` (DEV) -- `None` no modo
+    normal, nunca um valor inventado. Relevância bruta mais recente da
+    oferta, incluindo `NO_MATCH` (nunca aparece fora do modo DEV)."""
 
 
 class OfferListResponse(BaseModel):
@@ -199,6 +232,77 @@ class PriceHistoryResponse(BaseModel):
     metrics: PriceHistoryMetricsOut | None
 
 
+class HistoricalPriceInternalOut(BaseModel):
+    """Menor preço já registrado pelo próprio GG (só novo/disponível)."""
+
+    amount: Decimal
+    currency: str
+
+
+class HistoricalPriceReferenceOut(BaseModel):
+    """Menor preço histórico externo já coletado (hardwarebarato.com e
+    busca genérica, via César Core) -- `historical_date` é `None` quando a
+    fonte não trouxe data, nunca inventada."""
+
+    amount: Decimal
+    currency: str
+    source: str
+    source_url: str
+    store_name: str | None
+    historical_date: date | None
+    collected_at: str
+
+
+class HistoricalPriceSearchOut(BaseModel):
+    availability: ManualSearchAvailability
+    last_status: HistoricalBootstrapStatus | None
+    last_completed_at: str | None
+    next_allowed_at: str | None
+    """Só preenchido quando a busca está bloqueada pela janela de
+    revalidação (`blocked_recent`/`requires_force`)."""
+
+
+class HistoricalPriceResponse(BaseModel):
+    product_id: UUID
+    internal: HistoricalPriceInternalOut | None
+    reference: HistoricalPriceReferenceOut | None
+    search: HistoricalPriceSearchOut
+
+
+class HistoricalPriceSearchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    force: bool = False
+    """Só tem efeito para DEV (depois da confirmação na tela); ignorado
+    para qualquer outro papel -- nunca eleva o acesso de ninguém."""
+
+
+_HISTORICAL_SEARCH_REFUSALS: dict[ManualSearchAvailability, tuple[str, str]] = {
+    ManualSearchAvailability.REQUIRES_FORCE: (
+        "historical_price_force_required",
+        "O preço ainda está dentro do limite de 90 dias. Confirme para "
+        "pesquisar mesmo assim.",
+    ),
+    ManualSearchAvailability.BLOCKED_RECENT: (
+        "historical_price_recently_searched",
+        "Este produto já foi pesquisado recentemente.",
+    ),
+    ManualSearchAvailability.IN_PROGRESS: (
+        "historical_price_search_in_progress",
+        "Já existe uma busca de preço histórico em andamento.",
+    ),
+    ManualSearchAvailability.NO_IDENTITY: (
+        "historical_price_no_identity",
+        "Produto ainda sem identidade reconhecida -- não dá para buscar "
+        "preço histórico com segurança.",
+    ),
+    ManualSearchAvailability.DISABLED: (
+        "historical_price_search_disabled",
+        "A busca de preço histórico está desativada no momento.",
+    ),
+}
+
+
 async def _deny_offer_unavailable(
     session: AsyncSession, *, user: User, offer_id: UUID
 ) -> NoReturn:
@@ -218,6 +322,27 @@ async def _deny_offer_unavailable(
             message="Você não tem acesso a esta oferta.",
         ) from error
     raise AssertionError("unreachable")
+
+
+def _has_dev_access(user: User) -> bool:
+    """TASK-126/127: DEV abre detalhe/comparação/gráfico de qualquer
+    oferta (a mesma que já vê na listagem com `all_users=true`). Checagem
+    pura por papel -- nunca gera auditoria de negação para USER, que
+    continua caindo em `_deny_offer_unavailable` como sempre."""
+    return Permission.DEV_PANEL_ACCESS in permissions_for_role(
+        getattr(user, "role", None)
+    )
+
+
+async def _offer_detail_for_viewer(
+    session: AsyncSession, *, user: User, offer_id: UUID
+) -> UserOfferDetail | None:
+    detail = await get_offer_detail_for_user(
+        session, offer_id=offer_id, user_id=user.id
+    )
+    if detail is None and _has_dev_access(user):
+        detail = await get_offer_detail_for_dev(session, offer_id=offer_id)
+    return detail
 
 
 def _as_applied_coupon_out(
@@ -297,7 +422,9 @@ def _as_response(
 
 
 def _as_summary(
-    detail: UserOfferSummary, applied_coupon: AppliedCoupon | None = None
+    detail: UserOfferSummary,
+    applied_coupon: AppliedCoupon | None = None,
+    classification: OfferRelevance | None = None,
 ) -> OfferSummaryOut:
     observation = detail.observation
     image_url, image_fallback_url = resolve_offer_image_chain(
@@ -337,6 +464,7 @@ def _as_summary(
             else None
         ),
         applied_coupon=_as_applied_coupon_out(applied_coupon),
+        classification=classification,
     )
 
 
@@ -423,6 +551,7 @@ async def list_offers(
     sort: Literal["recent", "price_asc", "price_desc"] = "recent",
     limit: Annotated[int, Query(ge=1, le=100)] = 24,
     offset: Annotated[int, Query(ge=0)] = 0,
+    all_users: bool = False,
     user: User = Depends(require_web_session),
     session: AsyncSession = Depends(get_web_async_session),
     settings: Settings = Depends(get_settings),
@@ -436,17 +565,46 @@ async def list_offers(
             code="offer_list_access_denied",
             message="Você não tem acesso às ofertas.",
         ) from error
-    items, total = await list_user_offers(
-        session,
-        user_id=user.id,
-        search=q,
-        store_code=store,
-        condition=condition.value if condition else None,
-        availability=availability.value if availability else None,
-        sort=sort,
-        limit=limit,
-        offset=offset,
-    )
+    # TASK-126: `all_users` é DEV-only -- achado real (caso do 9800X3D/
+    # Kabum/CPUPROMO) mostrou que não existia NENHUMA tela mostrando os
+    # itens `NO_MATCH`/de outros usuários já coletados. Filtro desligado
+    # por padrão (comportamento idêntico a antes desta TASK); quando
+    # ligado, troca `list_user_offers` (posse + `ACCESSIBLE_RELEVANCE`)
+    # por `list_all_offers_dev` (qualquer usuário, qualquer classificação,
+    # `NO_MATCH` incluso) -- mesmos `OfferSummaryOut`/`OfferCard`, só a
+    # fonte de dado muda.
+    if all_users:
+        try:
+            authorize(session, user, Permission.DEV_PANEL_ACCESS)
+        except AuthorizationDenied as error:
+            await session.commit()
+            raise ApiError(
+                status_code=status.HTTP_403_FORBIDDEN,
+                code="dev_access_denied",
+                message="Você não tem acesso a esta área.",
+            ) from error
+        items, total = await list_all_offers_dev(
+            session,
+            search=q,
+            store_code=store,
+            condition=condition.value if condition else None,
+            availability=availability.value if availability else None,
+            sort=sort,
+            limit=limit,
+            offset=offset,
+        )
+    else:
+        items, total = await list_user_offers(
+            session,
+            user_id=user.id,
+            search=q,
+            store_code=store,
+            condition=condition.value if condition else None,
+            availability=availability.value if availability else None,
+            sort=sort,
+            limit=limit,
+            offset=offset,
+        )
     # FASE G (achado real, 2026-09-08): `list_offers` nunca calculava
     # `applied_coupon` -- só `get_user_offer` (detalhe de UMA Offer)
     # fazia isso. A listagem é a primeira superfície que o usuário vê;
@@ -474,7 +632,11 @@ async def list_offers(
             logger.warning("coupon_list_lookup_failed", exc_info=True)
     return OfferListResponse(
         items=[
-            _as_summary(item, applied_coupon=coupons_by_offer_id.get(item.offer.id))
+            _as_summary(
+                item,
+                applied_coupon=coupons_by_offer_id.get(item.offer.id),
+                classification=getattr(item, "classification", None),
+            )
             for item in items
         ],
         limit=limit,
@@ -511,6 +673,8 @@ async def compare_offer(
     comparison = await get_offer_comparison_for_user(
         session, offer_id=offer_id, user_id=user.id
     )
+    if comparison is None and _has_dev_access(user):
+        comparison = await get_offer_comparison_for_dev(session, offer_id=offer_id)
     if comparison is None:
         await _deny_offer_unavailable(session, user=user, offer_id=offer_id)
     return _as_comparison(comparison)
@@ -593,17 +757,264 @@ async def get_user_offer_price_history(
             code="offer_access_denied",
             message="Você não tem acesso a esta oferta.",
         ) from error
+    now = datetime.now(UTC)
+    selected_store_ids = frozenset(store_ids) if store_ids else None
     history = await get_offer_price_history_for_user(
         session,
         offer_id=offer_id,
         user_id=user.id,
         period=period,
-        now=datetime.now(UTC),
-        store_ids=frozenset(store_ids) if store_ids else None,
+        now=now,
+        store_ids=selected_store_ids,
     )
+    if history is None and _has_dev_access(user):
+        history = await get_offer_price_history_for_dev(
+            session,
+            offer_id=offer_id,
+            period=period,
+            now=now,
+            store_ids=selected_store_ids,
+        )
     if history is None:
         await _deny_offer_unavailable(session, user=user, offer_id=offer_id)
     return _as_price_history(history)
+
+
+async def _historical_price_response(
+    session: AsyncSession,
+    *,
+    product: Product,
+    user: User,
+    settings: Settings,
+    now: datetime,
+) -> HistoricalPriceResponse:
+    """TASK-127: tudo lido direto do banco a cada chamada -- preço que já
+    foi coletado aparece na hora, sem depender de ninguém clicar no botão."""
+    internal = await get_internal_historical_best(
+        session, product_id=product.id, currency="BRL"
+    )
+    reference = await get_external_price_reference_evidence(
+        session, product_id=product.id, currency="BRL"
+    )
+    bootstrap = await get_historical_bootstrap_state(session, product_id=product.id)
+    availability = manual_search_availability(
+        # Sem a credencial do César Core a busca nem consegue rodar --
+        # tratado como desativada (nunca uma reserva órfã em PROCESSING).
+        enabled=settings.historical_bootstrap_enabled
+        and settings.cesar_core_api_key_file is not None,
+        has_identity=product.identity_key is not None,
+        bootstrap=bootstrap,
+        now=now,
+        revalidation_days=settings.historical_bootstrap_revalidation_days,
+        can_force=_has_dev_access(user),
+    )
+    completed_at = bootstrap.completed_at if bootstrap is not None else None
+    next_allowed_at = (
+        completed_at + timedelta(days=settings.historical_bootstrap_revalidation_days)
+        if completed_at is not None
+        and availability
+        in (
+            ManualSearchAvailability.BLOCKED_RECENT,
+            ManualSearchAvailability.REQUIRES_FORCE,
+        )
+        else None
+    )
+    return HistoricalPriceResponse(
+        product_id=product.id,
+        internal=(
+            HistoricalPriceInternalOut(
+                amount=internal.amount, currency=internal.currency
+            )
+            if internal is not None
+            else None
+        ),
+        reference=(
+            HistoricalPriceReferenceOut(
+                amount=reference.amount,
+                currency=reference.currency,
+                source=reference.source,
+                source_url=reference.safe_url,
+                store_name=reference.store_name,
+                historical_date=reference.historical_date,
+                collected_at=reference.collected_at.isoformat(),
+            )
+            if reference is not None
+            else None
+        ),
+        search=HistoricalPriceSearchOut(
+            availability=availability,
+            last_status=bootstrap.status if bootstrap is not None else None,
+            last_completed_at=completed_at.isoformat() if completed_at else None,
+            next_allowed_at=next_allowed_at.isoformat() if next_allowed_at else None,
+        ),
+    )
+
+
+async def _authorized_offer_detail(
+    session: AsyncSession, *, user: User, offer_id: UUID
+) -> UserOfferDetail:
+    try:
+        authorize(
+            session,
+            user,
+            Permission.MISSION_READ,
+            resource_type="offer",
+            resource_id=offer_id,
+        )
+    except AuthorizationDenied as error:
+        await session.commit()
+        raise ApiError(
+            status_code=status.HTTP_403_FORBIDDEN,
+            code="offer_access_denied",
+            message="Você não tem acesso a esta oferta.",
+        ) from error
+    detail = await _offer_detail_for_viewer(session, user=user, offer_id=offer_id)
+    if detail is None:
+        await _deny_offer_unavailable(session, user=user, offer_id=offer_id)
+    return detail
+
+
+@router.get(
+    "/{offer_id}/historical-price",
+    operation_id="get_offer_historical_price",
+    summary="Preço histórico do produto desta oferta (GG + referência externa)",
+)
+async def get_offer_historical_price(
+    offer_id: UUID,
+    user: User = Depends(require_web_session),
+    session: AsyncSession = Depends(get_web_async_session),
+    settings: Settings = Depends(get_settings),
+) -> HistoricalPriceResponse:
+    detail = await _authorized_offer_detail(session, user=user, offer_id=offer_id)
+    return await _historical_price_response(
+        session,
+        product=detail.product,
+        user=user,
+        settings=settings,
+        now=datetime.now(UTC),
+    )
+
+
+async def _run_manual_historical_search(
+    session_factory: async_sessionmaker[AsyncSession],
+    claimed: ClaimedHistoricalBootstrap,
+    *,
+    ai: AIProviderManager,
+    fetch: CesarCoreFetchProvider | None,
+    profile: UserRole,
+    settings: Settings,
+    now: datetime,
+) -> None:
+    await run_claimed_historical_bootstrap(
+        session_factory,
+        claimed,
+        search=lambda: build_web_search_manager(settings),
+        fetch=fetch,
+        ai=ai,
+        profile=profile,
+        now=now,
+        failure_backoff_minutes=settings.market_assessment_failure_backoff_minutes,
+        failure_backoff_max_minutes=settings.market_assessment_failure_backoff_max_minutes,
+    )
+
+
+@router.post(
+    "/{offer_id}/historical-price/search",
+    status_code=status.HTTP_202_ACCEPTED,
+    operation_id="search_offer_historical_price",
+    summary="Disparar a busca de preço histórico deste produto",
+    response_description=(
+        "Busca reservada e iniciada em segundo plano -- consulte "
+        "`GET /{offer_id}/historical-price` até `search.availability` "
+        "deixar de ser `in_progress`."
+    ),
+)
+async def search_offer_historical_price(
+    offer_id: UUID,
+    payload: HistoricalPriceSearchRequest,
+    background_tasks: BackgroundTasks,
+    user: User = Depends(require_web_session),
+    session: AsyncSession = Depends(get_web_async_session),
+    session_factory: async_sessionmaker[AsyncSession] = Depends(
+        get_web_async_session_factory
+    ),
+    settings: Settings = Depends(get_settings),
+) -> HistoricalPriceResponse:
+    """TASK-127: fora do fluxo de coleta -- funciona mesmo para produto de
+    missão pausada/encerrada. A reserva (claim) é feita aqui, numa
+    transação curta; a busca em si (Search/Fetch/IA via César Core, que
+    pode levar minutos) roda depois da resposta."""
+    detail = await _authorized_offer_detail(session, user=user, offer_id=offer_id)
+    now = datetime.now(UTC)
+    current = await _historical_price_response(
+        session, product=detail.product, user=user, settings=settings, now=now
+    )
+    force = payload.force and _has_dev_access(user)
+    availability = current.search.availability
+    if not (
+        availability is ManualSearchAvailability.AVAILABLE
+        or (availability is ManualSearchAvailability.REQUIRES_FORCE and force)
+    ):
+        code, message = _HISTORICAL_SEARCH_REFUSALS[availability]
+        raise ApiError(
+            status_code=status.HTTP_409_CONFLICT,
+            code=code,
+            message=message,
+            details={"search": current.search.model_dump(mode="json")},
+        )
+    # Perfil de IA pelo papel real: clique de USER gasta a cota USER,
+    # clique de ADMIN/DEV gasta a de ADMIN/DEV (mesma regra do César Core).
+    profile = ai_profile_for_user(session, user)
+    ai = (
+        build_user_ai_provider_manager(settings)
+        if profile is UserRole.USER
+        else build_admin_dev_ai_provider_manager(settings)
+    )
+    fetch = CesarCoreFetchProvider(
+        api_key_file=settings.cesar_core_api_key_file,
+        base_url=settings.cesar_core_base_url,
+        service=settings.cesar_core_service,
+        service_class=settings.cesar_core_service_class,
+        timeout_seconds=settings.cesar_core_fetch_timeout_seconds,
+    )
+    claimed = await claim_manual_historical_bootstrap(
+        session_factory,
+        product_id=detail.product.id,
+        now=now,
+        revalidation_days=settings.historical_bootstrap_revalidation_days,
+        lease_seconds=settings.market_assessment_lease_seconds,
+        force=force,
+    )
+    if claimed is None:
+        # Corrida real: outro clique (ou a própria coleta) reservou entre
+        # a leitura acima e o claim -- devolve o estado novo, nunca uma
+        # segunda busca paralela.
+        refreshed = await _historical_price_response(
+            session, product=detail.product, user=user, settings=settings, now=now
+        )
+        code, message = _HISTORICAL_SEARCH_REFUSALS.get(
+            refreshed.search.availability,
+            _HISTORICAL_SEARCH_REFUSALS[ManualSearchAvailability.IN_PROGRESS],
+        )
+        raise ApiError(
+            status_code=status.HTTP_409_CONFLICT,
+            code=code,
+            message=message,
+            details={"search": refreshed.search.model_dump(mode="json")},
+        )
+    background_tasks.add_task(
+        _run_manual_historical_search,
+        session_factory,
+        claimed,
+        ai=ai,
+        fetch=fetch,
+        profile=profile,
+        settings=settings,
+        now=now,
+    )
+    return await _historical_price_response(
+        session, product=detail.product, user=user, settings=settings, now=now
+    )
 
 
 @router.get(
@@ -633,9 +1044,7 @@ async def get_user_offer(
             code="offer_access_denied",
             message="Você não tem acesso a esta oferta.",
         ) from error
-    detail = await get_offer_detail_for_user(
-        session, offer_id=offer_id, user_id=user.id
-    )
+    detail = await _offer_detail_for_viewer(session, user=user, offer_id=offer_id)
     if detail is None:
         await _deny_offer_unavailable(session, user=user, offer_id=offer_id)
     applied_coupon = None

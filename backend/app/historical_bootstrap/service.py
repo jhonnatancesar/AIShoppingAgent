@@ -9,7 +9,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
-from typing import Any
+from enum import StrEnum
+from typing import Any, Literal
 from urllib.parse import urlparse
 from uuid import UUID, uuid4
 
@@ -416,32 +417,162 @@ async def _mark_bootstrap_failed(
         )
 
 
-async def _run_historical_bootstrap(
+class ManualSearchAvailability(StrEnum):
+    """TASK-127: o que o botão "Buscar preço histórico" pode fazer agora
+    para este produto. Mesma regra que `_claim_bootstrap` aplica de forma
+    atômica no banco (modo manual) -- aqui só para a tela decidir o que
+    mostrar, nunca como autorização (o claim reavalia)."""
+
+    AVAILABLE = "available"
+    REQUIRES_FORCE = "requires_force"
+    BLOCKED_RECENT = "blocked_recent"
+    IN_PROGRESS = "in_progress"
+    NO_IDENTITY = "no_identity"
+    DISABLED = "disabled"
+
+
+def manual_search_availability(
+    *,
+    enabled: bool,
+    has_identity: bool,
+    bootstrap: HistoricalBootstrap | None,
+    now: datetime,
+    revalidation_days: int,
+    can_force: bool,
+) -> ManualSearchAvailability:
+    """Regra decidida pelo usuário (2026-09-21/25): sem busca concluída
+    recente (nunca buscado, falhou, ou última conclusão mais velha que
+    `revalidation_days`) -> qualquer usuário busca; com busca concluída
+    dentro da janela (achou preço OU não achou nada) -> USER bloqueado,
+    só DEV força com confirmação. `completed_at` é exclusivo do caminho
+    de sucesso (ver `_mark_bootstrap_failed`), então uma falha nunca
+    "renova" a janela."""
+    if not enabled:
+        return ManualSearchAvailability.DISABLED
+    if not has_identity:
+        return ManualSearchAvailability.NO_IDENTITY
+    if bootstrap is not None:
+        if (
+            bootstrap.status == HistoricalBootstrapStatus.PROCESSING
+            and bootstrap.lease_until is not None
+            and bootstrap.lease_until >= now
+        ):
+            return ManualSearchAvailability.IN_PROGRESS
+        if bootstrap.completed_at is not None and bootstrap.completed_at >= (
+            now - timedelta(days=revalidation_days)
+        ):
+            return (
+                ManualSearchAvailability.REQUIRES_FORCE
+                if can_force
+                else ManualSearchAvailability.BLOCKED_RECENT
+            )
+    return ManualSearchAvailability.AVAILABLE
+
+
+async def get_historical_bootstrap_state(
+    session: AsyncSession, *, product_id: UUID
+) -> HistoricalBootstrap | None:
+    return await session.scalar(
+        select(HistoricalBootstrap).where(
+            HistoricalBootstrap.product_id == product_id,
+            HistoricalBootstrap.condition == "new",
+            HistoricalBootstrap.currency == "BRL",
+        )
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class ClaimedHistoricalBootstrap:
+    """Linha já reservada (`PROCESSING` com lease) -- pronta para
+    `run_claimed_historical_bootstrap`, sem nenhuma transação aberta."""
+
+    bootstrap_id: UUID
+    product: Product
+    has_existing_references: bool
+
+
+_ClaimMode = Literal["auto", "manual", "manual_force"]
+
+
+async def _claim_bootstrap(
     session_factory: async_sessionmaker[AsyncSession],
     *,
     product_id: UUID,
-    search: Callable[[], WebSearchManager],
-    fetch: CesarCoreFetchProvider | None,
-    ai: AIProviderManager,
-    profile: UserRole,
     now: datetime,
     revalidation_days: int,
     lease_seconds: float,
-    failure_backoff_minutes: float,
-    failure_backoff_max_minutes: float,
-) -> HistoricalBootstrapStatus | None:
+    mode: _ClaimMode,
+) -> ClaimedHistoricalBootstrap | HistoricalBootstrapStatus | None:
+    """`None`: nada a fazer (produto ausente/sem identidade -- ou, só no
+    modo `auto`, histórico interno já suficiente). `HistoricalBootstrapStatus`:
+    claim recusado, devolve o estado atual. `ClaimedHistoricalBootstrap`:
+    reservado. O modo `auto` é EXATAMENTE o comportamento de sempre da
+    coleta; `manual`/`manual_force` (TASK-127) só existem para o botão."""
     async with session_factory() as session, session.begin():
         product = await session.get(Product, product_id)
-        if (
-            product is None
-            or product.identity_key is None
-            or await internal_history_is_sufficient(
-                session, product_id=product_id, now=now
-            )
+        if product is None or product.identity_key is None:
+            return None
+        # O botão existe justamente para os produtos que o fluxo automático
+        # nunca busca por já terem histórico interno suficiente -- o gate
+        # de suficiência vale só para `auto`.
+        if mode == "auto" and await internal_history_is_sufficient(
+            session, product_id=product_id, now=now
         ):
             return None
         stale_before = now - timedelta(days=revalidation_days)
         lease_until = now + timedelta(seconds=lease_seconds)
+        not_actively_processing = or_(
+            HistoricalBootstrap.status != HistoricalBootstrapStatus.PROCESSING,
+            HistoricalBootstrap.lease_until.is_(None),
+            HistoricalBootstrap.lease_until < now,
+        )
+        if mode == "auto":
+            # Três caminhos de reclaim, nunca confundidos entre si:
+            # (1) PROCESSING com lease vencido -- worker anterior
+            #     travou/crashou/teve exceção não tratada;
+            # (2) FAILED com retry_after vencido (ou nunca setado) --
+            #     backoff de erro, independente da revalidação;
+            # (3) COMPLETED_* com completed_at mais velho que
+            #     `revalidation_days` -- revalidação periódica de
+            #     sucesso, nunca por causa de falha.
+            reclaim_where = or_(
+                and_(
+                    HistoricalBootstrap.status == HistoricalBootstrapStatus.PROCESSING,
+                    HistoricalBootstrap.lease_until < now,
+                ),
+                and_(
+                    HistoricalBootstrap.status == HistoricalBootstrapStatus.FAILED,
+                    or_(
+                        HistoricalBootstrap.retry_after.is_(None),
+                        HistoricalBootstrap.retry_after <= now,
+                    ),
+                ),
+                and_(
+                    HistoricalBootstrap.status.in_(
+                        (
+                            HistoricalBootstrapStatus.COMPLETED_WITH_REFERENCES,
+                            HistoricalBootstrapStatus.COMPLETED_WITHOUT_REFERENCES,
+                        )
+                    ),
+                    HistoricalBootstrap.completed_at < stale_before,
+                ),
+            )
+        elif mode == "manual":
+            # Mesma regra de `manual_search_availability` (sem `can_force`),
+            # reavaliada de forma atômica: nunca rouba um lease ativo; nunca
+            # repete uma busca CONCLUÍDA dentro da janela; falha é sempre
+            # re-tentável por ação humana (ignora `retry_after`).
+            reclaim_where = and_(
+                not_actively_processing,
+                or_(
+                    HistoricalBootstrap.completed_at.is_(None),
+                    HistoricalBootstrap.completed_at < stale_before,
+                ),
+            )
+        else:
+            # `manual_force` -- só DEV, depois da confirmação explícita:
+            # qualquer estado que não seja uma busca em andamento agora.
+            reclaim_where = not_actively_processing
         bootstrap_id = await session.scalar(
             insert(HistoricalBootstrap)
             .values(
@@ -469,49 +600,18 @@ async def _run_historical_bootstrap(
                     # Zerar `completed_at` aqui apagaria a prova do
                     # último sucesso se ESTA tentativa falhar.
                 },
-                # Três caminhos de reclaim, nunca confundidos entre si:
-                # (1) PROCESSING com lease vencido -- worker anterior
-                #     travou/crashou/teve exceção não tratada;
-                # (2) FAILED com retry_after vencido (ou nunca setado) --
-                #     backoff de erro, independente da revalidação;
-                # (3) COMPLETED_* com completed_at mais velho que
-                #     `revalidation_days` -- revalidação periódica de
-                #     sucesso, nunca por causa de falha.
-                where=or_(
-                    and_(
-                        HistoricalBootstrap.status
-                        == HistoricalBootstrapStatus.PROCESSING,
-                        HistoricalBootstrap.lease_until < now,
-                    ),
-                    and_(
-                        HistoricalBootstrap.status == HistoricalBootstrapStatus.FAILED,
-                        or_(
-                            HistoricalBootstrap.retry_after.is_(None),
-                            HistoricalBootstrap.retry_after <= now,
-                        ),
-                    ),
-                    and_(
-                        HistoricalBootstrap.status.in_(
-                            (
-                                HistoricalBootstrapStatus.COMPLETED_WITH_REFERENCES,
-                                HistoricalBootstrapStatus.COMPLETED_WITHOUT_REFERENCES,
-                            )
-                        ),
-                        HistoricalBootstrap.completed_at < stale_before,
-                    ),
-                ),
+                where=reclaim_where,
             )
             .returning(HistoricalBootstrap.id)
         )
         if bootstrap_id is None:
-            existing = await session.scalar(
+            return await session.scalar(
                 select(HistoricalBootstrap.status).where(
                     HistoricalBootstrap.product_id == product_id,
                     HistoricalBootstrap.condition == "new",
                     HistoricalBootstrap.currency == "BRL",
                 )
             )
-            return existing
         # Só para decidir o status final (abaixo) -- NUNCA usado para
         # filtrar `_collect_candidates` (uma fonte já conhecida pode
         # reaparecer e ser considerada normalmente; não é blacklist).
@@ -532,6 +632,29 @@ async def _run_historical_bootstrap(
             family_key=product.family_key,
             identity_key=product.identity_key,
         )
+    return ClaimedHistoricalBootstrap(
+        bootstrap_id=bootstrap_id,
+        product=detached,
+        has_existing_references=has_existing_references,
+    )
+
+
+async def _execute_claimed_bootstrap(
+    session_factory: async_sessionmaker[AsyncSession],
+    claimed: ClaimedHistoricalBootstrap,
+    *,
+    search: Callable[[], WebSearchManager],
+    fetch: CesarCoreFetchProvider | None,
+    ai: AIProviderManager,
+    profile: UserRole,
+    now: datetime,
+    failure_backoff_minutes: float,
+    failure_backoff_max_minutes: float,
+) -> HistoricalBootstrapStatus | None:
+    bootstrap_id = claimed.bootstrap_id
+    product_id = claimed.product.id
+    detached = claimed.product
+    has_existing_references = claimed.has_existing_references
     try:
         candidates = await _collect_candidates(
             detached, search=search(), fetch=fetch, ai=ai, profile=profile, now=now
@@ -628,6 +751,100 @@ async def _run_historical_bootstrap(
         )
         return None
     return status
+
+
+async def _run_historical_bootstrap(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    product_id: UUID,
+    search: Callable[[], WebSearchManager],
+    fetch: CesarCoreFetchProvider | None,
+    ai: AIProviderManager,
+    profile: UserRole,
+    now: datetime,
+    revalidation_days: int,
+    lease_seconds: float,
+    failure_backoff_minutes: float,
+    failure_backoff_max_minutes: float,
+) -> HistoricalBootstrapStatus | None:
+    outcome = await _claim_bootstrap(
+        session_factory,
+        product_id=product_id,
+        now=now,
+        revalidation_days=revalidation_days,
+        lease_seconds=lease_seconds,
+        mode="auto",
+    )
+    if not isinstance(outcome, ClaimedHistoricalBootstrap):
+        return outcome
+    return await _execute_claimed_bootstrap(
+        session_factory,
+        outcome,
+        search=search,
+        fetch=fetch,
+        ai=ai,
+        profile=profile,
+        now=now,
+        failure_backoff_minutes=failure_backoff_minutes,
+        failure_backoff_max_minutes=failure_backoff_max_minutes,
+    )
+
+
+async def claim_manual_historical_bootstrap(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    product_id: UUID,
+    now: datetime,
+    revalidation_days: int,
+    lease_seconds: float,
+    force: bool,
+) -> ClaimedHistoricalBootstrap | None:
+    """TASK-127: reserva a busca do botão (transação curta, sem I/O
+    externo) -- `None` quando a regra não permite AGORA (corrida com outro
+    clique/worker, busca recente sem `force`, produto sem identidade). O
+    chamador só pede `force=True` para DEV depois da confirmação."""
+    outcome = await _claim_bootstrap(
+        session_factory,
+        product_id=product_id,
+        now=now,
+        revalidation_days=revalidation_days,
+        lease_seconds=lease_seconds,
+        mode="manual_force" if force else "manual",
+    )
+    return outcome if isinstance(outcome, ClaimedHistoricalBootstrap) else None
+
+
+async def run_claimed_historical_bootstrap(
+    session_factory: async_sessionmaker[AsyncSession],
+    claimed: ClaimedHistoricalBootstrap,
+    *,
+    search: Callable[[], WebSearchManager],
+    fetch: CesarCoreFetchProvider | None,
+    ai: AIProviderManager,
+    profile: UserRole,
+    now: datetime,
+    failure_backoff_minutes: float,
+    failure_backoff_max_minutes: float,
+) -> HistoricalBootstrapStatus | None:
+    """Executa uma busca já reservada (segundo plano do botão). Mesma
+    disciplina de `run_historical_bootstrap`: nunca propaga exceção --
+    falha vira `FAILED` com backoff; se até isso falhar, o lease já
+    gravado recupera a linha depois."""
+    try:
+        return await _execute_claimed_bootstrap(
+            session_factory,
+            claimed,
+            search=search,
+            fetch=fetch,
+            ai=ai,
+            profile=profile,
+            now=now,
+            failure_backoff_minutes=failure_backoff_minutes,
+            failure_backoff_max_minutes=failure_backoff_max_minutes,
+        )
+    except Exception:  # noqa: BLE001 -- rede de segurança final
+        logger.warning("manual_historical_bootstrap_unexpected_failure", exc_info=True)
+        return None
 
 
 async def run_historical_bootstrap(

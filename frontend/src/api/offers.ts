@@ -3,6 +3,7 @@ import type {
   OfferComparison,
   OfferDetail,
   OfferListResponse,
+  HistoricalPriceResponse,
   PriceHistoryPeriod,
   PriceHistoryResponse,
 } from './types'
@@ -15,6 +16,10 @@ export interface OfferListFilters {
   sort?: 'recent' | 'price_asc' | 'price_desc'
   limit?: number
   offset?: number
+  /** TASK-126, DEV-only: quando `true`, mostra ofertas de TODOS os
+   * usuários (não só as acessíveis ao logado) e inclui `NO_MATCH`.
+   * `false`/ausente preserva o comportamento de sempre. */
+  all_users?: boolean
 }
 
 export const offersApi = {
@@ -28,6 +33,11 @@ export const offersApi = {
   get: (offerId: string) => api.get<OfferDetail>(`/offers/${offerId}`),
   compare: (offerId: string) =>
     api.get<OfferComparison>(`/offers/${offerId}/comparison`),
+  historicalPrice: (offerId: string) =>
+    api.get<HistoricalPriceResponse>(`/offers/${offerId}/historical-price`),
+  /** `force` só tem efeito para DEV, depois da confirmação na tela. */
+  searchHistoricalPrice: (offerId: string, force = false) =>
+    api.post<HistoricalPriceResponse>(`/offers/${offerId}/historical-price/search`, { force }),
   priceHistory: (offerId: string, period: PriceHistoryPeriod, storeIds?: string[]) => {
     const params = new URLSearchParams({ period })
     for (const storeId of storeIds ?? []) params.append('store_ids', storeId)

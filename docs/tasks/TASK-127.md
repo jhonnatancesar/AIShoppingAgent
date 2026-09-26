@@ -1,140 +1,181 @@
-# TASK-127 — Exibir preço histórico (interno + externo) para todos + botão DEV para buscar sob demanda
+# TASK-127 — Exibir preço histórico (interno + de referência) para todos + botão para buscar sob demanda
 
-Status: **Registrada (2026-09-21), escopo definido, implementação NÃO
-iniciada.**
+Status: **Implementada e testada (2026-09-25)** — backend, frontend e
+testes prontos, ainda não commitada. Validação visual no navegador e em
+PROD pendentes (ver "Validação" e "Ação no deploy").
 
-## Contexto real (mecanismo já existe, hoje nunca é exposto)
+## Contexto real (mecanismo já existia, nunca era exposto)
 
-O F1 (`historical_bootstrap`) já faz praticamente o que foi pedido — a
-lacuna real é que ele só roda automaticamente dentro do fluxo de
-coleta, e nada do que ele produz chega a aparecer para o usuário:
+O F1 (`historical_bootstrap`) já fazia praticamente o que foi pedido — a
+lacuna real é que ele só rodava automaticamente dentro do fluxo de
+coleta, e nada do que ele produz chegava a aparecer para o usuário:
 
 - **Preço histórico interno** ("registrado no GG"):
   `get_internal_historical_best` (`backend/app/alerts/internal_
-  history.py:35-56`) — `min(PriceObservation.amount)` só condição
-  `NEW`/disponível/mesma moeda, PRODUCT-GLOBAL (nunca filtrado por
-  relevância de uma Mission específica). Já existe, já é usado
-  internamente pelo gatilho de pesquisa de mercado — nunca exposto ao
-  usuário.
-- **Preço histórico externo** ("de referência"/mercado):
+  history.py`) — `min(PriceObservation.amount)` só condição
+  `NEW`/disponível/mesma moeda, PRODUCT-GLOBAL.
+- **Preço histórico de referência** (externo):
   `get_external_price_reference_evidence` (`backend/app/historical_
-  bootstrap/service.py:72-99`) **já devolve o MENOR preço** entre todas
-  as `ExternalPriceReference` coletadas para o produto
-  (`order_by(amount.asc()).limit(1)`) — ou seja, "a IA já compila isso
-  e me dá o menor deles" já é exatamente o que este mecanismo faz hoje,
-  só que nunca é lido por nenhum endpoint webapp.
-- **As duas buscas que o pedido descreve já existem**, dentro de
-  `_collect_candidates` (`historical_bootstrap/service.py:296-305`):
-  uma busca específica no site `hardwarebarato.com` (só para categorias
-  `gpu/cpu/motherboard/psu/ram`) e uma busca genérica
-  (`"{label}" histórico de preço menor preço`) — exatamente "tanto pelo
-  hardware barato quanto na internet em si". IA entra como fallback
-  quando o parsing determinístico (`_parse_candidate`, regex sobre o
-  snippet) não resolve sozinho: `_interpret_ambiguous`
-  (`historical_bootstrap/service.py:220-274`) faz uma chamada real de
-  IA com instrução anti-alucinação explícita ("Extraia somente fatos
-  explícitos... não infira nem invente").
+  bootstrap/service.py`) — já devolve o MENOR preço entre todas as
+  `ExternalPriceReference` coletadas para o produto.
+- **As duas buscas pedidas já existiam** em `_collect_candidates`: uma
+  específica no `hardwarebarato.com` (categorias `gpu/cpu/motherboard/
+  psu/ram`) e uma genérica — "tanto pelo hardware barato quanto na
+  internet em si". IA (`_interpret_ambiguous`) só como último recurso,
+  com instrução anti-alucinação.
 
 ## Correção de premissa (confirmada no código)
 
 O pedido presumia "o preço histórico só vai vir pra produtos de
-missões novas". Não é bem isso: `run_historical_bootstrap` é chamado em
-`orchestration.py:2349-2377`, dentro da Fase B, para **qualquer**
-oferta `MATCH` de uma missão que está **ativamente coletando** (não
-precisa ser missão nova) — só pula quando `internal_history_is
-_sufficient` já é verdade (30 dias de cobertura + 2 lojas) ou quando já
-foi revalidado dentro da janela de `historical_bootstrap_revalidation_
-days` (default 90). A limitação real é outra: **produtos de missões
-pausadas, encerradas ou sem coleta agendada nunca disparam o F1**,
-porque ele só roda como efeito colateral de uma coleta acontecer — não
-existe hoje nenhum disparo manual/sob demanda. É exatamente essa
-lacuna que o botão pedido resolve.
+missões novas". Na verdade o F1 roda para qualquer oferta `MATCH` de
+missão **ativamente coletando** — a limitação real: produto de missão
+pausada/encerrada nunca dispara, e o fluxo automático **pula** a busca
+externa quando o histórico interno já é suficiente (30 dias + 2 lojas).
+O botão resolve as duas lacunas.
 
-Também confirmado: `Product` (`backend/app/products/models.py:60-94`)
-não tem nenhum campo de preço próprio hoje — todo dado de preço vive em
-`PriceObservation`/`ExternalPriceReference`/`HistoricalBootstrap`. Os
-dois valores pedidos podem ser calculados em tempo de leitura
-reaproveitando as duas funções acima, sem necessariamente precisar de
-coluna nova em `Product` — decisão de implementação, ver "Escopo"
-abaixo.
+## Nomenclatura
 
-## Nomenclatura (pedido do usuário: "troca a palavra por uma melhor")
+"Menor registrado no GG" (interno) e "Histórico de referência"
+(externo) — mesmos rótulos do preview aprovado pelo usuário no briefing
+de 2026-09-25.
 
-Proposta: **"preço histórico registrado no GG"** (interno) e
-**"preço histórico de referência"** (externo — reaproveita o nome já
-usado no código/modelo, `ExternalPriceReference`, em vez de "externo"
-que não diz nada pro usuário final). Sujeito a revisão do usuário ao
-ler este documento.
+## Decisões do usuário
 
-## Objetivo
+- **2026-09-21**: os dois campos mostram o que JÁ existe no banco, sem
+  ninguém clicar ("não adianta só por o campo, vai que tem item já com
+  o preço e você não trouxe"). Sem busca recente → qualquer usuário
+  busca; dentro da janela de 90 dias → USER bloqueado, só DEV força,
+  com aviso explícito e as opções "Pesquisar mesmo assim" / "Cancelar".
+- **2026-09-25 (briefing)**:
+  1. Local: bloco "Preço histórico" no detalhe da oferta, logo acima do
+     gráfico de histórico já existente.
+  2. Se o sistema já buscou há menos de 90 dias e **não achou nada**,
+     USER também não busca de novo — só DEV força.
+  3. Corrigir junto o furo da TASK-126 (DEV abrir o detalhe de qualquer
+     oferta vista no filtro "todos os usuários") — ver TASK-126.md.
 
-1. Dois campos visíveis para **todos os usuários** (produto/oferta,
-   local exato a decidir na implementação): preço histórico registrado
-   no GG (`get_internal_historical_best`) e preço histórico de
-   referência (`get_external_price_reference_evidence`) — quando
-   `None`, o campo simplesmente não aparece (nunca inventa valor).
-2. Botão **"Buscar preço histórico"**, visível **somente para DEV**
-   (mesmo padrão `Permission.DEV_PANEL_ACCESS`/`require_dev_web_session`
-   já usado na TASK-126), que dispara `run_historical_bootstrap` para
-   aquele produto especificamente, **fora do fluxo normal de coleta**
-   — funciona mesmo para produtos de missões pausadas/encerradas, sem
-   depender de uma coleta acontecer.
+(O item "botão visível somente para DEV" da versão original deste
+documento foi substituído pela regra acima: o botão existe para todos,
+o que muda por papel é o que cada um pode fazer.)
 
-## Escopo — decisão do usuário sobre o botão (2026-09-21)
+## Decisões técnicas (apresentadas no briefing, não contestadas)
 
-**Os dois campos exibem dado que já existe no banco HOJE, sem precisar
-de nenhum clique** — lição explícita da TASK-123 reaplicada aqui pelo
-próprio usuário ("não adianta só por o campo, vai que tem item já com
-o preço e você não trouxe"): a tela lê direto
-`get_internal_historical_best`/`get_external_price_reference_evidence`
-(as duas já refletem `PriceObservation`/`ExternalPriceReference`
-existentes) — nunca um campo que só populate depois de alguém apertar
-o botão manual.
+- **Busca em segundo plano**: cada leitura de página pode levar até
+  180s no César Core (`cesar_core_fetch_timeout_seconds`), então o
+  `POST` só **reserva** a busca (transação curta) e responde `202`; a
+  busca roda depois da resposta (`BackgroundTasks`) e a tela consulta o
+  estado a cada 4s até sair de `in_progress` (teto de ~5 min).
+- **Perfil de IA pelo papel real**: clique de USER usa o manager/cota
+  USER; ADMIN/DEV usam o de ADMIN/DEV.
+- **Modo manual ignora o gate "histórico interno suficiente"** (só o
+  modo automático da coleta respeita).
+- **Falha é sempre re-tentável** por ação humana (ignora `retry_after`),
+  mas uma falha nunca "renova" a janela: vale o `completed_at` do
+  último sucesso.
+- **Nunca rouba uma busca em andamento** (lease ativo), nem com `force`.
+- **Sem identidade → sem busca** (fail-closed): botão desabilitado com
+  aviso. Inclui o backlog da TASK-123 — pras placas-mãe, o botão só
+  funciona depois do backfill rodar em PROD.
+- **Busca desativada** quando `historical_bootstrap_enabled` é `false`
+  ou a credencial do César Core não existe — nunca uma reserva órfã.
 
-**Regra de acesso do botão "Buscar preço histórico"**:
+## Implementação
 
-- Produto **sem** preço histórico de referência ainda
-  (`get_external_price_reference_evidence` devolve `None` — nunca
-  buscado ou toda tentativa falhou): botão disponível para **qualquer
-  usuário**, USER normal incluso — clique dispara `run_historical_
-  bootstrap` na hora, sem confirmação extra.
-- Produto **com** preço histórico de referência já dentro da janela de
-  revalidação (`historical_bootstrap_revalidation_days`, default 90
-  dias): USER normal **não pode** buscar de novo — botão bloqueado
-  para esse caso. Só **DEV** vê a opção de forçar; ao clicar, recebe um
-  aviso explícito ("o preço ainda está dentro do limite de 90 dias")
-  com duas opções — **"Pesquisar mesmo assim"** ou **"Cancelar"** —
-  nunca busca de novo silenciosamente.
+### Backend
 
-**Endpoint**: `POST` DEV/USER (a checagem de role acontece por CASO,
-não pelo endpoint inteiro — ver regra acima) que chama
-`run_historical_bootstrap` diretamente para o `product_id`, não o
-padrão do precedente `POST /admin/collections/trigger`
-(`backend/app/webapp/admin_router.py:718-760`, que só força a próxima
-coleta agendada via `MissionSource.next_run_at` — não serve aqui,
-porque não funciona para missão pausada/encerrada). Confirmação
-explícita (`payload.confirmation`) só é exigida no caminho DEV
-"forçar mesmo dentro do limite" — o caminho USER (produto sem preço
-ainda) dispara direto, sem confirmação, já que não há nada a proteger.
+- `backend/app/historical_bootstrap/service.py`:
+  - `_run_historical_bootstrap` separado em `_claim_bootstrap` (reserva)
+    + `_execute_claimed_bootstrap` (busca/persistência) — o modo `auto`
+    mantém exatamente o comportamento de sempre da coleta (33 testes de
+    integração existentes passando sem alteração).
+  - Modos `manual`/`manual_force` no `ON CONFLICT ... WHERE` do claim —
+    a regra é reavaliada de forma atômica no banco (corrida entre dois
+    cliques nunca gera duas buscas).
+  - `ManualSearchAvailability` + `manual_search_availability` (regra
+    pura, para a tela), `get_historical_bootstrap_state`,
+    `claim_manual_historical_bootstrap`, `run_claimed_historical_
+    bootstrap` (nunca propaga exceção).
+- `backend/app/webapp/offers_router.py`:
+  - `GET /api/v1/offers/{id}/historical-price` — interno, referência
+    (valor, fonte, link, data) e estado da busca (`availability`,
+    `last_status`, `last_completed_at`, `next_allowed_at`).
+  - `POST /api/v1/offers/{id}/historical-price/search` (`{"force":
+    bool}`) — `202` com a busca reservada, ou `409` com código
+    específico (`historical_price_recently_searched`,
+    `historical_price_force_required`, `historical_price_search_in_
+    progress`, `historical_price_no_identity`, `historical_price_search_
+    disabled`). `force` só vale para DEV.
+  - Mesmo acesso do detalhe: dono da oferta, ou DEV em qualquer oferta.
+- `backend/app/database/dependency.py`: `get_web_async_session_factory`
+  (a busca em segundo plano não pode usar a sessão do request).
 
-## Ainda em aberto na implementação
+### Frontend
 
-- Onde exatamente os dois campos aparecem no frontend (`frontend/`) —
-  card de produto, detalhe de oferta, painel DEV.
+- `frontend/src/pages/offers/HistoricalPriceSection.tsx` (novo): bloco
+  "Preço histórico" com os dois valores, o botão e todos os estados
+  (buscando, já pesquisado em DD/MM com data de liberação, sem
+  identidade, confirmação DEV de 90 dias). Mensagens inline (sem toast —
+  o detalhe também é renderizado em SSR nos testes).
+- `frontend/src/pages/offers/OfferDetailPage.tsx`: bloco inserido entre
+  a comparação e o gráfico.
+- `frontend/src/api/offers.ts` / `types.ts`: `historicalPrice`,
+  `searchHistoricalPrice`, `HistoricalPriceResponse`.
 
 ## Fora de escopo
 
-Mudar a lógica de busca/parsing/matching do F1 em si
-(`_collect_candidates`/`_parse_candidate`/`_interpret_ambiguous`) — já
-funciona, reaproveitada como está. TASK-125 (cupom no gráfico de
-histórico) — tarefa separada, sem relação direta com preço histórico
-externo/interno.
+Lógica de busca/parsing/matching do F1 em si — reaproveitada como está.
+TASK-125 (cupom no gráfico) — tarefa separada.
 
-## Validação futura
+## Validação
 
-Confirmar visualmente que os dois campos aparecem (ou somem
-corretamente quando `None`) para um produto qualquer, e que o botão
-DEV, usado num produto de uma missão já encerrada, dispara uma busca
-real (hardwarebarato.com + busca genérica) e atualiza o campo "preço
-histórico de referência" sem precisar de nenhuma coleta nova
-acontecer.
+- `tests/test_historical_bootstrap_service.py`: regra pura do botão
+  (desativado, sem identidade, nunca buscado, falha com backoff futuro,
+  lease ativo/vencido, conclusão recente com/sem preço e falha após
+  sucesso recente, janela vencida) — 30 testes no arquivo.
+- `tests/test_webapp_offers_router.py`: 8 testes novos (valores já
+  coletados aparecem sem clique; desativado sem credencial; USER sem
+  preço reserva e roda em segundo plano com IA de USER; USER bloqueado
+  na janela mesmo pedindo `force`; DEV precisa confirmar e depois força
+  com IA de ADMIN/DEV; sem identidade recusado; corrida nunca inicia
+  segunda busca; furo da TASK-126) — 35 testes no arquivo.
+- `tests/integration/test_historical_bootstrap_manual.py` (novo, banco
+  real): busca manual roda mesmo com histórico interno suficiente;
+  bloqueio na janela até forçar; falha re-tentável ignorando backoff;
+  nunca rouba lease ativo; DEV abre detalhe/comparação/gráfico de oferta
+  `NO_MATCH` de outro usuário — 5 testes.
+- `tests/integration/test_historical_bootstrap.py` +
+  `test_market_research.py`: 33 passando, sem alteração (caminho
+  automático intacto).
+- Frontend: `tsc -b`, `oxlint`, `test:offer`, `test:offers`,
+  `test:layout`, `test:offer-card` passando.
+- **Gate de cobertura unitária (90%, nunca abaixado)**: o passo
+  unitário do pipeline oficial (`pytest --ignore=tests/integration
+  --ignore=tests/e2e`) estava em **89,11%** com este trabalho — parte
+  pelo código novo (coberto só pela integração) e parte por buracos que
+  já existiam (lote de IA da TASK-123, listagens USER de ofertas). Uma
+  tentativa de medir os commits anteriores em cópias isoladas do repo
+  não serviu de comparação (o Edge dedicado dos testes, porta 9333, não
+  sobe para uma segunda cópia — dezenas de falhas de ambiente). Gate
+  restaurado com testes unitários de verdade, sem baixar nada:
+  `tests/test_offers_query_dev.py` (caminhos DEV do `offers/query.py` +
+  fiação da busca manual), `tests/test_offers_query_user.py` (listagens
+  USER, ofertas por missão e ranking da comparação entre lojas), lote de
+  extração de IA da TASK-123 em `tests/test_product_identity_ai.py`,
+  fallback DEV da comparação/gráfico em `tests/test_webapp_offers_
+  router.py` e guard `require_dev_web_session` em `tests/test_webapp_
+  dependency.py`. Resultado: **90,04%**, 2695 passando, 0 falhas;
+  `ruff check .`/`ruff format --check .` limpos.
+- **Não verificado no navegador**: o stack local do GG está parado há 2
+  semanas (imagem anterior a este código, banco sem as migrations
+  recentes, login DEV necessário) — registrado honestamente, não
+  presumido.
+
+## Ação no deploy
+
+- **O container `api` passa a chamar Search e Fetch do César Core**
+  (antes só usava IA). Mesma credencial e mesma URL já configuradas
+  (`AISHOPPING_CESAR_CORE_API_KEY_FILE`/`BASE_URL`), mas isso nunca foi
+  exercitado em PROD — validar clicando no botão numa oferta sem preço
+  de referência depois do deploy.
+- O botão não funciona para produtos sem identidade (backlog da
+  TASK-123) até o backfill rodar em PROD.

@@ -14,6 +14,7 @@ import type {
 import { ConditionBadge } from '../../components/ConditionBadge'
 import { PageHeader } from '../../components/PageHeader'
 import { PriceHistoryChart, type PriceHistoryStoreOption } from '../../components/PriceHistoryChart'
+import { HistoricalPriceSection } from './HistoricalPriceSection'
 import { EmptyState, ErrorState, LoadingState } from '../../components/StatePanel'
 import { StoreName } from '@/components/StoreMark'
 import { Badge } from '../../components/ui/badge'
@@ -192,6 +193,8 @@ export function OfferDetailView({ offer, comparison }: { offer: OfferDetail; com
       </div>
 
       <ComparisonSection comparison={comparison} currentOfferId={offer.id} />
+
+      <HistoricalPriceSection offerId={offer.id} />
 
       <div className="mt-6">
         <PriceHistoryChart

@@ -8,16 +8,22 @@ de integração real e, quando aplicável, por testes unitários com sessão
 mockada em rodada futura -- não duplicado aqui.
 """
 
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from uuid import uuid4
 
 import pytest
+from app.historical_bootstrap.models import (
+    HistoricalBootstrap,
+    HistoricalBootstrapStatus,
+)
 from app.historical_bootstrap.service import (
+    ManualSearchAvailability,
     _Match,
     _match,
     _parse_candidate,
     _source,
+    manual_search_availability,
 )
 from app.products.models import Product
 
@@ -281,3 +287,93 @@ def test_match_ignores_product_attributes_not_present_in_required_set(monkeypatc
     product = _product(attributes={})
     result = _match(product, "texto qualquer")
     assert result is not None
+
+
+# ---------------------------------------------------------------------------
+# manual_search_availability (TASK-127, regra do botão)
+# ---------------------------------------------------------------------------
+
+_NOW = datetime(2026, 9, 25, 12, tzinfo=UTC)
+
+
+def _bootstrap(status, *, completed_days_ago=None, lease_seconds=None, retry=None):
+    return HistoricalBootstrap(
+        product_id=uuid4(),
+        condition="new",
+        currency="BRL",
+        status=status,
+        completed_at=(
+            _NOW - timedelta(days=completed_days_ago)
+            if completed_days_ago is not None
+            else None
+        ),
+        lease_until=(
+            _NOW + timedelta(seconds=lease_seconds)
+            if lease_seconds is not None
+            else None
+        ),
+        retry_after=_NOW + timedelta(minutes=retry) if retry is not None else None,
+    )
+
+
+def _availability(bootstrap, *, can_force=False, enabled=True, has_identity=True):
+    return manual_search_availability(
+        enabled=enabled,
+        has_identity=has_identity,
+        bootstrap=bootstrap,
+        now=_NOW,
+        revalidation_days=90,
+        can_force=can_force,
+    )
+
+
+def test_availability_disabled_and_no_identity_win_over_everything():
+    assert _availability(None, enabled=False) is ManualSearchAvailability.DISABLED
+    assert _availability(None, has_identity=False) is (
+        ManualSearchAvailability.NO_IDENTITY
+    )
+
+
+def test_never_searched_is_available_for_anyone():
+    assert _availability(None) is ManualSearchAvailability.AVAILABLE
+
+
+def test_failed_first_attempt_is_available_even_with_future_retry_after():
+    failed = _bootstrap(HistoricalBootstrapStatus.FAILED, retry=30)
+    assert _availability(failed) is ManualSearchAvailability.AVAILABLE
+
+
+def test_active_lease_is_in_progress_expired_lease_is_available():
+    active = _bootstrap(HistoricalBootstrapStatus.PROCESSING, lease_seconds=60)
+    expired = _bootstrap(HistoricalBootstrapStatus.PROCESSING, lease_seconds=-60)
+    assert _availability(active, can_force=True) is (
+        ManualSearchAvailability.IN_PROGRESS
+    )
+    assert _availability(expired) is ManualSearchAvailability.AVAILABLE
+
+
+@pytest.mark.parametrize(
+    "status",
+    [
+        HistoricalBootstrapStatus.COMPLETED_WITH_REFERENCES,
+        # Decisão do usuário (2026-09-25): mesmo sem achar nada, busca
+        # concluída há menos de 90 dias bloqueia USER.
+        HistoricalBootstrapStatus.COMPLETED_WITHOUT_REFERENCES,
+        # Falha DEPOIS de um sucesso recente não "renova" o direito de
+        # buscar -- `completed_at` do sucesso continua valendo.
+        HistoricalBootstrapStatus.FAILED,
+    ],
+)
+def test_recent_completion_blocks_user_and_requires_force_for_dev(status):
+    recent = _bootstrap(status, completed_days_ago=10)
+    assert _availability(recent) is ManualSearchAvailability.BLOCKED_RECENT
+    assert _availability(recent, can_force=True) is (
+        ManualSearchAvailability.REQUIRES_FORCE
+    )
+
+
+def test_completion_older_than_window_is_available_again():
+    stale = _bootstrap(
+        HistoricalBootstrapStatus.COMPLETED_WITH_REFERENCES, completed_days_ago=91
+    )
+    assert _availability(stale) is ManualSearchAvailability.AVAILABLE

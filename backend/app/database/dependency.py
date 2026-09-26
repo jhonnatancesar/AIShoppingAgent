@@ -92,3 +92,11 @@ async def get_web_async_session() -> AsyncIterator[AsyncSession]:
         raise
     finally:
         await session.close()
+
+
+def get_web_async_session_factory() -> async_sessionmaker[AsyncSession]:
+    """Fábrica (não uma sessão) para trabalho que sobrevive ao request --
+    ex.: a busca de preço histórico do botão (TASK-127), que roda em
+    segundo plano depois da resposta e abre as próprias transações curtas
+    (nunca segura uma transação durante I/O externo)."""
+    return _get_web_async_session_factory()

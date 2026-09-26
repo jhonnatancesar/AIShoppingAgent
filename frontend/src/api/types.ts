@@ -305,6 +305,10 @@ export interface OfferSummary {
   /** Mesma semântica de `OfferDetail.applied_coupon` -- só presente
    * quando o backend calculou um cupom realmente aplicável. */
   applied_coupon: AppliedCoupon | null
+  /** TASK-126: só vem preenchido quando a listagem foi pedida com
+   * `all_users=true` (DEV) -- `null` no modo normal. Inclui `no_match`,
+   * nunca visível fora do modo DEV. */
+  classification: 'match' | 'possible_match' | 'no_match' | null
 }
 
 export interface OfferListResponse {
@@ -312,6 +316,44 @@ export interface OfferListResponse {
   limit: number
   offset: number
   total: number
+}
+
+/** TASK-127: o que o botão "Buscar preço histórico" pode fazer agora. */
+export type HistoricalPriceAvailability =
+  | 'available'
+  | 'requires_force'
+  | 'blocked_recent'
+  | 'in_progress'
+  | 'no_identity'
+  | 'disabled'
+
+export type HistoricalSearchStatus =
+  | 'processing'
+  | 'completed_with_references'
+  | 'completed_without_references'
+  | 'failed'
+
+export interface HistoricalPriceResponse {
+  product_id: string
+  /** Menor preço já registrado pelo próprio GG (novo/disponível). */
+  internal: { amount: string; currency: string } | null
+  /** Menor preço histórico externo já coletado -- `historical_date` é
+   * `null` quando a fonte não trouxe data (nunca inventada). */
+  reference: {
+    amount: string
+    currency: string
+    source: string
+    source_url: string
+    store_name: string | null
+    historical_date: string | null
+    collected_at: string
+  } | null
+  search: {
+    availability: HistoricalPriceAvailability
+    last_status: HistoricalSearchStatus | null
+    last_completed_at: string | null
+    next_allowed_at: string | null
+  }
 }
 
 // TASK-121: listagem geral de cupons ativos (aba "Cupons") -- propósito

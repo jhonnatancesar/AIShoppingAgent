@@ -157,6 +157,32 @@ def _accessible_offer_exists(*, user_id: UUID):
     )
 
 
+class _DevViewer:
+    """Sentinela do leitor DEV (TASK-126/127) -- sempre um objeto
+    explícito, NUNCA `None`: um `user_id` ausente por bug jamais pode
+    virar acesso a todas as ofertas por acidente."""
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "DEV_VIEWER"
+
+
+DEV_VIEWER = _DevViewer()
+OfferViewer = UUID | _DevViewer
+
+
+def _viewer_access_clause(user_id: OfferViewer):
+    """Uma `UUID` mantém EXATAMENTE a regra USER de sempre
+    (`_accessible_offer_exists`); só `DEV_VIEWER` troca pela regra DEV
+    (`_any_relevance_exists`). Qualquer outro valor falha fechado."""
+    if user_id is DEV_VIEWER:
+        return _any_relevance_exists()
+    if isinstance(user_id, UUID):
+        return _accessible_offer_exists(user_id=user_id)
+    raise TypeError(f"viewer inválido: {user_id!r}")
+
+
 def user_offers_statement(
     *,
     user_id: UUID,
@@ -282,14 +308,43 @@ def offer_for_user_statement(*, offer_id: UUID, user_id: UUID):
     )
 
 
+def _offer_for_dev_statement(*, offer_id: UUID):
+    """TASK-126/127: mesma forma de `offer_for_user_statement`, sem dono,
+    sem `ACCESSIBLE_RELEVANCE` e sem critério atual -- basta a oferta ter
+    QUALQUER vínculo de missão (mesma regra da listagem DEV)."""
+    return (
+        select(Offer, Product, Store, Seller)
+        .join(Product, Product.id == Offer.product_id)
+        .join(Store, Store.id == Offer.store_id)
+        .outerjoin(Seller, Seller.id == Offer.seller_id)
+        .where(Offer.id == offer_id, _any_relevance_exists())
+        .limit(1)
+    )
+
+
 async def get_offer_detail_for_user(
     session: AsyncSession, *, offer_id: UUID, user_id: UUID
 ) -> UserOfferDetail | None:
-    row = (
-        await session.execute(
-            offer_for_user_statement(offer_id=offer_id, user_id=user_id)
-        )
-    ).first()
+    return await _get_offer_detail(session, offer_id=offer_id, viewer=user_id)
+
+
+async def get_offer_detail_for_dev(
+    session: AsyncSession, *, offer_id: UUID
+) -> UserOfferDetail | None:
+    """DEV-only (chamador precisa ter checado `Permission.DEV_PANEL_ACCESS`)."""
+    return await _get_offer_detail(session, offer_id=offer_id, viewer=DEV_VIEWER)
+
+
+async def _get_offer_detail(
+    session: AsyncSession, *, offer_id: UUID, viewer: OfferViewer
+) -> UserOfferDetail | None:
+    if viewer is DEV_VIEWER:
+        statement = _offer_for_dev_statement(offer_id=offer_id)
+    elif isinstance(viewer, UUID):
+        statement = offer_for_user_statement(offer_id=offer_id, user_id=viewer)
+    else:
+        raise TypeError(f"viewer inválido: {viewer!r}")
+    row = (await session.execute(statement)).first()
     if row is None:
         return None
     offer, product, store, seller = row
@@ -328,7 +383,7 @@ _COMPARISON_AVAILABILITY_RANK = {"available": 0, "unknown": 1, "unavailable": 2}
 _COMPARISON_PER_STORE_LIMIT = 5
 
 
-def comparison_offers_statement(*, product_id: UUID, user_id: UUID):
+def comparison_offers_statement(*, product_id: UUID, user_id: OfferViewer):
     """Mesmo Product global e ownership por Offer; identidade aproximada é proibida."""
     latest_observation_id = (
         select(PriceObservation.id)
@@ -345,7 +400,7 @@ def comparison_offers_statement(*, product_id: UUID, user_id: UUID):
         .outerjoin(PriceObservation, PriceObservation.id == latest_observation_id)
         .where(
             Offer.product_id == product_id,
-            _accessible_offer_exists(user_id=user_id),
+            _viewer_access_clause(user_id),
             # Rodada de frescor (2026-09-11): uma Offer substituída
             # (`_supersede_old_unattributed_offer`, `orchestration.py`)
             # nunca aparece como alternativa de comparação -- some
@@ -380,9 +435,20 @@ def _comparison_key(row: tuple[Offer, Store, Seller | None, PriceObservation | N
 async def get_offer_comparison_for_user(
     session: AsyncSession, *, offer_id: UUID, user_id: UUID
 ) -> UserOfferComparison | None:
-    anchor = await get_offer_detail_for_user(
-        session, offer_id=offer_id, user_id=user_id
-    )
+    return await _get_offer_comparison(session, offer_id=offer_id, viewer=user_id)
+
+
+async def get_offer_comparison_for_dev(
+    session: AsyncSession, *, offer_id: UUID
+) -> UserOfferComparison | None:
+    """DEV-only (chamador precisa ter checado `Permission.DEV_PANEL_ACCESS`)."""
+    return await _get_offer_comparison(session, offer_id=offer_id, viewer=DEV_VIEWER)
+
+
+async def _get_offer_comparison(
+    session: AsyncSession, *, offer_id: UUID, viewer: OfferViewer
+) -> UserOfferComparison | None:
+    anchor = await _get_offer_detail(session, offer_id=offer_id, viewer=viewer)
     if anchor is None:
         return None
     if anchor.product.identity_key is None:
@@ -391,7 +457,7 @@ async def get_offer_comparison_for_user(
         (
             await session.execute(
                 comparison_offers_statement(
-                    product_id=anchor.product.id, user_id=user_id
+                    product_id=anchor.product.id, user_id=viewer
                 )
             )
         ).all()
@@ -478,6 +544,142 @@ async def list_current_offer_links_for_mission(
         MissionOfferLink(offer=offer, product=product, store=store, condition=condition)
         for offer, product, store, condition in rows
         if offer.last_seen_at == latest_seen_by_store[store.id]
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class AllOfferSummaryDev(UserOfferSummary):
+    """TASK-126: mesmos campos de `UserOfferSummary` + a classificação de
+    relevância bruta (a mais recente, quando a oferta tem mais de um
+    vínculo de missão) -- só `list_all_offers_dev` devolve isto."""
+
+    classification: OfferRelevance
+
+
+def _any_relevance_exists():
+    """DEV-only: existe QUALQUER vínculo `MissionOfferRelevance` para esta
+    Offer -- sem checar dono, classificação (inclui `NO_MATCH` de
+    propósito) nem se a missão ainda pede a variante atual. Contraparte
+    deliberadamente mais permissiva de `_accessible_offer_exists`, nunca
+    reaproveitada por engano no caminho USER (só `list_all_offers_dev`
+    chama isto)."""
+    return exists(
+        select(MissionOfferRelevance.offer_id).where(
+            MissionOfferRelevance.offer_id == Offer.id
+        )
+    )
+
+
+def _all_offers_statement_dev(
+    *,
+    search: str | None = None,
+    store_code: str | None = None,
+    condition: str | None = None,
+    availability: str | None = None,
+    sort: str = "recent",
+):
+    """TASK-126: versão DEV-only de `user_offers_statement` -- mesmos
+    filtros/ordenação, mas troca `_accessible_offer_exists(user_id=...)`
+    (posse + `ACCESSIBLE_RELEVANCE` + critério atual) por
+    `_any_relevance_exists()` -- qualquer oferta com qualquer vínculo de
+    missão, de qualquer usuário, qualquer classificação. Uma linha por
+    Offer (não por vínculo) -- quando há mais de um vínculo, mostra a
+    classificação do MAIS RECENTE (`classified_at`), mesmo padrão de
+    'última observação' já usado abaixo para preço."""
+    latest_observation_id = (
+        select(PriceObservation.id)
+        .where(PriceObservation.offer_id == Offer.id)
+        .order_by(PriceObservation.observed_at.desc(), PriceObservation.id.desc())
+        .limit(1)
+        .correlate(Offer)
+        .scalar_subquery()
+    )
+    latest_classification = (
+        select(MissionOfferRelevance.classification)
+        .where(MissionOfferRelevance.offer_id == Offer.id)
+        .order_by(MissionOfferRelevance.classified_at.desc())
+        .limit(1)
+        .correlate(Offer)
+        .scalar_subquery()
+    )
+    statement = (
+        select(
+            Offer,
+            Product,
+            Store,
+            Seller,
+            PriceObservation,
+            latest_classification.label("classification"),
+        )
+        .join(Product, Product.id == Offer.product_id)
+        .join(Store, Store.id == Offer.store_id)
+        .outerjoin(Seller, Seller.id == Offer.seller_id)
+        .outerjoin(PriceObservation, PriceObservation.id == latest_observation_id)
+        .where(
+            _any_relevance_exists(),
+            Offer.superseded_by_id.is_(None),
+        )
+    )
+    if search:
+        statement = statement.where(
+            func.lower(func.coalesce(Product.display_name, Product.name)).contains(
+                search.strip().lower()
+            )
+        )
+    if store_code:
+        statement = statement.where(Store.code == store_code)
+    if condition:
+        statement = statement.where(PriceObservation.condition == condition)
+    if availability:
+        statement = statement.where(PriceObservation.availability == availability)
+    if sort == "price_asc":
+        statement = statement.order_by(
+            PriceObservation.total_amount.asc().nulls_last(), Offer.id
+        )
+    elif sort == "price_desc":
+        statement = statement.order_by(
+            PriceObservation.total_amount.desc().nulls_last(), Offer.id
+        )
+    else:
+        statement = statement.order_by(Offer.last_seen_at.desc(), Offer.id)
+    return statement
+
+
+async def list_all_offers_dev(
+    session: AsyncSession,
+    *,
+    search: str | None,
+    store_code: str | None,
+    condition: str | None,
+    availability: str | None,
+    sort: str,
+    limit: int,
+    offset: int,
+) -> tuple[tuple[AllOfferSummaryDev, ...], int]:
+    base = _all_offers_statement_dev(
+        search=search,
+        store_code=store_code,
+        condition=condition,
+        availability=availability,
+        sort=sort,
+    )
+    total = await session.scalar(
+        select(func.count()).select_from(base.order_by(None).subquery())
+    )
+    rows = (await session.execute(base.limit(limit).offset(offset))).all()
+    return (
+        tuple(
+            AllOfferSummaryDev(
+                offer=offer,
+                product=product,
+                store=store,
+                seller=seller,
+                observation=observation,
+                classification=classification,
+            )
+            for offer, product, store, seller, observation, classification in rows
+        ),
+        int(total or 0),
     )
 
 
@@ -645,7 +847,11 @@ def _commercial_day_expr(timestamp_column=None):
 
 
 async def _resolve_reference_currency(
-    session: AsyncSession, *, product_id: UUID, user_id: UUID, anchor_offer_id: UUID
+    session: AsyncSession,
+    *,
+    product_id: UUID,
+    user_id: OfferViewer,
+    anchor_offer_id: UUID,
 ) -> str | None:
     """Moeda de referência, cadeia determinística de duas etapas (correção
     pós-plano, item 4): (A) a observação mais recente da própria Offer
@@ -668,7 +874,7 @@ async def _resolve_reference_currency(
         .join(Offer, Offer.id == PriceObservation.offer_id)
         .where(
             Offer.product_id == product_id,
-            _accessible_offer_exists(user_id=user_id),
+            _viewer_access_clause(user_id),
         )
         .order_by(PriceObservation.observed_at.desc(), PriceObservation.id.desc())
         .limit(1)
@@ -679,7 +885,7 @@ async def _resolve_current_amount(
     session: AsyncSession,
     *,
     product_id: UUID,
-    user_id: UUID,
+    user_id: OfferViewer,
     reference_currency: str,
     now: datetime,
     store_ids: frozenset[UUID] | None = None,
@@ -718,7 +924,7 @@ async def _resolve_current_amount(
     )
     conditions = [
         Offer.product_id == product_id,
-        _accessible_offer_exists(user_id=user_id),
+        _viewer_access_clause(user_id),
     ]
     if store_ids is not None:
         conditions.append(Offer.store_id.in_(store_ids))
@@ -775,7 +981,7 @@ async def _fetch_daily_low_points(
     session: AsyncSession,
     *,
     product_id: UUID,
-    user_id: UUID,
+    user_id: OfferViewer,
     start_utc: datetime | None,
     end_utc: datetime,
     reference_currency: str,
@@ -816,7 +1022,7 @@ async def _fetch_daily_low_points(
     confirmação real nem inventam uma que não aconteceu."""
     legacy_conditions = [
         Offer.product_id == product_id,
-        _accessible_offer_exists(user_id=user_id),
+        _viewer_access_clause(user_id),
         PriceObservation.condition == OfferCondition.NEW,
         PriceObservation.availability == Availability.AVAILABLE,
         PriceObservation.currency == reference_currency,
@@ -824,7 +1030,7 @@ async def _fetch_daily_low_points(
     ]
     confirmed_conditions = [
         Offer.product_id == product_id,
-        _accessible_offer_exists(user_id=user_id),
+        _viewer_access_clause(user_id),
         CollectionRun.status == CollectionRunStatus.SUCCEEDED,
         PriceObservation.condition == OfferCondition.NEW,
         PriceObservation.availability == Availability.AVAILABLE,
@@ -967,9 +1173,50 @@ async def get_offer_price_history_for_user(
     """`None` quando a Offer não é acessível ao usuário -- o router converte
     isso em 403, mesmo mecanismo de autorização já existente para Offer
     (nenhum `resource_type="product"` novo)."""
-    anchor = await get_offer_detail_for_user(
-        session, offer_id=offer_id, user_id=user_id
+    return await _get_offer_price_history(
+        session,
+        offer_id=offer_id,
+        user_id=user_id,
+        period=period,
+        now=now,
+        store_ids=store_ids,
+        cadence_config=cadence_config,
     )
+
+
+async def get_offer_price_history_for_dev(
+    session: AsyncSession,
+    *,
+    offer_id: UUID,
+    period: PriceHistoryPeriod,
+    now: datetime,
+    store_ids: frozenset[UUID] | None = None,
+    cadence_config: CadenceConfig | None = None,
+) -> OfferPriceHistory | None:
+    """DEV-only (chamador precisa ter checado `Permission.DEV_PANEL_ACCESS`):
+    série/métricas de TODAS as ofertas do Product, de qualquer usuário."""
+    return await _get_offer_price_history(
+        session,
+        offer_id=offer_id,
+        user_id=DEV_VIEWER,
+        period=period,
+        now=now,
+        store_ids=store_ids,
+        cadence_config=cadence_config,
+    )
+
+
+async def _get_offer_price_history(
+    session: AsyncSession,
+    *,
+    offer_id: UUID,
+    user_id: OfferViewer,
+    period: PriceHistoryPeriod,
+    now: datetime,
+    store_ids: frozenset[UUID] | None = None,
+    cadence_config: CadenceConfig | None = None,
+) -> OfferPriceHistory | None:
+    anchor = await _get_offer_detail(session, offer_id=offer_id, viewer=user_id)
     if anchor is None:
         return None
     period_range = resolve_period_range(period, now=now)

@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { Search } from 'lucide-react'
 import { Link } from 'react-router-dom'
+import { useAuth } from '@/auth/authContextValue'
 import { ApiError } from '@/api/client'
 import { offersApi, type OfferListFilters } from '@/api/offers'
 import type { OfferListResponse } from '@/api/types'
@@ -14,6 +15,7 @@ import { offerSummaryToCardData } from './offerCardMapping'
 const PAGE_SIZE = 24
 
 export function OffersListPage() {
+  const { isDev } = useAuth()
   const [draftQuery, setDraftQuery] = useState('')
   const [filters, setFilters] = useState<OfferListFilters>({ sort: 'recent', limit: PAGE_SIZE, offset: 0 })
   const [result, setResult] = useState<OfferListResponse | null>(null)
@@ -65,6 +67,21 @@ export function OffersListPage() {
         onChange={updateFilter}
         onClearAdvanced={clearAdvancedFilters}
       />
+      {isDev ? (
+        // TASK-126: desligado por padrão -- liga sem precisar de mais
+        // nada (sem digitar ID, sem trocar de tela): mesma listagem,
+        // mesmos `OfferCard`, só troca a fonte pra "todos os usuários,
+        // toda classificação (inclui NO_MATCH)".
+        <label className="mb-4 flex items-center gap-2 text-sm text-muted-foreground">
+          <input
+            type="checkbox"
+            className="size-4 rounded border-input"
+            checked={filters.all_users ?? false}
+            onChange={(event) => setFilters((current) => ({ ...current, all_users: event.target.checked, offset: 0 }))}
+          />
+          Ver de todos os usuários, incluindo descartados (DEV)
+        </label>
+      ) : null}
       {error && !result ? <ErrorState title="Ofertas indisponíveis" description={error} onRetry={() => setRetryToken((token) => token + 1)} /> : !result ? <LoadingState label="Carregando suas ofertas…" /> : <OffersListView result={result} onPage={(offset) => setFilters((current) => ({ ...current, offset }))} />}
     </section>
   )
