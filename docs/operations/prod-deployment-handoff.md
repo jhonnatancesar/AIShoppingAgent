@@ -201,6 +201,39 @@ real quando isso acontecer.
 - **TASK-126**: nenhuma configuração — filtro DEV-only na tela de
   Ofertas, desligado por padrão.
 
+## TASK-128 — o que muda em PROD (sem passo manual obrigatório)
+
+Produto nunca fica sem vínculo + "não entendi, descreva melhor"
+(detalhe em `docs/tasks/TASK-128.md`).
+
+- **Duas migrations novas**: `20260926_0001_identity_candidate_partial_link`
+  e `20260926_0002_identity_candidate_page_read` — head passa a ser
+  **`20260926_0002`**. Ambas só mexem em `product_identity_candidates`
+  (status novos, colunas de identidade nullable nos estados de cache,
+  produto de origem, dados da página, tentativas). O `upgrade head` da
+  seção 3 já cobre; nenhum dado existente é alterado.
+- **Worker nativo**: no início de cada ciclo, com
+  `AISHOPPING_PRODUCT_IDENTITY_LEARNING_ENABLED` ativa (já nasce `true`),
+  abre a página de até `AISHOPPING_IDENTITY_PAGE_READ_BUDGET` (padrão
+  `3`; `0` desliga só isso) produtos cujo título a IA não entendeu, pela
+  mesma aba de detalhe Edge/CDP da coleta, e chama a IA de novo com os
+  dados da página. Variável nova é opcional (o padrão basta). Validar
+  depois do deploy no log do worker: evento `identity_page_read_sweep`
+  (quantos títulos foram vinculados/encerrados) e nenhum
+  `identity_page_read_sweep_failed`.
+- **Container `api` — criar missão no site passa a chamar a IA** (César
+  Core, mesma credencial/URL já configuradas) para conferir se a
+  descrição dá para pesquisar. Se a IA do Core não responder, o site
+  recusa a criação com "tente abrir a missão mais tarde" (HTTP 503
+  `ai_quota_exceeded`) — então, depois do deploy, **criar uma missão de
+  teste pelo site** é a prova de que o `api` alcança a IA do César Core.
+- **Telegram**: pedido vago no `/criar_missao` agora pede mais descrição
+  e continua esperando; IA sem resposta avisa para tentar mais tarde.
+  Nenhuma configuração.
+- **Backfill da TASK-123**: o backlog passa a ser só "produto sem vínculo
+  nenhum" — produtos genéricos que ganharem vínculo parcial saem dele,
+  então o `--count-only` tende a diminuir em relação ao número antigo.
+
 ## 2. O que fazer primeiro (antes de qualquer deploy)
 
 **Só dois repositórios têm checkout git em PROD: GG Oferta e Coupon
@@ -237,6 +270,12 @@ Worker), nesta ordem, sem pular etapas:
 Repita para os dois repositórios antes de prosseguir para a seção 3.
 
 ## 3. Migrations necessárias (só GG Oferta)
+
+**Atualização (TASK-128, `v1.3.26` ainda sem tag):** o head atual do
+repositório é **`20260926_0002`** — as duas migrations da TASK-128
+(`20260926_0001`, `20260926_0002`) vêm depois de `20260913_0001`; o
+`upgrade head` abaixo aplica tudo em ordem. O texto a seguir é o
+registro da tag `v1.3.15`.
 
 Head esperado após o pull da tag `v1.3.15`: **`20260913_0001`** (único
 head, confirmado sem ramificação pelo checkpoint-11 da rodada que gerou

@@ -3,11 +3,14 @@
 import asyncio
 from datetime import UTC, datetime
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
+from app.intent import MissionDescriptionCheck, MissionDescriptionOutcome
 from app.products.identity import ProductRequestKind, classify_product_request
 from app.products.search import search_persisted_products
+from app.users.models import UserRole
 from app.webapp import missions_router, search_router
 
 
@@ -140,6 +143,14 @@ def test_monitor_action_creates_mission_with_selected_family_variants(
 
     monkeypatch.setattr(missions_router, "authorize", lambda *args, **kwargs: None)
     monkeypatch.setattr(
+        missions_router, "ai_profile_for_user", lambda *args, **kwargs: UserRole.USER
+    )
+
+    async def understood(description, *, profile):
+        captured["description"] = (description, profile)
+        return MissionDescriptionCheck(MissionDescriptionOutcome.UNDERSTOOD)
+
+    monkeypatch.setattr(
         missions_router, "create_mission_from_criteria_async", fake_create
     )
     monkeypatch.setattr(
@@ -155,10 +166,12 @@ def test_monitor_action_creates_mission_with_selected_family_variants(
         missions_router.create_mission(
             payload,
             user=SimpleNamespace(id=user_id),
-            session=SimpleNamespace(),
+            session=SimpleNamespace(commit=AsyncMock()),
+            check_description=understood,
         )
     )
 
+    assert captured["description"] == ("iPhone 17", UserRole.USER)
     assert captured["create"]["search_query"] == "iPhone 17"
     assert captured["select"]["product_ids"] == (product_id,)
     assert captured["select"]["allow_uncollected_family_products"] is True

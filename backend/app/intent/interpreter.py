@@ -127,6 +127,15 @@ _SYSTEM_PROMPT = (
     'mesma família X3D). Continue preenchendo "search_query" com sua '
     'melhor estimativa mesmo quando marcar "baixa" -- nunca deixe de '
     "responder por incerteza.\n\n"
+    'Para "create_mission", "search_query" precisa dizer O QUE procurar '
+    'numa loja -- no mínimo o tipo do produto (ex.: "mouse", "cadeira '
+    'gamer", "notebook"). Uma mensagem só com o nome ou o código do '
+    'produto (ex.: "rtx 4060", "cadeira gamer", "9800x3d") já é um pedido '
+    'de "create_mission". Quando a pessoa quer comprar mas não diz o que '
+    "é, ou descreve algo que não dá para pesquisar numa loja (ex.: "
+    '"algo bom e barato", "um presente pra minha mãe", "o melhor '
+    'custo-benefício"), use "kind": "unknown" -- o GG Oferta vai pedir '
+    "para ela descrever melhor o produto.\n\n"
     "Exemplos de mensagens reais e a resposta esperada, apenas para ilustrar "
     "o padrão — generalize o critério, nunca copie um exemplo literalmente:\n\n"
     'Mensagem: "eu qria uma rtx 4060 ate uns 2500 pila na kabum, bora"\n'
@@ -195,6 +204,11 @@ _SYSTEM_PROMPT = (
     '{"search_query": null, "model": null, "model_confidence": null, '
     '"target_amount": null, "target_currency": null, '
     '"sources": [], "mission_reference": "monitor", "clear_target": true}}\n\n'
+    'Mensagem: "quero comprar alguma coisa boa e barata"\n'
+    'Resposta: {"kind": "unknown", "command": null, "parameters": '
+    '{"search_query": null, "model": null, "model_confidence": null, '
+    '"target_amount": null, "target_currency": null, '
+    '"sources": [], "mission_reference": null, "clear_target": false}}\n\n'
     'Mensagem: "bom dia, tudo certo?"\n'
     'Resposta: {"kind": "unknown", "command": null, "parameters": '
     '{"search_query": null, "model": null, "model_confidence": null, '

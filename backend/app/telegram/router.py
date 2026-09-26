@@ -70,7 +70,13 @@ from app.feedback import (
     validate_store_name,
     validate_store_url,
 )
-from app.intent import Intent, IntentInterpreter, IntentKind
+from app.intent import (
+    Intent,
+    IntentInterpreter,
+    IntentKind,
+    MissionDescriptionOutcome,
+    mission_description_outcome,
+)
 from app.missions.models import (
     Mission,
     MissionCommand,
@@ -249,6 +255,21 @@ _CREATE_MISSION_FLOW_EXPIRED = (
     "⌛ O tempo para descrever a missão acabou.\n\n"
     "Use /criar_missao quando quiser começar novamente."
 )
+_CREATE_MISSION_UNCLEAR_REPLY = (
+    "🤔 Não entendi o que você quer encontrar.\n\n"
+    'Descreva melhor o produto — por exemplo: "placa de vídeo RTX 4060" '
+    'ou "cadeira gamer até R$ 800".\n\n'
+    "Pode mandar a nova descrição agora (você tem 10 minutos)."
+)
+"""TASK-128 etapa 3 (decisão do usuário, 2026-09-26): pedido vago nunca
+encerra o fluxo -- o GG pede mais descrição e continua esperando."""
+_AI_UNAVAILABLE_REPLY = (
+    "⚠️ A cota de IA foi excedida no momento — nenhum provedor de IA "
+    "conseguiu responder.\n\n"
+    "Tente abrir a missão mais tarde com /criar_missao."
+)
+"""TASK-128 etapa 3: a IA não respondeu depois de toda a cascata de
+fallback do César Core -- nunca confundido com "pedido vago"."""
 _EDIT_MISSION_FREE_TEXT_REDIRECT = (
     f"✏️ Para editar lojas ou preço-alvo, use {_EDIT_MISSION_COMMAND}.\n\n"
     "A edição é feita por um menu guiado."
@@ -837,10 +858,7 @@ async def _handle_message(
         return handle_preferences_command(user, lowered)
     if lowered in {_CREATE_MISSION_COMMAND, _CREATE_MISSION_COMMAND_ALIAS}:
         authorize(session, user, Permission.MISSION_CREATE)
-        user.pending_intent = {
-            "kind": _AWAIT_CREATE_MISSION_DESCRIPTION,
-            "expires_at": (datetime.now(UTC) + _MISSION_DESCRIPTION_TTL).isoformat(),
-        }
+        _await_create_mission_description(user)
         return _CREATE_MISSION_PROMPT
     if lowered in {_CANCEL_MISSION_COMMAND, _CANCEL_MISSION_COMMAND_ALIAS}:
         authorize(session, user, Permission.MISSION_TRANSITION)
@@ -1023,6 +1041,13 @@ async def _resolve_pending_intent(
     return reply
 
 
+def _await_create_mission_description(user: User) -> None:
+    user.pending_intent = {
+        "kind": _AWAIT_CREATE_MISSION_DESCRIPTION,
+        "expires_at": (datetime.now(UTC) + _MISSION_DESCRIPTION_TTL).isoformat(),
+    }
+
+
 async def _apply_create_mission_description(
     message: TelegramMessage,
     *,
@@ -1053,18 +1078,19 @@ async def _apply_create_mission_description(
     await session.commit()
     try:
         intent = await adapters[profile].interpret(message, profile=profile)
-    except TelegramContractError, AIProviderError:
+    except AIProviderError:
+        logger.warning("telegram_webhook_intent_ai_unavailable")
+        return _AI_UNAVAILABLE_REPLY
+    except TelegramContractError:
         logger.warning("telegram_webhook_intent_failed")
-        return (
-            "Não consegui entender a missão dessa vez.\n\n"
-            "Use /criar_missao e tente novamente com uma descrição um pouco mais clara."
-        )
+        _await_create_mission_description(user)
+        return _CREATE_MISSION_UNCLEAR_REPLY
 
-    if intent.kind is not IntentKind.CREATE_MISSION:
-        return (
-            "Não consegui entender a missão dessa vez.\n\n"
-            "Use /criar_missao e tente novamente com uma descrição um pouco mais clara."
-        )
+    if mission_description_outcome(intent) is MissionDescriptionOutcome.UNCLEAR:
+        # Pedido vago: continua no MESMO passo, com prazo renovado -- a
+        # próxima mensagem já é a nova descrição (sem /criar_missao).
+        _await_create_mission_description(user)
+        return _CREATE_MISSION_UNCLEAR_REPLY
     try:
         return await _dispatch_intent(intent, session=session, user=user)
     except _KNOWN_DISPATCH_ERRORS as error:

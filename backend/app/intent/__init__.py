@@ -14,8 +14,18 @@ from app.intent.interpreter import (
     IntentInterpreter,
     parse_intent_response,
 )
+from app.intent.mission_description import (
+    MISSION_DESCRIPTION_AI_UNAVAILABLE_MESSAGE,
+    MISSION_DESCRIPTION_UNCLEAR_MESSAGE,
+    MissionDescriptionCheck,
+    MissionDescriptionOutcome,
+    check_mission_description,
+    mission_description_outcome,
+)
 
 __all__ = [
+    "MISSION_DESCRIPTION_AI_UNAVAILABLE_MESSAGE",
+    "MISSION_DESCRIPTION_UNCLEAR_MESSAGE",
     "MISSION_SOURCE_CODES",
     "MODEL_CONFIDENCE_VALUES",
     "PURPOSE",
@@ -25,5 +35,9 @@ __all__ = [
     "IntentInterpreter",
     "IntentKind",
     "IntentParameters",
+    "MissionDescriptionCheck",
+    "MissionDescriptionOutcome",
+    "check_mission_description",
+    "mission_description_outcome",
     "parse_intent_response",
 ]

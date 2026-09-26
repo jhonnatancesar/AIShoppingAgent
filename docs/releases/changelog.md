@@ -1,6 +1,24 @@
 # Changelog
 
-## `v1.3.26` — TASK-124/126/127: cupom com preço de tabela igual, visão DEV de todos os itens e preço histórico com busca manual
+## `v1.3.26` — TASK-124/126/127/128: cupom com preço de tabela igual, visão DEV de todos os itens, preço histórico com busca manual e produto nunca sem vínculo
+
+### TASK-128 — produto nunca fica sem vínculo + "não entendi, descreva melhor"
+
+Produto genérico que a IA não identificava por completo ("cadeira
+gamer", "mouse gamer") ficava sem vínculo nenhum, e o mesmo título
+pagava IA de novo a cada coleta. Agora ganha um **vínculo parcial**
+(categoria + marca/família que aparecem no título, ex.: CPU + AMD) que
+fica no banco para o sistema, sem nunca fundir produtos diferentes; o
+mesmo título nunca paga IA duas vezes. Título que a IA não entende nem a
+categoria: o **worker abre a página do produto** e a IA tenta de novo
+com os dados da própria página (nunca um laço: loja sem página de
+produto ou página que não ajuda encerram o título). Ao **abrir missão**,
+no Telegram e no site, pedido vago recebe "não entendi, descreva
+melhor" (no Telegram a conversa continua esperando a nova descrição) e
+IA sem resposta depois de toda a cascata recebe "cota de IA excedida,
+tente abrir a missão mais tarde". **Deploy**: duas migrations
+(`20260926_0001`/`0002`); criar missão no site passa a depender da IA
+do César Core.
 
 ### TASK-127 — preço histórico visível para todos + botão "Buscar preço histórico"
 

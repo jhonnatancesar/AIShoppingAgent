@@ -82,7 +82,10 @@ async def get_web_async_session() -> AsyncIterator[AsyncSession]:
     Telegram, os endpoints da aplicação web não têm nenhum `await` de I/O
     externo (IA, Telegram) no meio da transação -- não existe aqui o
     autodeadlock que `get_telegram_async_session` evita com controle
-    manual de fase, então uma única transação por requisição é segura."""
+    manual de fase, então uma única transação por requisição é segura.
+    Exceção deliberada (TASK-128 etapa 3): criar missão chama a IA para
+    conferir a descrição -- o endpoint comita ANTES dessa chamada, então
+    ela também nunca acontece com transação aberta."""
     session = _get_web_async_session_factory()()
     try:
         yield session

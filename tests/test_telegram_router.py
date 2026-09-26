@@ -17,7 +17,11 @@ from app.missions.query import MissionReferenceError
 from app.missions.service import MissionCreationError, MissionTransitionConditionError
 from app.quotas import QuotaExceededError, QuotaKind
 from app.telegram.confirmation import ConfirmationError
-from app.telegram.contracts import TelegramChatType, TelegramMessage
+from app.telegram.contracts import (
+    TelegramChatType,
+    TelegramContractError,
+    TelegramMessage,
+)
 from app.telegram.limits import TelegramUpdateReservation
 from app.telegram.models import TelegramUpdateDisposition
 from app.telegram.router import (
@@ -1204,29 +1208,66 @@ async def test_unrecognized_answer_to_pending_intent_keeps_it_staged(
     assert "não entendi" in send_calls[0][1].lower()
 
 
-@pytest.mark.anyio
-async def test_create_mission_intent_without_search_query_is_a_known_error(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _patch_user(
-        monkeypatch,
-        _fake_user(pending_intent=_awaiting_mission_description()),
-    )
+async def _describe_mission(
+    monkeypatch: pytest.MonkeyPatch, outcome: Intent | Exception
+) -> tuple[SimpleNamespace, str]:
+    user = _fake_user(pending_intent=_awaiting_mission_description())
+    _patch_user(monkeypatch, user)
     send_calls = _patch_send_message(monkeypatch)
-
-    intent = _intent(kind=IntentKind.CREATE_MISSION)  # sem parameters.search_query
-    adapter = _FakeAdapter(intent)
 
     response = await receive_telegram_webhook(
         update=_update(),
         x_telegram_bot_api_secret_token="correct-secret",
-        adapters=_adapters(adapter),  # type: ignore[arg-type]
+        adapters=_adapters(_FakeAdapter(outcome)),  # type: ignore[arg-type]
         settings=_settings(),
         session=_async_session(),
     )
 
     assert response.status_code == 204
-    assert send_calls  # respondeu explicando o problema, sem propagar exceção
+    return user, send_calls[-1][1]
+
+
+def _still_awaiting_description(user: SimpleNamespace) -> bool:
+    pending = user.pending_intent or {}
+    return pending.get("kind") == "await_create_mission_description" and (
+        datetime.fromisoformat(pending["expires_at"]) > datetime.now(UTC)
+    )
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "outcome",
+    [
+        _intent(kind=IntentKind.CREATE_MISSION),  # sem parameters.search_query
+        _intent(kind=IntentKind.UNKNOWN),
+        TelegramContractError("text must not be blank"),
+    ],
+)
+async def test_vague_mission_description_asks_for_more_detail_and_keeps_waiting(
+    monkeypatch: pytest.MonkeyPatch, outcome
+) -> None:
+    """TASK-128 etapa 3 (decisão do usuário): pedido vago -> "não entendi,
+    descreva melhor", e o fluxo CONTINUA esperando a descrição (prazo
+    renovado) -- a próxima mensagem já é a nova tentativa."""
+    user, reply = await _describe_mission(monkeypatch, outcome)
+
+    assert reply.startswith("🤔 Não entendi o que você quer encontrar.")
+    assert "Pode mandar a nova descrição agora" in reply
+    assert _still_awaiting_description(user)
+
+
+@pytest.mark.anyio
+async def test_ai_without_answer_after_the_cascade_tells_to_open_the_mission_later(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TASK-128 etapa 3: nenhum provedor da cascata respondeu (cota de IA)
+    -> aviso para abrir a missão mais tarde, nunca "descreva melhor"."""
+    user, reply = await _describe_mission(monkeypatch, AIProviderQuotaExceeded())
+
+    assert reply.startswith("⚠️ A cota de IA foi excedida no momento")
+    assert "Tente abrir a missão mais tarde" in reply
+    assert "Não entendi" not in reply
+    assert user.pending_intent is None
 
 
 @pytest.mark.anyio

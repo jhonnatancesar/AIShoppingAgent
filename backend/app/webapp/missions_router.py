@@ -11,7 +11,9 @@ router. Posse de missão via `app.missions.query.get_mission_for_user`
 (`403 mission_access_denied`) tanto para missão inexistente quanto para
 missão de outro usuário, nunca distinguindo os dois casos na resposta."""
 
+from collections.abc import Awaitable, Callable
 from decimal import Decimal
+from functools import lru_cache
 from typing import Annotated, NoReturn
 from uuid import UUID
 
@@ -19,9 +21,14 @@ from fastapi import APIRouter, Depends, Query, status
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.ai_provider import (
+    build_admin_dev_ai_provider_manager,
+    build_user_ai_provider_manager,
+)
 from app.authorization import (
     AuthorizationDenied,
     Permission,
+    ai_profile_for_user,
     authorize,
     deny_resource_unavailable,
 )
@@ -30,6 +37,14 @@ from app.core.config import get_settings
 from app.core.errors import ApiError
 from app.database.dependency import get_web_async_session
 from app.database.time import utc_now
+from app.intent import (
+    MISSION_DESCRIPTION_AI_UNAVAILABLE_MESSAGE,
+    MISSION_DESCRIPTION_UNCLEAR_MESSAGE,
+    IntentInterpreter,
+    MissionDescriptionCheck,
+    MissionDescriptionOutcome,
+    check_mission_description,
+)
 from app.intent.contracts import MISSION_SOURCE_CODES
 from app.missions.models import (
     Mission,
@@ -61,7 +76,7 @@ from app.missions.service import (
 )
 from app.offers.query import MissionOfferLink, list_current_offer_links_for_mission
 from app.quotas import QuotaExceededError
-from app.users.models import User
+from app.users.models import User, UserRole
 from app.webapp.dependency import require_web_session
 
 router = APIRouter(prefix="/api/v1/missions", tags=["missions"])
@@ -501,6 +516,32 @@ def _raise_for_quota_error(error: QuotaExceededError) -> NoReturn:
     ) from error
 
 
+MissionDescriptionChecker = Callable[..., Awaitable[MissionDescriptionCheck]]
+
+
+@lru_cache
+def get_mission_description_checker() -> MissionDescriptionChecker:
+    """TASK-128 etapa 3 (decisão do usuário, 2026-09-26: "IA confere ao
+    criar"): a descrição da missão criada no site passa pela MESMA
+    interpretação do `/criar_missao` do Telegram -- um interpretador por
+    perfil, montado uma vez (mesmo desenho de
+    `app.telegram.router.get_telegram_intent_adapters`)."""
+    user_interpreter = IntentInterpreter(build_user_ai_provider_manager())
+    dev_interpreter = IntentInterpreter(build_admin_dev_ai_provider_manager())
+    interpreters = {
+        UserRole.USER: user_interpreter,
+        UserRole.ADMIN: dev_interpreter,
+        UserRole.DEV: dev_interpreter,
+    }
+
+    async def check(description: str, *, profile: UserRole) -> MissionDescriptionCheck:
+        return await check_mission_description(
+            interpreters[profile], description, profile=profile
+        )
+
+    return check
+
+
 # --- Endpoints --------------------------------------------------------------
 
 
@@ -515,11 +556,34 @@ async def create_mission(
     payload: CreateMissionRequest,
     user: User = Depends(require_web_session),
     session: AsyncSession = Depends(get_web_async_session),
+    check_description: MissionDescriptionChecker = Depends(
+        get_mission_description_checker
+    ),
 ) -> MissionSummary:
     try:
         authorize(session, user, Permission.MISSION_CREATE)
+        authorize(session, user, Permission.AI_INTERPRET)
+        profile = ai_profile_for_user(session, user)
     except AuthorizationDenied as error:
         await _deny_and_commit(session, error)
+
+    # TASK-128 etapa 3: a IA confere se a descrição dá para pesquisar ANTES
+    # de criar a missão. Nenhuma transação fica aberta durante a chamada
+    # de rede (mesma disciplina do webhook Telegram).
+    await session.commit()
+    check = await check_description(payload.search_query, profile=profile)
+    if check.outcome is MissionDescriptionOutcome.AI_UNAVAILABLE:
+        raise ApiError(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            code="ai_quota_exceeded",
+            message=MISSION_DESCRIPTION_AI_UNAVAILABLE_MESSAGE,
+        )
+    if check.outcome is MissionDescriptionOutcome.UNCLEAR:
+        raise ApiError(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            code="mission_request_unclear",
+            message=MISSION_DESCRIPTION_UNCLEAR_MESSAGE,
+        )
 
     settings = get_settings()
     try:

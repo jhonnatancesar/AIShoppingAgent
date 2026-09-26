@@ -8,6 +8,7 @@ sobrepõe `get_web_async_session` com um `AsyncMock`; `require_web_session`
 CSRF continuam protegendo estes endpoints exatamente como os de
 `app.webapp.router` (mesma dependência, TASK-091/DEC-074)."""
 
+import asyncio
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
@@ -16,6 +17,7 @@ import pytest
 from app.collection.contracts import OfferCondition
 from app.core.errors import register_api_error_handler
 from app.database.dependency import get_web_async_session
+from app.intent import MissionDescriptionCheck, MissionDescriptionOutcome
 from app.missions.models import Mission, MissionStatus
 from app.missions.query import MissionDetail, MissionListExtras
 from app.missions.service import (
@@ -31,7 +33,7 @@ from app.stores.models import Store
 from app.users.models import User, UserRole
 from app.webapp.csrf import CSRF_COOKIE_NAME
 from app.webapp.dependency import WEB_SESSION_COOKIE_NAME
-from app.webapp.missions_router import router
+from app.webapp.missions_router import get_mission_description_checker, router
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -79,12 +81,36 @@ def async_session() -> MagicMock:
     return session
 
 
+class _DescriptionChecker:
+    """TASK-128 etapa 3: dublê da conferência por IA da descrição da
+    missão -- teste unitário nunca chama a IA real (César Core)."""
+
+    def __init__(self) -> None:
+        self.outcome = MissionDescriptionOutcome.UNDERSTOOD
+        self.calls: list[tuple[str, UserRole]] = []
+
+    async def __call__(self, description: str, *, profile: UserRole):
+        self.calls.append((description, profile))
+        return MissionDescriptionCheck(self.outcome)
+
+
+@pytest.fixture
+def description_checker() -> _DescriptionChecker:
+    return _DescriptionChecker()
+
+
 @pytest.fixture
 def client(
-    async_session: MagicMock, owner: User, monkeypatch: pytest.MonkeyPatch
+    async_session: MagicMock,
+    owner: User,
+    monkeypatch: pytest.MonkeyPatch,
+    description_checker: _DescriptionChecker,
 ) -> TestClient:
     app = _build_app()
     app.dependency_overrides[get_web_async_session] = lambda: async_session
+    app.dependency_overrides[get_mission_description_checker] = lambda: (
+        description_checker
+    )
     monkeypatch.setattr(
         "app.webapp.dependency.get_web_session_user", lambda *a, **k: owner
     )
@@ -163,6 +189,59 @@ def test_create_mission_success(
     body = response.json()
     assert body["id"] == str(created.id)
     assert body["status"] == "active"
+
+
+@pytest.mark.parametrize(
+    ("outcome", "status_code", "code", "message_start"),
+    [
+        (
+            MissionDescriptionOutcome.UNCLEAR,
+            422,
+            "mission_request_unclear",
+            "Não entendi o que você quer encontrar. Descreva melhor o produto",
+        ),
+        (
+            MissionDescriptionOutcome.AI_UNAVAILABLE,
+            503,
+            "ai_quota_exceeded",
+            "A cota de IA foi excedida no momento",
+        ),
+    ],
+)
+def test_create_mission_is_refused_when_ai_does_not_understand_or_answer(
+    client: TestClient,
+    async_session: MagicMock,
+    description_checker: _DescriptionChecker,
+    monkeypatch: pytest.MonkeyPatch,
+    outcome,
+    status_code,
+    code,
+    message_start,
+) -> None:
+    """TASK-128 etapa 3 (decisão do usuário: "IA confere ao criar"): a
+    descrição passa pela mesma interpretação do Telegram ANTES de virar
+    missão; vago e IA sem resposta nunca criam missão e nunca se
+    confundem. A transação é fechada antes da chamada de IA."""
+    create = AsyncMock()
+    monkeypatch.setattr(
+        "app.webapp.missions_router.create_mission_from_criteria_async", create
+    )
+    description_checker.outcome = outcome
+
+    response = client.post(
+        "/api/v1/missions",
+        json={"search_query": "algo bom e barato", "model": "x"},
+        cookies=_cookies(),
+        headers=_csrf_headers(),
+    )
+
+    assert response.status_code == status_code
+    error = response.json()["error"]
+    assert error["code"] == code
+    assert error["message"].startswith(message_start)
+    assert description_checker.calls == [("algo bom e barato", UserRole.USER)]
+    async_session.commit.assert_awaited()
+    create.assert_not_awaited()
 
 
 def test_create_mission_rejects_unpaired_target(client: TestClient) -> None:
@@ -846,3 +925,44 @@ def test_list_missions_enforces_max_limit(
     )
 
     assert response.status_code == 422  # acima do limite máximo documentado
+
+
+def test_description_checker_routes_each_profile_to_its_own_ai_manager(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TASK-128 etapa 3: USER confere com o manager USER; ADMIN/DEV com o
+    manager ADMIN/DEV -- mesmo desenho do webhook Telegram, montado uma
+    vez só (nunca um manager por request)."""
+    user_manager, dev_manager = object(), object()
+    monkeypatch.setattr(
+        "app.webapp.missions_router.build_user_ai_provider_manager",
+        lambda: user_manager,
+    )
+    monkeypatch.setattr(
+        "app.webapp.missions_router.build_admin_dev_ai_provider_manager",
+        lambda: dev_manager,
+    )
+    seen: dict[UserRole, object] = {}
+
+    async def fake_check(interpreter, description, *, profile):
+        seen[profile] = interpreter.manager
+        return MissionDescriptionCheck(MissionDescriptionOutcome.UNDERSTOOD)
+
+    monkeypatch.setattr(
+        "app.webapp.missions_router.check_mission_description", fake_check
+    )
+    get_mission_description_checker.cache_clear()
+    try:
+        checker = get_mission_description_checker()
+        for profile in (UserRole.USER, UserRole.ADMIN, UserRole.DEV):
+            result = asyncio.run(checker("mouse gamer", profile=profile))
+            assert result.outcome is MissionDescriptionOutcome.UNDERSTOOD
+        assert get_mission_description_checker() is checker
+    finally:
+        get_mission_description_checker.cache_clear()
+
+    assert seen == {
+        UserRole.USER: user_manager,
+        UserRole.ADMIN: dev_manager,
+        UserRole.DEV: dev_manager,
+    }
