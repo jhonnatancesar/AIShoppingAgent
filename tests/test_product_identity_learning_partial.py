@@ -75,6 +75,9 @@ def test_unlinked_criteria_requires_no_exact_identity_and_no_category() -> None:
     sql = str(unlinked_product_criteria().compile(dialect=postgresql.dialect()))
     assert "products.identity_key IS NULL" in sql
     assert "products.category IS NULL" in sql
+    # já entregue à leitura de página do worker = fora do backlog do script
+    assert "NOT (EXISTS" in sql
+    assert "product_identity_candidates.source_product_id = products.id" in sql
 
 
 # ---------------------------------------------------------------------------
@@ -480,7 +483,7 @@ def test_record_after_reading_the_page_is_terminal_or_partial() -> None:
     product_id = uuid4()
     cases = (
         (None, False, "awaiting_page", product_id),
-        (None, True, "unrecognized", None),
+        (None, True, "unrecognized", product_id),
         (PartialProductLink("cpu", None, None), True, "partial", None),
     )
     for link, replace, status, source in cases:

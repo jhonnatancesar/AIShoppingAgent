@@ -255,6 +255,7 @@ async def _resolve_with_page(
             ai_manager=ai_manager,
             arbiter_ai_manager=arbiter_ai_manager,
             now=now,
+            source_product_id=claim.source_product_id,
             page_context=page.context,
             replace_awaiting_page=True,
         )

@@ -67,11 +67,32 @@ logger = logging.getLogger("app.products.identity_learning")
 
 def unlinked_product_criteria() -> ColumnElement[bool]:
     """TASK-128: backlog = `Product` SEM vínculo nenhum -- nem identidade
-    exata (`identity_key`), nem vínculo parcial (`category`). Único
-    ponto do critério: `reprocess_unresolved_products` e o script de
-    backfill (`--count-only`/lista de candidatos) usam esta mesma
-    expressão, para a contagem nunca divergir do que é processado."""
-    return and_(Product.identity_key.is_(None), Product.category.is_(None))
+    exata (`identity_key`), nem vínculo parcial (`category`) -- e que
+    ainda NÃO foi entregue à leitura de página (`awaiting_page`/
+    `unrecognized` com este Product de origem). Único ponto do critério:
+    `reprocess_unresolved_products` e o script de backfill
+    (`--count-only`/lista de candidatos) usam esta mesma expressão, para
+    a contagem nunca divergir do que é processado.
+
+    Achado ao documentar o deploy (2026-09-26): sem a exclusão, com o
+    worker parado durante o backfill (sequência obrigatória de deploy),
+    os títulos "não entendidos" ficavam no backlog para sempre -- com mais
+    de `limit` deles, toda rodada pegava os MESMOS produtos (cache, sem
+    IA) e nunca chegava aos outros. Quem resolve esses títulos é a
+    varredura de página do worker (`app.products.identity_page`)."""
+    handed_to_page_read = (
+        select(ProductIdentityCandidate.id)
+        .where(
+            ProductIdentityCandidate.source_product_id == Product.id,
+            ProductIdentityCandidate.status.in_(("awaiting_page", "unrecognized")),
+        )
+        .exists()
+    )
+    return and_(
+        Product.identity_key.is_(None),
+        Product.category.is_(None),
+        ~handed_to_page_read,
+    )
 
 
 async def _find_candidate(
@@ -729,7 +750,9 @@ async def _record_uncertain_extraction(
         grounded=False,
         ai_provider=ai_provider,
         ai_model=ai_model,
-        source_product_id=source_product_id if status == "awaiting_page" else None,
+        source_product_id=(
+            source_product_id if status in ("awaiting_page", "unrecognized") else None
+        ),
         page_context=page_context,
         created_at=now or utc_now(),
     )

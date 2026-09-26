@@ -293,10 +293,12 @@ def test_reprocess_batch_persists_partial_and_awaiting_page(
     with integration_database.sessions() as session:
         assert session.get(Product, chair_id).category == "cadeira-gamer"
         assert session.get(Product, unknown_id).category is None
-    assert _unlinked_count(integration_database) == 1
+    # O "não entendido" sai do backlog do script: quem o resolve é a
+    # varredura de página do worker (etapa 2), não uma nova rodada.
+    assert _unlinked_count(integration_database) == 0
 
     assert asyncio.run(_reprocess()) == 0
-    assert manager.calls == 1, "awaiting_page sai do cache, nunca paga IA de novo"
+    assert manager.calls == 1, "awaiting_page nunca paga IA de novo"
 
 
 def test_reprocess_one_by_one_never_loses_awaiting_page_to_the_next_rollback(
@@ -367,3 +369,39 @@ def test_database_rejects_invalid_candidate_shapes(
             ),
             {"id": uuid4(), "hash": uuid4().hex, "status": status},
         )
+
+
+def test_backfill_never_gets_stuck_on_titles_handed_to_page_read(
+    integration_database,
+) -> None:
+    """Regressão (achada ao documentar o deploy): durante o backfill o
+    worker fica PARADO (sequência obrigatória), então os "não entendidos"
+    não saem do banco -- sem excluí-los do backlog, com `limit` pequeno
+    toda rodada pegava os MESMOS títulos (cache, sem IA) e o resto do
+    backlog nunca era processado."""
+    unknown_id, chair_id = _seed_ad_hoc_products(integration_database, _UNKNOWN, _CHAIR)
+    manager = _ByTitleAIManager(
+        {
+            _CHAIR: _extraction(category="cadeira gamer"),
+            _UNKNOWN: _extraction(),
+        }
+    )
+
+    async def _one_round():
+        async with integration_database.async_sessions() as session:
+            count = await reprocess_unresolved_products(
+                session, ai_manager=manager, profile=UserRole.ADMIN, limit=1, apply=True
+            )
+            await session.commit()
+            return count
+
+    asyncio.run(_one_round())
+    asyncio.run(_one_round())
+
+    assert manager.calls == 2, "cada título pagou IA uma única vez"
+    with integration_database.sessions() as session:
+        assert session.get(Product, chair_id).category == "cadeira-gamer"
+        assert session.get(Product, unknown_id).category is None
+    statuses = {c.raw_title: c.status for c in _candidates(integration_database)}
+    assert statuses == {_CHAIR: "partial", _UNKNOWN: "awaiting_page"}
+    assert _unlinked_count(integration_database) == 0

@@ -132,7 +132,9 @@ async def run(
         total = await _total_unresolved_count(session)
         print(
             "Total REAL de Products sem vínculo nenhum (nem identity_key nem "
-            f"categoria) no banco: {total}"
+            f"categoria) no banco: {total} -- títulos que a IA não entendeu "
+            "ficam fora desta conta: o worker os resolve lendo a página do "
+            "produto depois que a coleta volta a rodar"
         )
         if count_only:
             print("--count-only: nenhuma tentativa de resolver, zero chamada de IA.")
