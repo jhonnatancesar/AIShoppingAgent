@@ -1,6 +1,27 @@
 # Changelog
 
-## `v1.3.26` — TASK-124/126/127/128: cupom com preço de tabela igual, visão DEV de todos os itens, preço histórico com busca manual e produto nunca sem vínculo
+## `v1.3.26` — TASK-124 a 128: cupom com preço de tabela igual, visão DEV de todos os itens, preço histórico com busca manual, produto nunca sem vínculo e preço com cupom no gráfico
+
+**Deploy**: sobe com os serviços do GG parados e só os inicia depois do
+script de dedupe/backfill da TASK-123; todas as flags do GG sobem ativas
+(ver `docs/operations/prod-deployment-handoff.md`, seção "Deploy da
+`v1.3.26`"). Migrations: `20260926_0001`/`0002`/`0003`.
+
+### TASK-125 — preço com cupom no gráfico de histórico
+
+O gráfico de histórico mostrava só o preço de tabela, mesmo quando um
+cupom deixava o produto mais barato: o cálculo do cupom feito a cada
+coleta era descartado. Agora a coleta guarda o preço com cupom de cada
+dia, e o ponto daquele dia fica nele, na mesma linha (decisão do
+usuário). Ao passar o mouse aparecem o preço normal, o preço com cupom
+e qual cupom foi usado. O "Atual" das métricas usa o cupom vigente. Vale
+só daqui pra frente: dias anteriores ao deploy continuam com o preço
+normal, nada é reconstruído.
+
+**Correção junto (TASK-128)**: o backfill da TASK-123 ficava preso nos
+títulos "não entendidos" enquanto o worker estava parado (toda rodada
+pegava os mesmos). Agora esses títulos saem da conta do script, e o
+worker os resolve lendo a página.
 
 ### TASK-128 — produto nunca fica sem vínculo + "não entendi, descreva melhor"
 

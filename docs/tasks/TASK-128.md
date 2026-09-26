@@ -128,6 +128,18 @@ unitária.
 **Descartada** pelo usuário em 2026-09-26 ("não precisa, deixa só para o
 sistema ver mesmo").
 
+### Correção pós-fechamento (2026-09-26, junto com a TASK-125)
+
+Achado ao documentar o deploy da `v1.3.26`: o backlog do backfill
+(`unlinked_product_criteria()`) não excluía os títulos já entregues à
+leitura de página (`awaiting_page`/`unrecognized`). Com o worker parado
+durante o backfill (sequência obrigatória de deploy) e mais títulos
+"não entendidos" que o `--limit`, toda rodada pegaria os mesmos produtos
+(cache, sem IA) e nunca chegaria ao resto. Corrigido: esses produtos
+saem do backlog (o terminal `unrecognized` também guarda o produto de
+origem), com teste de regressão
+(`test_backfill_never_gets_stuck_on_titles_handed_to_page_read`).
+
 ## Checkpoint forçado (2026-09-26, limite de cota da sessão) — histórico
 
 > ✅ **RESOLVIDO na retomada de 2026-09-26** — a Fase C passou a

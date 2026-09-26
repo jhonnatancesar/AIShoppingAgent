@@ -14,6 +14,16 @@ coleta real no Coupon Worker, FASE G (feature flags), a política real
 de providers AI (`ai_profile`, César Core/OmniRoute) e a separação de
 cota de missões USER/ADMIN_DEV + correção do Telegram.
 
+**Atualização `v1.3.26` (2026-09-26):** este deploy passa a levar também
+as TASK-124 a 128 — cupom com preço de tabela igual, visão DEV de todos
+os itens, preço histórico com busca manual, produto nunca sem vínculo
+(com leitura de página pelo worker), "não entendi, descreva melhor" e
+aviso de cota de IA, e preço com cupom no gráfico de histórico — além das
+cotas do DEV (50 missões/300 vagas). **Siga a seção "Deploy da
+`v1.3.26` — sequência obrigatória" logo depois da tabela de tags**: os
+serviços do GG sobem parados e só são iniciados depois do script de
+dedupe/backfill.
+
 **Este deploy foi explicitamente autorizado pelo usuário em 07/09/2026**
 (`DEC-119`, `docs/internal/decision-log.md`). Nenhuma parte deste
 documento deve ser lida como "aguardando autorização" — se você
@@ -46,7 +56,8 @@ uma foto de um instante, não uma garantia de que nada mudou depois):
 
 | Componente | Tag | Commit | Observação |
 |---|---|---|---|
-| GG Oferta | **`v1.3.25`** | `e97e1cc` (`main`) | Substitui `v1.3.17`–`v1.3.24`. Sob `v1.3.24` (mecanismo de extração já validado, ver histórico), o primeiro `--apply --limit 100` REAL autorizado crashou (`RestrictViolation` num `DELETE FROM products`) -- `apply_learned_identity` só migrava `Offer` antes de apagar o Product ad-hoc fundido, mas `products.id` também é referenciado com `ON DELETE RESTRICT` por outras 6 tabelas. Corrigido: `mission_product_alert_state` agora é MESCLADO de verdade (nunca sobrescrito às cegas) quando a mesma Mission já tem checkpoint nos dois Products; `purchase_confirmations` é IMUTÁVEL por trigger de banco (achado ao tentar migrar) -- o merge agora é recusado com segurança (`None`, nunca crash) quando o ad-hoc tem compra confirmada. PROD permanece parado desde o crash, nada foi perdido (backlog confirmado intacto em 372). **Pronto para retomar `--apply` de verdade** -- ver seção "TASK-123 -- ação obrigatória no deploy" logo abaixo desta tabela, pendente de nova autorização explícita |
+| GG Oferta | **`v1.3.26`** | `main` — ver observação | **Alvo deste deploy.** Contém TASK-124/125/126/127/128 + cotas do DEV (commits até o `main` publicado em 2026-09-26). **A tag `v1.3.26` só existe depois de cortada** — confirme com `git fetch --tags; git tag --sort=-creatordate`; se ainda não existir, pare e peça a tag (nunca faça deploy de um `main` sem tag sem autorização explícita). Migrations novas: `20260926_0001`/`0002`/`0003` (head `20260926_0003`). Sequência obrigatória na seção "Deploy da `v1.3.26`" abaixo |
+| GG Oferta (anterior) | `v1.3.25` | `e97e1cc` (`main`) | Substitui `v1.3.17`–`v1.3.24`. Sob `v1.3.24` (mecanismo de extração já validado, ver histórico), o primeiro `--apply --limit 100` REAL autorizado crashou (`RestrictViolation` num `DELETE FROM products`) -- `apply_learned_identity` só migrava `Offer` antes de apagar o Product ad-hoc fundido, mas `products.id` também é referenciado com `ON DELETE RESTRICT` por outras 6 tabelas. Corrigido: `mission_product_alert_state` agora é MESCLADO de verdade (nunca sobrescrito às cegas) quando a mesma Mission já tem checkpoint nos dois Products; `purchase_confirmations` é IMUTÁVEL por trigger de banco (achado ao tentar migrar) -- o merge agora é recusado com segurança (`None`, nunca crash) quando o ad-hoc tem compra confirmada. PROD permanece parado desde o crash, nada foi perdido (backlog confirmado intacto em 372). **Pronto para retomar `--apply` de verdade** -- ver seção "TASK-123 -- ação obrigatória no deploy" logo abaixo desta tabela, pendente de nova autorização explícita |
 | GG Oferta (histórico) | `v1.3.15`–`v1.3.24` | `e8ac138`/`d071adc`/`ba3ef16`/`2155a21`/`204da8a`/`dcfda07`/`76e37a9`/`015979c`/`163aa09`/`6d53c9c` | Identidade global de produto (SKU vs part number + árbitro de IA), parcelamento real, `offer_supersession`, `coupon_evidence_isolation`, `search_history` + área DEV, cobertura de testes ≥90%, correção do início do Windows Ops Agent, fechamento documental do episódio `INC-2026-09-17-001` (`v1.3.15`); correções de sequência de tag sem mudança de código (`v1.3.16`, `v1.3.18`); TASK-122 (busca sem oferta relevante não é mais bloqueio) + TASK-123 original -- script de backfill sem lote (`v1.3.17`); TASK-123 com lote de 4/teto de 20 (`v1.3.19`); TASK-123 com lote de 10/teto de 100, ajustado ao backlog real de 371 (`v1.3.20`); TASK-123 corrige relatório contraditório do dry-run + melhora log de falha de lote (`v1.3.21`); TASK-123 liga logging estruturado no script (`v1.3.22`); TASK-123 ancora mensagem do lote em linguagem natural (`v1.3.23`); TASK-123 permite `max_tokens` maior por chamada, causa raiz real da falha de extração (`v1.3.24`). Substituem `v1.3.8` (handoff parado desde então, v1.3.9-v1.3.14 foram hotfixes pontuais não documentados aqui) |
 | César Core | **`v1.2.1`** | `a5ba084` | Política real de providers AI (`ai_profile`, 4 connections, 2 combos) + saneamento documental. **Imagem já publicada e verificada no GHCR:** `ghcr.io/jhonnatancesar/cesar-core:1.2.1` (também `:1.2`, `:1`, `:latest`). **PROD não usa esta tag/repositório diretamente — só a imagem, via `deploy/prod/cesar-core.compose.yaml`.** Não mudou nesta rodada -- confirme se já é a versão rodando antes de reafirmar, não reinstale/rebuilde sem necessidade |
 | Coupon Worker | **`v1.0.4`** | `75a7bce` (`master`) | Substitui `v1.0.0` (já instalado em PROD desde a primeira release -- isto NÃO é uma primeira instalação, ver nota na seção 9). Traz retry com backoff ao abrir o coupon store (não aborta mais na primeira falha se o Postgres ainda não estiver pronto) e `MultipleInstances IgnoreNew` explícito na Scheduled Task -- **worker.py precisa ser atualizado e a Scheduled Task precisa de `-Action Update` para essas duas correções entrarem em vigor** (seção 9) |
@@ -67,14 +78,94 @@ Histórico relevante anterior a estas tags, para contexto:
   refinamento de esgotamento).
 
 **Para o deploy em si:** faça checkout das tags acima nos dois
-repositórios que existem em PROD (`git checkout v1.3.25` — confirme que é
+repositórios que existem em PROD (`git checkout v1.3.26` — confirme que é
 essa a mais recente com `git tag --sort=-creatordate` antes — no GG
 Oferta, `v1.0.4` no Coupon Worker, sem mudança desde a rodada anterior).
 O César Core **não tem repositório em PROD**: use `deploy/prod/
 cesar-core.compose.yaml` (deste próprio checkout do GG Oferta, já em
-`v1.3.25`), que já referencia `ghcr.io/jhonnatancesar/cesar-core:1.2.1`
+`v1.3.26`), que já referencia `ghcr.io/jhonnatancesar/cesar-core:1.2.1`
 como imagem padrão — nenhum `docker build`, nenhum clone do repositório
 `cesar-core`.
+
+## Deploy da `v1.3.26` — sequência obrigatória (serviços parados até rodar o script)
+
+Decisão do usuário (2026-09-26): **o deploy sobe com os serviços do GG
+PARADOS, e eles só são iniciados depois de rodar o script de
+dedupe/backfill da TASK-123.** As flags do GG já sobem ativas com o
+código, sem nenhum passo manual (ver "Flags" abaixo). O que fica parado
+são os serviços, nunca as flags.
+
+1. **Parar tudo que coleta ou atende usuário ANTES de atualizar o
+   código:**
+   ```powershell
+   Stop-ScheduledTask -TaskName "AIShoppingAgent-CollectionWorker"
+   powershell -File scripts\manage_collection_worker_task.ps1 -Action Disable
+   Stop-ScheduledTask -TaskName "AIShoppingCoupon-Worker"
+   Disable-ScheduledTask -TaskName "AIShoppingCoupon-Worker"
+   docker compose stop api telegram_notifier
+   ```
+   O banco (`database`) e o César Core continuam de pé: as migrations e
+   o script precisam dos dois.
+2. **Preflight, backup, pull e checkout** da tag `v1.3.26` (seções 2 e
+   7, passos 1–3).
+3. **Migrations** (seção 3): head esperado **`20260926_0003`**.
+   ```powershell
+   docker compose run --rm api python -m alembic -c alembic.ini upgrade head
+   ```
+4. **Rebuild da imagem sem iniciar os serviços:**
+   `docker compose build api telegram_notifier`. Não rode `up` ainda.
+5. **Confirmar que a IA do César Core responde** (`GET /ready` do Core
+   e, se necessário, a prova da seção 5.2). O script chama IA de verdade.
+   Com a IA do Core fora, ele só registra falhas passageiras: pare e
+   reporte, não insista.
+6. **Rodar o script de dedupe/backfill da TASK-123**, com os serviços
+   ainda parados, em rodadas `--count-only` → `--dry-run` → `--apply`,
+   seguindo a seção "TASK-123" abaixo. Ele funde produtos duplicados
+   (dedupe pela identidade aprendida). Desde a TASK-128, ele também dá
+   **vínculo parcial** a produtos genéricos (cadeira gamer, mouse gamer)
+   e registra como "não entendido" o título que a IA não categoriza.
+   Esses títulos saem da conta do script: quem os resolve é o worker,
+   lendo a página do produto, depois do passo 7.
+7. **Só depois do script**, iniciar os serviços:
+   ```powershell
+   docker compose up -d api telegram_notifier
+   powershell -File scripts\manage_collection_worker_task.ps1 -Action Enable
+   Enable-ScheduledTask -TaskName "AIShoppingCoupon-Worker"
+   ```
+   Confirmar `GET /health`/`GET /ready` (seção 8) e o worker de coleta
+   disparando normalmente.
+8. **Provas funcionais desta versão:**
+   - **TASK-128**: criar uma missão de teste **pelo site** prova que o
+     `api` alcança a IA do César Core. Se a IA não responder, o site
+     recusa com "tente abrir a missão mais tarde".
+   - **TASK-128**: no log do worker, aparece o evento
+     `identity_page_read_sweep` e nenhum `identity_page_read_sweep_failed`.
+   - **TASK-127**: o botão "Buscar preço histórico" (seção "TASK-126/127").
+   - **TASK-125**: depois do primeiro ciclo de coleta com um cupom ativo,
+     o ponto de hoje do gráfico de histórico daquela oferta fica no preço
+     com cupom, e o mouse sobre ele mostra preço normal, preço com cupom e
+     cupom.
+
+**Flags — todas sobem ATIVAS com o código** (regra do usuário:
+"todas as flags sobem ativas sempre"). Nenhuma variável de ambiente é
+necessária. Se PROD tiver alguma delas definida como `false` numa rodada
+anterior, **remova** a variável: não troque para `true`, remova. Vale
+tanto no `.env` do Compose quanto nas variáveis de Máquina do worker.
+
+| Flag | Default |
+|---|---|
+| `AISHOPPING_HISTORICAL_BOOTSTRAP_ENABLED` | `true` |
+| `AISHOPPING_MARKET_RESEARCH_EXTERNAL_REFERENCE_ENABLED` | `true` |
+| `AISHOPPING_COUPONS_ENABLED` | `true` (também liga o preço com cupom no gráfico, TASK-125) |
+| `AISHOPPING_PRODUCT_IDENTITY_LEARNING_ENABLED` | `true` (também liga a leitura de página pelo worker, TASK-128) |
+
+Configuração nova, **não é flag**: `AISHOPPING_IDENTITY_PAGE_READ_BUDGET`,
+títulos "não entendidos" que o worker lê por ciclo (padrão `3`; `0`
+desliga só a leitura de página). O padrão basta.
+
+As flags do **César Core** (`CESAR_CORE_AI_ENABLED`/
+`CESAR_CORE_SEARCH_ENABLED`, seção 6) são de outro deploy e continuam
+com a regra própria da seção 6.
 
 ## TASK-123 — ação obrigatória no deploy (não é automática)
 
@@ -116,10 +207,16 @@ religados (depois da seção 7, antes de declarar o deploy concluído):
    (~10x menos chamadas que 1-por-produto), então uma rodada de 100 já
    cobre ~10 chamadas de IA, não 100 -- e os 371 conhecidos cabem em
    ~4 rodadas. Repita `--count-only`/`--dry-run`/`--apply` em rodadas
-   sucessivas até a saída mostrar "Total REAL de Products sem
-   identity_key no banco: 0" -- só então o backlog está zerado. Cada
-   rodada `--apply` chama IA de verdade (custo real) -- não rode em
-   loop automatizado sem supervisão, acompanhe a saída de cada rodada.
+   sucessivas até a saída mostrar "Total REAL de Products sem vínculo
+   nenhum (nem identity_key nem categoria) no banco: 0" -- só então o
+   backlog está zerado. **Desde a TASK-128 (`v1.3.26`)**: produto
+   genérico ganha vínculo parcial (sai do backlog), e título que a IA
+   não categoriza é registrado como "não entendido" -- ele também sai da
+   conta do script (o worker o resolve lendo a página do produto depois
+   que a coleta voltar a rodar), então o backlog zera mesmo com o worker
+   parado. Cada rodada `--apply` chama IA de verdade (custo real) -- não
+   rode em loop automatizado sem supervisão, acompanhe a saída de cada
+   rodada.
 2. **Itens novos (flag `product_identity_learning_enabled`) -- NÃO é
    mais passo manual.** Desde 2026-09-25 a flag nasce `true` no código
    (decisão do usuário: "todas as flags sobem ativas sempre") -- sobe
@@ -231,8 +328,25 @@ Produto nunca fica sem vínculo + "não entendi, descreva melhor"
   e continua esperando; IA sem resposta avisa para tentar mais tarde.
   Nenhuma configuração.
 - **Backfill da TASK-123**: o backlog passa a ser só "produto sem vínculo
-  nenhum" — produtos genéricos que ganharem vínculo parcial saem dele,
-  então o `--count-only` tende a diminuir em relação ao número antigo.
+  nenhum e ainda não entregue à leitura de página" — produtos genéricos
+  que ganharem vínculo parcial e títulos "não entendidos" saem dele,
+  então o `--count-only` tende a diminuir em relação ao número antigo e
+  chega a zero mesmo com o worker parado (sequência da seção "Deploy da
+  `v1.3.26`").
+
+## TASK-125 — o que muda em PROD (sem passo manual obrigatório)
+
+- **Migration nova** `20260926_0003_offer_coupon_price_days` — head passa
+  a ser **`20260926_0003`**. Tabela nova, nasce vazia (decisão do
+  usuário: o preço com cupom vale só daqui pra frente, nada é
+  reconstruído).
+- A cada coleta, o preço com cupom que a Fase B já calculava passa a ser
+  guardado por (oferta, observação, dia). O gráfico de histórico usa esse
+  valor no ponto do dia, e o tooltip mostra preço normal, preço com cupom
+  e o cupom. O "Atual" das métricas usa o cupom vigente, com a mesma
+  regra do card da oferta.
+- Com `AISHOPPING_COUPONS_ENABLED` desligada, nada muda (preço de tabela
+  puro). Nenhuma variável nova.
 
 ## 2. O que fazer primeiro (antes de qualquer deploy)
 
@@ -271,11 +385,11 @@ Repita para os dois repositórios antes de prosseguir para a seção 3.
 
 ## 3. Migrations necessárias (só GG Oferta)
 
-**Atualização (TASK-128, `v1.3.26` ainda sem tag):** o head atual do
-repositório é **`20260926_0002`** — as duas migrations da TASK-128
-(`20260926_0001`, `20260926_0002`) vêm depois de `20260913_0001`; o
-`upgrade head` abaixo aplica tudo em ordem. O texto a seguir é o
-registro da tag `v1.3.15`.
+**Atualização (`v1.3.26`):** o head atual do repositório é
+**`20260926_0003`**. As três migrations novas (`20260926_0001` e
+`20260926_0002` da TASK-128, `20260926_0003` da TASK-125) vêm depois de
+`20260913_0001`, e o `upgrade head` abaixo aplica tudo em ordem. O texto
+a seguir é o registro da tag `v1.3.15`.
 
 Head esperado após o pull da tag `v1.3.15`: **`20260913_0001`** (único
 head, confirmado sem ramificação pelo checkpoint-11 da rodada que gerou
@@ -833,7 +947,8 @@ responder `HTTP 200` com `provider_gateway: "omniroute"` e
 |---|---|---|---|---|
 | `AISHOPPING_HISTORICAL_BOOTSTRAP_ENABLED` | GG Oferta | `true` (desde 2026-09-21, TASK-124) | Idêntico ao fluxo anterior à FASE G — sem bootstrap histórico externo | `run_historical_bootstrap` (F1) roda: busca referência histórica externa uma vez por produto elegível, com retry/backoff exponencial e lease contra dupla execução, revalidando a cada 90 dias |
 | `AISHOPPING_MARKET_RESEARCH_EXTERNAL_REFERENCE_ENABLED` | GG Oferta | `true` (desde 2026-09-21, TASK-124) | Avaliação de mercado (F2) usa só histórico interno, como antes | Avaliação de mercado (F3) também considera a referência histórica externa buscada pelo F1 |
-| `AISHOPPING_COUPONS_ENABLED` | GG Oferta | `true` (desde 2026-09-21, TASK-124) | Preço exibido/alertado nunca considera cupom, mesmo que existam cupons coletados no banco | Ofertas elegíveis (Web e alerta) calculam o melhor cupom aplicável em tempo real (`best_applicable_coupon`) e mostram o preço com desconto |
+| `AISHOPPING_COUPONS_ENABLED` | GG Oferta | `true` (desde 2026-09-21, TASK-124) | Preço exibido/alertado nunca considera cupom, mesmo que existam cupons coletados no banco | Ofertas elegíveis (Web e alerta) calculam o melhor cupom aplicável em tempo real (`best_applicable_coupon`) e mostram o preço com desconto; desde a TASK-125, o gráfico de histórico também usa o preço com cupom guardado pela coleta |
+| `AISHOPPING_PRODUCT_IDENTITY_LEARNING_ENABLED` | GG Oferta | `true` (desde 2026-09-25) | Título não reconhecido pelos extratores fica "não identificado"; nenhuma leitura de página | Identidade/vínculo parcial via IA na coleta (TASK-123/128) + leitura de página pelo worker para títulos "não entendidos" (TASK-128, orçamento `AISHOPPING_IDENTITY_PAGE_READ_BUDGET`, padrão 3) |
 | `CESAR_CORE_AI_ENABLED` | César Core | `false` | `/v1/ai/generate` responde "não configurado" | AI real via OmniRoute, resolvida por `ai_profile` |
 | `CESAR_CORE_SEARCH_ENABLED` | César Core | `false` | `/v1/search` responde "não configurado" | Search real via SearXNG |
 
@@ -845,8 +960,10 @@ estava ativa em PROD, mascarando um bug real (cupom coletado pelo
 worker mas nunca considerado pelo GG, ver seção "TASK-124" abaixo).
 Corrigido: as três agora nascem `true` no código
 (`backend/app/core/config.py`), por decisão explícita do usuário.
-**Regra permanente**: nenhuma flag nova nasce ativa ou desativada por
-decisão do assistente — sempre perguntar antes.
+**Regra permanente (atualizada pelo usuário em 2026-09-25):** "todas as
+flags sobem ativas sempre" — toda feature flag do GG nasce `true`
+(inclusive `product_identity_learning_enabled`). `debug` e
+`observability_enabled` não são feature flags e ficam como estão.
 
 **Ordem segura de ativação — só se aplica às duas flags do César Core
 agora** (as três de GG Oferta acima já sobem ativas junto com o
@@ -929,10 +1046,11 @@ deploy do container/worker, sem etapa de ativação manual separada):
    5. **Só então** iniciar/confirmar a Scheduled Task
       `AIShoppingAgent-CollectionWorker` (`manage_collection_worker_task.ps1`)
       — ela lê as variáveis de Máquina frescas a cada disparo, sem
-      precisar de reboot. **Nesta rodada (TASK-124), NÃO complete esta
+      precisar de reboot. **Nesta rodada (`v1.3.26`), NÃO complete esta
       sub-etapa ainda** — deixe a Scheduled Task parada até rodar o
-      backfill do TASK-123 (ver seção "TASK-124" no início deste
-      documento); só depois disso inicie/confirme a task de verdade.
+      backfill do TASK-123 (ver seção "Deploy da `v1.3.26` — sequência
+      obrigatória" no início deste documento); só depois disso
+      inicie/confirme a task de verdade.
 9. **Coupon Worker — primeira instalação em PROD** (seção 9) — diretório,
    `.env` (`AUTH_TOKEN` + `COUPONS_POSTGRES_DSN` apontando para o
    Postgres de PROD), instalar o agendamento (Windows Scheduled Task).

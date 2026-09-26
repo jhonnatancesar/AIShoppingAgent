@@ -1,5 +1,11 @@
 # Roadmap
 
+**Atualização 2026-09-26:** `v1.3.26` (TASK-124 a 128) pronta e
+publicada em `origin/main`, deploy pendente. Ver `DEC-134` e
+`docs/internal/project-context.md`. Ideia futura registrada, sem TASK:
+aba pública "Históricos de preços" na landing page
+(`future_ideas/public-price-history-landing.md`).
+
 **Estado real em 2026-09-07 (saneamento de documentação).** Este
 roadmap não foi atualizado desde ~2026-08-30 (fechamento da V1.2) e não
 cobre o que veio depois: TASK-113 (absorve item 17 da V1.2), TASK-117

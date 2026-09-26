@@ -1,5 +1,38 @@
 # Decision Log
 
+## DEC-134 — Rodada 2026-09-21 a 26: TASK-124 a 128, flags sempre ativas e deploy da `v1.3.26` com serviços parados
+
+- **Data:** 2026-09-26.
+- **Decisões do usuário (todas explícitas, em chat):**
+  - **Flags**: "todas as flags sobem ativas sempre" (2026-09-25). Toda
+    feature flag do GG nasce `true`, inclusive
+    `product_identity_learning_enabled`. `debug`/`observability_enabled`
+    não são feature flags e ficam como estão.
+  - **TASK-126**: visão DEV de todos os itens como filtro na tela
+    Ofertas existente, não uma tela nova. Dois desenhos anteriores foram
+    rejeitados.
+  - **TASK-127**: bloco "Preço histórico" acima do gráfico; busca vazia
+    há menos de 90 dias só o DEV força.
+  - **Cotas**: ADMIN/DEV com 50 missões e 300 vagas de loja.
+  - **TASK-128**: a IA nunca deixa produto sem vínculo (vínculo parcial
+    fica só para o sistema; a etapa "DEV vê parcial" foi descartada).
+    Título não entendido → o worker lê a página. Pedido vago ao abrir
+    missão → "não entendi, descreva melhor" no Telegram e no site. IA sem
+    resposta depois da cascata → "tente abrir a missão mais tarde". No
+    site, a IA confere a descrição ao criar a missão.
+  - **TASK-125**: preço com cupom na mesma linha do gráfico, com preço
+    normal + cupom no tooltip; só daqui pra frente.
+  - **Registros**: doc da TASK, memória e MCP são gravados só no fim de
+    cada TASK.
+  - **Deploy da `v1.3.26`**: sobe com os serviços do GG parados e só os
+    inicia depois do script de dedupe/backfill da TASK-123; commit e push
+    com as flags ativas.
+- **Detalhe**: `docs/tasks/TASK-124.md` a `TASK-128.md`,
+  `docs/operations/prod-deployment-handoff.md` (seção "Deploy da
+  `v1.3.26`"), `docs/releases/changelog.md`.
+- **Ideia futura registrada** (não é TASK): aba pública "Históricos de
+  preços" na landing page, `future_ideas/public-price-history-landing.md`.
+
 ## DEC-133 — Login do Mercado Livre nunca foi feito na instalação real de PROD do Coupon Worker
 
 - **Data:** 2026-09-10.

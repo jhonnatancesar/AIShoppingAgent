@@ -1,68 +1,83 @@
 # TASK-125 — Gráfico de histórico de preço nunca mostra o preço com cupom aplicado
 
-Status: **Registrada (2026-09-21), escopo definido, implementação NÃO
-iniciada.** Separada da TASK-124 por decisão explícita do usuário — a
-mesma investigação (caso 9800X3D/Kabum/`CPUPROMO`) revelou dois
-problemas distintos: TASK-124 é o pipeline de alerta nunca considerar
-um cupom novo quando o preço de tabela não muda; esta TASK é o gráfico
-de histórico de preço nunca refletir o preço com desconto de cupom, em
-nenhuma circunstância — mesmo depois da TASK-124 corrigida.
+Status: **Concluída (2026-09-26)**. Entra na `v1.3.26` junto com
+124/126/127/128.
 
-## Contexto (confirmado no código)
+Validação:
+- integração: 385/385 na rodada completa final (migration `20260926_0003`
+  com upgrade → downgrade → upgrade → `alembic check`);
+- unitária: 2769 passando, cobertura 90,22%;
+- frontend: `tsc`, `oxlint`, `test:price-history` e `test:offer`
+  passando.
 
-A série usada pelo gráfico de histórico
-(`PriceHistoryPoint`/`PriceHistorySeries`/`PriceHistoryMetrics`,
-`backend/app/offers/query.py:593-627`, montada por
-`build_offer_price_history`/`_fetch_daily_low_points` e exposta em
-`GET /api/v1/offers/{offer_id}/price-history`,
-`backend/app/webapp/offers_router.py:565-606`) lê exclusivamente
-`PriceObservation.amount` — o preço de tabela bruto coletado. Nenhum
-ponto da série é ajustado por cupom.
+Separada da TASK-124 por decisão explícita do usuário: a mesma
+investigação (caso 9800X3D/Kabum/`CPUPROMO`) revelou dois problemas.
+- TASK-124: o alerta nunca considerava um cupom novo quando o preço de
+  tabela não mudava.
+- Esta TASK: o gráfico de histórico nunca refletia o preço com desconto.
 
-O cálculo de cupom (`best_applicable_coupon`,
-`app/coupons/pricing.py`) só acontece **transiente**, no momento da
-leitura de uma oferta específica (`get_user_offer`,
-`offers_router.py:615-647`) ou na avaliação de alerta — nunca é
-persistido como um ponto próprio de série histórica. Ou seja: mesmo
-que a TASK-124 já garanta que o alerta dispare corretamente quando um
-cupom baixa o preço efetivo, o gráfico de histórico daquele mesmo
-produto continua mostrando só a linha do preço de tabela — o menor
-preço "de verdade" (com cupom) nunca aparece visualmente, mesmo depois
-do alerta ter sido enviado.
+## Problema (confirmado no código)
 
-## Objetivo
+A série do gráfico (`_fetch_daily_low_points`, `offers/query.py`) lia só
+`PriceObservation.amount`, o preço de tabela. O melhor cupom aplicável
+(`best_applicable_coupon`) já era calculado a cada coleta, na Fase B, para
+o alerta, mas era **descartado** em seguida. Nunca ficava guardado, então o
+gráfico não tinha de onde tirar o preço com cupom.
 
-Fazer o preço efetivo (com o melhor cupom aplicável do momento)
-aparecer no histórico de preço exibido ao usuário — pelo menos no
-ponto mais recente da série (o cupom vigente agora), idealmente também
-retroativo quando fizer sentido (a decidir na implementação: cupom é
-um dado com vigência própria, nem sempre é possível reconstruir
-retroativamente qual cupom estava ativo em cada dia passado sem ter
-sido registrado na época).
+## Decisões do usuário (2026-09-26)
 
-## Escopo (a definir na implementação — perguntas em aberto)
+1. **Tudo na mesma linha**: nada de linha nova. O ponto do dia fica no
+   **preço com cupom** quando havia cupom aplicável. Ao passar o mouse
+   aparecem o preço normal, o preço com cupom e qual cupom foi usado.
+   Palavras do usuário: "quero tudo na mesma linha".
+2. **Só daqui pra frente**: nada é reconstruído para os dias anteriores
+   ao deploy. Reconstruir pelo período em que o cupom foi visto seria
+   aproximação. Dias antigos continuam só com o preço normal.
 
-- Se o ajuste de cupom entra na série (`PriceHistoryPoint`, um ponto
-  por dia/loja) ou só nas métricas agregadas (`PriceHistoryMetrics.
-  current_amount`, mostrando "preço atual com cupom" separado do
-  histórico bruto).
-- Se cupons antigos/expirados devem ser reconstruídos retroativamente
-  (provavelmente não é possível de forma confiável sem uma tabela de
-  auditoria de vigência de cupom por dia) ou se o ajuste vale só para
-  o ponto mais recente/atual.
-- Onde no frontend (`frontend/`) o preço com cupom deveria aparecer
-  junto ao gráfico (badge/anotação no ponto atual, linha separada,
-  etc.) — decisão de produto, não só de dado.
+## O que foi feito
+
+- Tabela nova `offer_coupon_price_days`, migration `20260926_0003`. Guarda
+  o preço com cupom que a coleta calculou.
+  - Chave: (Offer, observação de preço, dia comercial de São Paulo). A
+    mesma observação pode ser reaproveitada em dias diferentes, e o cupom
+    de cada dia pode mudar.
+  - Várias coletas no mesmo dia ficam com o **menor** preço com cupom.
+  - Guarda uma cópia do código do cupom (`''` = cupom automático).
+- Fase C da coleta (`_record_coupon_price_day`): grava o cupom que a Fase
+  B já calculou, sem nenhuma chamada nova.
+  - O desconto é arredondado na precisão da coluna (half-up) antes de
+    derivar o final. Um cupom percentual podia gerar casas demais e
+    quebrar a regra `final = normal − desconto`.
+  - Roda em savepoint próprio: falhar aqui nunca derruba a coleta.
+- Gráfico (`GET /api/v1/offers/{id}/price-history`):
+  - cada confirmação usa o preço com cupom do mesmo dia quando existe;
+  - o ponto carrega `original_amount` e `coupon_code` para o tooltip;
+  - mínimo, máximo e média acompanham a linha;
+  - o **"Atual"** usa o cupom vigente agora, com a mesma regra do card da
+    oferta, para o último ponto e o "Atual" nunca divergirem;
+  - com `coupons_enabled` desligada, nada muda (preço de tabela puro).
+- Frontend:
+  - `PriceHistoryTooltipContent` mostra "Preço normal / Com cupom /
+    Cupom";
+  - os dados do gráfico ficam em `priceHistoryChartData.ts`;
+  - teste novo: `npm run test:price-history`.
+
+## Achado corrigido junto (TASK-128)
+
+Ao documentar o deploy, apareceu um problema no backfill da TASK-123:
+- o backlog selecionava "sem vínculo" com `LIMIT`, sem excluir os títulos
+  já entregues à leitura de página (`awaiting_page`/`unrecognized`);
+- com o worker parado durante o backfill, que é a sequência obrigatória de
+  deploy, toda rodada pegaria os mesmos títulos (cache, sem IA) e nunca
+  chegaria ao resto.
+
+Corrigido:
+- `unlinked_product_criteria()` exclui produtos entregues à leitura de
+  página;
+- o terminal `unrecognized` também guarda o produto de origem;
+- o `--count-only` explica que esses títulos ficam fora da conta.
 
 ## Fora de escopo
 
-TASK-124 (pipeline de alerta) — já corrigida separadamente. Cálculo do
-cupom em si (`app/coupons/pricing.py`) — já correto e determinístico,
-não precisa mudar.
-
-## Validação futura
-
-Confirmar visualmente (webapp real) que, para um produto com cupom
-ativo no momento, o gráfico/card de histórico mostra o preço com
-desconto de alguma forma — não só o preço de tabela igual ao que
-apareceria sem nenhum cupom cadastrado.
+Reconstruir o passado. Mostrar o cupom fora do gráfico, por exemplo no
+bloco "Preço histórico" da TASK-127.

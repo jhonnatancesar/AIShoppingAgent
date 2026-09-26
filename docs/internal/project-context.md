@@ -1,5 +1,22 @@
 # Project Context
 
+**Estado em 2026-09-26 — `v1.3.26` pronta, publicada em `origin/main`,
+tag e deploy pendentes (`DEC-134`):** TASK-124 a 128 concluídas.
+- **124**: o cupom avisa mesmo com o preço de tabela igual.
+- **125**: preço com cupom no gráfico de histórico.
+- **126**: DEV vê todos os itens, de todos os usuários.
+- **127**: preço histórico com busca manual.
+- **128**: produto nunca sem vínculo, com leitura de página pelo worker;
+  "não entendi, descreva melhor" e aviso de cota de IA.
+- **Cotas**: ADMIN/DEV com 50 missões e 300 vagas de loja.
+
+Todas as flags do GG nascem ativas. O head do Alembic é `20260926_0003`.
+PROD ainda está na `v1.3.25`, com o backfill da TASK-123 pausado. O
+próximo deploy segue a sequência "serviços parados até rodar o script" de
+`docs/operations/prod-deployment-handoff.md`. Validação:
+- integração: 385/385;
+- unitária: 2769 passando, cobertura 90,22%.
+
 **FASE E.3 — concluída localmente em 2026-09-05, sem commit/push
 (`DEC-112`):** achado de auditoria de segurança anterior a esta fase
 (read-only) confirmou empiricamente que o OmniRoute loga a URL completa
