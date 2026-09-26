@@ -14,13 +14,14 @@ from unittest.mock import MagicMock
 from uuid import uuid4
 
 import pytest
-from app.core.errors import register_api_error_handler
+from app.core.errors import ApiError, register_api_error_handler
 from app.database.dependency import get_session
 from app.users.models import User, UserRole
 from app.webapp.csrf import CSRF_COOKIE_NAME
 from app.webapp.dependency import (
     WEB_SESSION_COOKIE_NAME,
     require_admin_web_session,
+    require_dev_web_session,
     require_web_session,
 )
 from fastapi import APIRouter, Depends, FastAPI
@@ -299,3 +300,24 @@ def test_require_admin_web_session_still_requires_csrf_for_mutation(
 
     assert response.status_code == 403
     assert response.json()["error"]["code"] == "csrf_invalid"
+
+
+def test_require_dev_web_session_denies_admin_and_commits_denial_audit() -> None:
+    """ADMIN passa em `require_admin_web_session`, mas NUNCA no guard DEV
+    (`Permission.DEV_PANEL_ACCESS` é exclusiva do papel DEV) -- e a
+    auditoria da negação é comitada antes do erro, mesma armadilha já
+    resolvida no guard ADMIN."""
+    session = MagicMock()
+
+    with pytest.raises(ApiError) as error:
+        require_dev_web_session(user=_user(role=UserRole.ADMIN), session=session)
+
+    assert error.value.status_code == 403
+    assert error.value.code == "dev_access_denied"
+    session.commit.assert_called_once()
+
+
+def test_require_dev_web_session_allows_dev() -> None:
+    user = _user(role=UserRole.DEV)
+
+    assert require_dev_web_session(user=user, session=MagicMock()) is user

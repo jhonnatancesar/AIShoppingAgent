@@ -2,14 +2,17 @@
 determinístico e validação de forma (rodada de 2026-09-12), sem banco.
 """
 
+import json
 from datetime import UTC, datetime
 
 import pytest
 from app.ai_provider import AIResponse
 from app.products.identity import build_resolved_variant_from_fields
 from app.products.identity_ai import (
+    BATCH_EXTRACT_IDENTITY_PURPOSE,
     AIIdentityExtraction,
     evaluate_ai_identity_extraction,
+    extract_product_identities_via_ai_batch,
     extract_product_identity_via_ai,
     normalized_title_hash,
     values_match_ignoring_punctuation,
@@ -415,3 +418,127 @@ async def test_extract_product_identity_none_when_provider_fails() -> None:
         profile=UserRole.ADMIN,
     )
     assert result is None
+
+
+# ---------------------------------------------------------------------------
+# extract_product_identities_via_ai_batch -- lote da TASK-123
+# ---------------------------------------------------------------------------
+
+
+class _CapturingAIManager(_StaticAIManager):
+    def __init__(self, content: str) -> None:
+        super().__init__(content)
+        self.requests = []
+
+    async def generate(self, request):
+        self.requests.append(request)
+        return await super().generate(request)
+
+
+def _batch_item(item_id, **overrides):
+    item = {
+        "id": item_id,
+        "category": "monitor",
+        "brand": "LG",
+        "family": "UltraGear",
+        "model": "27GP850",
+        "variant": None,
+        "store_sku": None,
+        "manufacturer_part_number": None,
+        "attributes": {},
+    }
+    item.update(overrides)
+    return item
+
+
+@pytest.mark.anyio
+async def test_batch_matches_items_by_id_never_by_position() -> None:
+    """O modelo gratuito pode reordenar/omitir itens e envolver o JSON em
+    cerca de código -- cada posição só recebe o item do PRÓPRIO id."""
+    content = json.dumps(
+        [
+            _batch_item(2, model="32GS95UE"),
+            {"id": 1, "brand": "sem as outras chaves"},
+            _batch_item(True, model="bool nunca é id"),
+            _batch_item(7, model="fora do lote"),
+            _batch_item(0, variant=" Branco ", attributes={"hz": "165Hz", "x": " "}),
+        ]
+    )
+    manager = _CapturingAIManager(f"```json\n{content}\n```")
+
+    results = await extract_product_identities_via_ai_batch(
+        manager,
+        raw_titles=["LG UltraGear 27GP850 Branco", "título sem item", "LG 32GS95UE"],
+        profile=UserRole.ADMIN,
+        requested_at=NOW,
+    )
+
+    assert [None if r is None else r.model for r in results] == [
+        "27GP850",
+        None,
+        "32GS95UE",
+    ]
+    assert results[0].variant == "Branco"
+    assert results[0].attributes == {"hz": "165Hz"}
+    request = manager.requests[0]
+    assert request.max_tokens == 4096
+    assert request.purpose == BATCH_EXTRACT_IDENTITY_PURPOSE
+    assert request.messages[1].content.startswith("Processe os 3 títulos")
+
+
+@pytest.mark.anyio
+async def test_batch_rejects_items_with_wrong_types_or_blank_required_fields() -> None:
+    content = json.dumps(
+        [
+            _batch_item(0, brand=123),
+            _batch_item(1, variant=5),
+            _batch_item(2, store_sku=5),
+            _batch_item(3, manufacturer_part_number=5),
+            _batch_item(4, attributes=["não é objeto"]),
+            _batch_item(5, attributes={"hz": 165}),
+            _batch_item(6, model="  "),
+            _batch_item(7, store_sku=" SKU-1 ", manufacturer_part_number=" 27GP850-B "),
+        ]
+    )
+
+    results = await extract_product_identities_via_ai_batch(
+        _StaticAIManager(content),
+        raw_titles=[f"título {n}" for n in range(8)],
+        profile=UserRole.ADMIN,
+    )
+
+    assert results[:7] == [None] * 7
+    assert results[7].store_sku == "SKU-1"
+    assert results[7].manufacturer_part_number == "27GP850-B"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("content", ['{"id": 0}', "não é JSON"])
+async def test_batch_all_none_when_response_is_not_a_json_array(content) -> None:
+    results = await extract_product_identities_via_ai_batch(
+        _StaticAIManager(content), raw_titles=["a", "b"], profile=UserRole.ADMIN
+    )
+
+    assert results == [None, None]
+
+
+@pytest.mark.anyio
+async def test_batch_all_none_when_provider_fails() -> None:
+    results = await extract_product_identities_via_ai_batch(
+        _FailingAIManager(), raw_titles=["a", "b", "c"], profile=UserRole.ADMIN
+    )
+
+    assert results == [None, None, None]
+
+
+@pytest.mark.anyio
+async def test_batch_with_no_titles_never_calls_ai() -> None:
+    manager = _StaticAIManager("[]")
+
+    assert (
+        await extract_product_identities_via_ai_batch(
+            manager, raw_titles=[], profile=UserRole.ADMIN
+        )
+        == []
+    )
+    assert manager.calls == 0
