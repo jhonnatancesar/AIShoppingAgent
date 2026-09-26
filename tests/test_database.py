@@ -212,6 +212,8 @@ def test_metadata_contains_only_implemented_tables() -> None:
         # no mesmo PostgreSQL do GG Oferta.
         "coupons",
         "coupon_offer_links",
+        # TASK-125: preço com cupom guardado pela coleta, para o gráfico.
+        "offer_coupon_price_days",
         # Aprendizado de identidade de produto assistido por IA
         # (2026-09-12): conceitualmente separada de
         # `product_identity_aliases` (correção de escrita de valor de

@@ -203,6 +203,12 @@ class OfferComparisonResponse(BaseModel):
 class PriceHistoryPointOut(BaseModel):
     date: date
     amount: Decimal
+    """TASK-125: preço COM cupom quando a coleta registrou um cupom
+    aplicável naquele dia, senão o preço de tabela."""
+    original_amount: Decimal | None = None
+    """Preço de tabela -- só quando `amount` veio de cupom."""
+    coupon_code: str | None = None
+    """Cupom usado (`''` = automático, sem código) -- só com cupom."""
 
 
 class PriceHistorySeriesOut(BaseModel):
@@ -695,7 +701,12 @@ def _as_price_history(history: OfferPriceHistory) -> PriceHistoryResponse:
                 store_code=series.store_code,
                 store_name=series.store_name,
                 points=[
-                    PriceHistoryPointOut(date=point.day, amount=point.amount)
+                    PriceHistoryPointOut(
+                        date=point.day,
+                        amount=point.amount,
+                        original_amount=point.original_amount,
+                        coupon_code=point.coupon_code,
+                    )
                     for point in series.points
                 ],
             )
@@ -741,6 +752,7 @@ async def get_user_offer_price_history(
     ] = None,
     user: User = Depends(require_web_session),
     session: AsyncSession = Depends(get_web_async_session),
+    settings: Settings = Depends(get_settings),
 ) -> PriceHistoryResponse:
     try:
         authorize(
@@ -766,6 +778,7 @@ async def get_user_offer_price_history(
         period=period,
         now=now,
         store_ids=selected_store_ids,
+        apply_coupons=settings.coupons_enabled,
     )
     if history is None and _has_dev_access(user):
         history = await get_offer_price_history_for_dev(
@@ -774,6 +787,7 @@ async def get_user_offer_price_history(
             period=period,
             now=now,
             store_ids=selected_store_ids,
+            apply_coupons=settings.coupons_enabled,
         )
     if history is None:
         await _deny_offer_unavailable(session, user=user, offer_id=offer_id)

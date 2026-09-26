@@ -10,7 +10,7 @@ from typing import Literal
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import Date, and_, cast, exists, func, or_, select
+from sqlalchemy import Date, and_, cast, exists, func, null, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -30,6 +30,9 @@ from app.collection.models import (
 )
 from app.collection.normalization import Availability
 from app.collection.relevance import OfferRelevance
+from app.coupons.models import OfferCouponPriceDay
+from app.coupons.pricing import best_applicable_coupon
+from app.coupons.service import get_active_coupons_by_store
 from app.missions.models import (
     Mission,
     MissionCriteria,
@@ -795,8 +798,15 @@ def resolve_period_range(period: PriceHistoryPeriod, *, now: datetime) -> Period
 class PriceHistoryPoint:
     day: date
     amount: Decimal
+    """Preço do ponto -- TASK-125: o preço COM cupom quando a coleta
+    registrou um cupom aplicável naquele dia (decisão do usuário: "tudo
+    na mesma linha"), senão o preço de tabela."""
     observation_id: UUID
     offer_id: UUID
+    original_amount: Decimal | None = None
+    """Preço de tabela (sem cupom) -- só quando `amount` veio de cupom."""
+    coupon_code: str | None = None
+    """Cupom usado (`''` = cupom automático, sem código) -- só com cupom."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -890,6 +900,7 @@ async def _resolve_current_amount(
     now: datetime,
     store_ids: frozenset[UUID] | None = None,
     cadence_config: CadenceConfig | None = None,
+    apply_coupons: bool = False,
 ) -> Decimal | None:
     """Preço ATUAL -- nunca o mínimo do dia (correção pós-plano, item 2).
     Resolve a observação MAIS RECENTE de cada Offer acessível primeiro (sem
@@ -969,12 +980,50 @@ async def _resolve_current_amount(
         now=now,
         config=effective_config,
     )
-    eligible_amounts = [
-        amount_by_offer[offer_id]
+    eligible = {
+        offer_id: amount_by_offer[offer_id]
         for offer_id, status in freshness_by_offer.items()
         if status == OfferFreshnessStatus.CONFIRMED_RECENT
-    ]
-    return min(eligible_amounts) if eligible_amounts else None
+    }
+    if apply_coupons and eligible:
+        eligible = await _apply_current_coupons(
+            session, amounts=eligible, currency=reference_currency
+        )
+    return min(eligible.values()) if eligible else None
+
+
+async def _apply_current_coupons(
+    session: AsyncSession, *, amounts: dict[UUID, Decimal], currency: str
+) -> dict[UUID, Decimal]:
+    """TASK-125: o "atual" do gráfico usa o cupom VIGENTE agora -- mesma
+    regra do card da oferta (`best_applicable_coupon` sobre os cupons
+    ativos da loja), para o último ponto da linha e o "atual" nunca
+    mostrarem números diferentes. Uma consulta de ofertas + uma de
+    cupons, nunca uma por oferta."""
+    offers = (
+        await session.scalars(select(Offer).where(Offer.id.in_(tuple(amounts))))
+    ).all()
+    coupons_by_store = await get_active_coupons_by_store(
+        session, store_ids=[offer.store_id for offer in offers]
+    )
+    effective = dict(amounts)
+    for offer in offers:
+        applied = best_applicable_coupon(
+            offer,
+            coupons_by_store.get(offer.store_id, ()),
+            amounts[offer.id],
+            currency,
+        )
+        if applied is not None:
+            effective[offer.id] = applied.final_amount
+    return effective
+
+
+DailyLowRow = tuple[
+    UUID, str, str, date, Decimal, UUID, UUID, Decimal | None, str | None
+]
+"""`(store_id, store_code, store_name, dia, preço, observation_id,
+offer_id, preço_de_tabela_se_cupom, código_do_cupom)`."""
 
 
 async def _fetch_daily_low_points(
@@ -986,7 +1035,8 @@ async def _fetch_daily_low_points(
     end_utc: datetime,
     reference_currency: str,
     store_ids: frozenset[UUID] | None = None,
-) -> list[tuple[UUID, str, str, date, Decimal, UUID, UUID]]:
+    apply_coupons: bool = False,
+) -> list[DailyLowRow]:
     """Menor preço CONFIRMADO por (Store, dia comercial) -- linhas da série
     exibida no gráfico. Desempate: menor `amount`; empate, confirmação mais
     recente; empate ainda, `id` da observação como último critério
@@ -1019,7 +1069,15 @@ async def _fetch_daily_low_points(
     LEGADO anterior a esta correção, sem nenhuma linha em
     `SharedCollectionOffer` ainda: nunca descartado, só preenche dias
     que a fonte (1) não cobre. As duas fontes juntas nunca perdem uma
-    confirmação real nem inventam uma que não aconteceu."""
+    confirmação real nem inventam uma que não aconteceu.
+
+    TASK-125 (`apply_coupons`, espelha `Settings.coupons_enabled`): cada
+    confirmação usa o preço COM cupom quando a coleta registrou um cupom
+    aplicável para aquela (Offer, observação, dia) em
+    `OfferCouponPriceDay` -- o menor preço do dia passa a ser o menor
+    preço EFETIVO. Só existe dado a partir do deploy da TASK-125 (decisão
+    do usuário: nada reconstruído); sem registro, o ponto continua no
+    preço de tabela."""
     legacy_conditions = [
         Offer.product_id == product_id,
         _viewer_access_clause(user_id),
@@ -1044,13 +1102,36 @@ async def _fetch_daily_low_points(
         legacy_conditions.append(PriceObservation.observed_at >= start_utc)
         confirmed_conditions.append(CollectionRun.started_at >= start_utc)
 
-    legacy_rows = (
+    def _with_coupon(statement, day_expr):
+        # Cupom do MESMO dia da confirmação, na MESMA observação.
+        if not apply_coupons:
+            return statement.add_columns(
+                PriceObservation.amount.label("amount"),
+                PriceObservation.amount.label("original_amount"),
+                null().label("coupon_code"),
+            )
+        return statement.add_columns(
+            func.coalesce(
+                OfferCouponPriceDay.final_amount, PriceObservation.amount
+            ).label("amount"),
+            PriceObservation.amount.label("original_amount"),
+            OfferCouponPriceDay.coupon_code.label("coupon_code"),
+        ).outerjoin(
+            OfferCouponPriceDay,
+            and_(
+                OfferCouponPriceDay.offer_id == PriceObservation.offer_id,
+                OfferCouponPriceDay.observation_id == PriceObservation.id,
+                OfferCouponPriceDay.commercial_day == day_expr,
+            ),
+        )
+
+    legacy_day = _commercial_day_expr(PriceObservation.observed_at)
+    legacy_rows = _with_coupon(
         select(
             Offer.store_id.label("store_id"),
             Store.code.label("store_code"),
             Store.name.label("store_name"),
-            _commercial_day_expr(PriceObservation.observed_at).label("commercial_day"),
-            PriceObservation.amount.label("amount"),
+            legacy_day.label("commercial_day"),
             PriceObservation.id.label("observation_id"),
             PriceObservation.offer_id.label("offer_id"),
             PriceObservation.observed_at.label("confirmed_at"),
@@ -1058,15 +1139,16 @@ async def _fetch_daily_low_points(
         .select_from(PriceObservation)
         .join(Offer, Offer.id == PriceObservation.offer_id)
         .join(Store, Store.id == Offer.store_id)
-        .where(*legacy_conditions)
+        .where(*legacy_conditions),
+        legacy_day,
     )
-    confirmed_rows = (
+    confirmed_day = _commercial_day_expr(CollectionRun.started_at)
+    confirmed_rows = _with_coupon(
         select(
             Offer.store_id.label("store_id"),
             Store.code.label("store_code"),
             Store.name.label("store_name"),
-            _commercial_day_expr(CollectionRun.started_at).label("commercial_day"),
-            PriceObservation.amount.label("amount"),
+            confirmed_day.label("commercial_day"),
             PriceObservation.id.label("observation_id"),
             PriceObservation.offer_id.label("offer_id"),
             CollectionRun.started_at.label("confirmed_at"),
@@ -1081,7 +1163,8 @@ async def _fetch_daily_low_points(
         )
         .join(Offer, Offer.id == SharedCollectionOffer.offer_id)
         .join(Store, Store.id == Offer.store_id)
-        .where(*confirmed_conditions)
+        .where(*confirmed_conditions),
+        confirmed_day,
     )
     candidates_cte = legacy_rows.union_all(confirmed_rows).cte(
         "daily_confirmation_candidates"
@@ -1108,16 +1191,41 @@ async def _fetch_daily_low_points(
             ranked_cte.c.amount,
             ranked_cte.c.observation_id,
             ranked_cte.c.offer_id,
+            ranked_cte.c.original_amount,
+            ranked_cte.c.coupon_code,
         )
         .where(ranked_cte.c.rn == 1)
         .order_by(ranked_cte.c.store_code, ranked_cte.c.commercial_day)
     )
     rows = (await session.execute(statement)).all()
-    return [tuple(row) for row in rows]
+    return [
+        (
+            store_id,
+            store_code,
+            store_name,
+            day,
+            amount,
+            observation_id,
+            offer_id,
+            original_amount if coupon_code is not None else None,
+            coupon_code,
+        )
+        for (
+            store_id,
+            store_code,
+            store_name,
+            day,
+            amount,
+            observation_id,
+            offer_id,
+            original_amount,
+            coupon_code,
+        ) in rows
+    ]
 
 
 def _compute_metrics(
-    rows: list[tuple[UUID, str, str, date, Decimal, UUID, UUID]],
+    rows: list[DailyLowRow],
     *,
     current_amount: Decimal | None,
 ) -> PriceHistoryMetrics:
@@ -1126,7 +1234,8 @@ def _compute_metrics(
     nunca da média bruta dos pontos por Store (evita viés por dias com mais
     ou menos lojas coletadas, correção pós-plano item 3)."""
     daily_low: dict[date, Decimal] = {}
-    for _store_id, _code, _name, day, amount, _obs_id, _offer_id in rows:
+    for row in rows:
+        day, amount = row[3], row[4]
         current = daily_low.get(day)
         if current is None or amount < current:
             daily_low[day] = amount
@@ -1169,6 +1278,7 @@ async def get_offer_price_history_for_user(
     now: datetime,
     store_ids: frozenset[UUID] | None = None,
     cadence_config: CadenceConfig | None = None,
+    apply_coupons: bool = False,
 ) -> OfferPriceHistory | None:
     """`None` quando a Offer não é acessível ao usuário -- o router converte
     isso em 403, mesmo mecanismo de autorização já existente para Offer
@@ -1181,6 +1291,7 @@ async def get_offer_price_history_for_user(
         now=now,
         store_ids=store_ids,
         cadence_config=cadence_config,
+        apply_coupons=apply_coupons,
     )
 
 
@@ -1192,6 +1303,7 @@ async def get_offer_price_history_for_dev(
     now: datetime,
     store_ids: frozenset[UUID] | None = None,
     cadence_config: CadenceConfig | None = None,
+    apply_coupons: bool = False,
 ) -> OfferPriceHistory | None:
     """DEV-only (chamador precisa ter checado `Permission.DEV_PANEL_ACCESS`):
     série/métricas de TODAS as ofertas do Product, de qualquer usuário."""
@@ -1203,6 +1315,7 @@ async def get_offer_price_history_for_dev(
         now=now,
         store_ids=store_ids,
         cadence_config=cadence_config,
+        apply_coupons=apply_coupons,
     )
 
 
@@ -1215,6 +1328,7 @@ async def _get_offer_price_history(
     now: datetime,
     store_ids: frozenset[UUID] | None = None,
     cadence_config: CadenceConfig | None = None,
+    apply_coupons: bool = False,
 ) -> OfferPriceHistory | None:
     anchor = await _get_offer_detail(session, offer_id=offer_id, viewer=user_id)
     if anchor is None:
@@ -1259,6 +1373,7 @@ async def _get_offer_price_history(
         now=now,
         store_ids=store_ids,
         cadence_config=cadence_config,
+        apply_coupons=apply_coupons,
     )
     rows = await _fetch_daily_low_points(
         session,
@@ -1268,6 +1383,7 @@ async def _get_offer_price_history(
         end_utc=period_range.end_utc,
         reference_currency=reference_currency,
         store_ids=store_ids,
+        apply_coupons=apply_coupons,
     )
     series_points: dict[UUID, list[PriceHistoryPoint]] = defaultdict(list)
     store_meta: dict[UUID, tuple[str, str]] = {}
@@ -1279,6 +1395,8 @@ async def _get_offer_price_history(
         amount,
         observation_id,
         offer_id_row,
+        original_amount,
+        coupon_code,
     ) in rows:
         store_meta[store_id] = (store_code, store_name)
         series_points[store_id].append(
@@ -1287,6 +1405,8 @@ async def _get_offer_price_history(
                 amount=amount,
                 observation_id=observation_id,
                 offer_id=offer_id_row,
+                original_amount=original_amount,
+                coupon_code=coupon_code,
             )
         )
     series = tuple(

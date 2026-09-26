@@ -18,6 +18,13 @@ import { EmptyState, ErrorState, LoadingState } from '@/components/StatePanel'
 import { StoreMark } from '@/components/StoreMark'
 import { getStoreVisual } from '@/components/storeVisuals'
 import { cn } from '@/lib/utils'
+import {
+  buildChartData,
+  couponKey,
+  couponLabel,
+  originalKey,
+  type ChartRow,
+} from '@/components/priceHistoryChartData'
 
 const PERIOD_OPTIONS: { value: PriceHistoryPeriod; label: string }[] = [
   { value: '1d', label: '1 dia' },
@@ -87,18 +94,60 @@ function percent(value: string | null): string {
   }).format(rounded / 100)
 }
 
-type ChartRow = { date: string } & Record<string, string | number>
+type TooltipEntry = {
+  dataKey?: unknown
+  value?: unknown
+  color?: string
+  payload?: ChartRow
+}
 
-function buildChartData(history: PriceHistoryResponse): ChartRow[] {
-  const byDate = new Map<string, ChartRow>()
-  for (const series of history.series) {
-    for (const point of series.points) {
-      const row: ChartRow = byDate.get(point.date) ?? { date: point.date }
-      row[series.store_code] = Number(point.amount)
-      byDate.set(point.date, row)
-    }
-  }
-  return Array.from(byDate.values()).sort((a, b) => a.date.localeCompare(b.date))
+export function PriceHistoryTooltipContent({
+  active,
+  payload,
+  label,
+  history,
+}: {
+  active?: boolean
+  payload?: readonly TooltipEntry[]
+  label?: string | number
+  history: PriceHistoryResponse
+}) {
+  if (!active || !payload || payload.length === 0) return null
+  return (
+    <div className="rounded-[var(--radius)] border border-[var(--border)] bg-[var(--popover)] px-3 py-2 text-sm text-[var(--popover-foreground)] shadow-sm">
+      <p className="mb-1 font-medium">{shortDate(String(label))}</p>
+      <ul className="space-y-1.5">
+        {payload.map((entry) => {
+          const storeCode = String(entry.dataKey)
+          const storeName =
+            history.series.find((series) => series.store_code === storeCode)?.store_name ??
+            storeCode
+          const row = entry.payload
+          const coupon = row?.[couponKey(storeCode)]
+          const original = row?.[originalKey(storeCode)]
+          const value = money(String(entry.value), history.currency)
+          return (
+            <li key={storeCode}>
+              <span className="flex items-center gap-1.5">
+                <span aria-hidden style={{ color: entry.color }}>●</span>
+                <span>{storeName}:</span>
+                <strong>{value}</strong>
+              </span>
+              {typeof coupon === 'string' && original !== undefined ? (
+                <span className="mt-0.5 block pl-4 text-xs text-[var(--muted-foreground)]">
+                  Preço normal: {money(String(original), history.currency)}
+                  <br />
+                  Com cupom: {value}
+                  <br />
+                  Cupom: {couponLabel(coupon)}
+                </span>
+              ) : null}
+            </li>
+          )
+        })}
+      </ul>
+    </div>
+  )
 }
 
 export interface PriceHistoryStoreOption {
@@ -287,21 +336,15 @@ export function PriceHistoryChart({
                 }
               />
               <Tooltip
-                labelFormatter={(label) => shortDate(String(label))}
-                formatter={(value, name) => [
-                  money(String(value), history.currency),
-                  history.series.find((series) => series.store_code === name)
-                    ?.store_name ?? String(name),
-                ]}
+                content={(props) => (
+                  <PriceHistoryTooltipContent
+                    active={props.active}
+                    payload={props.payload as readonly TooltipEntry[] | undefined}
+                    label={props.label}
+                    history={history}
+                  />
+                )}
                 cursor={{ stroke: 'var(--border)', strokeWidth: 1 }}
-                contentStyle={{
-                  background: 'var(--popover)',
-                  color: 'var(--popover-foreground)',
-                  border: '1px solid var(--border)',
-                  borderRadius: 'var(--radius)',
-                }}
-                labelStyle={{ color: 'var(--popover-foreground)' }}
-                itemStyle={{ color: 'var(--popover-foreground)' }}
               />
               <Legend
                 formatter={(value) =>

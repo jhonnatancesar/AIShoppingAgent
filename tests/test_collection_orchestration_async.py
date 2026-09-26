@@ -10,7 +10,7 @@ partir de retornos controlados.
 
 import asyncio
 import inspect
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -77,6 +77,7 @@ from app.collection.orchestration import (
     _previous_prelist_best_by_store,
     _product_selected_for_mission,
     _publish_failure,
+    _record_coupon_price_day,
     _record_failure,
     _refresh_legacy_schedule_aggregate,
     _reset_source_backoff,
@@ -117,6 +118,7 @@ from app.products.identity_page import AwaitingPageSweepSummary
 from app.products.models import Product
 from app.stores.models import Seller
 from app.users.models import UserRole
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.exc import IntegrityError
 
 NOW = datetime(2026, 8, 12, 12, 0, tzinfo=UTC)
@@ -6348,3 +6350,68 @@ def test_page_read_sweep_uses_the_worker_adapter_and_never_breaks_the_cycle(
     assert kwargs["page_reader"] == orchestrator._adapter.read_product_page
     assert (kwargs["budget"], kwargs["now"]) == (4, NOW)
     assert kwargs["ai_manager"] is orchestrator._ai_manager
+
+
+# ---------------------------------------------------------------------------
+# TASK-125 -- preço com cupom guardado pela coleta (gráfico de histórico)
+# ---------------------------------------------------------------------------
+
+
+def _coupon_applied(discount: str) -> AppliedCoupon:
+    original, off = Decimal("2499.00"), Decimal(discount)
+    return AppliedCoupon(
+        coupon_id=uuid4(),
+        code="CPUPROMO",
+        discount_kind="percentage",
+        original_amount=original,
+        discount_amount=off,
+        final_amount=original - off,
+        currency="BRL",
+    )
+
+
+def test_coupon_price_day_uses_sao_paulo_day_and_consistent_rounding() -> None:
+    """01h UTC de 27/09 ainda é 26/09 em São Paulo; desconto percentual
+    com mais casas que a coluna é arredondado ANTES de derivar o final."""
+    session = _mock_async_session()
+    offer_id, observation_id = uuid4(), uuid4()
+
+    asyncio.run(
+        _record_coupon_price_day(
+            session,
+            offer_id=offer_id,
+            observation_id=observation_id,
+            applied=_coupon_applied("187.49925"),
+            evaluated_at=datetime(2026, 9, 27, 1, 0, tzinfo=UTC),
+        )
+    )
+
+    statement = session.execute.await_args.args[0]
+    params = statement.compile(dialect=postgresql.dialect()).params
+    assert params["commercial_day"] == date(2026, 9, 26)
+    assert params["discount_amount"] == Decimal("187.4993")
+    assert params["final_amount"] == Decimal("2311.5007")
+    assert (
+        params["final_amount"] == params["original_amount"] - params["discount_amount"]
+    )
+    assert (params["offer_id"], params["observation_id"]) == (offer_id, observation_id)
+    assert "ON CONFLICT ON CONSTRAINT uq_offer_coupon_price_days_confirmation" in str(
+        statement.compile(dialect=postgresql.dialect())
+    )
+
+
+def test_coupon_price_day_failure_never_breaks_phase_c() -> None:
+    session = _mock_async_session()
+    session.execute.side_effect = RuntimeError("banco recusou")
+
+    asyncio.run(
+        _record_coupon_price_day(
+            session,
+            offer_id=uuid4(),
+            observation_id=uuid4(),
+            applied=_coupon_applied("100.00"),
+            evaluated_at=NOW,
+        )
+    )
+
+    session.execute.assert_awaited_once()

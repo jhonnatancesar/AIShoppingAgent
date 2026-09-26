@@ -27,6 +27,7 @@
     "test:admin-users": "node tests/admin-users.mjs",
     "test:admin-feedback": "node tests/admin-feedback.mjs",
     "test:format-date-time": "node tests/format-date-time.mjs",
+    "test:price-history": "node tests/price-history-chart.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

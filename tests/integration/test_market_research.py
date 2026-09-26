@@ -1167,6 +1167,16 @@ def test_phase_g_integrated_flow_flags_on_coupon_f1_f3_and_alert_snapshot(
     assert rendered.final_amount == Decimal("3799.90")
     assert rendered.raw_rule_text == "Válido só hoje"
 
+    # TASK-125: a coleta real também GUARDA o preço com cupom desta
+    # confirmação, para o gráfico de histórico usar no ponto do dia.
+    from app.coupons.models import OfferCouponPriceDay
+
+    with integration_database.sessions() as session:
+        [coupon_day] = list(session.scalars(select(OfferCouponPriceDay)))
+    assert coupon_day.coupon_code == "PHASEG20"
+    assert coupon_day.original_amount == Decimal("3999.90")
+    assert coupon_day.final_amount == Decimal("3799.90")
+
 
 def test_phase_g_integrated_flow_flags_off_preserves_legacy_behavior(
     integration_database, monkeypatch
@@ -1248,3 +1258,9 @@ def test_phase_g_integrated_flow_flags_off_preserves_legacy_behavior(
     # Preço original, sem cupom -- nenhuma chave "coupon" no payload.
     assert Decimal(event.payload["current_total"]) == Decimal("3999.90")
     assert event.payload.get("coupon") is None
+
+    # TASK-125: com cupons desligados, nenhum preço com cupom é guardado.
+    from app.coupons.models import OfferCouponPriceDay
+
+    with integration_database.sessions() as session:
+        assert list(session.scalars(select(OfferCouponPriceDay))) == []

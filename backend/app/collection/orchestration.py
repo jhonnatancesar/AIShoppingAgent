@@ -16,9 +16,10 @@ import traceback
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import exists, func, or_, select, tuple_
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
@@ -98,6 +99,7 @@ from app.collection.shared_claim import (
     _SharedClaim,
 )
 from app.core.config import Settings
+from app.coupons.models import OfferCouponPriceDay
 from app.coupons.pricing import AppliedCoupon, best_applicable_coupon
 from app.coupons.service import get_candidate_coupons_for_offer
 from app.coupons.worker_control import notify_coupon_worker_high_activity
@@ -2558,6 +2560,71 @@ async def _run_phase_b(
     return tuple(await asyncio.gather(*(_classify(item) for item in to_process)))
 
 
+_COMMERCIAL_TIMEZONE = ZoneInfo("America/Sao_Paulo")
+_DB_MONEY_QUANTUM = Decimal("0.0001")
+
+
+async def _record_coupon_price_day(
+    session: AsyncSession,
+    *,
+    offer_id: UUID,
+    observation_id: UUID,
+    applied: AppliedCoupon,
+    evaluated_at: datetime,
+) -> None:
+    """TASK-125: guarda o preço com cupom que a Fase B calculou para esta
+    confirmação (Offer, observação, dia comercial) -- o gráfico de
+    histórico usa este valor no ponto do dia. Várias coletas no mesmo dia
+    ficam com o MENOR preço com cupom. O desconto é arredondado na
+    precisão da coluna ANTES de derivar o final (cupom percentual pode
+    gerar mais casas decimais e quebrar `final = original - desconto`).
+    Savepoint próprio: falhar aqui nunca derruba a Fase C da missão --
+    mesma disciplina da avaliação de cupom na Fase B."""
+    original = applied.original_amount.quantize(
+        _DB_MONEY_QUANTUM, rounding=ROUND_HALF_UP
+    )
+    discount = applied.discount_amount.quantize(
+        _DB_MONEY_QUANTUM, rounding=ROUND_HALF_UP
+    )
+    statement = postgresql_insert(OfferCouponPriceDay).values(
+        id=uuid4(),
+        offer_id=offer_id,
+        observation_id=observation_id,
+        commercial_day=evaluated_at.astimezone(_COMMERCIAL_TIMEZONE).date(),
+        coupon_id=applied.coupon_id,
+        coupon_code=applied.code,
+        original_amount=original,
+        discount_amount=discount,
+        final_amount=original - discount,
+        currency=applied.currency,
+        evaluated_at=evaluated_at,
+    )
+    excluded = statement.excluded
+    try:
+        async with session.begin_nested():
+            await session.execute(
+                statement.on_conflict_do_update(
+                    constraint="uq_offer_coupon_price_days_confirmation",
+                    set_={
+                        "coupon_id": excluded.coupon_id,
+                        "coupon_code": excluded.coupon_code,
+                        "original_amount": excluded.original_amount,
+                        "discount_amount": excluded.discount_amount,
+                        "final_amount": excluded.final_amount,
+                        "currency": excluded.currency,
+                        "evaluated_at": excluded.evaluated_at,
+                    },
+                    where=excluded.final_amount < OfferCouponPriceDay.final_amount,
+                )
+            )
+    except Exception:
+        logger.warning(
+            "coupon_price_day_record_failed",
+            extra={"offer_id": str(offer_id)},
+            exc_info=True,
+        )
+
+
 async def _persist_phase_c(
     session_factory: async_sessionmaker[AsyncSession],
     outcome: _PhaseAOutcome,
@@ -2690,6 +2757,15 @@ async def _persist_phase_c(
                 product = await session.get(Product, pending.product_id)
                 if product is not None and product.display_name is None:
                     product.display_name = ai_outcome.display_title
+
+            if ai_outcome is not None and ai_outcome.applied_coupon is not None:
+                await _record_coupon_price_day(
+                    session,
+                    offer_id=pending.offer_id,
+                    observation_id=pending.observation_id,
+                    applied=ai_outcome.applied_coupon,
+                    evaluated_at=outcome.completed_at,
+                )
 
             has_new_coupon_despite_unchanged_price = (
                 pending.alert_comparison is PriceObservationComparison.UNCHANGED_REUSED

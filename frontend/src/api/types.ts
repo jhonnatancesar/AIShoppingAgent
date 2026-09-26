@@ -415,7 +415,12 @@ export type PriceHistoryPeriod = '1d' | '7d' | '1m' | '6m' | '1a' | 'all'
 
 export interface PriceHistoryPoint {
   date: string
+  // TASK-125: preço COM cupom quando a coleta registrou um cupom naquele dia.
   amount: string
+  // Preço de tabela (sem cupom) -- só quando `amount` veio de cupom.
+  original_amount?: string | null
+  // Cupom usado ('' = cupom automático, sem código) -- só com cupom.
+  coupon_code?: string | null
 }
 
 export interface PriceHistorySeries {

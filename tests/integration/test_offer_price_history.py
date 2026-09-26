@@ -29,8 +29,13 @@ from app.collection.models import (
     PriceObservation,
 )
 from app.collection.normalization import Availability
-from app.collection.orchestration import CollectionOrchestrator
+from app.collection.orchestration import (
+    CollectionOrchestrator,
+    _record_coupon_price_day,
+)
 from app.collection.relevance import OfferRelevance
+from app.coupons.models import Coupon, OfferCouponPriceDay
+from app.coupons.pricing import AppliedCoupon
 from app.missions.models import (
     Mission,
     MissionCriteria,
@@ -45,6 +50,7 @@ from app.products.models import Product
 from app.stores.models import Store
 from app.users.models import User, UserRole
 from sqlalchemy import event, select
+from sqlalchemy.exc import IntegrityError
 
 pytestmark = pytest.mark.integration
 
@@ -175,7 +181,14 @@ def _observe(
 
 
 def _fetch(
-    integration_database, *, offer_id, user_id, period="all", now=NOW, store_ids=None
+    integration_database,
+    *,
+    offer_id,
+    user_id,
+    period="all",
+    now=NOW,
+    store_ids=None,
+    apply_coupons=False,
 ):
     async def _run():
         async with integration_database.async_sessions() as session:
@@ -186,6 +199,7 @@ def _fetch(
                 period=period,
                 now=now,
                 store_ids=store_ids,
+                apply_coupons=apply_coupons,
             )
 
     return asyncio.run(_run())
@@ -915,3 +929,242 @@ def test_gap_without_any_collection_never_invents_a_confirmation(
         f"nunca coletado), recebido {sorted(point_days)} -- nenhuma "
         "confirmação pode ser inventada num intervalo sem coleta real"
     )
+
+
+# --- TASK-125: preço com cupom na mesma linha do gráfico ---------------------
+
+
+def _seed_coupon(sessions, *, store_id, code: str):
+    """Cupom real no banco -- o preço com cupom referencia `coupons.id`."""
+    with sessions.begin() as session:
+        coupon = Coupon(
+            store_id=store_id,
+            code=code,
+            discount_kind="fixed_amount",
+            discount_value=Decimal("1.00"),
+            scope_kind="store_wide",
+            evidence=f"evidência {code}",
+            status="active",
+            last_seen_at=NOW,
+        )
+        session.add(coupon)
+        session.flush()
+        return coupon.id
+
+
+def _applied(
+    code: str, original: str, discount: str, *, coupon_id, kind="fixed_amount"
+):
+    original_amount, discount_amount = Decimal(original), Decimal(discount)
+    return AppliedCoupon(
+        coupon_id=coupon_id,
+        code=code,
+        discount_kind=kind,
+        original_amount=original_amount,
+        discount_amount=discount_amount,
+        final_amount=original_amount - discount_amount,
+        currency="BRL",
+    )
+
+
+def _record(integration_database, *, offer_id, observation_id, applied, at):
+    async def _run():
+        async with integration_database.async_sessions() as session:
+            await _record_coupon_price_day(
+                session,
+                offer_id=offer_id,
+                observation_id=observation_id,
+                applied=applied,
+                evaluated_at=at,
+            )
+            await session.commit()
+
+    asyncio.run(_run())
+
+
+def _coupon_days(integration_database):
+    with integration_database.sessions() as session:
+        return list(
+            session.scalars(
+                select(OfferCouponPriceDay).order_by(OfferCouponPriceDay.commercial_day)
+            )
+        )
+
+
+def test_coupon_price_of_the_day_is_the_point_with_normal_price_and_code(
+    integration_database,
+) -> None:
+    """Decisão do usuário: "tudo na mesma linha" -- o ponto do dia fica no
+    preço com cupom; preço normal e cupom vão junto para o tooltip. Dia
+    sem cupom registrado continua no preço de tabela, e o cupom de um dia
+    nunca vaza para outro dia. Com a flag de cupons desligada, nada muda."""
+    sessions, user, mission, store, _product, offer = _setup_single_offer(
+        integration_database
+    )
+    yesterday = NOW - timedelta(days=1)
+    _observe(
+        sessions,
+        offer_id=offer.id,
+        store_id=store.id,
+        mission_id=mission.id,
+        amount="2499.00",
+        observed_at=yesterday,
+    )
+    today = _observe(
+        sessions,
+        offer_id=offer.id,
+        store_id=store.id,
+        mission_id=mission.id,
+        amount="2499.00",
+        observed_at=NOW,
+    )
+    _record(
+        integration_database,
+        offer_id=offer.id,
+        observation_id=today.id,
+        applied=_applied(
+            "CPUPROMO",
+            "2499.00",
+            "250.00",
+            coupon_id=_seed_coupon(sessions, store_id=store.id, code="CPUPROMO"),
+        ),
+        at=NOW,
+    )
+
+    history = _fetch(
+        integration_database, offer_id=offer.id, user_id=user.id, apply_coupons=True
+    )
+    plain = _fetch(integration_database, offer_id=offer.id, user_id=user.id)
+
+    [series] = history.series
+    first, second = series.points
+    assert (first.amount, first.original_amount, first.coupon_code) == (
+        Decimal("2499.00"),
+        None,
+        None,
+    )
+    assert (second.amount, second.original_amount, second.coupon_code) == (
+        Decimal("2249.00"),
+        Decimal("2499.00"),
+        "CPUPROMO",
+    )
+    assert history.metrics.min_amount == Decimal("2249.00")
+    [plain_series] = plain.series
+    assert [point.amount for point in plain_series.points] == [
+        Decimal("2499.00"),
+        Decimal("2499.00"),
+    ]
+    assert all(point.coupon_code is None for point in plain_series.points)
+
+
+def test_current_price_uses_the_coupon_valid_now(integration_database) -> None:
+    """O "atual" das métricas usa o cupom vigente (mesma regra do card da
+    oferta) -- o último ponto da linha e o "atual" nunca divergem."""
+    sessions, user, mission, store, _product, offer = _setup_single_offer(
+        integration_database
+    )
+    _observe(
+        sessions,
+        offer_id=offer.id,
+        store_id=store.id,
+        mission_id=mission.id,
+        amount="2499.00",
+        observed_at=NOW,
+    )
+    with sessions.begin() as session:
+        session.add(
+            Coupon(
+                store_id=store.id,
+                code="AGORA10",
+                discount_kind="percentage",
+                discount_value=Decimal("10"),
+                scope_kind="store_wide",
+                evidence="10% em toda a loja",
+                status="active",
+                last_seen_at=NOW,
+            )
+        )
+
+    with_coupon = _fetch(
+        integration_database, offer_id=offer.id, user_id=user.id, apply_coupons=True
+    )
+    without = _fetch(integration_database, offer_id=offer.id, user_id=user.id)
+
+    assert with_coupon.metrics.current_amount == Decimal("2249.10")
+    assert without.metrics.current_amount == Decimal("2499.00")
+
+
+def test_several_collections_in_a_day_keep_the_lowest_coupon_price(
+    integration_database,
+) -> None:
+    sessions, _user, mission, store, _product, offer = _setup_single_offer(
+        integration_database
+    )
+    observation = _observe(
+        sessions,
+        offer_id=offer.id,
+        store_id=store.id,
+        mission_id=mission.id,
+        amount="2499.00",
+        observed_at=NOW,
+    )
+    coupon_id = _seed_coupon(sessions, store_id=store.id, code="VARIOS")
+    for applied in (
+        _applied("PRIMEIRO", "2499.00", "100.00", coupon_id=coupon_id),
+        _applied("PIOR", "2499.00", "50.00", coupon_id=coupon_id),
+        # Percentual com mais casas que a coluna: o desconto é arredondado
+        # ANTES de derivar o final -- nunca quebra `final = normal - desc.`
+        _applied(
+            "MELHOR", "2499.00", "187.49925", coupon_id=coupon_id, kind="percentage"
+        ),
+    ):
+        _record(
+            integration_database,
+            offer_id=offer.id,
+            observation_id=observation.id,
+            applied=applied,
+            at=NOW,
+        )
+    _record(
+        integration_database,
+        offer_id=offer.id,
+        observation_id=observation.id,
+        applied=_applied("AMANHA", "2499.00", "10.00", coupon_id=coupon_id),
+        at=NOW + timedelta(days=1),
+    )
+
+    today, tomorrow = _coupon_days(integration_database)
+    assert (today.coupon_code, today.discount_amount, today.final_amount) == (
+        "MELHOR",
+        Decimal("187.4993"),
+        Decimal("2311.5007"),
+    )
+    assert tomorrow.coupon_code == "AMANHA"
+
+
+def test_database_rejects_inconsistent_coupon_price(integration_database) -> None:
+    sessions, _user, mission, store, _product, offer = _setup_single_offer(
+        integration_database
+    )
+    observation = _observe(
+        sessions,
+        offer_id=offer.id,
+        store_id=store.id,
+        mission_id=mission.id,
+        amount="2499.00",
+        observed_at=NOW,
+    )
+    with pytest.raises(IntegrityError), sessions.begin() as session:
+        session.add(
+            OfferCouponPriceDay(
+                offer_id=offer.id,
+                observation_id=observation.id,
+                commercial_day=NOW.date(),
+                coupon_code="X",
+                original_amount=Decimal("2499.00"),
+                discount_amount=Decimal("100.00"),
+                final_amount=Decimal("1.00"),
+                currency="BRL",
+                evaluated_at=NOW,
+            )
+        )
