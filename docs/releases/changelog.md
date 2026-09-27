@@ -1,5 +1,9 @@
 # Changelog
 
+## `v1.3.27` — handoff: nenhum processo do GG sobe até o script de dedupe
+
+Só documentação, mesmo código da `v1.3.26`. O handoff da `v1.3.26` ainda mandava subir o site e o Coupon Worker antes do script, em trechos antigos, e não parava o `AIShoppingAgentOpsAgent`, que religa sozinho o worker de coleta. Agora há uma regra ⛔ no topo, com precedência sobre o resto do documento: parar o Ops Agent primeiro, desabilitar as tarefas antes de pará-las e só religar tudo depois do script. **Faça o deploy pela `v1.3.27`.**
+
 ## `v1.3.26` — TASK-124 a 128: cupom com preço de tabela igual, visão DEV de todos os itens, preço histórico com busca manual, produto nunca sem vínculo e preço com cupom no gráfico
 
 **Deploy**: sobe com os serviços do GG parados e só os inicia depois do

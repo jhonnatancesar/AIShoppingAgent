@@ -24,6 +24,18 @@ cotas do DEV (50 missões/300 vagas). **Siga a seção "Deploy da
 serviços do GG sobem parados e só são iniciados depois do script de
 dedupe/backfill.
 
+> ⛔ **REGRA DA `v1.3.26` — VALE ACIMA DE QUALQUER OUTRA INSTRUÇÃO DESTE
+> DOCUMENTO:** depois de atualizar o código, **NÃO SUBA NENHUM PROCESSO
+> DO GG** até o script de dedupe/backfill da TASK-123 terminar. Até lá,
+> **nada de** `docker compose up` do GG, **nada de** habilitar/iniciar as
+> Scheduled Tasks `AIShoppingAgent-CollectionWorker` e
+> `AIShoppingCoupon-Worker`, **nada de** iniciar o serviço
+> `AIShoppingAgentOpsAgent` e **nada de** usar o botão de iniciar o worker
+> no painel admin. Onde outra seção mandar subir, iniciar ou habilitar
+> algo do GG (seção 7, passos 8 e 9; seção 9), **não faça naquele
+> momento**. Isso só acontece no passo 7 da seção "Deploy da `v1.3.26`".
+> O César Core e o banco podem e devem ficar de pé.
+
 **Este deploy foi explicitamente autorizado pelo usuário em 07/09/2026**
 (`DEC-119`, `docs/internal/decision-log.md`). Nenhuma parte deste
 documento deve ser lida como "aguardando autorização" — se você
@@ -56,7 +68,8 @@ uma foto de um instante, não uma garantia de que nada mudou depois):
 
 | Componente | Tag | Commit | Observação |
 |---|---|---|---|
-| GG Oferta | **`v1.3.26`** | `main` — ver observação | **Alvo deste deploy.** Contém TASK-124/125/126/127/128 + cotas do DEV (commits até o `main` publicado em 2026-09-26). **A tag `v1.3.26` só existe depois de cortada** — confirme com `git fetch --tags; git tag --sort=-creatordate`; se ainda não existir, pare e peça a tag (nunca faça deploy de um `main` sem tag sem autorização explícita). Migrations novas: `20260926_0001`/`0002`/`0003` (head `20260926_0003`). Sequência obrigatória na seção "Deploy da `v1.3.26`" abaixo |
+| GG Oferta | **`v1.3.27`** | `main` | **Alvo deste deploy — use esta tag.** Mesmo código da `v1.3.26`; só corrige o handoff (regra ⛔: nenhum processo do GG sobe até o script de dedupe/backfill, inclusive o Ops Agent). Contém TASK-124/125/126/127/128 + cotas do DEV. Migrations `20260926_0001`/`0002`/`0003` (head `20260926_0003`). Sequência obrigatória na seção "Deploy da `v1.3.26`" abaixo |
+| GG Oferta (não usar) | `v1.3.26` | `168087d` | Mesmo código, mas o handoff dessa tag ainda mandava subir o site e o Coupon Worker antes do script -- **não faça deploy por ela** |
 | GG Oferta (anterior) | `v1.3.25` | `e97e1cc` (`main`) | Substitui `v1.3.17`–`v1.3.24`. Sob `v1.3.24` (mecanismo de extração já validado, ver histórico), o primeiro `--apply --limit 100` REAL autorizado crashou (`RestrictViolation` num `DELETE FROM products`) -- `apply_learned_identity` só migrava `Offer` antes de apagar o Product ad-hoc fundido, mas `products.id` também é referenciado com `ON DELETE RESTRICT` por outras 6 tabelas. Corrigido: `mission_product_alert_state` agora é MESCLADO de verdade (nunca sobrescrito às cegas) quando a mesma Mission já tem checkpoint nos dois Products; `purchase_confirmations` é IMUTÁVEL por trigger de banco (achado ao tentar migrar) -- o merge agora é recusado com segurança (`None`, nunca crash) quando o ad-hoc tem compra confirmada. PROD permanece parado desde o crash, nada foi perdido (backlog confirmado intacto em 372). **Pronto para retomar `--apply` de verdade** -- ver seção "TASK-123 -- ação obrigatória no deploy" logo abaixo desta tabela, pendente de nova autorização explícita |
 | GG Oferta (histórico) | `v1.3.15`–`v1.3.24` | `e8ac138`/`d071adc`/`ba3ef16`/`2155a21`/`204da8a`/`dcfda07`/`76e37a9`/`015979c`/`163aa09`/`6d53c9c` | Identidade global de produto (SKU vs part number + árbitro de IA), parcelamento real, `offer_supersession`, `coupon_evidence_isolation`, `search_history` + área DEV, cobertura de testes ≥90%, correção do início do Windows Ops Agent, fechamento documental do episódio `INC-2026-09-17-001` (`v1.3.15`); correções de sequência de tag sem mudança de código (`v1.3.16`, `v1.3.18`); TASK-122 (busca sem oferta relevante não é mais bloqueio) + TASK-123 original -- script de backfill sem lote (`v1.3.17`); TASK-123 com lote de 4/teto de 20 (`v1.3.19`); TASK-123 com lote de 10/teto de 100, ajustado ao backlog real de 371 (`v1.3.20`); TASK-123 corrige relatório contraditório do dry-run + melhora log de falha de lote (`v1.3.21`); TASK-123 liga logging estruturado no script (`v1.3.22`); TASK-123 ancora mensagem do lote em linguagem natural (`v1.3.23`); TASK-123 permite `max_tokens` maior por chamada, causa raiz real da falha de extração (`v1.3.24`). Substituem `v1.3.8` (handoff parado desde então, v1.3.9-v1.3.14 foram hotfixes pontuais não documentados aqui) |
 | César Core | **`v1.2.1`** | `a5ba084` | Política real de providers AI (`ai_profile`, 4 connections, 2 combos) + saneamento documental. **Imagem já publicada e verificada no GHCR:** `ghcr.io/jhonnatancesar/cesar-core:1.2.1` (também `:1.2`, `:1`, `:latest`). **PROD não usa esta tag/repositório diretamente — só a imagem, via `deploy/prod/cesar-core.compose.yaml`.** Não mudou nesta rodada -- confirme se já é a versão rodando antes de reafirmar, não reinstale/rebuilde sem necessidade |
@@ -78,12 +91,12 @@ Histórico relevante anterior a estas tags, para contexto:
   refinamento de esgotamento).
 
 **Para o deploy em si:** faça checkout das tags acima nos dois
-repositórios que existem em PROD (`git checkout v1.3.26` — confirme que é
+repositórios que existem em PROD (`git checkout v1.3.27` — confirme que é
 essa a mais recente com `git tag --sort=-creatordate` antes — no GG
 Oferta, `v1.0.4` no Coupon Worker, sem mudança desde a rodada anterior).
 O César Core **não tem repositório em PROD**: use `deploy/prod/
 cesar-core.compose.yaml` (deste próprio checkout do GG Oferta, já em
-`v1.3.26`), que já referencia `ghcr.io/jhonnatancesar/cesar-core:1.2.1`
+`v1.3.27`), que já referencia `ghcr.io/jhonnatancesar/cesar-core:1.2.1`
 como imagem padrão — nenhum `docker build`, nenhum clone do repositório
 `cesar-core`.
 
@@ -96,17 +109,31 @@ código, sem nenhum passo manual (ver "Flags" abaixo). O que fica parado
 são os serviços, nunca as flags.
 
 1. **Parar tudo que coleta ou atende usuário ANTES de atualizar o
-   código:**
+   código, NESTA ORDEM:**
    ```powershell
-   Stop-ScheduledTask -TaskName "AIShoppingAgent-CollectionWorker"
+   # (a) primeiro o vigia: o AIShoppingAgentOpsAgent reinicia sozinho o
+   #     worker de coleta quando ele para (verifica a cada 15 s)
+   powershell -File ops_agent\manage_ops_agent_service.ps1 -Action Stop
+   # (b) desabilitar ANTES de parar, para nada religar as tasks no meio
    powershell -File scripts\manage_collection_worker_task.ps1 -Action Disable
-   Stop-ScheduledTask -TaskName "AIShoppingCoupon-Worker"
+   Stop-ScheduledTask -TaskName "AIShoppingAgent-CollectionWorker"
    Disable-ScheduledTask -TaskName "AIShoppingCoupon-Worker"
+   Stop-ScheduledTask -TaskName "AIShoppingCoupon-Worker"
+   # (c) site/API e notificador do Telegram
    docker compose stop api telegram_notifier
    ```
-   O banco (`database`) e o César Core continuam de pé: as migrations e
-   o script precisam dos dois.
-2. **Preflight, backup, pull e checkout** da tag `v1.3.26` (seções 2 e
+   Confira que ficou tudo parado:
+   - `Get-ScheduledTask -TaskName "AIShoppingAgent-CollectionWorker","AIShoppingCoupon-Worker"`
+     mostra `Disabled`;
+   - `Get-Service AIShoppingAgentOpsAgent` mostra `Stopped`;
+   - `docker compose ps` não lista `api` nem `telegram_notifier` rodando.
+
+   Com `restart: unless-stopped`, container parado com `docker compose
+   stop` **continua parado mesmo se o servidor reiniciar**; tasks
+   desabilitadas também não disparam. O banco (`database`) e o César Core
+   continuam de pé, porque as migrations e o script precisam dos dois.
+   **Não use o botão de iniciar o worker no painel admin até o passo 7.**
+2. **Preflight, backup, pull e checkout** da tag `v1.3.27` (seções 2 e
    7, passos 1–3).
 3. **Migrations** (seção 3): head esperado **`20260926_0003`**.
    ```powershell
@@ -131,6 +158,7 @@ são os serviços, nunca as flags.
    docker compose up -d api telegram_notifier
    powershell -File scripts\manage_collection_worker_task.ps1 -Action Enable
    Enable-ScheduledTask -TaskName "AIShoppingCoupon-Worker"
+   powershell -File ops_agent\manage_ops_agent_service.ps1 -Action Start
    ```
    Confirmar `GET /health`/`GET /ready` (seção 8) e o worker de coleta
    disparando normalmente.
@@ -1010,7 +1038,12 @@ deploy do container/worker, sem etapa de ativação manual separada):
    neste ambiente. Rode a verificação real de cada subseção
    (`POST /api/combos/test` para os 2 combos; `POST /v1/search`/
    `POST /v1/fetch` reais para Search/Fetch) antes de prosseguir.
-8. **GG Oferta — container `api` + `telegram_notifier`** (`docker
+8. **⛔ `v1.3.26`: NÃO rode o `docker compose up -d` deste passo agora**
+   — o `api`/`telegram_notifier` só sobem no passo 7 da seção "Deploy da
+   `v1.3.26`", depois do script de dedupe/backfill. Na `v1.3.26`, deste
+   passo só vale o que não inicia processo (configuração do worker,
+   sub-etapas 1–4 abaixo).
+   **GG Oferta — container `api` + `telegram_notifier`** (`docker
    compose up -d`) — as duas flags do César Core (seção 6) seguem
    **OFF** neste ponto (ativação manual, passo 13 abaixo); as três
    flags de GG Oferta (F1/F3/cupons) já sobem **ATIVAS** junto com o
@@ -1055,7 +1088,8 @@ deploy do container/worker, sem etapa de ativação manual separada):
    `.env` (`AUTH_TOKEN` + `COUPONS_POSTGRES_DSN` apontando para o
    Postgres de PROD), instalar o agendamento (Windows Scheduled Task).
    Pode subir a qualquer momento depois do passo 4; não depende do
-   César Core.
+   César Core. **⛔ Na `v1.3.26`, não: a task do Coupon Worker fica
+   desabilitada até o passo 7 da seção "Deploy da `v1.3.26`".**
 10. **Health/readiness dos três** — confirmar antes de tocar em
     qualquer flag (tabela na seção 8 abaixo).
 11. **Flags do César Core OFF, prova básica** — com tudo no ar e as
@@ -1103,7 +1137,9 @@ ordem:
 4. `.\manage_coupon_worker_task.ps1 -Action Update -TaskUser "<mesmo usuário já configurado>"`
    -- reaplica a definição da Scheduled Task, incluindo o
    `MultipleInstances IgnoreNew` novo (idempotente, não duplica a
-   tarefa).
+   tarefa). **⛔ `v1.3.26`: regravar a task pode deixá-la habilitada de
+   novo — rode `Disable-ScheduledTask -TaskName "AIShoppingCoupon-Worker"`
+   logo em seguida** e confira `Disabled` com `Get-ScheduledTask`.
 5. Se o passo 6 abaixo (login manual do Mercado Livre) **ainda não foi
    feito nesta instalação** (confirme: `SELECT count(*) FROM coupons c
    JOIN stores s ON s.id=c.store_id WHERE s.code='mercadolivre' AND
@@ -1111,7 +1147,9 @@ ordem:
    ainda pendente, ver `DEC-133`), faça agora, com a tarefa ainda parada
    do passo 1.
 6. `.\manage_coupon_worker_task.ps1 -Action Start` (ou `-Action Enable`
-   se só estava desabilitada).
+   se só estava desabilitada). **⛔ `v1.3.26`: este passo só acontece no
+   passo 7 da seção "Deploy da `v1.3.26`", depois do script de
+   dedupe/backfill.**
 
 Os passos 1-9 abaixo continuam válidos como referência completa (e para
 qualquer instalação nova futura em outra máquina) -- inclusive o passo 6
