@@ -68,7 +68,8 @@ uma foto de um instante, não uma garantia de que nada mudou depois):
 
 | Componente | Tag | Commit | Observação |
 |---|---|---|---|
-| GG Oferta | **`v1.3.28`** | `main` | **Alvo deste deploy — use esta tag.** TASK-129: a IA preenche a identidade com o vocabulário do sistema (categorias oficiais, grafias de marca), a cor não separa mais produto, tabela de grafias com lista inicial e aprendizado pelo part number, backfill em lotes de 5 com pausa. Migration `20260927_0001` (head `20260927_0001`). PROD já na `v1.3.27`: siga a seção "Atualização para a `v1.3.28`" abaixo |
+| GG Oferta | **`v1.3.29`** | `main` | **Alvo deste deploy — use esta tag.** TASK-130: anúncio de kit/combo (ex.: processador + placa-mãe) deixa de virar oferta rastreada; alias de marca casa por prefixo de token ("Fury Beast" bate com o alias "Fury"). Sem migration nova (head continua `20260927_0001`, o mesmo da `v1.3.28`). PROD já na `v1.3.27`: siga a seção "Atualização para a `v1.3.29`" abaixo — ela já leva a `v1.3.28` (TASK-129) junto, as duas de uma vez |
+| GG Oferta (anterior) | `v1.3.28` | `7bf927c` | TASK-129: a IA preenche a identidade com o vocabulário do sistema (categorias oficiais, grafias de marca), a cor não separa mais produto, tabela de grafias com lista inicial e aprendizado pelo part number, backfill em lotes de 5 com pausa. Migration `20260927_0001`. Não implante esta tag sozinha — use `v1.3.29`, que já a contém |
 | GG Oferta (anterior) | `v1.3.27` | `7838de9` | Mesmo código da `v1.3.26`; só corrige o handoff (regra ⛔: nenhum processo do GG sobe até o script de dedupe/backfill, inclusive o Ops Agent). Contém TASK-124/125/126/127/128 + cotas do DEV. Migrations `20260926_0001`/`0002`/`0003` (head `20260926_0003`). Sequência obrigatória na seção "Deploy da `v1.3.26`" abaixo |
 | GG Oferta (não usar) | `v1.3.26` | `168087d` | Mesmo código, mas o handoff dessa tag ainda mandava subir o site e o Coupon Worker antes do script -- **não faça deploy por ela** |
 | GG Oferta (anterior) | `v1.3.25` | `e97e1cc` (`main`) | Substitui `v1.3.17`–`v1.3.24`. Sob `v1.3.24` (mecanismo de extração já validado, ver histórico), o primeiro `--apply --limit 100` REAL autorizado crashou (`RestrictViolation` num `DELETE FROM products`) -- `apply_learned_identity` só migrava `Offer` antes de apagar o Product ad-hoc fundido, mas `products.id` também é referenciado com `ON DELETE RESTRICT` por outras 6 tabelas. Corrigido: `mission_product_alert_state` agora é MESCLADO de verdade (nunca sobrescrito às cegas) quando a mesma Mission já tem checkpoint nos dois Products; `purchase_confirmations` é IMUTÁVEL por trigger de banco (achado ao tentar migrar) -- o merge agora é recusado com segurança (`None`, nunca crash) quando o ad-hoc tem compra confirmada. PROD permanece parado desde o crash, nada foi perdido (backlog confirmado intacto em 372). **Pronto para retomar `--apply` de verdade** -- ver seção "TASK-123 -- ação obrigatória no deploy" logo abaixo desta tabela, pendente de nova autorização explícita |
@@ -92,53 +93,73 @@ Histórico relevante anterior a estas tags, para contexto:
   refinamento de esgotamento).
 
 **Para o deploy em si:** faça checkout das tags acima nos dois
-repositórios que existem em PROD (`git checkout v1.3.28` — confirme que é
+repositórios que existem em PROD (`git checkout v1.3.29` — confirme que é
 essa a mais recente com `git tag --sort=-creatordate` antes — no GG
 Oferta, `v1.0.4` no Coupon Worker, sem mudança desde a rodada anterior).
 O César Core **não tem repositório em PROD**: use `deploy/prod/
 cesar-core.compose.yaml` (deste próprio checkout do GG Oferta, já em
-`v1.3.28`), que já referencia `ghcr.io/jhonnatancesar/cesar-core:1.2.1`
+`v1.3.29`), que já referencia `ghcr.io/jhonnatancesar/cesar-core:1.2.1`
 como imagem padrão — nenhum `docker build`, nenhum clone do repositório
 `cesar-core`.
 
-## Atualização para a `v1.3.28` (PROD já na `v1.3.27`, serviços parados)
+## Atualização para a `v1.3.29` (PROD já na `v1.3.27`, serviços parados)
 
 Situação esperada: servidor na `v1.3.27`, banco restaurado, só o banco e
-o César Core de pé, nenhum processo do GG rodando (regra ⛔ acima). A
-`v1.3.28` traz a TASK-129 (`docs/tasks/TASK-129.md`), achada no dry-run
-da própria PROD: a IA escrevia categoria e marca livremente e separava o
-mesmo produto em dois.
+o César Core de pé, nenhum processo do GG rodando (regra ⛔ acima). Esta
+seção leva a `v1.3.28` (TASK-129) e a `v1.3.29` (TASK-130) juntas, de
+uma vez — não há necessidade de implantar a `v1.3.28` sozinha primeiro.
+
+**Decisão do usuário para esta rodada (2026-09-28):** rodar o backfill
+da TASK-123 DIRETO em `--apply`, **sem** `--count-only`/`--dry-run`
+antes (o dry-run da `v1.3.28`, sem as correções desta tag, já mostrou
+100/100 resolvidos e só achados menores, todos corrigidos agora). Por
+isso, o passo 6 abaixo muda em relação às rodadas anteriores: backup do
+banco primeiro, depois `--apply` direto, em rodadas sucessivas até
+zerar o backlog, com relatório ao final. Não pule o backup.
 
 1. Confirme que continua tudo parado (passo 1 da seção seguinte, só a
    parte "Confira que ficou tudo parado").
-2. `git fetch --tags` e `git checkout v1.3.28`.
+2. `git fetch --tags` e `git checkout v1.3.29`. Confirme com
+   `git describe --tags` (deve mostrar exatamente `v1.3.29`, não
+   `v1.3.28`).
 3. `docker compose build api telegram_notifier` (sem `up`).
 4. Migrations: `docker compose run --rm api python -m alembic -c
-   alembic.ini upgrade head`. O head esperado é **`20260927_0001`**
-   (lista inicial de grafias + status `rejected`).
-5. Confira a lista inicial (zero IA):
+   alembic.ini upgrade head`. O head esperado é **`20260927_0001`** —
+   igual ao da `v1.3.28`, a `v1.3.29` não traz migration nova. Confirme
+   com `docker compose run --rm api python -m alembic -c alembic.ini
+   current`.
+5. Confira a lista inicial de grafias (zero IA):
    ```powershell
    docker compose run --rm api python -m scripts.review_identity_aliases --list --all
    ```
    Devem aparecer 47 linhas `[active]` (ex.: `ram brand: fury -> kingston`).
-6. Refaça o backfill da TASK-123 (`--count-only` → `--dry-run` →
-   `--apply`), seção "TASK-123" abaixo. **Pare depois do `--dry-run` e
-   reporte ao usuário antes do `--apply`.** No dry-run, confira:
-   - categoria sempre com o nome oficial (`motherboard`, nunca
-     `placa-mae`; `ram`, nunca `memoria`);
-   - marca = fabricante (`kingston`, nunca `fury`);
-   - a cor nunca aparece separando dois produtos iguais.
-
-   Cada lote tem 5 títulos, com pausa de 30 s entre lotes: uma rodada de
-   100 leva cerca de 10 minutos. Um `product_identity_ai_batch_retry`
-   isolado é normal (o lote tenta mais uma vez). Se vários lotes falharem
-   de novo depois da nova tentativa (`product_identity_ai_batch_extraction_failed`),
-   pare e reporte.
-7. Depois do `--apply`, liste as sugestões de grafia:
-   `docker compose run --rm api python -m scripts.review_identity_aliases --list`.
-   **Não aprove nem recuse nada por conta própria**: mostre a lista ao
-   usuário, que decide (`--approve ID` / `--reject ID`).
-8. Só então siga o passo 7 da seção seguinte (iniciar os serviços).
+6. **Backup do banco antes do script** — siga
+   [`docs/operations/backup-restore.md`](backup-restore.md), seção
+   "Gerar um backup" (`pg_dump` dentro do container `database`, arquivo
+   `.dump` em `backups/`). Confirme que o arquivo não ficou vazio antes
+   de seguir. Guarde o caminho do arquivo para o relatório final.
+7. Rode o backfill da TASK-123 (seção "TASK-123" abaixo) DIRETO em
+   `--apply --limit 100`, sem `--count-only`/`--dry-run` antes. Cada
+   lote tem 5 títulos, pausa de 30 s entre lotes: uma rodada de 100 leva
+   cerca de 10 minutos. Repita `--apply --limit 100` em rodadas
+   sucessivas até uma rodada não encontrar mais nada para processar
+   (o próprio script informa o total restante a cada rodada). Não é
+   necessário confirmar com o usuário entre rodadas — só ao final.
+8. **Relatório final**, arquivo texto em `C:\App\relatorios\` (crie a
+   pasta se não existir), reunindo TODAS as rodadas do passo 7:
+   - total de Products processados, total RESOLVIDO (vínculo novo),
+     total MERGE (Offers migradas para produto já existente/duplicata
+     desfeita), total vínculo parcial, total "não entendido";
+   - para cada RESOLVIDO e cada MERGE: título bruto, categoria, marca,
+     família, modelo (a saída do script já lista isso por produto — não
+     precisa reprocessar, só reunir);
+   - quantas sugestões de alias novas apareceram
+     (`scripts.review_identity_aliases --list`, sem aprovar/recusar
+     nada);
+   - qualquer `product_identity_ai_batch_retry`/
+     `product_identity_ai_batch_extraction_failed` que tenha aparecido;
+   - caminho do arquivo de backup do passo 6.
+9. Só então siga o passo 7 da seção seguinte (iniciar os serviços).
 
 ## Deploy da `v1.3.26` — sequência obrigatória (serviços parados até rodar o script)
 

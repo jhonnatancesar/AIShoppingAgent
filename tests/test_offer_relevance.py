@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 import pytest
 from app.ai_provider import AIProviderError, AIRequest, AIResponse
 from app.collection.relevance import (
+    _RELEVANCE_SYSTEM_PROMPT,
     RELEVANCE_CLASSIFICATION_PURPOSE,
     TITLE_NORMALIZATION_PURPOSE,
     OfferRelevance,
@@ -108,6 +109,14 @@ async def test_classify_offer_relevance_builds_request_with_correct_purpose() ->
         "search_query": "rtx 4060",
         "listing_title": "Placa de vídeo RTX 4060 8GB",
     }
+
+
+def test_relevance_prompt_rejects_kit_combo_bundling_the_requested_item() -> None:
+    """TASK-130 (correção do usuário, 2026-09-27): um anúncio "Kit
+    Processador + Placa-mãe" cita marca/modelo certos, mas não é o item
+    avulso pedido -- isso nunca devia virar uma Offer rastreada."""
+    assert 'no_match" quando o anúncio for um KIT, COMBO' in _RELEVANCE_SYSTEM_PROMPT
+    assert "search_query" in _RELEVANCE_SYSTEM_PROMPT
 
 
 @pytest.mark.parametrize(

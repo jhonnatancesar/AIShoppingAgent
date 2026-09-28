@@ -92,6 +92,37 @@ def test_active_alias_turns_product_line_into_manufacturer() -> None:
     assert canonicalize_fields(None, category="x", brand="", family=None).brand == ""
 
 
+def test_alias_matches_by_token_prefix_when_ai_writes_the_whole_line() -> None:
+    """TASK-130 (achado do dry-run): a IA escreve a linha inteira no campo
+    marca ("Fury Beast"), não só "Fury" -- o alias precisa cobrir isso."""
+    fields = canonicalize_fields(_FURY, category="ram", brand="Fury Beast", family=None)
+    assert fields.brand == "kingston"
+    # nunca por substring solta -- "furyx"/"furioso" não são "fury"
+    assert (
+        canonicalize_fields(_FURY, category="ram", brand="Furyx", family=None).brand
+        == "Furyx"
+    )
+    assert (
+        canonicalize_fields(
+            _FURY, category="ram", brand="Furioso Beast", family=None
+        ).brand
+        == "Furioso Beast"
+    )
+    # em empate, o alias mais específico (mais tokens) vence
+    layered = IdentityVocabulary(
+        aliases=(
+            ("ram", "brand", "fury", "kingston"),
+            ("ram", "brand", "fury-beast", "kingston-fury-beast-oficial"),
+        )
+    )
+    assert (
+        canonicalize_fields(
+            layered, category="ram", brand="Fury Beast RGB", family=None
+        ).brand
+        == "kingston-fury-beast-oficial"
+    )
+
+
 def test_same_product_written_two_ways_gets_the_same_identity() -> None:
     """O caso real do dry-run: um lote respondeu "motherboard", outro
     "placa-mae" -- agora os dois viram a mesma identidade."""

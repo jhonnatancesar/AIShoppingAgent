@@ -146,9 +146,32 @@ class IdentityVocabulary:
 
     def _alias(self, category: str, attribute: str, value: str) -> str | None:
         key = category_slug(value)
-        return self._alias_index.get(
+        exact = self._alias_index.get(
             (category, attribute, key)
         ) or self._alias_index.get(("*", attribute, key))
+        return exact or self._alias_prefix(category, attribute, key)
+
+    def _alias_prefix(self, category: str, attribute: str, key: str) -> str | None:
+        """TASK-130: a IA escreve a linha inteira no campo (ex.: brand=
+        "fury-beast"), e o alias só cobre o fabricante ("fury" -> "kingston")
+        -- aceita quando os tokens de `key` COMEÇAM pelos tokens de um alias
+        ativo, nunca por substring solta ("furyx" nunca bate com "fury").
+        Em empate (mais de um alias serve de prefixo), o mais específico
+        (mais tokens) vence, determinístico."""
+        tokens = key.split("-")
+        best: tuple[int, str] | None = None
+        for (scope, alias_attribute, raw), canonical in self._alias_index.items():
+            if alias_attribute != attribute or scope not in (category, "*"):
+                continue
+            raw_tokens = raw.split("-")
+            if (
+                len(raw_tokens) >= len(tokens)
+                or tokens[: len(raw_tokens)] != raw_tokens
+            ):
+                continue
+            if best is None or len(raw_tokens) > best[0]:
+                best = (len(raw_tokens), canonical)
+        return best[1] if best else None
 
     def canonical_category(self, value: str | None) -> str:
         """Categoria oficial quando é sinônimo/alias; senão o slug do que

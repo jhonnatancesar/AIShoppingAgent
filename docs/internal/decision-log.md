@@ -1,5 +1,84 @@
 # Decision Log
 
+## DEC-138 — TASK-130 fechada e publicada: tag `v1.3.29`, item 3 fica só registrado
+
+- **Data:** 2026-09-28.
+- **Decisão do usuário:** "fecha mais deixa salvo essas info caso de
+  problema futuramente. commit e push liberado" — fechar a TASK com os
+  itens 1 e 2; item 3 não implementado, mas o critério fica documentado
+  em `docs/tasks/TASK-130.md` para reabrir se um caso real aparecer.
+- **Verificado antes do commit:** `backend/app/core/config.py` sem
+  diff nesta TASK — nenhuma flag nova, nenhuma flag alterada; as 4
+  flags do GG (`historical_bootstrap_enabled`,
+  `market_research_external_reference_enabled`, `coupons_enabled`,
+  `product_identity_learning_enabled`) continuam `default=True`. O
+  item 1 (relevância) não passa por nenhuma flag.
+- **Publicação:** commit + push para `origin/main`, tag anotada
+  `v1.3.29`.
+- **Deploy combinado:** PROD está na `v1.3.27` — o deploy desta rodada
+  leva `v1.3.28` (TASK-129) e `v1.3.29` (TASK-130) juntas, sem migration
+  nova entre elas. Decisão do usuário: backfill da TASK-123 roda direto
+  em `--apply`, sem `--count-only`/`--dry-run` antes (a validação já foi
+  feita no dry-run anterior + as duas correções desta TASK), com backup
+  do banco antes de rodar.
+- **Detalhe:** `docs/tasks/TASK-130.md`, `docs/operations/prod-deployment-handoff.md`.
+
+## DEC-137 — TASK-130 itens 1 e 2 implementados (relevância recusa kit/combo, alias por prefixo); item 3 reavaliado
+
+- **Data:** 2026-09-28.
+- **Decisão do usuário:** "inicia ela, lembra de atualizar o dedupe e o
+  script de dedupe também, se preciso. Quero essa alteração em pé no
+  GG todo".
+- **Item 1:** `_RELEVANCE_SYSTEM_PROMPT`
+  (`app/collection/relevance.py`) passa a recusar (`no_match`) anúncio
+  de kit/combo/bundle que embala o item pedido com outro produto,
+  mesmo citando marca/modelo certos — a não ser que a própria busca da
+  missão peça um kit/combo. Só vale a partir de agora (não retroage
+  sobre ofertas já coletadas).
+- **Item 2:** `IdentityVocabulary._alias` (`identity_vocabulary.py`)
+  passa a casar por prefixo de token inteiro, não só igualdade exata —
+  "fury-beast" (linha inteira no campo marca) agora bate com o alias
+  `fury -> kingston`. Vale automaticamente no caminho ao vivo E no
+  script de dedupe/backfill (`reprocess_unresolved_product_identity.py`,
+  sem nenhuma mudança nele — os dois compartilham o mesmo
+  `IdentityVocabulary`), provado com um teste que roda o próprio
+  script.
+- **Item 3** (ampliar a leitura de página): reavaliado depois de 1 e 2
+  prontos — o caso que sobra é raro (marca nova sem alias E sem outro
+  anúncio com o mesmo part number pra aprender por prova). Não
+  implementado; aguarda decisão do usuário sobre valer o custo de
+  navegação real pra esse caso de borda.
+- **Validação:** unitária 2790 (90,34%), integração completa 394/394,
+  ruff limpo. Sem commit — aguardando autorização.
+- **Detalhe:** `docs/tasks/TASK-130.md`.
+
+## DEC-136 — TASK-130 registrada (planejada, não iniciada): kit/combo não deve virar oferta, alias por prefixo, leitura de página quando a marca não bate com alias
+
+- **Data:** 2026-09-27.
+- **Origem:** análise do dry-run da `v1.3.28` (PROD) e conversa de
+  aprofundamento com o usuário; três achados reais, nenhum código
+  escrito ainda.
+- **Decisão do usuário:** "só registra tudo isso na task-130, abre ela
+  formalmente mas não inicia".
+- **Achados (detalhe em `docs/tasks/TASK-130.md`):**
+  1. Anúncio de kit/combo (ex.: "Kit Processador + Placa-mãe") pode
+     virar `Offer` de um item avulso porque `classify_offer_relevance`
+     (`app/collection/relevance.py`) não trata bundle como `no_match` —
+     correção do usuário: isso é problema de relevância da busca, não
+     de identidade, e o anúncio nunca deveria virar oferta rastreada.
+  2. A tabela de aliases (TASK-129) só compara por igualdade exata; uma
+     marca escrita como a linha inteira ("fury-beast") nunca bate com
+     o alias `fury -> kingston`.
+  3. A leitura de página (TASK-128) só dispara em "não entendi", nunca
+     quando a extração foi aprovada mas a marca não bate com nenhum
+     alias — mesmo a página tendo "Marca: X" estruturado (JSON-LD),
+     confirmado em `product_page.py`.
+  - Confirmado, e registrado como FORA de escopo: diferença de grafia
+    tipo "WiFi"/"Wi-Fi" **não é bug** — o árbitro já ignora
+    pontuação/maiúscula nessa comparação; o dry-run só parece separado
+    por desfazer cada lote antes do próximo.
+- **Detalhe:** `docs/tasks/TASK-130.md`.
+
 ## DEC-135 — TASK-129: vocabulário padronizado na extração de identidade, cor fora da identidade e tabela de grafias preenchida
 
 - **Data:** 2026-09-27.

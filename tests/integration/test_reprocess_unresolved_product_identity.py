@@ -283,6 +283,38 @@ def test_apply_resolves_identity_without_losing_offer_or_observation(
         assert resolved_product.brand == "asus"
 
 
+def test_apply_uses_alias_by_prefix_through_the_dedupe_script(
+    integration_database,
+) -> None:
+    """TASK-130: o alias fury -> kingston (seed da migration) precisa
+    valer mesmo quando a IA escreve a linha inteira no campo marca
+    ("Fury Beast", nao so "Fury") -- provado pelo PROPRIO script de
+    dedupe/backfill, sem nenhuma mudanca nele: a correcao mora no
+    vocabulario compartilhado com o caminho ao vivo."""
+    module = _load_script_module()
+    _seed_unresolved_product(
+        integration_database,
+        "Memoria Fury Beast 8GB DDR4 3200MHz KF432C16BB/8",
+    )
+    extraction = (
+        '{"category": "ram", "brand": "Fury Beast", "family": "Fury Beast", '
+        '"model": "KF432C16BB/8", "variant": null, "store_sku": null, '
+        '"manufacturer_part_number": null, "attributes": {}}'
+    )
+    manager = _StaticIdentityAIManager(extraction)
+
+    _run(
+        module.run(apply=True, limit=50, ai_manager=manager, arbiter_ai_manager=manager)
+    )
+
+    with integration_database.sessions() as session:
+        product = session.scalar(select(Product).where(Product.category == "ram"))
+        assert product is not None
+        assert product.brand == "kingston", (
+            "fury-beast (linha inteira) tinha que bater com o alias fury"
+        )
+
+
 def test_apply_twice_is_idempotent(integration_database) -> None:
     module = _load_script_module()
     _seed_unresolved_motherboard(integration_database)

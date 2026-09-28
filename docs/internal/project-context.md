@@ -1,13 +1,14 @@
 # Project Context
 
-**Estado em 2026-09-27 — `v1.3.28` (TASK-129) publicada em `origin/main`
-com tag (`DEC-135`), deploy pendente:** a IA preenche a identidade com o
-vocabulário do sistema, a cor não separa mais produto, a tabela de
-grafias tem a lista inicial e aprende com o mesmo part number, e o
-backfill usa lotes de 5 com pausa. Head do Alembic: `20260927_0001`. A
-PROD está na `v1.3.27` (servidor reformatado, banco restaurado, só o
-banco e o César Core de pé); o dry-run ainda não foi refeito com esta
-versão.
+**Estado em 2026-09-28 — `v1.3.29` (TASK-130) publicada em `origin/main`
+com tag (`DEC-138`), deploy pendente:** anúncio de kit/combo (processador
++ placa-mãe etc.) deixa de virar oferta rastreada; alias de marca casa
+por prefixo de token ("Fury Beast" bate com o alias "Fury"), valendo no
+caminho ao vivo e no script de dedupe/backfill. Sem migration nova
+(head do Alembic segue `20260927_0001`). Nenhuma flag nova/alterada. A
+PROD está na `v1.3.27`; o deploy leva as tags `v1.3.28` e `v1.3.29`
+juntas, com o backfill da TASK-123 rodado direto (sem dry-run, decisão
+do usuário) e com backup do banco antes.
 
 **Estado em 2026-09-26 — `v1.3.26` publicada em `origin/main` com as
 tags `v1.3.26`/`v1.3.27` (`DEC-134`):** TASK-124 a 128 concluídas.

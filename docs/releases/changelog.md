@@ -1,5 +1,22 @@
 # Changelog
 
+## `v1.3.29` — TASK-130: kit/combo nunca vira oferta, alias por prefixo
+
+O dry-run da `v1.3.28` mostrou um processador vendido junto com uma
+placa-mãe sendo tratado como se fosse só o processador. A causa real
+era mais cedo que a identidade: o anúncio de kit/combo nunca deveria
+ter virado uma oferta rastreada da missão. Agora a classificação que
+decide se um anúncio bate com o que foi pedido recusa kit/combo/pacote
+que embala o item pedido com outro produto diferente, mesmo citando a
+marca e o modelo certos — a não ser que a própria busca peça um kit.
+Vale só para anúncio coletado a partir de agora.
+
+A tabela de grafias de marca também passa a reconhecer quando a IA
+escreve a linha inteira no campo marca ("Fury Beast", não só "Fury") --
+antes só batia com a grafia exata. Vale tanto na coleta do dia a dia
+quanto no script de dedupe/backfill, sem precisar mudar o script. Sem
+migration nova.
+
 ## `v1.3.28` — TASK-129: a IA preenche a identidade com o vocabulário do sistema
 
 No dry-run da PROD, o mesmo produto se separava em dois porque a IA

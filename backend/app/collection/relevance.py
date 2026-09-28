@@ -57,7 +57,15 @@ _RELEVANCE_SYSTEM_PROMPT = (
     "pedido (mesma categoria, mesma marca e modelo quando mencionados). "
     'Use "no_match" quando o anúncio for um produto diferente, um '
     "acessório, uma peça avulsa, uma categoria diferente ou um modelo "
-    'claramente diferente do pedido. Use "possible_match" somente quando '
+    'claramente diferente do pedido. Também use "no_match" quando o '
+    "anúncio for um KIT, COMBO ou pacote que embala o produto pedido "
+    "junto com outro produto diferente (ex.: processador + placa-mãe, "
+    "notebook + mochila, monitor + suporte) — mesmo citando a marca e o "
+    "modelo certos do item pedido, um kit/combo não é o item avulso e o "
+    "preço do anúncio não é o preço dele sozinho. Só classifique um "
+    'kit/combo como "match" quando o próprio pedido (search_query) '
+    "pedir explicitamente um kit/combo. "
+    'Use "possible_match" somente quando '
     "houver ambiguidade genuína que impeça afirmar com segurança qualquer "
     "um dos dois extremos. Nunca classifique com base em preço — julgue "
     "somente a correspondência entre o pedido e o anúncio."

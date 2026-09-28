@@ -1,5 +1,10 @@
 # Roadmap
 
+**Atualização 2026-09-28:** TASK-130 fechada e publicada na tag
+`v1.3.29` — kit/combo não vira mais oferta, alias por marca casa por
+prefixo. Ver `DEC-137`/`DEC-138` e `docs/tasks/TASK-130.md`. Deploy
+pendente.
+
 **Atualização 2026-09-27:** TASK-129 (vocabulário padronizado na
 identidade, cor fora da identidade, tabela de grafias) concluída e
 publicada na tag `v1.3.28`. Depois dela: refazer o dry-run do
