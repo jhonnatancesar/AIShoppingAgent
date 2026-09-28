@@ -46,14 +46,14 @@ Lote de IA (mesma pergunta do usuário, correção 2026-09-20): em vez de
 1 chamada de IA por Product (depois de tentar o motor determinístico/
 cache/reuso sem IA para cada um), `reprocess_unresolved_products` agora
 agrupa só os produtos que realmente precisam de extração em lotes de
-`_BATCH_SIZE` (10) títulos por chamada -- corta o número de chamadas
+`_BATCH_SIZE` (5 desde a TASK-129; era 10) títulos por chamada -- corta o número de chamadas
 de IA por ~10x. Números ajustados no mesmo dia depois que o usuário
 revelou o tamanho real do backlog (371 Products, não a dúzia que se
 supunha ao escolher 4/20 originalmente) -- `_BATCH_SIZE=4`/
 `_MAX_LIMIT=20` exigiriam ~19 execuções manuais de `--apply` pra
 esgotar o backlog, inviável de acompanhar de perto. Por isso
 `--limit`/`--dry-run`/`--apply` têm um teto rígido de `_MAX_LIMIT`
-(100 Products, 10 lotes de 10) -- ainda supervisionável por rodada,
+(100 Products, 20 lotes de 5 desde a TASK-129) -- ainda supervisionável por rodada,
 mas 371 cabe em ~4 rodadas em vez de ~19.
 
 Uso:
@@ -88,7 +88,11 @@ from app.users.models import UserRole
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-_BATCH_SIZE = 10
+_BATCH_SIZE = 5
+# TASK-129 (dry-run da PROD, 2026-09-27): lotes de 10 estouravam o limite
+# do Groq gratuito (~8.000 tokens/min) e cortavam a resposta -- 5 por
+# chamada, com pausa entre lotes e uma nova tentativa do lote que falhar.
+_BATCH_PAUSE_SECONDS = 30.0
 _MAX_LIMIT = 100
 
 
@@ -119,6 +123,7 @@ async def run(
     count_only: bool = False,
     ai_manager: object | None = None,
     arbiter_ai_manager: object | None = None,
+    batch_pause_seconds: float = _BATCH_PAUSE_SECONDS,
 ) -> None:
     """`ai_manager`/`arbiter_ai_manager` só são parâmetros para permitir
     injetar um fake em teste (mesmo padrão de `sleep`/`monotonic`
@@ -168,6 +173,7 @@ async def run(
             arbiter_ai_manager=arbiter_ai_manager,
             limit=limit,
             batch_size=_BATCH_SIZE,
+            batch_pause_seconds=batch_pause_seconds,
             apply=apply,
             outcome_sink=outcome_sink,
         )

@@ -317,9 +317,9 @@ def test_batch_of_thirteen_products_uses_two_ai_calls_not_thirteen(
     """Prova o pedido real do usuário (2026-09-20, ajustado no mesmo dia
     depois que o usuário revelou que o backlog real tem 371 Products,
     não a dúzia suposta ao escolher os números originais): lote de
-    `_BATCH_SIZE` (10) produtos por chamada de IA -- 13 Products
-    DIFERENTES (nenhum reaproveitável entre si antes da extração) devem
-    gastar só 2 chamadas de IA (10 + 3), nunca 13. Também é a regressão
+    `_BATCH_SIZE` produtos por chamada de IA (5 desde a TASK-129) -- 13
+    Products DIFERENTES (nenhum reaproveitável entre si antes da extração)
+    devem gastar só 3 chamadas de IA (5 + 5 + 3), nunca 13. Também é a regressão
     do bug real encontrado nesta mesma rodada: `session.rollback()`
     entre lotes expirava produtos já carregados e/ou descartava
     trabalho já aplicado de um lote anterior -- aqui os 13 sobrevivem,
@@ -336,12 +336,17 @@ def test_batch_of_thirteen_products_uses_two_ai_calls_not_thirteen(
 
     _run(
         module.run(
-            apply=True, limit=100, ai_manager=manager, arbiter_ai_manager=manager
+            apply=True,
+            limit=100,
+            ai_manager=manager,
+            arbiter_ai_manager=manager,
+            batch_pause_seconds=0,
         )
     )
 
-    assert manager.calls == 2, (
-        "13 produtos em lotes de 10 devem gastar 2 chamadas de IA (10 + 3), não 13"
+    assert module._BATCH_SIZE == 5
+    assert manager.calls == 3, (
+        "13 produtos em lotes de 5 devem gastar 3 chamadas de IA (5 + 5 + 3), não 13"
     )
 
     with integration_database.sessions() as session:

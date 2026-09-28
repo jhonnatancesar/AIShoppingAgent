@@ -1,5 +1,26 @@
 # Changelog
 
+## `v1.3.28` — TASK-129: a IA preenche a identidade com o vocabulário do sistema
+
+No dry-run da PROD, o mesmo produto se separava em dois porque a IA
+escrevia a categoria e a marca do jeito que queria ("motherboard" x
+"placa-mae", "fury" x "kingston"), e cada cor virava um produto. Agora a
+IA recebe o vocabulário do sistema, com as categorias oficiais (e o que
+cada uma significa), as marcas e famílias já cadastradas e as grafias
+conhecidas, e o código converte o que ela devolve para a grafia oficial.
+A cor não separa mais produto: ela só conta quando a missão pede uma cor.
+
+A tabela de grafias ganhou uma lista inicial (linha → fabricante: ROG →
+ASUS, Aorus → Gigabyte, Fury → Kingston, WD → Western Digital…) e passa
+a aprender sozinha quando há prova: dois anúncios com o mesmo part
+number do fabricante e grafias diferentes são o mesmo produto. O que é
+só suspeita vira sugestão, para revisar com
+`scripts/review_identity_aliases.py`.
+
+O backfill passa a mandar 5 títulos por chamada (eram 10), com pausa de
+30 s entre lotes e uma nova tentativa do lote que falhar, dentro do
+limite do Groq gratuito. Migration `20260927_0001`.
+
 ## `v1.3.27` — handoff: nenhum processo do GG sobe até o script de dedupe
 
 Só documentação, mesmo código da `v1.3.26`. O handoff da `v1.3.26` ainda mandava subir o site e o Coupon Worker antes do script, em trechos antigos, e não parava o `AIShoppingAgentOpsAgent`, que religa sozinho o worker de coleta. Agora há uma regra ⛔ no topo, com precedência sobre o resto do documento: parar o Ops Agent primeiro, desabilitar as tarefas antes de pará-las e só religar tudo depois do script. **Faça o deploy pela `v1.3.27`.**

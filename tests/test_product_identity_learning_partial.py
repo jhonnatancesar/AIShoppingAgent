@@ -30,6 +30,7 @@ from app.products.identity_learning import (
     resolve_or_learn_product_variant,
     unlinked_product_criteria,
 )
+from app.products.identity_vocabulary import IdentityVocabulary
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.exc import IntegrityError
 
@@ -412,10 +413,13 @@ def test_transient_ai_failure_is_never_cached(monkeypatch) -> None:
         "_prepare_resolution",
         AsyncMock(return_value=_prepared()),
     )
+    extract = AsyncMock(return_value=None)
+    monkeypatch.setattr(identity_learning, "extract_product_identity_via_ai", extract)
+    vocabulary = IdentityVocabulary(generic_categories=("cadeira-gamer",))
     monkeypatch.setattr(
         identity_learning,
-        "extract_product_identity_via_ai",
-        AsyncMock(return_value=None),
+        "load_identity_vocabulary",
+        AsyncMock(return_value=vocabulary),
     )
     resolve = AsyncMock()
     monkeypatch.setattr(identity_learning, "_resolve_from_extraction", resolve)
@@ -430,6 +434,8 @@ def test_transient_ai_failure_is_never_cached(monkeypatch) -> None:
     assert result is None
     session.rollback.assert_awaited_once()
     resolve.assert_not_awaited()
+    # TASK-129: a IA recebe o vocabulário lido do banco antes do rollback.
+    assert extract.await_args.kwargs["vocabulary"] is vocabulary
 
 
 def test_one_by_one_backfill_commits_awaiting_page_before_the_next_title(
@@ -519,3 +525,56 @@ def test_insert_candidate_replaces_awaiting_page_only_when_asked() -> None:
         if replace:
             statement = str(session.execute.await_args.args[0])
             assert statement.startswith("DELETE FROM product_identity_candidates")
+
+
+def test_batch_backfill_pauses_between_batches_and_retries_a_failed_batch(
+    monkeypatch,
+) -> None:
+    """TASK-129 (dry-run da PROD): Groq gratuito aguenta ~8.000 tokens/min
+    -- pausa entre lotes, e o lote que falhou INTEIRO tenta mais uma vez
+    depois da pausa, em vez de perder os títulos."""
+    products = [SimpleNamespace(id=uuid4(), name=f"título {n}") for n in range(3)]
+    session = _session()
+    session.scalars.return_value = MagicMock(all=MagicMock(return_value=products))
+    monkeypatch.setattr(
+        identity_learning, "_prepare_resolution", AsyncMock(return_value=_prepared())
+    )
+    monkeypatch.setattr(
+        identity_learning,
+        "load_identity_vocabulary",
+        AsyncMock(return_value=IdentityVocabulary()),
+    )
+    ok = AIPartialExtraction(
+        category="cpu", brand=None, family=None, ai_provider="s", ai_model="m"
+    )
+    batch = AsyncMock(side_effect=[[None, None], [ok, ok], [ok]])
+    monkeypatch.setattr(
+        identity_learning, "extract_product_identities_via_ai_batch", batch
+    )
+    monkeypatch.setattr(
+        identity_learning,
+        "_resolve_from_extraction",
+        AsyncMock(return_value=PartialProductLink("cpu", None, None)),
+    )
+    monkeypatch.setattr(
+        identity_learning, "_apply_resolution", AsyncMock(return_value=True)
+    )
+    pauses: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        pauses.append(seconds)
+
+    count = asyncio.run(
+        reprocess_unresolved_products(
+            session,
+            ai_manager=MagicMock(),
+            batch_size=2,
+            apply=True,
+            batch_pause_seconds=30,
+            sleep=fake_sleep,
+        )
+    )
+
+    assert batch.await_count == 3, "lote 1 falhou e tentou de novo; lote 2 normal"
+    assert pauses == [30, 30], "pausa antes da nova tentativa e entre os lotes"
+    assert count == 3

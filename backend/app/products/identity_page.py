@@ -49,6 +49,7 @@ from app.products.identity_learning import (
     apply_learned_identity,
     apply_partial_link,
 )
+from app.products.identity_vocabulary import load_identity_vocabulary
 from app.products.models import Product
 from app.stores.models import Store
 from app.users.models import UserRole
@@ -224,11 +225,14 @@ async def _resolve_with_page(
         return await _retry_later_or_give_up(
             session_factory, claim, max_attempts=max_attempts
         )
+    async with session_factory() as vocabulary_session:
+        vocabulary = await load_identity_vocabulary(vocabulary_session)
     extraction = await extract_product_identity_via_ai(
         ai_manager,
         raw_title=claim.raw_title,
         profile=profile,
         page_context=page.context,
+        vocabulary=vocabulary,
     )
     if extraction is None:
         # IA fora do ar/resposta fora do contrato -- passageiro.
@@ -258,6 +262,7 @@ async def _resolve_with_page(
             source_product_id=claim.source_product_id,
             page_context=page.context,
             replace_awaiting_page=True,
+            vocabulary=vocabulary,
         )
         if resolved is not None and claim.source_product_id is not None:
             product = await session.get(Product, claim.source_product_id)

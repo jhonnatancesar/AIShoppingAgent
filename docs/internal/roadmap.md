@@ -1,5 +1,10 @@
 # Roadmap
 
+**Atualização 2026-09-27:** TASK-129 (vocabulário padronizado na
+identidade, cor fora da identidade, tabela de grafias) concluída e
+publicada na tag `v1.3.28`. Depois dela: refazer o dry-run do
+backfill na PROD. Ver `DEC-135`.
+
 **Atualização 2026-09-26:** `v1.3.26` (TASK-124 a 128) pronta e
 publicada em `origin/main`, deploy pendente. Ver `DEC-134` e
 `docs/internal/project-context.md`. Ideia futura registrada, sem TASK:

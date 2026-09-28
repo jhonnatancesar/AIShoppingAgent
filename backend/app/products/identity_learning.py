@@ -18,7 +18,9 @@ decidir promover ou migrar."""
 
 from __future__ import annotations
 
+import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
@@ -52,12 +54,21 @@ from app.products.identity_ai import (
     tokens_present,
     values_match_ignoring_punctuation,
 )
+from app.products.identity_alias_learning import (
+    find_same_part_number_candidate,
+    record_part_number_aliases,
+    suggest_brand_aliases,
+)
 from app.products.identity_arbiter import (
     ArbiterVerdict,
     ListingEvidence,
     arbitrate_same_product,
 )
 from app.products.identity_candidates import ProductIdentityCandidate
+from app.products.identity_vocabulary import (
+    IdentityVocabulary,
+    load_identity_vocabulary,
+)
 from app.products.models import Product
 from app.purchase.models import PurchaseConfirmation
 from app.users.models import UserRole
@@ -331,6 +342,21 @@ class _ArbitrationCandidate:
     identity_key: str
 
 
+def _snapshot(candidate: ProductIdentityCandidate) -> _ArbitrationCandidate:
+    return _ArbitrationCandidate(
+        category=candidate.category,
+        brand=candidate.brand,
+        family=candidate.family,
+        model=candidate.model,
+        variant=candidate.variant,
+        attributes=dict(candidate.attributes),
+        store_sku=candidate.store_sku,
+        manufacturer_part_number=candidate.manufacturer_part_number,
+        family_key=candidate.family_key,
+        identity_key=candidate.identity_key,
+    )
+
+
 class DimensionVerdict(StrEnum):
     """Classificação semântica de UMA dimensão de evidência (`variant`,
     um atributo específico ou `manufacturer_part_number`) entre o que já
@@ -420,18 +446,7 @@ async def _find_same_model_candidates(
         )
     )
     return [
-        _ArbitrationCandidate(
-            category=candidate.category,
-            brand=candidate.brand,
-            family=candidate.family,
-            model=candidate.model,
-            variant=candidate.variant,
-            attributes=dict(candidate.attributes),
-            store_sku=candidate.store_sku,
-            manufacturer_part_number=candidate.manufacturer_part_number,
-            family_key=candidate.family_key,
-            identity_key=candidate.identity_key,
-        )
+        _snapshot(candidate)
         for candidate in candidates
         if all(
             tokens_present(raw_title_normalized, field)
@@ -548,6 +563,53 @@ async def _prepare_resolution(
     )
 
 
+async def _reuse_approved_identity(
+    session: AsyncSession,
+    approved: _ArbitrationCandidate,
+    *,
+    raw_title: str,
+    title_hash: str,
+    extraction: AIIdentityExtraction,
+    reviewer_note: str,
+    page_context: str | None,
+    replace_awaiting_page: bool,
+    now: datetime | None,
+) -> ResolvedProductVariant:
+    """O título novo é o MESMO produto de um candidato já aprovado
+    (árbitro ou mesmo part number): guarda o título como apelido dessa
+    identidade (cache do hash, nunca chama a IA de novo por ele) e devolve
+    a identidade já existente."""
+    alias = ProductIdentityCandidate(
+        id=uuid4(),
+        raw_title=raw_title[:2000],
+        normalized_title_hash=title_hash,
+        category=approved.category,
+        brand=approved.brand,
+        family=approved.family,
+        model=approved.model,
+        variant=approved.variant,
+        attributes=dict(approved.attributes),
+        store_sku=extraction.store_sku,
+        manufacturer_part_number=extraction.manufacturer_part_number,
+        family_key=approved.family_key,
+        identity_key=approved.identity_key,
+        status="approved",
+        grounded=True,
+        ai_provider=extraction.ai_provider,
+        ai_model=extraction.ai_model,
+        reviewer_note=reviewer_note,
+        page_context=page_context,
+        created_at=now or utc_now(),
+    )
+    try:
+        await _insert_candidate(
+            session, alias, replace_awaiting_page=replace_awaiting_page
+        )
+    except IntegrityError:
+        pass
+    return _resolved_from_candidate(approved)
+
+
 async def _finish_resolution_with_extraction(
     session: AsyncSession,
     *,
@@ -560,6 +622,7 @@ async def _finish_resolution_with_extraction(
     now: datetime | None = None,
     page_context: str | None = None,
     replace_awaiting_page: bool = False,
+    vocabulary: IdentityVocabulary | None = None,
 ) -> ResolvedProductVariant | PartialProductLink | None:
     """Continuação de `_prepare_resolution` depois que uma extração de
     IA (item único ou uma posição de um lote) já existe -- zona
@@ -608,38 +671,20 @@ async def _finish_resolution_with_extraction(
                     verdict = ArbiterVerdict.SAME_PRODUCT
             if verdict is not ArbiterVerdict.SAME_PRODUCT:
                 continue
-            alias = ProductIdentityCandidate(
-                id=uuid4(),
-                raw_title=raw_title[:2000],
-                normalized_title_hash=title_hash,
-                category=candidate.category,
-                brand=candidate.brand,
-                family=candidate.family,
-                model=candidate.model,
-                variant=candidate.variant,
-                attributes=dict(candidate.attributes),
-                store_sku=extraction.store_sku,
-                manufacturer_part_number=extraction.manufacturer_part_number,
-                family_key=candidate.family_key,
-                identity_key=candidate.identity_key,
-                status="approved",
-                grounded=True,
-                ai_provider=extraction.ai_provider,
-                ai_model=extraction.ai_model,
+            return await _reuse_approved_identity(
+                session,
+                candidate,
+                raw_title=raw_title,
+                title_hash=title_hash,
+                extraction=extraction,
                 reviewer_note="arbitered_same_product",
                 page_context=page_context,
-                created_at=now or utc_now(),
+                replace_awaiting_page=replace_awaiting_page,
+                now=now,
             )
-            try:
-                await _insert_candidate(
-                    session, alias, replace_awaiting_page=replace_awaiting_page
-                )
-            except IntegrityError:
-                pass
-            return _resolved_from_candidate(candidate)
 
     evaluated = evaluate_ai_identity_extraction(
-        raw_title, extraction, page_context=page_context
+        raw_title, extraction, page_context=page_context, vocabulary=vocabulary
     )
     partial_link = build_partial_link(
         raw_title,
@@ -647,6 +692,7 @@ async def _finish_resolution_with_extraction(
         brand=extraction.brand,
         family=extraction.family,
         page_context=page_context,
+        vocabulary=vocabulary,
     )
     if evaluated.resolved is None:
         # Caso degenerado (ex.: campos só com símbolos, slug vazio) --
@@ -668,6 +714,34 @@ async def _finish_resolution_with_extraction(
             page_context=page_context,
             replace_awaiting_page=replace_awaiting_page,
         )
+
+    if evaluated.status == "approved":
+        # TASK-129: o MESMO part number já aprovado com outra grafia de
+        # marca/família é prova de que é o mesmo produto -- a grafia nova
+        # vira alias ativo e o anúncio herda a identidade já existente.
+        same_part_row = await find_same_part_number_candidate(
+            session, evaluated.resolved, evaluated.raw.manufacturer_part_number
+        )
+        if same_part_row is not None:
+            same_part = _snapshot(same_part_row)
+            await record_part_number_aliases(
+                session,
+                resolved=evaluated.resolved,
+                approved_brand=same_part.brand,
+                approved_family=same_part.family,
+            )
+            return await _reuse_approved_identity(
+                session,
+                same_part,
+                raw_title=raw_title,
+                title_hash=title_hash,
+                extraction=extraction,
+                reviewer_note="same_part_number",
+                page_context=page_context,
+                replace_awaiting_page=replace_awaiting_page,
+                now=now,
+            )
+        await suggest_brand_aliases(session, evaluated.resolved)
 
     candidate = ProductIdentityCandidate(
         id=uuid4(),
@@ -782,6 +856,7 @@ async def _resolve_from_extraction(
     source_product_id: UUID | None = None,
     page_context: str | None = None,
     replace_awaiting_page: bool = False,
+    vocabulary: IdentityVocabulary | None = None,
 ) -> ResolvedProductVariant | PartialProductLink | None:
     """Único ponto que transforma o resultado da IA (item único ou uma
     posição de lote) em resolução -- exata, parcial ou "aguardando
@@ -801,6 +876,7 @@ async def _resolve_from_extraction(
             now=now,
             page_context=page_context,
             replace_awaiting_page=replace_awaiting_page,
+            vocabulary=vocabulary,
         )
     link = (
         build_partial_link(
@@ -809,6 +885,7 @@ async def _resolve_from_extraction(
             brand=extraction.brand,
             family=extraction.family,
             page_context=page_context,
+            vocabulary=vocabulary,
         )
         if isinstance(extraction, AIPartialExtraction)
         else None
@@ -895,9 +972,12 @@ async def resolve_or_learn_product_variant(
     # com título real e confirmado no log do Postgres). Só leituras
     # aconteceram até aqui, então não há nada a perder; a sessão reabre
     # transação sozinha na próxima operação.
+    # TASK-129: o vocabulário (categorias oficiais, grafias aprovadas,
+    # aliases) é lido ANTES do rollback -- a IA nunca escreve livre.
+    vocabulary = await load_identity_vocabulary(session)
     await session.rollback()
     extraction = await extract_product_identity_via_ai(
-        ai_manager, raw_title=raw_title, profile=profile
+        ai_manager, raw_title=raw_title, profile=profile, vocabulary=vocabulary
     )
     if extraction is None:
         # Falha de rede/provedor/contrato -- passageira, nunca vai para o
@@ -912,6 +992,7 @@ async def resolve_or_learn_product_variant(
         arbiter_ai_manager=arbiter_ai_manager,
         now=now,
         source_product_id=source_product_id,
+        vocabulary=vocabulary,
     )
 
 
@@ -1188,6 +1269,8 @@ async def reprocess_unresolved_products(
     batch_size: int = 1,
     apply: bool = False,
     outcome_sink: dict[object, str] | None = None,
+    batch_pause_seconds: float = 0.0,
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
 ) -> int:
     """Tenta resolver de novo `Product`s sem `identity_key` -- fallback
     ad-hoc criado por `app.collection.orchestration._resolve_offer`
@@ -1328,6 +1411,10 @@ async def reprocess_unresolved_products(
             continue
         pending.append((product_id, raw_title, prepared))
 
+    # TASK-129: mesmo vocabulário para todos os lotes desta rodada (lido
+    # antes do primeiro rollback; grafias aprovadas nesta rodada entram na
+    # próxima).
+    vocabulary = await load_identity_vocabulary(session) if pending else None
     for start in range(0, len(pending), batch_size):
         chunk = pending[start : start + batch_size]
         # Mesmo motivo do rollback em `resolve_or_learn_product_variant`:
@@ -1335,11 +1422,25 @@ async def reprocess_unresolved_products(
         # Seguro por causa do commit acima (bug 2): tudo que já foi
         # aplicado com `apply=True` já é durável antes deste ponto.
         await session.rollback()
+        # TASK-129 (dry-run da PROD, 2026-09-27): o plano gratuito do Groq
+        # aceita ~8.000 tokens por minuto -- pausa entre lotes, e o lote
+        # que falhou INTEIRO (limite, resposta cortada, nenhum provedor)
+        # tenta mais uma vez depois da pausa, em vez de perder os títulos.
+        if start and batch_pause_seconds:
+            await sleep(batch_pause_seconds)
+        titles = [raw_title for _, raw_title, _ in chunk]
         extractions = await extract_product_identities_via_ai_batch(
-            ai_manager,
-            raw_titles=[raw_title for _, raw_title, _ in chunk],
-            profile=profile,
+            ai_manager, raw_titles=titles, profile=profile, vocabulary=vocabulary
         )
+        if all(extraction is None for extraction in extractions):
+            logger.warning(
+                "product_identity_ai_batch_retry",
+                extra={"batch_size": len(chunk)},
+            )
+            await sleep(batch_pause_seconds)
+            extractions = await extract_product_identities_via_ai_batch(
+                ai_manager, raw_titles=titles, profile=profile, vocabulary=vocabulary
+            )
         for (product_id, raw_title, prepared), extraction in zip(
             chunk, extractions, strict=True
         ):
@@ -1354,6 +1455,7 @@ async def reprocess_unresolved_products(
                 ai_manager=ai_manager,
                 arbiter_ai_manager=arbiter_ai_manager,
                 source_product_id=product_id,
+                vocabulary=vocabulary,
             )
             if resolved is None:
                 if apply:

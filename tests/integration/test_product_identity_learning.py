@@ -1139,7 +1139,10 @@ def test_dry_run_outcome_report_survives_a_later_batchs_rollback(
 
     resolved_count, outcome_sink = asyncio.run(_reprocess())
 
-    assert manager.calls == 2, "2 lotes esperados (3 produtos, lote de 2)"
+    assert manager.calls == 3, (
+        "2 lotes (3 produtos, lote de 2); o segundo falha e tenta mais uma "
+        "vez (TASK-129)"
+    )
     assert resolved_count == 2, (
         "só o primeiro lote (2 produtos) resolve; o segundo falha na IA"
     )

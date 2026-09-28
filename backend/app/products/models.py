@@ -108,12 +108,19 @@ class ProductIdentityAlias(Base):
     mas nunca a ativa sozinha); só `status="active"` participa da geração de
     `monitoring_key` (`app.products.identity.resolve_monitoring_identity`).
     Promoção é sempre uma ação determinística/humana, nunca automática.
+
+    TASK-129: a extração por IA passa a consultar os `active`; a promoção
+    determinística é o MESMO part number do fabricante em dois anúncios
+    com grafias diferentes (`app.products.identity_alias_learning`); o
+    resto nasce `candidate` e vai para revisão
+    (`scripts/review_identity_aliases.py`), onde `rejected` guarda a
+    recusa para a mesma sugestão nunca voltar.
     """
 
     __tablename__ = "product_identity_aliases"
     __table_args__ = (
         CheckConstraint(
-            "status IN ('active', 'candidate')",
+            "status IN ('active', 'candidate', 'rejected')",
             name="ck_product_identity_aliases_status_values",
         ),
         CheckConstraint(

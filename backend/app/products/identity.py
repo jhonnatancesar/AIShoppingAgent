@@ -536,6 +536,18 @@ _CATEGORY_REGISTRY: tuple[CategoryDefinition, ...] = (
         ),
     ),
 )
+
+
+def registered_categories() -> tuple[tuple[str, tuple[str, ...]], ...]:
+    """Categorias oficiais do registro + nomes dos atributos esperados de
+    cada uma -- vocabulário que a extração por IA recebe (TASK-129) para
+    nunca inventar uma grafia nova de categoria/atributo."""
+    return tuple(
+        (definition.category, tuple(attr.name for attr in definition.attributes))
+        for definition in _CATEGORY_REGISTRY
+    )
+
+
 _CATEGORY_BY_NAME: dict[str, CategoryDefinition] = {
     definition.category: definition for definition in _CATEGORY_REGISTRY
 }

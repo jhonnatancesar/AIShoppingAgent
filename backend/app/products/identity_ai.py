@@ -39,6 +39,12 @@ from app.products.identity import (
     build_resolved_variant_from_fields,
     normalize_for_grounding,
 )
+from app.products.identity_vocabulary import (
+    IdentityVocabulary,
+    canonicalize_fields,
+    render_vocabulary_prompt,
+    strip_color,
+)
 from app.users.models import UserRole
 
 logger = logging.getLogger("app.products.identity_ai")
@@ -47,50 +53,58 @@ EXTRACT_IDENTITY_PURPOSE = "extract_product_identity"
 BATCH_EXTRACT_IDENTITY_PURPOSE = "extract_product_identity_batch"
 
 _FIELD_INSTRUCTIONS = (
-    "category: categoria geral do produto em uma palavra (ex.: "
-    '"monitor", "teclado", "gpu", "smartphone").\n'
-    'brand: fabricante (ex.: "LG", "Samsung", "Logitech").\n'
-    'family: linha/série do produto dentro da marca (ex.: "UltraGear", '
-    '"Galaxy Tab", "MX Keys").\n'
-    'model: código ou número do modelo específico (ex.: "27GP850", '
-    '"S9", "K380").\n'
-    "variant: variação explícita do MESMO modelo (cor, tamanho, edição) "
-    "quando existir no título, ou null quando não houver nenhuma "
-    "variação mencionada.\n"
-    "store_sku: código/SKU que a PRÓPRIA loja usa para identificar este "
-    'anúncio (ex.: um campo chamado "SKU", "Código" ou "Referência" '
-    "na página), quando aparecer explicitamente no título -- null quando "
-    "não houver. Isto é específico da loja, NUNCA um identificador do "
-    "fabricante.\n"
-    "manufacturer_part_number: código/part number atribuído pelo "
-    'FABRICANTE do produto (ex.: um campo chamado "Part Number", '
-    '"Número de peça", "MPN" ou "P/N" na página), quando aparecer '
-    "explicitamente no título -- null quando não houver. Nunca confunda "
-    "com store_sku: o mesmo manufacturer_part_number pode aparecer em "
-    "lojas diferentes vendendo o mesmo produto; o store_sku, não.\n"
-    "attributes: pares chave-valor de especificações técnicas "
-    "EXPLICITAMENTE mencionadas no título (ex.: capacidade de "
-    "armazenamento, taxa de atualização, tipo de memória, tamanho de "
-    "tela) -- nunca inventadas nem inferidas de conhecimento externo "
-    "sobre o produto, e nunca incluindo store_sku/manufacturer_part_"
-    "number aqui (eles têm campos próprios). Cada VALOR deve ser "
-    "copiado como aparece no título, incluindo a unidade/sufixo colado "
-    'ao número (ex.: "165Hz", não "165"; "512GB", não "512"; "DDR5", '
-    'não "5") -- nunca separe o número da unidade.\n\n'
+    "O QUE PREENCHER EM CADA CAMPO (TASK-129 -- cada campo vira coluna do "
+    "banco e entra na identidade que junta o MESMO produto entre lojas; "
+    "grafia diferente para a mesma coisa separa o produto em dois):\n"
+    "- category: o TIPO do produto, SEMPRE uma das categorias oficiais do "
+    "VOCABULÁRIO abaixo, escolhida pelo significado (ex.: placa-mãe -> "
+    '"motherboard", memória RAM -> "ram", fonte -> "psu"). Só para produto '
+    "que não é de nenhuma categoria oficial, use a categoria genérica em "
+    'português (ex.: "cadeira gamer"), reaproveitando a genérica já em uso '
+    "quando houver.\n"
+    "- brand: o FABRICANTE quando ele está escrito no título, nunca a "
+    'linha do produto (ex.: "Kingston Fury Beast" -> "Kingston"; "ASUS ROG '
+    'Strix" -> "ASUS"; "Gigabyte Aorus" -> "Gigabyte"). Se o título só traz '
+    'a linha, sem o fabricante (ex.: "Memória Fury Beast"), copie a linha '
+    '("Fury") -- o sistema converte para o fabricante. Nunca escreva um '
+    "nome que não está no título. Se a marca já existe no VOCABULÁRIO, "
+    "repita a mesma grafia.\n"
+    '- family: a LINHA/série dentro da marca, completa (ex.: "Fury Beast", '
+    'não só "Beast"; "TUF Gaming"; "UltraGear"). Se a família já existe no '
+    "VOCABULÁRIO para essa marca, repita a mesma grafia.\n"
+    "- model: o código/número do modelo específico, com todos os sufixos "
+    '(ex.: "27GP850", "B650-Plus", "KF432C16BB"). Sufixo muda o modelo: '
+    '"B650" e "B650E" são produtos DIFERENTES -- nunca omita letra final.\n'
+    "- variant: o que muda o produto dentro do MESMO modelo -- edição ou "
+    'versão (ex.: "WiFi", "Pro", "Max", "Ti"). NUNCA a cor: cor NÃO separa '
+    "produto. null quando o título não traz nenhuma variação.\n"
+    "- cor: se o título trouxer cor, registre só em attributes.color "
+    '(ex.: {"color": "Rosa"}), nunca em variant. A cor não muda a '
+    "identidade do produto (ela só importa quando o usuário pede uma cor "
+    "na missão, e isso é tratado depois).\n"
+    "- attributes: especificações técnicas EXPLÍCITAS no título, usando "
+    "só os nomes de atributo listados para a categoria no VOCABULÁRIO "
+    "(ex.: capacity_gb, type, speed_mhz para ram). Cada VALOR copiado como "
+    'aparece no título, com a unidade colada (ex.: "165Hz", "512GB", '
+    '"DDR5"). Nunca inclua store_sku/manufacturer_part_number aqui.\n'
+    "- store_sku: código que a PRÓPRIA loja usa para o anúncio, só se "
+    "aparecer no título; senão null. Nunca é código do fabricante.\n"
+    '- manufacturer_part_number: código/part number do FABRICANTE ("Part '
+    'Number", "P/N", "MPN"), só se aparecer no título; senão null. O mesmo '
+    "part number aparece em lojas diferentes vendendo o mesmo produto.\n\n"
+    'PRODUTO GENÉRICO (sem marca e modelo no título, ex.: "Cadeira Gamer '
+    'Reclinável Preta"): category = o tipo padronizado ("cadeira gamer") '
+    'e brand/family/model = "" (vazio) -- a não ser que o título traga '
+    "marca/modelo, aí preencha normalmente.\n\n"
     "Nunca invente marca, família, modelo, variante, SKU, part number "
     "ou atributo que não esteja claramente presente no título. Cada um "
     "dos campos brand/family/model/variant/store_sku/manufacturer_"
     "part_number e cada valor de attributes deve ser uma palavra ou "
     "frase que aparece, ainda que com grafia/acentuação diferente, no "
     "próprio título recebido -- nunca conhecimento externo sobre o "
-    "produto. Preste atenção a SUFIXOS que mudam o modelo (ex.: "
-    '"B650" e "B650E" são placas-mãe DIFERENTES -- nunca omita a letra '
-    "final se ela estiver no título) e a variantes que mudam o produto "
-    'mesmo com o mesmo modelo (ex.: "DDR4" vs "DDR5" são versões de '
-    "memória diferentes da mesma placa-mãe -- sempre capture isso como "
-    "atributo quando aparecer). Se o título não permitir identificar "
-    "marca, família E modelo com segurança, devolva strings vazias "
-    '("") nesses campos em vez de adivinhar.'
+    "produto. Se o título não permitir identificar marca, família E "
+    'modelo com segurança, devolva strings vazias ("") nesses campos em '
+    "vez de adivinhar."
 )
 
 _SYSTEM_PROMPT = (
@@ -119,6 +133,12 @@ _PAGE_CONTEXT_ADDENDUM = (
 )
 
 _PAGE_SYSTEM_PROMPT = _SYSTEM_PROMPT + _PAGE_CONTEXT_ADDENDUM
+
+
+def _with_vocabulary(prompt: str, vocabulary: IdentityVocabulary | None) -> str:
+    """TASK-129: todo prompt de extração leva o vocabulário (categorias
+    oficiais + grafias já aprovadas + aliases) -- a IA nunca escreve livre."""
+    return f"{prompt}\n\n{render_vocabulary_prompt(vocabulary)}"
 
 
 def grounding_evidence(raw_title: str, page_context: str | None = None) -> str:
@@ -237,6 +257,7 @@ def build_partial_link(
     brand: str | None,
     family: str | None,
     page_context: str | None = None,
+    vocabulary: IdentityVocabulary | None = None,
 ) -> PartialProductLink | None:
     """Categoria é um RÓTULO de classificação (a IA normaliza, ex.:
     "gpu" para "Placa de Vídeo"). Marca e família são FATOS do anúncio:
@@ -251,21 +272,36 @@ def build_partial_link(
     resolução e "hyperx" depois, lido do candidato `pending_review` (que
     guarda slug); e um vínculo parcial "cpu/amd" nunca casaria com os
     produtos de identidade exata da mesma marca."""
-    label = _slug(category or "")[:80]
-    if not label:
-        return None
     title_normalized = normalize_for_grounding(
         grounding_evidence(raw_title, page_context)
     )
 
-    def _grounded(value: str | None) -> str | None:
-        cleaned = (value or "").strip()
-        if cleaned and tokens_present(title_normalized, cleaned):
-            return _slug(cleaned)[:160] or None
-        return None
+    alias_category = (vocabulary or IdentityVocabulary()).canonical_category(category)
 
+    def _grounded(attribute: str, value: str | None) -> str | None:
+        cleaned = (value or "").strip()
+        if not cleaned:
+            return None
+        evidence = _grounding_value(
+            vocabulary, alias_category, attribute, cleaned, title_normalized
+        )
+        return cleaned if tokens_present(title_normalized, evidence) else None
+
+    # TASK-129: grounding confere o que está ESCRITO; só depois a grafia
+    # vira a oficial (categoria do registro, alias de marca/família).
+    canonical = canonicalize_fields(
+        vocabulary,
+        category=category,
+        brand=_grounded("brand", brand),
+        family=_grounded("family", family),
+    )
+    label = _slug(canonical.category)[:80]
+    if not label:
+        return None
     return PartialProductLink(
-        category=label, brand=_grounded(brand), family=_grounded(family)
+        category=label,
+        brand=(_slug(canonical.brand)[:160] or None) if canonical.brand else None,
+        family=(_slug(canonical.family)[:160] or None) if canonical.family else None,
     )
 
 
@@ -425,6 +461,29 @@ def tokens_present(raw_title_normalized: str, value: str) -> bool:
     return _compact_run_matches(title_tokens, _compact_alnum(value))
 
 
+def _grounding_value(
+    vocabulary: IdentityVocabulary | None,
+    category: str,
+    attribute: str,
+    value: str,
+    raw_title_normalized: str,
+) -> str:
+    """O que o grounding confere para marca/família: o próprio valor
+    quando está no título; senão a grafia alternativa de um alias ATIVO
+    que leva a esse valor e está no título (TASK-129 -- "Kingston" em
+    "Memória Fury Beast" via fury -> kingston). Sem alias, o valor fica
+    como veio e o grounding reprova normalmente -- nunca inventa."""
+    if vocabulary is None or not value or tokens_present(raw_title_normalized, value):
+        return value
+    source = vocabulary.alias_source_in(
+        category,
+        attribute,
+        value,
+        lambda raw: tokens_present(raw_title_normalized, raw),
+    )
+    return source or value
+
+
 def _is_grounded(
     raw_title_normalized: str,
     *,
@@ -474,6 +533,7 @@ def evaluate_ai_identity_extraction(
     extraction: AIIdentityExtraction,
     *,
     page_context: str | None = None,
+    vocabulary: IdentityVocabulary | None = None,
 ) -> EvaluatedIdentityExtraction:
     """Núcleo determinístico: decide se uma extração da IA é confiável
     o bastante para `status="approved"` -- nunca a própria IA decide
@@ -489,23 +549,43 @@ def evaluate_ai_identity_extraction(
     raw_title_normalized = normalize_for_grounding(
         grounding_evidence(raw_title, page_context)
     )
+    category = (vocabulary or IdentityVocabulary()).canonical_category(
+        extraction.category
+    )
     grounded = _is_grounded(
         raw_title_normalized,
-        brand=extraction.brand,
-        family=extraction.family,
+        brand=_grounding_value(
+            vocabulary, category, "brand", extraction.brand, raw_title_normalized
+        ),
+        family=_grounding_value(
+            vocabulary, category, "family", extraction.family, raw_title_normalized
+        ),
         model=extraction.model,
         variant=extraction.variant,
         store_sku=extraction.store_sku,
         manufacturer_part_number=extraction.manufacturer_part_number,
         attributes=extraction.attributes,
     )
-    resolved = build_resolved_variant_from_fields(
+    # TASK-129: o grounding acima conferiu a grafia do título; a
+    # identidade usa a grafia oficial (registro de categorias + aliases).
+    canonical = canonicalize_fields(
+        vocabulary,
         category=extraction.category,
         brand=extraction.brand,
         family=extraction.family,
+    )
+    # Cor nunca separa produto (decisão do usuário, 2026-09-27): sai da
+    # variante e dos atributos que entram na chave.
+    variant, identity_attributes = strip_color(
+        extraction.variant, extraction.attributes
+    )
+    resolved = build_resolved_variant_from_fields(
+        category=canonical.category,
+        brand=canonical.brand or "",
+        family=canonical.family or "",
         model=extraction.model,
-        variant=extraction.variant,
-        attributes=extraction.attributes,
+        variant=variant,
+        attributes=identity_attributes,
     )
     status = "approved" if (grounded and resolved is not None) else "pending_review"
     return EvaluatedIdentityExtraction(
@@ -523,6 +603,7 @@ async def extract_product_identity_via_ai(
     profile: UserRole,
     requested_at: datetime | None = None,
     page_context: str | None = None,
+    vocabulary: IdentityVocabulary | None = None,
 ) -> AIExtractionResult | None:
     """Chama a IA (via `AIProviderManager` -> César Core) para
     estruturar um título bruto -- `None` em qualquer falha de rede/
@@ -556,7 +637,9 @@ async def extract_product_identity_via_ai(
         profile=profile,
         purpose=EXTRACT_IDENTITY_PURPOSE,
         messages=(
-            AIMessage(AIMessageRole.SYSTEM, system_prompt),
+            AIMessage(
+                AIMessageRole.SYSTEM, _with_vocabulary(system_prompt, vocabulary)
+            ),
             AIMessage(AIMessageRole.USER, user_message),
         ),
         requested_at=moment,
@@ -641,6 +724,7 @@ async def extract_product_identities_via_ai_batch(
     raw_titles: list[str],
     profile: UserRole,
     requested_at: datetime | None = None,
+    vocabulary: IdentityVocabulary | None = None,
 ) -> list[AIExtractionResult | None]:
     """Mesmo contrato de `extract_product_identity_via_ai`, mas manda um
     LOTE de títulos numa única chamada de IA (`request.purpose=
@@ -700,7 +784,9 @@ async def extract_product_identities_via_ai_batch(
         profile=profile,
         purpose=BATCH_EXTRACT_IDENTITY_PURPOSE,
         messages=(
-            AIMessage(AIMessageRole.SYSTEM, _BATCH_SYSTEM_PROMPT),
+            AIMessage(
+                AIMessageRole.SYSTEM, _with_vocabulary(_BATCH_SYSTEM_PROMPT, vocabulary)
+            ),
             AIMessage(AIMessageRole.USER, user_message),
         ),
         requested_at=moment,

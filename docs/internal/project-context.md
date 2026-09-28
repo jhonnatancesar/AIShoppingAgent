@@ -1,7 +1,16 @@
 # Project Context
 
-**Estado em 2026-09-26 — `v1.3.26` pronta, publicada em `origin/main`,
-tag e deploy pendentes (`DEC-134`):** TASK-124 a 128 concluídas.
+**Estado em 2026-09-27 — `v1.3.28` (TASK-129) publicada em `origin/main`
+com tag (`DEC-135`), deploy pendente:** a IA preenche a identidade com o
+vocabulário do sistema, a cor não separa mais produto, a tabela de
+grafias tem a lista inicial e aprende com o mesmo part number, e o
+backfill usa lotes de 5 com pausa. Head do Alembic: `20260927_0001`. A
+PROD está na `v1.3.27` (servidor reformatado, banco restaurado, só o
+banco e o César Core de pé); o dry-run ainda não foi refeito com esta
+versão.
+
+**Estado em 2026-09-26 — `v1.3.26` publicada em `origin/main` com as
+tags `v1.3.26`/`v1.3.27` (`DEC-134`):** TASK-124 a 128 concluídas.
 - **124**: o cupom avisa mesmo com o preço de tabela igual.
 - **125**: preço com cupom no gráfico de histórico.
 - **126**: DEV vê todos os itens, de todos os usuários.
@@ -10,8 +19,9 @@ tag e deploy pendentes (`DEC-134`):** TASK-124 a 128 concluídas.
   "não entendi, descreva melhor" e aviso de cota de IA.
 - **Cotas**: ADMIN/DEV com 50 missões e 300 vagas de loja.
 
-Todas as flags do GG nascem ativas. O head do Alembic é `20260926_0003`.
-PROD ainda está na `v1.3.25`, com o backfill da TASK-123 pausado. O
+Todas as flags do GG nascem ativas. O head do Alembic era `20260926_0003`.
+Nessa data a PROD ainda estava na `v1.3.25`, com o backfill da TASK-123
+pausado. O
 próximo deploy segue a sequência "serviços parados até rodar o script" de
 `docs/operations/prod-deployment-handoff.md`. Validação:
 - integração: 385/385;

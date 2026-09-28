@@ -1,5 +1,27 @@
 # Decision Log
 
+## DEC-135 — TASK-129: vocabulário padronizado na extração de identidade, cor fora da identidade e tabela de grafias preenchida
+
+- **Data:** 2026-09-27.
+- **Origem:** dry-run real do backfill da TASK-123 na PROD. A IA escrevia
+  categoria e marca livremente, e o mesmo produto se separava em dois.
+- **Decisões do usuário (explícitas, em chat):**
+  - "primeiro vc resolve que a IA veja essas tabelas e passa explicação
+    de cada item e o que ela deve preencher". Item genérico ganha
+    categoria genérica padronizada, sem marca/modelo salvo se o título
+    trouxer.
+  - "a questão da cor é somente se o usuário especificar no pedido da
+    missão": cor nunca separa identidade; a relevância filtra pela cor
+    pedida.
+  - Lotes menores com pausa e nova tentativa; preencher a tabela de
+    grafias (lista inicial, aprendizado só com prova, resto como
+    sugestão para revisão).
+- **Regra técnica:** o grounding confere o que está escrito no título
+  (ou uma grafia alternativa ativa que leva ao valor); a canonicalização
+  vem depois. Aprendizado automático de grafia só com o mesmo part
+  number do fabricante; a recusa humana (`rejected`) nunca é desfeita.
+- **Detalhe:** `docs/tasks/TASK-129.md`.
+
 ## DEC-134 — Rodada 2026-09-21 a 26: TASK-124 a 128, flags sempre ativas e deploy da `v1.3.26` com serviços parados
 
 - **Data:** 2026-09-26.
