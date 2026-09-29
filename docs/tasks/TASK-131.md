@@ -1,7 +1,7 @@
 # TASK-131 — Identidade: iPhone 1/2 TB, palavras de edição (MAX/PZ/Pro Max) e RAM lida como CPU
 
 Status: **Concluída em DEV (2026-09-28), commit local, sem push e sem tag.**
-Vai na `v1.3.30` (tag só quando as tasks pendentes ficarem prontas, decisão do
+Vai na `v1.4.0` (tag só quando as tasks pendentes ficarem prontas, decisão do
 usuário). Origem: relatório do backfill da TASK-123 na PROD com a `v1.3.29` e
 correção manual do mesmo dia (`DEC-139`).
 

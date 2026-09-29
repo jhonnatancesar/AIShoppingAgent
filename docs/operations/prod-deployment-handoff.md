@@ -102,6 +102,77 @@ cesar-core.compose.yaml` (deste próprio checkout do GG Oferta, já em
 como imagem padrão — nenhum `docker build`, nenhum clone do repositório
 `cesar-core`.
 
+## Atualização para a `v1.4.0` (PROD já na `v1.3.29`, serviços parados)
+
+Situação esperada: servidor na `v1.3.29`, backfill da TASK-123 **já
+rodado** (`DEC-139`), só o banco e o César Core de pé, nenhum processo do
+GG rodando. A regra ⛔ acima (não subir o GG até o script de
+dedupe/backfill terminar) **já foi cumprida** nesse backfill: depois desta
+seção, o passo 9 sobe os serviços. **Não rode o backfill de novo** (os 45
+títulos sem vínculo continuam com o worker, que lê a página do produto).
+
+O que a `v1.4.0` traz (TASK-131 e TASK-132; detalhes em `docs/tasks/`):
+iPhone de 1/2 TB, palavras de edição (MAX, PZ, Pro Max) e memória RAM
+nunca lida como CPU; **troca automática de produto em anúncio** (o anúncio
+que passa a descrever outro produto é detectado pelo título, confirmado em
+2 coletas seguidas, e o histórico antigo fica numa oferta arquivada); e o
+**catálogo de nomenclaturas** (nome + part number) consultado antes da IA.
+Sem flag nova (a lógica nova roda sob `AISHOPPING_PRODUCT_IDENTITY_
+LEARNING_ENABLED`, já ativa) e uma configuração nova opcional:
+`AISHOPPING_LISTING_TITLE_CHECK_BUDGET` (padrão `3`, títulos novos que a
+varredura resolve por ciclo; `0` desliga só a varredura de IA — o padrão
+basta).
+
+1. Confirme que continua tudo parado (passo 1 da seção "Deploy da
+   `v1.3.26`", só a parte "Confira que ficou tudo parado").
+2. `git fetch --tags` e `git checkout v1.4.0`. Confirme com
+   `git describe --tags` (deve mostrar exatamente `v1.4.0`).
+3. **Backup do banco** — [`docs/operations/backup-restore.md`](backup-restore.md),
+   seção "Gerar um backup". Confirme que o arquivo não ficou vazio. Esta
+   versão traz migrations: não pule o backup.
+4. `docker compose build api telegram_notifier` (sem `up`).
+5. Migrations: `docker compose run --rm api python -m alembic -c
+   alembic.ini upgrade head`. O head esperado é **`20260928_0002`** (duas
+   migrations novas, ambas só criam tabelas vazias: `20260928_0001`
+   catálogo de nomenclaturas e `20260928_0002` vigilância de título do
+   anúncio). Confirme com `docker compose run --rm api python -m alembic
+   -c alembic.ini current`.
+6. **Popular o catálogo** (zero IA, idempotente). Primeiro sem gravar:
+   ```powershell
+   docker compose run --rm api python -m scripts.seed_identity_catalog --dry-run
+   ```
+   Confira o resumo: entradas da pré-lista, entradas aprendidas dos
+   produtos já aprovados com part number e a lista de **CONFLITO** (mesmo
+   part number em duas identidades — esses NÃO entram; só reporte). Se o
+   resumo estiver coerente, grave:
+   ```powershell
+   docker compose run --rm api python -m scripts.seed_identity_catalog --apply
+   docker compose run --rm api python -m scripts.review_identity_catalog --list
+   ```
+   A listagem deve mostrar as entradas `[active/seed]` e `[active/learned]`.
+   Rodar `--apply` de novo não duplica nada.
+7. **Relatório curto** em `C:\App\relatorios\` (crie a pasta se não
+   existir): caminho do backup, head do Alembic, números do `--dry-run`
+   e do `--apply`, lista de conflitos.
+8. Conferência que **não** precisa de ação: as fusões de identidade já
+   feitas no banco não mudam. O catálogo só age em título novo.
+9. Iniciar os serviços (passo 7 da seção "Deploy da `v1.3.26`"):
+   ```powershell
+   docker compose up -d api telegram_notifier
+   powershell -File scripts\manage_collection_worker_task.ps1 -Action Enable
+   Enable-ScheduledTask -TaskName "AIShoppingCoupon-Worker"
+   powershell -File ops_agent\manage_ops_agent_service.ps1 -Action Start
+   ```
+   Confirme `GET /health`/`GET /ready` (seção 8) e o worker coletando.
+10. **Provas funcionais desta versão** (depois do primeiro ciclo de coleta):
+    - no log do worker não aparece `listing_identity_tracking_failed` nem
+      `listing_title_sweep_cycle_failed`; pode aparecer o evento
+      `listing_title_sweep` (só quando um título de anúncio mudou);
+    - a Offer `196b2fa2` (Amazon `B0D8WH9NG3`, antes "GIGABYTE B550 AORUS
+      Elite AX V3"): após 2 coletas seguidas ela deve estar no produto novo,
+      com uma oferta arquivada `B0D8WH9NG3~arquivada-…` guardando o
+      histórico antigo. Só conferir e reportar; não corrigir à mão.
+
 ## Atualização para a `v1.3.29` (PROD já na `v1.3.27`, serviços parados)
 
 Situação esperada: servidor na `v1.3.27`, banco restaurado, só o banco e
@@ -477,6 +548,9 @@ Worker), nesta ordem, sem pular etapas:
 Repita para os dois repositórios antes de prosseguir para a seção 3.
 
 ## 3. Migrations necessárias (só GG Oferta)
+
+**Atualização (`v1.4.0`):** head **`20260928_0002`** (TASK-132: catálogo de
+nomenclaturas e vigilância de título do anúncio), depois de `20260927_0001`.
 
 **Atualização (`v1.3.28`):** head **`20260927_0001`** (TASK-129: lista
 inicial de grafias em `product_identity_aliases` + status `rejected`),

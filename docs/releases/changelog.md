@@ -1,6 +1,6 @@
 # Changelog
 
-## `v1.3.30` (em preparo, sem tag) — TASK-131 e TASK-132: iPhone de 1/2 TB, palavras de edição, troca de produto em anúncio e catálogo de nomenclaturas
+## `v1.4.0` — TASK-131 e TASK-132: iPhone de 1/2 TB, palavras de edição, troca de produto em anúncio e catálogo de nomenclaturas
 
 O backfill da PROD mostrou três erros de código, hoje já corrigidos à mão no
 banco. O iPhone 17 Pro Max de 1 TB era fundido no Pro porque o extrator nunca

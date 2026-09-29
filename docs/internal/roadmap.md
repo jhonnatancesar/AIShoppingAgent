@@ -1,7 +1,7 @@
 # Roadmap
 
 **Atualização 2026-09-28 (noite):** TASK-131 e TASK-132 concluídas com commit
-local, sem push/tag/deploy (a `v1.3.30` agrupa as duas). TASK-132: (A) anúncio
+local, sem push/tag/deploy (a `v1.4.0` agrupa as duas). TASK-132: (A) anúncio
 que muda de produto é detectado e o cadastro trocado, preservando o histórico;
 (B) catálogo de nomenclaturas (nome + part number) consultado antes da IA. Duas
 migrations novas. Ver `docs/tasks/TASK-132.md`.

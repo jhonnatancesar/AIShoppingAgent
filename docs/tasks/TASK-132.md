@@ -1,6 +1,6 @@
 # TASK-132 — Anúncio que muda de produto (troca automática de cadastro) e catálogo de nomenclaturas
 
-Status: **Concluída localmente (2026-09-28), commit local, sem push/tag/deploy.**
+Status: **Concluída (2026-09-28), publicada na tag `v1.4.0`; deploy PROD pendente.**
 Duas partes, ambas implementadas. Duas migrations novas (`20260928_0001` e
 `20260928_0002`), sem flag nova (nascem ativas, sob a flag existente
 `product_identity_learning_enabled`).
