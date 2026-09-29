@@ -61,7 +61,12 @@ class _ParsedFamily:
 
 _Extractor = Callable[[str], _ParsedFamily | None]
 _SPACE = re.compile(r"\s+")
-_STORAGE = re.compile(r"(?<!\d)(\d{2,4})\s*(GB|TB)(?![A-Z])")
+# TASK-131: `\d{1,4}` (era `\d{2,4}`) -- "1 TB"/"2TB" têm um dígito e nunca
+# casavam, então todo iPhone/Galaxy de 1 ou 2 TB saía do extrator
+# determinístico e ia para a IA (achado do backfill de PROD, 2026-09-28).
+# Valor < 64 GB segue ignorado em `_storage_attribute`, então "8GB" (RAM)
+# continua não sendo armazenamento.
+_STORAGE = re.compile(r"(?<!\d)(\d{1,4})\s*(GB|TB)(?![A-Z])")
 
 
 def _normalized(text: str) -> str:
@@ -599,10 +604,30 @@ _CPU_COMPATIBILITY_PHRASE = re.compile(
 _NON_CPU_PRODUCT_CATEGORY = re.compile(r"\bPLACA.?MAE\b|\bMOTHERBOARD\b|\bMAINBOARD\b")
 
 
+# TASK-131 (backfill de PROD, 2026-09-28): título de MEMÓRIA RAM com "AMD EXPO"
+# ou "Intel XMP" e uma frequência de 4-5 dígitos ("6000MT/s", "5200MHz") era
+# lido como CPU Ryzen/Core -- a guarda acima só conhecia placa-mãe. O substantivo
+# da categoria vem NO COMEÇO do título ("Kingston Memória de desktop...",
+# "Corsair Memória Vengeance...", "Memoria RAM..."); um Processador real abre
+# com "Processador"/"CPU" ou com a própria marca+linha, e "memória DDR5"
+# no meio de um título de CPU (especificação) não entra nesta regra.
+_MEMORY_LEADING_WORDS = frozenset({"MEMORIA", "MEMORY", "RAM", "DIMM", "SODIMM"})
+_CPU_LEADING_WORDS = frozenset({"PROCESSADOR", "PROCESSOR", "CPU"})
+_LEADING_TOKENS = 6
+
+
+def _starts_as_memory_module(text: str) -> bool:
+    leading = text.split()[:_LEADING_TOKENS]
+    return any(token in _MEMORY_LEADING_WORDS for token in leading) and not any(
+        token in _CPU_LEADING_WORDS for token in leading
+    )
+
+
 def _mentions_cpu_only_as_compatibility(text: str) -> bool:
     return (
         _CPU_COMPATIBILITY_PHRASE.search(text) is not None
         or _NON_CPU_PRODUCT_CATEGORY.search(text) is not None
+        or _starts_as_memory_module(text)
     )
 
 

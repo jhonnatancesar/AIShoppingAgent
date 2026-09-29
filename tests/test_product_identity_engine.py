@@ -17,6 +17,7 @@ from app.products.identity import (
     resolve_monitoring_identity,
     resolve_monitoring_identity_for_family,
     resolve_monitoring_identity_for_resolved_product,
+    resolve_product_variant,
 )
 
 # ---------------------------------------------------------------------------
@@ -415,11 +416,63 @@ def test_family_scope_unknown_category_never_resolves() -> None:
 
 def test_storage_attribute_converts_terabytes_to_gigabytes() -> None:
     """`_storage_attribute` converte TB para GB antes de aplicar o piso de
-    64GB que distingue armazenamento de RAM nos títulos atuais. O regex
-    (`\\d{2,4}\\s*(GB|TB)`) exige 2-4 dígitos -- por isso o teste usa um
-    valor de 2 dígitos, não o "1TB"/"2TB" de uma capacidade real de
-    smartphone (esses nem chegam a casar com o regex)."""
+    64GB que distingue armazenamento de RAM nos títulos atuais. Desde a
+    TASK-131 o regex aceita 1-4 dígitos: "1 TB"/"2TB" (capacidade real de
+    smartphone) casam -- antes exigia 2-4 e todo iPhone de 1/2 TB caía fora
+    do extrator determinístico."""
     assert _storage_attribute("SSD Externo 16TB") == (("storage_gb", "16384"),)
+    assert _storage_attribute("IPHONE 17 PRO (1 TB) PRATEADO") == (
+        ("storage_gb", "1024"),
+    )
+    assert _storage_attribute("IPHONE 17 PRO MAX 2TB") == (("storage_gb", "2048"),)
+    # 1 dígito em GB continua abaixo do piso de 64 GB (RAM, não storage)
+    assert _storage_attribute("IPHONE 17 PRO 256GB 8GB RAM") == (("storage_gb", "256"),)
+
+
+def test_iphone_one_and_two_terabytes_resolve_deterministically() -> None:
+    """TASK-131: os "Pro Max" de 1 TB eram fundidos nos "Pro" porque o extrator
+    não os reconhecia e a IA reaproveitava o cadastro do Pro."""
+    pro = resolve_product_variant("Apple iPhone 17 Pro (1 TB) - Prateado")
+    pro_max = resolve_product_variant("Apple iPhone 17 Pro Max (1 TB) - Azul intenso")
+    pro_max_2tb = resolve_product_variant("iPhone 17 Pro Max Apple 2TB, Câmera Tripla")
+    assert (pro.model, pro.variant, dict(pro.attributes)) == (
+        "17",
+        "pro",
+        {"storage_gb": "1024"},
+    )
+    assert (pro_max.model, pro_max.variant) == ("17", "pro-max")
+    assert dict(pro_max_2tb.attributes) == {"storage_gb": "2048"}
+    assert pro.identity_key != pro_max.identity_key != pro_max_2tb.identity_key
+
+
+def test_memory_module_titles_are_never_read_as_cpu() -> None:
+    """TASK-131: "AMD EXPO"/"Intel XMP" + frequência de 4-5 dígitos fazia a
+    memória RAM virar `cpu/amd/ryzen` (`modelo=6000mt`)."""
+    for title in (
+        "Kingston Memória de desktop FURY Beast 8GB 6000MT/s DDR5 CL36 | AMD EXPO"
+        " | Módulo único | KF560C36BBE-8",
+        "CORSAIR Memória Vengeance DDR5 RAM 16GB (1x16GB) 5200MHz CL40 AMD Expo"
+        " Intel XMP 3.0 - Cinza (CMK16GX5M1B5200Z40)",
+        "Kingston Módulo único de memória de desktop Fury Beast RGB 16GB 5200MT/s"
+        " DDR5 CL40 AMD Expo",
+        "Memória RAM Kingston Fury Beast 8GB DDR4 3200MHz Intel Core i5 12400",
+    ):
+        assert resolve_product_variant(title) is None, title
+
+
+def test_real_cpu_titles_still_resolve_after_the_memory_guard() -> None:
+    """A guarda de memória olha só o COMEÇO do título: "memória DDR4" no meio
+    de uma especificação de CPU não bloqueia."""
+    cpu = resolve_product_variant(
+        "Processador AMD Ryzen 5 5600, 3.5GHz, Cache 35MB, AM4, Memória DDR4"
+    )
+    assert (cpu.category, cpu.family, cpu.model) == ("cpu", "ryzen-5", "5600")
+    intel = resolve_product_variant("Processador Intel Core i5 12400F 2.5GHz LGA1700")
+    assert (intel.brand, intel.model) == ("intel", "12400f")
+    assert (
+        resolve_product_variant("AMD Ryzen 7 5700 8 núcleos 65W soquete AM4").model
+        == "5700"
+    )
 
 
 # ---------------------------------------------------------------------------

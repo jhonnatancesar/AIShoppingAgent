@@ -46,6 +46,7 @@ from app.products.identity_ai import (
     AIIdentityExtraction,
     AIPartialExtraction,
     PartialProductLink,
+    _strip_token_edges,
     build_partial_link,
     evaluate_ai_identity_extraction,
     extract_product_identities_via_ai_batch,
@@ -226,6 +227,40 @@ def _has_unrecognized_model_suffix(
     return False
 
 
+# TASK-131 (backfill de PROD, 2026-09-28): o reuso por tokens devolvia o
+# PRIMEIRO candidato aprovado cujos tokens de marca/família/modelo aparecem no
+# título -- palavras de edição extras ("MAX", "PZ", o "Max" de "Pro Max") não
+# impediam o reuso, e "MSI MAG X870E Tomahawk MAX WiFi" caía no cadastro da
+# Tomahawk sem MAX, o iPhone 17 Pro Max no do Pro. Lista fechada e curta, de
+# propósito: fora dela ficam "AIR" ("Air Cooler"), "MINI" ("Mini-ITX"), "SUPER"
+# ("Super Retina") e "SE", que aparecem em título de produto sem mudar o modelo.
+# Custo assumido: título com uma dessas palavras que o candidato não conhece
+# vai para a IA (uma chamada a mais) em vez de ser fundido no produto errado.
+_EDITION_WORDS = frozenset(
+    {"MAX", "PLUS", "ULTRA", "PRO", "LITE", "FE", "PZ", "TI", "XT", "XTX"}
+)
+
+
+def _has_unknown_edition_word(
+    raw_title_normalized: str,
+    candidate: ProductIdentityCandidate | _ArbitrationCandidate,
+) -> bool:
+    """`True` quando o título traz uma palavra de edição (`_EDITION_WORDS`) que o
+    candidato não registra em marca/família/modelo/variante/atributos."""
+    known: set[str] = set()
+    for field in (
+        candidate.brand,
+        candidate.family,
+        candidate.model,
+        candidate.variant,
+    ):
+        known.update(normalize_for_grounding(field or "").split())
+    for value in candidate.attributes.values():
+        known.update(normalize_for_grounding(value).split())
+    title_words = {_strip_token_edges(token) for token in raw_title_normalized.split()}
+    return any(word in title_words and word not in known for word in _EDITION_WORDS)
+
+
 async def _find_reusable_candidate_by_tokens(
     session: AsyncSession, raw_title_normalized: str
 ) -> ProductIdentityCandidate | None:
@@ -269,6 +304,8 @@ async def _find_reusable_candidate_by_tokens(
             tokens_present(raw_title_normalized, value)
             for value in candidate.attributes.values()
         ):
+            continue
+        if _has_unknown_edition_word(raw_title_normalized, candidate):
             continue
         known_tokens = frozenset(
             normalize_for_grounding(candidate.variant).split()
@@ -452,6 +489,7 @@ async def _find_same_model_candidates(
             tokens_present(raw_title_normalized, field)
             for field in (candidate.brand, candidate.family, candidate.model)
         )
+        and not _has_unknown_edition_word(raw_title_normalized, candidate)
     ]
 
 

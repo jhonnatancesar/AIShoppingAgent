@@ -1,5 +1,17 @@
 # Changelog
 
+## `v1.3.30` (em preparo, sem tag) — TASK-131: iPhone de 1/2 TB, palavras MAX/PZ/Pro Max e memória lida como CPU
+
+O backfill da PROD mostrou três erros de código, hoje já corrigidos à mão no
+banco. O iPhone 17 Pro Max de 1 TB era fundido no Pro porque o extrator nunca
+lia capacidade de um dígito ("1 TB", "2TB"); agora lê. Placas como a "MSI MAG
+X870E Tomahawk MAX" eram fundidas na versão sem MAX porque o reuso por palavras
+do título ignorava palavras de edição; agora MAX, PZ, Pro, Plus, Ultra, Lite,
+FE, Ti, XT e XTX que o cadastro não conhece mandam o título para a IA em vez de
+fundir. E memória RAM com "AMD EXPO" ou "Intel XMP" e uma frequência no título
+era lida como processador; agora título que começa como memória nunca é CPU.
+Sem migration e sem flag nova.
+
 ## `v1.3.29` — TASK-130: kit/combo nunca vira oferta, alias por prefixo
 
 O dry-run da `v1.3.28` mostrou um processador vendido junto com uma

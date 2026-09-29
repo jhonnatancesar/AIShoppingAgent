@@ -11,6 +11,7 @@ from app.products.identity_learning import (
     _ArbitrationCandidate,
     _classify_candidate_against_extraction,
     _classify_dimension,
+    _has_unknown_edition_word,
     _has_unrecognized_model_suffix,
     _listing_evidence_from_candidate,
     _listing_evidence_from_extraction,
@@ -269,3 +270,66 @@ class TestListingEvidenceFromExtraction:
             manufacturer_part_number="MPN-1",
             attributes=extraction.attributes,
         )
+
+
+class TestUnknownEditionWord:
+    """TASK-131: "MAX"/"PZ"/"Pro Max" no título, que o candidato aprovado não
+    conhece, impedem o reuso por tokens (a IA decide, em vez de fundir)."""
+
+    @staticmethod
+    def _msi(family: str, variant: str = "base") -> _ArbitrationCandidate:
+        return _ArbitrationCandidate(
+            category="motherboard",
+            brand="msi",
+            family=family,
+            model="x870e",
+            variant=variant,
+            attributes={},
+            store_sku=None,
+            manufacturer_part_number=None,
+            family_key="k",
+            identity_key="i",
+        )
+
+    def test_max_title_is_not_reused_for_the_non_max_candidate(self) -> None:
+        title = "MSI MAG X870E TOMAHAWK MAX WIFI PZ, ATX - SUPORTA RYZEN"
+        assert _has_unknown_edition_word(title, self._msi("mag-tomahawk")) is True
+
+    def test_candidate_that_knows_the_word_is_still_reused(self) -> None:
+        title = "MSI MAG X870E TOMAHAWK MAX WIFI, ATX"
+        assert _has_unknown_edition_word(title, self._msi("mag-tomahawk-max")) is False
+        # o "PZ" é da variante: com ela registrada, também reaproveita
+        assert (
+            _has_unknown_edition_word(
+                title + " PZ", self._msi("mag-tomahawk-max", variant="pz")
+            )
+            is False
+        )
+
+    def test_title_without_edition_words_is_reused(self) -> None:
+        title = "PLACA MAE MSI MAG X870E TOMAHAWK WIFI DDR5 AM5"
+        assert _has_unknown_edition_word(title, self._msi("mag-tomahawk")) is False
+
+    def test_pro_max_iphone_is_not_reused_for_pro(self) -> None:
+        pro = _ArbitrationCandidate(
+            category="smartphone",
+            brand="apple",
+            family="iphone",
+            model="17-pro",
+            variant="base",
+            attributes={},
+            store_sku=None,
+            manufacturer_part_number=None,
+            family_key="k",
+            identity_key="i",
+        )
+        assert _has_unknown_edition_word("APPLE IPHONE 17 PRO MAX 1TB", pro) is True
+        assert _has_unknown_edition_word("APPLE IPHONE 17 PRO 1TB", pro) is False
+
+    def test_words_outside_the_closed_list_never_block(self) -> None:
+        title = "PLACA MAE MSI MAG X870E TOMAHAWK WIFI MINI ITX AIR COOLER SUPER RETINA"
+        assert _has_unknown_edition_word(title, self._msi("mag-tomahawk")) is False
+
+    def test_punctuation_stuck_to_the_word_is_ignored(self) -> None:
+        title = "MSI MAG X870E TOMAHAWK (MAX), WIFI"
+        assert _has_unknown_edition_word(title, self._msi("mag-tomahawk")) is True
