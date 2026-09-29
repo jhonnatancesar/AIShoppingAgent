@@ -1,5 +1,15 @@
 # Roadmap
 
+**Atualização 2026-09-28 (madrugada):** TASK-132 registrada, NÃO iniciada —
+(A) anúncio que muda de produto: o GG detecta e troca o cadastro preservando
+o histórico; (B) catálogo de nomenclaturas (nome + part number) consultado
+antes da IA. Não bloqueia a `v1.3.30`. Ver `docs/tasks/TASK-132.md`.
+
+**Atualização 2026-09-28 (noite):** TASK-131 registrada, NÃO iniciada,
+aguardando o "vai" do usuário — iPhone 1/2 TB, palavras de edição
+(MAX/PZ/Pro Max) e reparo do que o backfill fundiu errado. Ver
+`docs/tasks/TASK-131.md`. PROD na `v1.3.29`, serviços do GG parados.
+
 **Atualização 2026-09-28:** TASK-130 fechada e publicada na tag
 `v1.3.29` — kit/combo não vira mais oferta, alias por marca casa por
 prefixo. Ver `DEC-137`/`DEC-138` e `docs/tasks/TASK-130.md`. Deploy

@@ -1,5 +1,47 @@
 # Decision Log
 
+## DEC-139 — Backfill da TASK-123 rodado em PROD na `v1.3.29`: 341/386 resolvidos, combo apagado, serviços continuam parados
+
+- **Data:** 2026-09-28.
+- **Execução:** sessão de Claude no servidor PROD, seguindo o prompt
+  desta sessão (backup -> `--apply` direto, sem `--count-only`/
+  `--dry-run` -- decisão do usuário do turno anterior).
+- **Backup:** `postgres-20260928T172249Z-antes-apply-v1.3.29.dump`
+  (12,96 MB), restaurado num banco descartável para validar antes de
+  confiar nele.
+- **Resultado do backfill** (4 rodadas de `--limit 100`, ver relatório
+  completo no servidor): 341/386 Products resolvidos (133 vínculo novo,
+  96 duplicata desfeita, 112 vínculo parcial), 0 categoria/marca fora
+  do padrão, 0 sugestão de alias nova. 45 continuam sem vínculo -- a
+  rodada 4 parou por esgotamento das cotas gratuitas de IA do dia.
+- **Achado novo, real:** o último recurso da cascata gratuita
+  (`oc/mimo-v2.5-free`, via César Core/OmniRoute) devolve HTTP 403 "só
+  pode ser usado de dentro do OpenCode" quando chamado de fora --
+  fallback documentado mas que não funciona de fato. Não corrigido
+  nesta sessão (fica fora do GG Oferta, é do OmniRoute).
+- **Decisão do usuário, direta na sessão de PROD:** apagar o Product
+  combo "Processador AMD Ryzen 7 7800X3D + Placa-Mãe ASUS ROG STRIX
+  X870E-H GAMING WIFI7" ("esse combo pode apagar do banco"), que o
+  backfill tinha fundido com a CPU sozinha -- 1 Product, 2 Offers, 146
+  `price_observations`, 146 `offer_installment_options`, 4
+  `mission_offer_relevance`, numa transação, com backup extra antes
+  (`postgres-20260928T184620Z-antes-apagar-combo.dump`). A CPU real
+  ("Amd Ryzen-7 7800x3d") não foi afetada, seguiu com 14 Offers.
+- **Estado do banco depois:** 305 Products, 413 Offers.
+- **Nenhum serviço do GG foi religado** -- api, telegram_notifier,
+  worker de coleta, Coupon Worker e Ops Agent continuam parados,
+  aguardando decisão do usuário sobre os próximos passos.
+- **Achado operacional novo:** Docker Desktop não subiu sozinho depois
+  de um reboot da máquina, mesmo configurado para iniciar com o
+  Windows -- precisa investigar antes de depender disso em produção.
+- **Achados de qualidade sem correção** (candidatos a TASK-131): ASUS
+  ROG Strix X870E-H Gaming WiFi7 em 3 identidades; duas placas "MAX"
+  fundidas com a versão sem "MAX"; GIGABYTE B550 AORUS Elite AX V3 com
+  `model=b550` genérico demais.
+- **Detalhe:** relatório completo em
+  `C:\App\relatorios\relatorio-v1.3.29-2026-09-28.txt`, no servidor
+  (não versionado neste repositório).
+
 ## DEC-138 — TASK-130 fechada e publicada: tag `v1.3.29`, item 3 fica só registrado
 
 - **Data:** 2026-09-28.

@@ -1,14 +1,37 @@
 # Project Context
 
-**Estado em 2026-09-28 — `v1.3.29` (TASK-130) publicada em `origin/main`
-com tag (`DEC-138`), deploy pendente:** anúncio de kit/combo (processador
-+ placa-mãe etc.) deixa de virar oferta rastreada; alias de marca casa
-por prefixo de token ("Fury Beast" bate com o alias "Fury"), valendo no
-caminho ao vivo e no script de dedupe/backfill. Sem migration nova
-(head do Alembic segue `20260927_0001`). Nenhuma flag nova/alterada. A
-PROD está na `v1.3.27`; o deploy leva as tags `v1.3.28` e `v1.3.29`
-juntas, com o backfill da TASK-123 rodado direto (sem dry-run, decisão
-do usuário) e com backup do banco antes.
+**Estado em 2026-09-28 (fim de tarde) — PROD atualizada para `v1.3.29`,
+backfill da TASK-123 rodado de verdade, serviços do GG AINDA PARADOS
+(`DEC-139`):** código em `v1.3.29` (TASK-129+130), head do Alembic
+`20260927_0001`. Backup validado (restaurado num banco descartável)
+antes do `--apply`. Backfill rodou direto (sem dry-run, decisão do
+usuário) em 4 rodadas de `--limit 100`: **341 dos 386 Products sem
+vínculo foram resolvidos** (133 vínculo novo + 96 duplicata desfeita +
+112 vínculo parcial), **0 categoria/marca fora do padrão**. **45
+continuam sem vínculo** — a rodada 4 parou porque as cotas gratuitas de
+IA do dia se esgotaram (Gemini ADMIN_DEV 20 req/dia, Groq com pausas
+longas, OpenRouter free devolvendo JSON vazio, e o último recurso da
+cascata `oc/mimo-v2.5-free` **não funciona de fora do OpenCode**, HTTP
+403 — achado novo, quebra o fallback documentado em
+`project_omniroute_ai_providers_not_configured`). Um Product combo
+("Processador + Placa-mãe") identificado como a CPU sozinha foi
+apagado do banco, com backup e conferência de dependências antes,
+autorização do usuário direta na sessão de PROD ("esse combo pode
+apagar do banco"); a CPU real não foi afetada. PROD hoje: 305 Products,
+413 Offers. **Nenhum processo do GG foi religado ainda** — api,
+telegram_notifier, worker de coleta, Coupon Worker e Ops Agent
+continuam parados, aguardando decisão do usuário sobre os próximos
+passos (religar agora vs. terminar os 45 restantes vs. tratar os 3
+achados de qualidade abaixo). Achado operacional novo: o Docker Desktop
+não subiu sozinho depois de um reboot da máquina às 13:37, mesmo
+configurado para iniciar com o Windows — precisa investigar antes de
+depender disso. Achados de qualidade sem correção (candidatos a
+TASK-131): ASUS ROG Strix X870E-H Gaming WiFi7 segue separado em 3
+identidades (variante grafada diferente); duas placas "MAX" foram
+fundidas com a versão sem "MAX" (modelo diferente na prática); GIGABYTE
+B550 AORUS Elite AX V3 ficou com `model=b550`, genérico demais.
+Relatório completo: `C:\App\relatorios\relatorio-v1.3.29-2026-09-28.txt`
+(no servidor, não neste repositório).
 
 **Estado em 2026-09-26 — `v1.3.26` publicada em `origin/main` com as
 tags `v1.3.26`/`v1.3.27` (`DEC-134`):** TASK-124 a 128 concluídas.
