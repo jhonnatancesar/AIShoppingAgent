@@ -1,5 +1,11 @@
 # Roadmap
 
+**Atualização 2026-09-28 (noite, 2):** TASK-133 registrada, NÃO iniciada —
+catálogo de nomenclaturas como fonte principal de identidade e de deduplicação
+(aprender por nome, ampliar cobertura, unificar grafias, dedupe sem IA, medição);
+IA só quando o catálogo não tiver. Aguarda o levantamento de gasto de IA em PROD.
+Ver `docs/tasks/TASK-133.md`.
+
 **Atualização 2026-09-28 (noite):** TASK-131 e TASK-132 concluídas com commit
 local, sem push/tag/deploy (a `v1.4.0` agrupa as duas). TASK-132: (A) anúncio
 que muda de produto é detectado e o cadastro trocado, preservando o histórico;
