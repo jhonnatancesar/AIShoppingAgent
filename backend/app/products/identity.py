@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from hashlib import sha256
@@ -285,6 +285,65 @@ def build_resolved_variant_from_fields(
         # não é subconjunto dos atributos -- aqui `required_attributes`
         # é sempre `frozenset()` (acima), então esse ramo é
         # estruturalmente inalcançável por qualquer chamador real.
+        return None
+    return ResolvedProductVariant(
+        category=parsed.category,
+        brand=parsed.brand,
+        family=parsed.family,
+        model=parsed.model,
+        variant=parsed.variant,
+        attributes=parsed.attributes,
+        family_key=_family_key(parsed),
+        identity_key=identity_key,
+        label=_label(parsed),
+    )
+
+
+def catalog_family_key(*, category: str, brand: str, family: str, model: str) -> str:
+    """`family_key` de uma entrada do catálogo (TASK-132): a MESMA fórmula dos
+    extratores (`_family_key`), sobre os campos em slug."""
+    return _key((_slug(category), _slug(brand), _slug(family), _slug(model)))
+
+
+def resolve_catalog_family(
+    *,
+    category: str,
+    brand: str,
+    family: str,
+    model: str,
+    variant: str | None,
+    attributes: Mapping[str, str],
+    required_attributes: Iterable[str],
+    title: str,
+) -> ResolvedProductVariant | None:
+    """Identidade de uma entrada do catálogo com atributo obrigatório (TASK-132,
+    celular: a capacidade decide o produto). Monta pelo MESMO caminho dos
+    extratores (`_ParsedFamily`/`_identity_key`/`_label`), com o atributo lido do
+    TÍTULO exatamente como eles leem (`storage_gb`, sem virar `storage-gb` como
+    faz `build_resolved_variant_from_fields`) -- assim um extrator determinístico
+    futuro da mesma família converge para a mesma `identity_key`. Sem o atributo
+    obrigatório no título, `None` (fail-closed, igual ao extrator)."""
+    required = frozenset(required_attributes)
+    found = dict(attributes)
+    if "storage_gb" in required:
+        found.update(dict(_storage_attribute(_normalized(title))))
+    category_slug, brand_slug = _slug(category), _slug(brand)
+    family_slug, model_slug = _slug(family), _slug(model)
+    variant_slug = _slug(variant) if variant else "base"
+    if not all((category_slug, brand_slug, family_slug, model_slug, variant_slug)):
+        return None
+    parsed = _ParsedFamily(
+        category=category_slug,
+        brand=brand_slug,
+        family=family_slug,
+        model=model_slug,
+        variant=variant_slug,
+        variant_explicit=variant is not None,
+        attributes=tuple(sorted(found.items())),
+        required_attributes=required,
+    )
+    identity_key = _identity_key(parsed)
+    if identity_key is None:
         return None
     return ResolvedProductVariant(
         category=parsed.category,

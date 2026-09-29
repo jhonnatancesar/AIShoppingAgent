@@ -1,6 +1,6 @@
 # Changelog
 
-## `v1.3.30` (em preparo, sem tag) — TASK-131: iPhone de 1/2 TB, palavras MAX/PZ/Pro Max e memória lida como CPU
+## `v1.3.30` (em preparo, sem tag) — TASK-131 e TASK-132: iPhone de 1/2 TB, palavras de edição, troca de produto em anúncio e catálogo de nomenclaturas
 
 O backfill da PROD mostrou três erros de código, hoje já corrigidos à mão no
 banco. O iPhone 17 Pro Max de 1 TB era fundido no Pro porque o extrator nunca
@@ -10,7 +10,16 @@ do título ignorava palavras de edição; agora MAX, PZ, Pro, Plus, Ultra, Lite,
 FE, Ti, XT e XTX que o cadastro não conhece mandam o título para a IA em vez de
 fundir. E memória RAM com "AMD EXPO" ou "Intel XMP" e uma frequência no título
 era lida como processador; agora título que começa como memória nunca é CPU.
-Sem migration e sem flag nova.
+TASK-132: quando um anúncio passa a descrever outro produto (a versão padrão
+de um ASIN mudou, a loja reaproveitou o link), o GG detecta pelo título, espera
+duas coletas seguidas com o mesmo título novo e troca o cadastro: o histórico
+antigo fica numa oferta arquivada, ligada ao produto antigo, e o do produto novo
+recomeça. A IA só é chamada quando o título muda. Novo catálogo de nomenclaturas
+(nome e part number), consultado antes da IA, alimentado pelas identidades
+aprovadas e por uma pré-lista (iPhone 16e, Galaxy A/M/Z, Redmi, Poco, Moto G,
+Intel Core Ultra, Radeon RX, Intel Arc). Duas migrations
+(`20260928_0001`, `20260928_0002`); depois delas, rodar
+`scripts.seed_identity_catalog` (`--dry-run`, depois `--apply`). Sem flag nova.
 
 ## `v1.3.29` — TASK-130: kit/combo nunca vira oferta, alias por prefixo
 

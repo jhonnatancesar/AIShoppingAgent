@@ -12,6 +12,7 @@ from sqlalchemy import (
     ForeignKeyConstraint,
     Index,
     Numeric,
+    SmallInteger,
     String,
     Text,
     UniqueConstraint,
@@ -203,5 +204,56 @@ class OfferShortLink(Base):
         DateTime(timezone=True),
         nullable=False,
         default=utc_now,
+        server_default=func.now(),
+    )
+
+
+class OfferIdentityWatch(Base):
+    """TASK-132 (Parte A): vigilância do título de um anúncio já cadastrado.
+
+    Quando o título coletado deixa de descrever o produto ao qual a Offer está
+    ligada (a versão padrão de um anúncio da Amazon mudou, a loja reaproveitou o
+    link), esta linha acumula as coletas seguidas com o MESMO título novo
+    (`sightings`). Só depois de `LISTING_CHANGE_CONFIRMATIONS` avistamentos com
+    identidade conhecida e diferente a troca é aplicada (`app.offers.
+    listing_change`). Some quando o título volta a bater com o produto.
+    `needs_ai`: o título novo ainda não tem identidade sem IA; a varredura
+    `app.products.listing_title_sweep` resolve (com orçamento por ciclo)."""
+
+    __tablename__ = "offer_identity_watch"
+    __table_args__ = (
+        CheckConstraint("sightings >= 1", name="ck_offer_identity_watch_sightings"),
+        CheckConstraint("ai_attempts >= 0", name="ck_offer_identity_watch_ai_attempts"),
+        Index(
+            "ix_offer_identity_watch_needs_ai",
+            "first_seen_at",
+            postgresql_where="needs_ai",
+        ),
+    )
+
+    offer_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("offers.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    pending_title: Mapped[str] = mapped_column(Text, nullable=False)
+    pending_title_hash: Mapped[str] = mapped_column(String(80), nullable=False)
+    first_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    sightings: Mapped[int] = mapped_column(
+        SmallInteger, nullable=False, default=1, server_default="1"
+    )
+    needs_ai: Mapped[bool] = mapped_column(
+        nullable=False, default=False, server_default="false"
+    )
+    ai_attempts: Mapped[int] = mapped_column(
+        SmallInteger, nullable=False, default=0, server_default="0"
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+        onupdate=utc_now,
         server_default=func.now(),
     )

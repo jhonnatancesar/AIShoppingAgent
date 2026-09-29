@@ -29,6 +29,10 @@ from app.missions.models import (
 )
 from app.offers.models import Offer, OfferShortLink
 from app.products.identity_candidates import ProductIdentityCandidate
+from app.products.identity_catalog_models import (
+    ProductIdentityCatalogCode,
+    ProductIdentityCatalogEntry,
+)
 from app.products.models import Product
 from app.purchase.models import PurchaseConfirmation, PurchaseTrailEntry
 from app.quotas.models import SearchReceipt, SearchReceiptProduct
@@ -50,6 +54,8 @@ REGISTERED_MODELS = (
     User,
     Product,
     ProductIdentityCandidate,
+    ProductIdentityCatalogEntry,
+    ProductIdentityCatalogCode,
     Store,
     Seller,
     Offer,

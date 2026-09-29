@@ -167,6 +167,7 @@ def test_metadata_contains_only_implemented_tables() -> None:
         "mission_product_selections",
         "collection_runs",
         "price_observations",
+        "offer_identity_watch",
         "offer_installment_options",
         "offer_short_links",
         "events",
@@ -184,6 +185,8 @@ def test_metadata_contains_only_implemented_tables() -> None:
         "search_receipts",
         "search_receipt_products",
         "product_identity_aliases",
+        "product_identity_catalog_codes",
+        "product_identity_catalog_entries",
         # TASK-112: Shared Monitoring (fases 1-3B).
         "monitoring_items",
         "mission_monitoring_items",

@@ -1,9 +1,10 @@
 # Roadmap
 
-**Atualização 2026-09-28 (madrugada):** TASK-132 registrada, NÃO iniciada —
-(A) anúncio que muda de produto: o GG detecta e troca o cadastro preservando
-o histórico; (B) catálogo de nomenclaturas (nome + part number) consultado
-antes da IA. Não bloqueia a `v1.3.30`. Ver `docs/tasks/TASK-132.md`.
+**Atualização 2026-09-28 (noite):** TASK-131 e TASK-132 concluídas com commit
+local, sem push/tag/deploy (a `v1.3.30` agrupa as duas). TASK-132: (A) anúncio
+que muda de produto é detectado e o cadastro trocado, preservando o histórico;
+(B) catálogo de nomenclaturas (nome + part number) consultado antes da IA. Duas
+migrations novas. Ver `docs/tasks/TASK-132.md`.
 
 **Atualização 2026-09-28 (noite):** TASK-131 registrada, NÃO iniciada,
 aguardando o "vai" do usuário — iPhone 1/2 TB, palavras de edição

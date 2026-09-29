@@ -1,5 +1,17 @@
 # Decision Log
 
+## DEC-140 — TASK-132: troca de produto em anúncio (histórico separado, 2 coletas) e catálogo de nomenclaturas antes da IA
+
+Decisões do usuário em 2026-09-28: (1) quando o anúncio muda de produto, o
+histórico antigo fica numa Offer arquivada (`superseded_by_id`), não se mistura
+com o novo; (2) a troca só vale após 2 coletas seguidas com o mesmo título novo
+(anúncio com versões alterna a versão padrão); (3) IA só quando o título muda,
+nunca na detecção; (4) o catálogo de nomenclaturas cobre todas as categorias, é
+alimentado automaticamente pelas identidades aprovadas com part number mais uma
+pré-lista, e é consultado antes do cache e da IA. Entrada recusada nunca é
+reaprendida. Offer com confirmação de compra (imutável) nunca é trocada.
+Implementação e testes: `docs/tasks/TASK-132.md`.
+
 ## DEC-139 — Backfill da TASK-123 rodado em PROD na `v1.3.29`: 341/386 resolvidos, combo apagado, serviços continuam parados
 
 - **Data:** 2026-09-28.

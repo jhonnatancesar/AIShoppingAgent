@@ -46,7 +46,6 @@ from app.products.identity_ai import (
     AIIdentityExtraction,
     AIPartialExtraction,
     PartialProductLink,
-    _strip_token_edges,
     build_partial_link,
     evaluate_ai_identity_extraction,
     extract_product_identities_via_ai_batch,
@@ -66,6 +65,8 @@ from app.products.identity_arbiter import (
     arbitrate_same_product,
 )
 from app.products.identity_candidates import ProductIdentityCandidate
+from app.products.identity_catalog import learn_catalog_entry, lookup_catalog_identity
+from app.products.identity_edition import has_unknown_edition_word
 from app.products.identity_vocabulary import (
     IdentityVocabulary,
     load_identity_vocabulary,
@@ -227,38 +228,10 @@ def _has_unrecognized_model_suffix(
     return False
 
 
-# TASK-131 (backfill de PROD, 2026-09-28): o reuso por tokens devolvia o
-# PRIMEIRO candidato aprovado cujos tokens de marca/família/modelo aparecem no
-# título -- palavras de edição extras ("MAX", "PZ", o "Max" de "Pro Max") não
-# impediam o reuso, e "MSI MAG X870E Tomahawk MAX WiFi" caía no cadastro da
-# Tomahawk sem MAX, o iPhone 17 Pro Max no do Pro. Lista fechada e curta, de
-# propósito: fora dela ficam "AIR" ("Air Cooler"), "MINI" ("Mini-ITX"), "SUPER"
-# ("Super Retina") e "SE", que aparecem em título de produto sem mudar o modelo.
-# Custo assumido: título com uma dessas palavras que o candidato não conhece
-# vai para a IA (uma chamada a mais) em vez de ser fundido no produto errado.
-_EDITION_WORDS = frozenset(
-    {"MAX", "PLUS", "ULTRA", "PRO", "LITE", "FE", "PZ", "TI", "XT", "XTX"}
-)
-
-
-def _has_unknown_edition_word(
-    raw_title_normalized: str,
-    candidate: ProductIdentityCandidate | _ArbitrationCandidate,
-) -> bool:
-    """`True` quando o título traz uma palavra de edição (`_EDITION_WORDS`) que o
-    candidato não registra em marca/família/modelo/variante/atributos."""
-    known: set[str] = set()
-    for field in (
-        candidate.brand,
-        candidate.family,
-        candidate.model,
-        candidate.variant,
-    ):
-        known.update(normalize_for_grounding(field or "").split())
-    for value in candidate.attributes.values():
-        known.update(normalize_for_grounding(value).split())
-    title_words = {_strip_token_edges(token) for token in raw_title_normalized.split()}
-    return any(word in title_words and word not in known for word in _EDITION_WORDS)
+# TASK-131: guarda de palavras de edição (MAX/PZ/Pro Max) no reuso por tokens e
+# na zona cinzenta -- a lógica mora em `identity_edition` (compartilhada com o
+# catálogo, TASK-132); o nome antigo fica como alias.
+_has_unknown_edition_word = has_unknown_edition_word
 
 
 async def _find_reusable_candidate_by_tokens(
@@ -530,6 +503,12 @@ async def _prepare_resolution(
     if deterministic is not None:
         return _PreparedResolution(done=True, resolved=deterministic)
 
+    # TASK-132: catálogo de nomenclaturas (part number/nome curados ou já
+    # aprendidos) ANTES do cache por título, do reuso por palavras e da IA.
+    cataloged = await lookup_catalog_identity(session, raw_title)
+    if cataloged is not None:
+        return _PreparedResolution(done=True, resolved=cataloged)
+
     title_hash = normalized_title_hash(raw_title)
     existing = await _find_candidate(session, title_hash)
     if existing is not None:
@@ -599,6 +578,42 @@ async def _prepare_resolution(
         title_hash=title_hash,
         arbitration_candidates=tuple(arbitration_candidates),
     )
+
+
+@dataclass(frozen=True, slots=True)
+class TitleIdentity:
+    """Resultado de `lookup_title_identity` (TASK-132, Parte A).
+
+    `resolved`: identidade conhecida SEM IA; `cached_unresolved`: o título já foi
+    avaliado e não fechou identidade exata (revisão, vínculo parcial, aguardando
+    página); `unknown`: nunca visto e nada o reconhece."""
+
+    status: str
+    resolved: ResolvedProductVariant | None = None
+
+
+async def lookup_title_identity(session: AsyncSession, raw_title: str) -> TitleIdentity:
+    """Quem é este título, sem gastar IA e SEM gravar nada -- a mesma ordem de
+    `_prepare_resolution` (extrator determinístico, catálogo, cache por título,
+    reuso por palavras), só que somente leitura. Usado para vigiar o título de um
+    anúncio já cadastrado (`app.offers.listing_change`)."""
+    deterministic = resolve_product_variant(raw_title)
+    if deterministic is not None:
+        return TitleIdentity("resolved", deterministic)
+    cataloged = await lookup_catalog_identity(session, raw_title)
+    if cataloged is not None:
+        return TitleIdentity("resolved", cataloged)
+    existing = await _find_candidate(session, normalized_title_hash(raw_title))
+    if existing is not None:
+        if existing.status == "approved":
+            return TitleIdentity("resolved", _resolved_from_candidate(existing))
+        return TitleIdentity("cached_unresolved")
+    reusable = await _find_reusable_candidate_by_tokens(
+        session, normalize_for_grounding(raw_title)
+    )
+    if reusable is not None:
+        return TitleIdentity("resolved", _resolved_from_candidate(reusable))
+    return TitleIdentity("unknown")
 
 
 async def _reuse_approved_identity(
@@ -822,6 +837,11 @@ async def _finish_resolution_with_extraction(
         # fila de revisão, mas o produto já ganha o vínculo parcial com a
         # parte que aparece no título (TASK-128, "não pode não resolver").
         return partial_link
+    # TASK-132: identidade aprovada com part number entra sozinha no catálogo
+    # (melhor esforço, nunca derruba a resolução).
+    await learn_catalog_entry(
+        session, evaluated.resolved, evaluated.raw.manufacturer_part_number
+    )
     return evaluated.resolved
 
 

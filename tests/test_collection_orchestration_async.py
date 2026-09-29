@@ -1022,6 +1022,9 @@ def test_offer_and_seller_resolution_reuse_existing(monkeypatch) -> None:
     item = PriceNormalizer().normalize_offer(_raw())
     existing_offer = SimpleNamespace(id=uuid4())
     monkeypatch.setattr(
+        "app.collection.orchestration.track_listing_identity", AsyncMock()
+    )
+    monkeypatch.setattr(
         "app.collection.orchestration._resolve_seller", AsyncMock(return_value=None)
     )
     monkeypatch.setattr(
@@ -1343,6 +1346,9 @@ def test_resolve_offer_reused_offer_keeps_already_identified_product(
     )
     existing_offer = Offer(id=uuid4(), product_id=current_product.id, image_url=None)
     session.get.return_value = current_product
+    monkeypatch.setattr(
+        "app.collection.orchestration.track_listing_identity", AsyncMock()
+    )
     monkeypatch.setattr(
         "app.collection.orchestration._resolve_seller", AsyncMock(return_value=None)
     )

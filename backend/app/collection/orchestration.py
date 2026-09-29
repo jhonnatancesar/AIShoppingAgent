@@ -141,6 +141,7 @@ from app.missions.schedule import (
     staggered_next_run_at,
 )
 from app.missions.service import promote_confirmed_product_identity_async
+from app.offers.listing_change import track_listing_identity
 from app.offers.models import Offer
 from app.products.identity import (
     IDENTITY_VERSION,
@@ -155,6 +156,7 @@ from app.products.identity_learning import (
     resolve_or_learn_product_variant,
 )
 from app.products.identity_page import resolve_awaiting_page_titles
+from app.products.listing_title_sweep import sweep_listing_titles
 from app.products.models import Product
 from app.search.cesar_core_fetch import CesarCoreFetchProvider
 from app.search.manager import build_web_search_manager
@@ -1334,6 +1336,38 @@ class CollectionOrchestrator:
                 },
             )
 
+    async def _sweep_listing_titles(self) -> None:
+        settings = self._settings
+        if (
+            settings is None
+            or not settings.product_identity_learning_enabled
+            or settings.listing_title_check_budget <= 0
+        ):
+            return
+        try:
+            summary = await sweep_listing_titles(
+                self._session_factory,
+                ai_manager=self._ai_manager,
+                profile=self._ai_profile,
+                arbiter_ai_manager=self._arbiter_ai_manager,
+                budget=settings.listing_title_check_budget,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning("listing_title_sweep_cycle_failed", exc_info=True)
+            return
+        if summary.claimed:
+            logger.info(
+                "listing_title_sweep",
+                extra={
+                    "claimed": summary.claimed,
+                    "changed": summary.changed,
+                    "resolved_same": summary.resolved_same,
+                    "unresolved": summary.unresolved,
+                },
+            )
+
     async def run_batch(
         self, *, now: datetime | None = None, limit: int = 25
     ) -> CollectionBatchResult:
@@ -1362,6 +1396,10 @@ class CollectionOrchestrator:
         # a leitura da página do produto ANTES das coletas novas -- em
         # sequência, orçamento pequeno, nunca derruba o ciclo.
         await self._resolve_awaiting_page_titles(effective_now)
+
+        # TASK-132 (Parte A): títulos novos de anúncios já cadastrados que
+        # nenhuma regra local reconhece -- IA só quando o título muda.
+        await self._sweep_listing_titles()
 
         # Fase A: transação curta, só dados locais -- nenhum Playwright,
         # HTTP ou IA acontece dentro deste bloco. `claim_due_work`
@@ -3206,6 +3244,14 @@ async def _resolve_offer(session: AsyncSession, store_id: UUID, item: Any) -> Of
         item.raw_offer.url,
     )
     if offer is not None:
+        # TASK-132: o título coletado ainda descreve o produto da Offer? Só
+        # banco, dentro de savepoint -- nunca derruba a coleta.
+        await track_listing_identity(
+            session,
+            offer,
+            raw_title=item.raw_offer.title,
+            collected_at=item.raw_offer.collected_at,
+        )
         resolved_product = await _resolve_global_product(session, item.raw_offer.title)
         target_product = None
         if resolved_product is not None:

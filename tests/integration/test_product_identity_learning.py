@@ -586,7 +586,10 @@ def test_matching_manufacturer_part_number_merges_without_spending_an_arbiter_ca
 
     assert from_amazon is not None and from_kabum is not None
     assert amazon_manager.calls == 1
-    assert kabum_manager.calls == 1
+    # TASK-132: a primeira resolução aprovada com part number entra no catálogo,
+    # que resolve o título da segunda loja pelo MESMO part number ANTES da IA --
+    # nem a extração é chamada (era 1 chamada antes do catálogo).
+    assert kabum_manager.calls == 0
     assert kabum_manager.arbiter_calls == 0, (
         "manufacturer_part_number igual (só com pontuação diferente) é "
         "evidência forte o bastante para fundir sem gastar uma chamada "
@@ -599,11 +602,8 @@ def test_matching_manufacturer_part_number_merges_without_spending_an_arbiter_ca
 
     with integration_database.sessions.begin() as session:
         candidates = list(session.scalars(select(ProductIdentityCandidate)))
-        assert len(candidates) == 2
-        assert {c.store_sku for c in candidates} == {
-            "AMZ-B650TUF-001",
-            "KBM-99887",
-        }, "store_sku precisa continuar distinto por loja, nunca comparado entre lojas"
+        assert len(candidates) == 1, "a segunda loja foi resolvida pelo catálogo"
+        assert {c.store_sku for c in candidates} == {"AMZ-B650TUF-001"}
         assert all(c.manufacturer_part_number is not None for c in candidates)
 
 
