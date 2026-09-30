@@ -28,9 +28,11 @@ caminho normal e vira exceção, reduzindo o gasto de cota.
 - Regra: o sistema usa o catálogo; se ele não tiver, tenta a busca; só então IA.
 - **Busca de identidade fica no César Core.** O GG apenas solicita a busca e
   envia o pedido ao Core; a lista de sites, a leitura e o consenso vivem no
-  Core. Sites: os **sites oficiais das próprias marcas** (a lista por categoria
-  é mantida no Core, aprovada pelo usuário). Regra do projeto: o GG nunca fala
-  direto com site nem provedor.
+  Core. Sites: os já sugeridos (**TechPowerUp, PassMark, Adrenaline, Hardware
+  Barato**, e outros de confiança que o usuário indicar) **mais os sites
+  oficiais das próprias marcas**; a lista por categoria é mantida no Core,
+  aprovada pelo usuário. Regra do projeto: o GG nunca fala direto com site nem
+  provedor.
 - Nenhum texto externo é entregue a IA nesse caminho: o Core extrai só campos
   fechados (categoria, marca, família, modelo, variante, part number,
   atributos) e devolve estruturado. Aceita só com consenso (2+ fontes da lista,
@@ -76,7 +78,8 @@ reuso por palavras → **busca no Core** → página (Core, depois worker) → I
 
 ## Dependência no César Core (repositório `cesar-core`, fora deste)
 
-Capacidade nova "identidade de produto por busca": lista de domínios oficiais
+Capacidade nova "identidade de produto por busca": lista de domínios permitidos
+(TechPowerUp, PassMark, Adrenaline, Hardware Barato e os oficiais das marcas)
 por categoria/marca, extração determinística de campos fechados, consenso entre
 fontes, sem entregar conteúdo a IA, tempo e volume limitados por pedido. O
 contrato exato (campos e códigos de status) é definido junto com o usuário antes
