@@ -56,7 +56,8 @@ from app.products.identity_ai import (
     values_match_ignoring_punctuation,
 )
 from app.products.identity_ai_failure import (
-    AI_BREAKER,
+    breaker_open_until,
+    breaker_trip,
     clear_ai_failed,
     is_retry_due,
     record_ai_failure,
@@ -931,7 +932,7 @@ async def _register_ai_failure(
     (título pulado porque o disjuntor está aberto) não gasta tentativa e espera
     até o disjuntor fechar."""
     real_now = utc_now()
-    AI_BREAKER.trip(failure, real_now)
+    await breaker_trip(session, failure, real_now)
     skipped = failure.kind == "circuit_open"
     await record_ai_failure(
         session,
@@ -941,7 +942,7 @@ async def _register_ai_failure(
         now=now,
         source_product_id=source_product_id,
         count_attempt=not skipped,
-        retry_at=AI_BREAKER.open_until(real_now) if skipped else None,
+        retry_at=await breaker_open_until(session, real_now) if skipped else None,
     )
     logger.info(
         "product_identity_ai_failure_recorded",
@@ -1092,8 +1093,9 @@ async def resolve_or_learn_product_variant(
     # TASK-129: o vocabulário (categorias oficiais, grafias aprovadas,
     # aliases) é lido ANTES do rollback -- a IA nunca escreve livre.
     vocabulary = await load_identity_vocabulary(session)
+    breaker_open = await breaker_open_until(session, utc_now()) is not None
     await session.rollback()
-    if AI_BREAKER.open_until(utc_now()) is not None:
+    if breaker_open:
         # TASK-133: a IA acabou de falhar por infraestrutura (cota, provedor,
         # tempo) -- não gasta chamada; o título ganha candidato `ai_failed`.
         extraction: AIExtractionResult | AIExtractionFailure = AIExtractionFailure(
@@ -1537,6 +1539,9 @@ async def reprocess_unresolved_products(
     vocabulary = await load_identity_vocabulary(session) if pending else None
     for start in range(0, len(pending), batch_size):
         chunk = pending[start : start + batch_size]
+        # Disjuntor compartilhado lido ANTES do rollback (nada de transação
+        # aberta durante a chamada de rede à IA).
+        breaker_open = await breaker_open_until(session, utc_now()) is not None
         # Mesmo motivo do rollback em `resolve_or_learn_product_variant`:
         # nunca segurar transação ociosa durante a chamada de rede à IA.
         # Seguro por causa do commit acima (bug 2): tudo que já foi
@@ -1549,7 +1554,7 @@ async def reprocess_unresolved_products(
         if start and batch_pause_seconds:
             await sleep(batch_pause_seconds)
         titles = [raw_title for _, raw_title, _ in chunk]
-        if AI_BREAKER.open_until(utc_now()) is not None:
+        if breaker_open:
             extractions = [AIExtractionFailure("circuit_open")] * len(chunk)
         else:
             extractions = await extract_product_identities_via_ai_batch(

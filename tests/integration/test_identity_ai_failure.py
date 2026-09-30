@@ -15,7 +15,7 @@ from app.products.identity_candidates import ProductIdentityCandidate
 from app.products.identity_learning import resolve_or_learn_product_variant
 from app.products.models import Product
 from app.users.models import UserRole
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 
 pytestmark = pytest.mark.integration
 
@@ -54,6 +54,13 @@ class _AI:
             content=self.content,
             finished_at=datetime.now(UTC),
         )
+
+
+def _close_breaker(integration_database) -> None:
+    """Simula a passagem do tempo: fecha o disjuntor local e o compartilhado."""
+    AI_BREAKER.reset()
+    with integration_database.sessions.begin() as session:
+        session.execute(text("DELETE FROM identity_ai_breaker"))
 
 
 def _resolve(integration_database, ai, now, title=TITLE, source_product_id=None):
@@ -102,7 +109,7 @@ def test_failure_leaves_a_candidate_and_waits_before_calling_the_ai_again(
     assert ai.calls == 1
 
     # depois do prazo: tenta, falha de novo, espera mais e conta a tentativa
-    AI_BREAKER.reset()
+    _close_breaker(integration_database)
     assert _resolve(integration_database, ai, T0 + timedelta(minutes=16)) is None
     row = _candidate(integration_database)
     assert (ai.calls, row.ai_attempts) == (2, 2)
@@ -113,7 +120,7 @@ def test_real_answer_replaces_the_failure_row(integration_database) -> None:
     grounded = "Memória Kingston Fury Beast 8GB DDR5 6000MHz KF560C36BBE-8"
     down = _AI(error=RuntimeError("fora"))
     _resolve(integration_database, down, T0, title=grounded)
-    AI_BREAKER.reset()
+    _close_breaker(integration_database)
 
     up = _AI(GOOD)
     resolved = _resolve(
@@ -164,7 +171,7 @@ def test_content_cap_without_a_source_product_is_terminal_and_visible(
 def test_infrastructure_failures_never_reach_the_cap(integration_database) -> None:
     quota = _AI(error=AIProviderQuotaExceeded())
     for n in range(8):
-        AI_BREAKER.reset()
+        _close_breaker(integration_database)
         _resolve(integration_database, quota, T0 + timedelta(days=n))
     row = _candidate(integration_database)
     assert (row.status, row.ai_error_kind, row.ai_attempts) == ("ai_failed", "quota", 8)
@@ -229,7 +236,7 @@ def test_page_sweep_refunds_the_attempt_when_the_ai_is_down(
 
     quota = _AI(error=AIProviderQuotaExceeded())
     for n in range(4):
-        AI_BREAKER.reset()
+        _close_breaker(integration_database)
         asyncio.run(
             resolve_awaiting_page_titles(
                 integration_database.async_sessions,
@@ -243,3 +250,87 @@ def test_page_sweep_refunds_the_attempt_when_the_ai_is_down(
     assert row.status == "awaiting_page", "queda de IA nunca vira terminal"
     assert row.page_attempts == 0
     assert quota.calls == 4
+
+
+def test_breaker_is_shared_across_processes_and_survives_restart(
+    integration_database,
+) -> None:
+    quota = _AI(error=AIProviderQuotaExceeded())
+    _resolve(integration_database, quota, T0)
+    assert quota.calls == 1
+
+    # "outro processo" ou restart: a memória local é zerada, o banco continua
+    AI_BREAKER.reset()
+    other = "Outra memória sem marca conhecida ABC 16GB DDR4 3200MHz"
+    assert _resolve(integration_database, quota, T0, title=other) is None
+    assert quota.calls == 1, "o disjuntor compartilhado pausou a IA"
+
+    with integration_database.sessions() as session:
+        stored = session.execute(
+            text("SELECT id, reason, open_until FROM identity_ai_breaker")
+        ).one()
+    assert (stored.id, stored.reason) == (1, "quota")
+    assert stored.open_until > datetime.now(UTC) - timedelta(days=1)
+
+
+def test_page_sweep_honors_the_shared_breaker_without_opening_the_page(
+    integration_database,
+) -> None:
+    from app.collection.contracts import ProductPageRead, ProductPageReadStatus
+    from app.offers.models import Offer
+    from app.products.identity_ai import AIExtractionFailure
+    from app.products.identity_ai_failure import breaker_trip
+    from app.products.identity_page import resolve_awaiting_page_titles
+    from app.stores.models import Store
+
+    title = "Cadeira outra misteriosa"
+    with integration_database.sessions.begin() as session:
+        store = session.scalar(select(Store).where(Store.code == "amazon"))
+        product = Product(id=uuid4(), name=title)
+        session.add(product)
+        session.flush()
+        session.add(
+            Offer(
+                product_id=product.id,
+                store_id=store.id,
+                external_id="PAGE-2",
+                url="https://amazon.example.test/dp/PAGE-2",
+            )
+        )
+        session.add(
+            ProductIdentityCandidate(
+                id=uuid4(),
+                raw_title=title,
+                normalized_title_hash=normalized_title_hash(title),
+                status="awaiting_page",
+                grounded=False,
+                source_product_id=product.id,
+                created_at=T0,
+            )
+        )
+
+    async def _trip():
+        async with integration_database.async_sessions() as session:
+            await breaker_trip(session, AIExtractionFailure("quota"), datetime.now(UTC))
+            await session.commit()
+
+    asyncio.run(_trip())
+    AI_BREAKER.reset()
+    opened: list[str] = []
+
+    async def reader(store_code, url):
+        opened.append(url)
+        return ProductPageRead(ProductPageReadStatus.READ, context="Categoria: x")
+
+    ai = _AI(GOOD)
+    asyncio.run(
+        resolve_awaiting_page_titles(
+            integration_database.async_sessions,
+            page_reader=reader,
+            ai_manager=ai,
+            budget=3,
+            now=datetime.now(UTC),
+        )
+    )
+    assert opened == [] and ai.calls == 0
+    assert _candidate(integration_database, title).page_attempts == 0

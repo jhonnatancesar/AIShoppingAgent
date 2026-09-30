@@ -41,6 +41,27 @@ from app.database.base import Base
 from app.database.time import utc_now
 
 
+class IdentityAIBreaker(Base):
+    """TASK-133: disjuntor COMPARTILHADO da IA de identidade -- uma única
+    linha (`id = 1`). Depois de uma falha de infraestrutura (cota, provedor,
+    tempo) a IA de identidade fica pausada para todos os processos (worker,
+    API, scripts) e sobrevive a restart, até `open_until`."""
+
+    __tablename__ = "identity_ai_breaker"
+    __table_args__ = (
+        CheckConstraint("id = 1", name="ck_identity_ai_breaker_single_row"),
+    )
+
+    id: Mapped[int] = mapped_column(SmallInteger, primary_key=True, default=1)
+    open_until: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    reason: Mapped[str] = mapped_column(String(40), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+
+
 class ProductIdentityCandidate(Base):
     """Uma proposta de identidade estruturada para UM título bruto
     específico -- nunca uma regra genérica/regex gerada por IA (risco

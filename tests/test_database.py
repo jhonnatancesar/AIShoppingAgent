@@ -184,6 +184,7 @@ def test_metadata_contains_only_implemented_tables() -> None:
         "admin_api_keys",
         "search_receipts",
         "search_receipt_products",
+        "identity_ai_breaker",
         "product_identity_aliases",
         "product_identity_catalog_codes",
         "product_identity_catalog_entries",

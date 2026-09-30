@@ -46,7 +46,7 @@ from app.products.identity_ai import (
     PartialProductLink,
     extract_product_identity_via_ai,
 )
-from app.products.identity_ai_failure import AI_BREAKER
+from app.products.identity_ai_failure import breaker_open_until, breaker_trip
 from app.products.identity_candidates import ProductIdentityCandidate
 from app.products.identity_learning import (
     _find_same_model_candidates,
@@ -241,7 +241,9 @@ async def _resolve_with_page(
     now: datetime,
     max_attempts: int,
 ) -> str:
-    if AI_BREAKER.open_until(utc_now()) is not None:
+    async with session_factory() as breaker_session:
+        breaker_open = await breaker_open_until(breaker_session, utc_now())
+    if breaker_open is not None:
         # TASK-133: IA acabou de falhar por infraestrutura -- nem abre a página.
         return await _refund_page_attempt(session_factory, claim)
     if claim.store_code is None or claim.url is None:
@@ -269,7 +271,8 @@ async def _resolve_with_page(
     if isinstance(extraction, AIExtractionFailure):
         if extraction.kind in INFRA_FAILURE_KINDS:
             # Cota/provedor/tempo: não conta tentativa e aciona o disjuntor.
-            AI_BREAKER.trip(extraction, utc_now())
+            async with session_factory() as breaker_session, breaker_session.begin():
+                await breaker_trip(breaker_session, extraction, utc_now())
             return await _refund_page_attempt(session_factory, claim)
         # Resposta fora do contrato: conta para o teto de leituras.
         return await _retry_later_or_give_up(

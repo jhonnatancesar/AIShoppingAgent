@@ -48,6 +48,7 @@ def _session() -> MagicMock:
     session.commit = AsyncMock()
     session.rollback = AsyncMock()
     session.scalars = AsyncMock()
+    session.scalar = AsyncMock(return_value=None)
     session.execute = AsyncMock()
     session.begin_nested = MagicMock(side_effect=lambda: _noop_cm())
     return session

@@ -9,7 +9,9 @@ mesmo título a cada coleta. Agora a falha vira um candidato `ai_failed`:
 - `ai_attempts`: chamadas de IA já feitas para o título;
 - `next_retry_at`: antes desse prazo a IA não é chamada de novo.
 
-Nasce sem nenhuma linha `ai_failed`.
+Também cria `identity_ai_breaker` (uma linha): o disjuntor COMPARTILHADO da
+IA de identidade, para worker, API e scripts pararem juntos e sobreviverem a
+restart. Nasce sem nenhuma linha `ai_failed` e com o disjuntor vazio.
 
 Revision ID: 20260929_0001
 Revises: 20260928_0002
@@ -38,6 +40,15 @@ _INDEX = "ix_product_identity_candidates_ai_failed"
 
 
 def upgrade() -> None:
+    op.create_table(
+        "identity_ai_breaker",
+        sa.Column("id", sa.SmallInteger(), nullable=False),
+        sa.Column("open_until", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("reason", sa.String(length=40), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+        sa.CheckConstraint("id = 1", name="ck_identity_ai_breaker_single_row"),
+        sa.PrimaryKeyConstraint("id", name=op.f("pk_identity_ai_breaker")),
+    )
     op.add_column(
         _TABLE,
         sa.Column("ai_attempts", sa.SmallInteger(), nullable=False, server_default="0"),
@@ -66,6 +77,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    op.drop_table("identity_ai_breaker")
     # `ai_failed` não cabe no CHECK antigo: some (era só registro de falha; a
     # próxima coleta chama a IA de novo, como antes desta migration).
     op.execute(f"DELETE FROM {_TABLE} WHERE status = 'ai_failed'")

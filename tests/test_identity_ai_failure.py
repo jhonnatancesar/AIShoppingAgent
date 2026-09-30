@@ -232,3 +232,58 @@ def test_clear_deletes_only_the_failure_row() -> None:
     session = _session()
     asyncio.run(clear_ai_failed(session, "hash"))
     session.execute.assert_awaited_once()
+
+
+# --- disjuntor compartilhado (tabela) com sessão simulada ------------------
+
+from app.products.identity_ai_failure import (  # noqa: E402
+    AI_BREAKER,
+    breaker_open_until,
+    breaker_trip,
+)
+from sqlalchemy.exc import SQLAlchemyError  # noqa: E402
+
+
+def test_open_until_reads_the_shared_row_and_caches_it_locally() -> None:
+    AI_BREAKER.reset()
+    until = NOW + timedelta(minutes=3)
+    session = _session(until)
+    assert asyncio.run(breaker_open_until(session, NOW)) == until
+    # segunda leitura: cache local, sem nova consulta
+    session.scalar.reset_mock()
+    assert asyncio.run(breaker_open_until(session, NOW)) == until
+    session.scalar.assert_not_awaited()
+    AI_BREAKER.reset()
+
+
+def test_open_until_ignores_expired_or_missing_rows_and_read_errors() -> None:
+    AI_BREAKER.reset()
+    assert asyncio.run(breaker_open_until(_session(None), NOW)) is None
+    assert (
+        asyncio.run(breaker_open_until(_session(NOW - timedelta(minutes=1)), NOW))
+        is None
+    )
+    broken = _session()
+    broken.scalar = AsyncMock(side_effect=SQLAlchemyError("x"))
+    assert asyncio.run(breaker_open_until(broken, NOW)) is None
+
+
+def test_trip_writes_the_shared_row_only_for_infrastructure_failures() -> None:
+    AI_BREAKER.reset()
+    session = _session()
+    asyncio.run(breaker_trip(session, AIExtractionFailure("invalid_response"), NOW))
+    session.execute.assert_not_awaited()
+
+    asyncio.run(breaker_trip(session, AIExtractionFailure("quota"), NOW))
+    session.execute.assert_awaited_once()
+    assert AI_BREAKER.open_until(NOW) == NOW + timedelta(minutes=5)
+    AI_BREAKER.reset()
+
+
+def test_trip_survives_a_write_error_keeping_the_local_breaker() -> None:
+    AI_BREAKER.reset()
+    session = _session()
+    session.execute = AsyncMock(side_effect=SQLAlchemyError("x"))
+    asyncio.run(breaker_trip(session, AIExtractionFailure("timeout"), NOW))
+    assert AI_BREAKER.open_until(NOW) is not None
+    AI_BREAKER.reset()

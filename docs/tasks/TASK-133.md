@@ -33,8 +33,9 @@ a devolver `AIExtractionFailure(kind)` (`quota`, `provider_unavailable`,
 `app/products/identity_ai_failure.py`: `record_ai_failure`, espera crescente
 (infraestrutura 15 min até 6 h; conteúdo 15 min, 1 h, 6 h, 24 h), teto de 5
 tentativas só para falha de conteúdo (então `awaiting_page` se há produto de
-origem, senão `unrecognized`), disjuntor por processo (5 min ou até o reset da
-cota, no máximo 1 h). `_prepare_resolution` respeita `next_retry_at`; a decisão
+origem, senão `unrecognized`), disjuntor **compartilhado** (tabela `identity_ai_breaker`, uma linha, na mesma
+migration; vale para worker, API e scripts e sobrevive a restart; o cache em
+memória é só local; 5 min ou até o reset da cota, no máximo 1 h). `_prepare_resolution` respeita `next_retry_at`; a decisão
 real substitui a linha `ai_failed`. A varredura de página devolve a tentativa
 quando a IA está fora, para queda de IA nunca virar `unrecognized`. Caminho em
 lote (backfill) também registra e respeita o disjuntor. Testes unitários e de

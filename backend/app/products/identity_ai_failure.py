@@ -14,11 +14,14 @@ não deixava rastro. Regra nova: nenhum título passa pela IA sem uma linha em
   (`invalid_response`/`request_rejected`) conta: no teto o título segue para a
   leitura de página (`awaiting_page`, se há produto de origem) ou termina
   `unrecognized`, visível para revisão.
-- `AIBreaker`: disjuntor por processo. Depois de uma falha de infraestrutura a
-  IA de identidade fica pausada para TODOS os títulos por alguns minutos (ou até
-  o reset da cota informado pelo provedor, no máximo 1 h), em vez de cada título
-  falhar um a um. Os títulos pulados também ganham candidato (`circuit_open`,
-  sem gastar tentativa).
+- Disjuntor COMPARTILHADO (tabela `identity_ai_breaker`, uma linha): depois de
+  uma falha de infraestrutura a IA de identidade fica pausada para TODOS os
+  títulos e TODOS os processos (worker, API, scripts) por alguns minutos (ou até
+  o reset da cota informado pelo provedor, no máximo 1 h), e sobrevive a restart.
+  `AIBreaker` em memória é só o cache local (vale também em dry-run, em que a
+  transação é descartada); `breaker_open_until`/`breaker_trip` são a fonte de
+  verdade. Os títulos pulados também ganham candidato (`circuit_open`, sem gastar
+  tentativa).
 - `clear_ai_failed`: a decisão real (a IA respondeu) substitui a linha `ai_failed`.
 """
 
@@ -28,13 +31,17 @@ import logging
 from datetime import datetime, timedelta
 from uuid import UUID, uuid4
 
-from sqlalchemy import delete, select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import delete, func, select
+from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.time import utc_now
 from app.products.identity_ai import INFRA_FAILURE_KINDS, AIExtractionFailure
-from app.products.identity_candidates import ProductIdentityCandidate
+from app.products.identity_candidates import (
+    IdentityAIBreaker,
+    ProductIdentityCandidate,
+)
 
 logger = logging.getLogger("app.products.identity_ai_failure")
 
@@ -68,8 +75,9 @@ def retry_delay(kind: str, attempts: int) -> timedelta:
 
 
 class AIBreaker:
-    """Disjuntor simples, em memória, por processo (worker e API são processos
-    diferentes e cada um aprende sozinho)."""
+    """Cache LOCAL do disjuntor (memória do processo). A fonte de verdade
+    compartilhada é a tabela `identity_ai_breaker` (`breaker_open_until`/
+    `breaker_trip`)."""
 
     def __init__(self) -> None:
         self._open_until: datetime | None = None
@@ -79,13 +87,21 @@ class AIBreaker:
             return self._open_until
         return None
 
-    def trip(self, failure: AIExtractionFailure, now: datetime) -> None:
+    def trip(self, failure: AIExtractionFailure, now: datetime) -> datetime | None:
+        """Abre (ou estende) o disjuntor local; devolve o novo `open_until`, ou
+        `None` quando a falha não é de infraestrutura."""
         if failure.kind not in BREAKER_KINDS:
-            return
+            return None
         wait = BREAKER_DEFAULT
         if failure.quota_reset_at is not None and failure.quota_reset_at > now:
             wait = min(failure.quota_reset_at - now, BREAKER_MAX)
         until = now + wait
+        if self._open_until is None or until > self._open_until:
+            self._open_until = until
+        return self._open_until
+
+    def remember(self, until: datetime) -> None:
+        """Guarda no cache local um `open_until` lido do banco."""
         if self._open_until is None or until > self._open_until:
             self._open_until = until
 
@@ -94,6 +110,55 @@ class AIBreaker:
 
 
 AI_BREAKER = AIBreaker()
+
+
+async def breaker_open_until(session: AsyncSession, now: datetime) -> datetime | None:
+    """Até quando a IA de identidade está pausada, ou `None`. Cache local
+    primeiro; senão a linha compartilhada. Leitura curta: quem chama deve ler
+    ANTES do rollback que antecede a chamada de rede (nunca deixar transação
+    aberta durante a IA)."""
+    local = AI_BREAKER.open_until(now)
+    if local is not None:
+        return local
+    try:
+        stored = await session.scalar(select(IdentityAIBreaker.open_until))
+    except SQLAlchemyError:
+        logger.warning("identity_ai_breaker_read_failed", exc_info=True)
+        return None
+    if isinstance(stored, datetime) and stored > now:
+        AI_BREAKER.remember(stored)
+        return stored
+    return None
+
+
+async def breaker_trip(
+    session: AsyncSession, failure: AIExtractionFailure, now: datetime
+) -> None:
+    """Abre o disjuntor (local e compartilhado). Nunca derruba o chamador: se a
+    gravação falhar, só o cache local vale. O commit é de quem chama."""
+    until = AI_BREAKER.trip(failure, now)
+    if until is None:
+        return
+    try:
+        async with session.begin_nested():
+            statement = insert(IdentityAIBreaker).values(
+                id=1, open_until=until, reason=failure.kind, updated_at=now
+            )
+            await session.execute(
+                statement.on_conflict_do_update(
+                    index_elements=[IdentityAIBreaker.id],
+                    set_={
+                        "open_until": func.greatest(
+                            IdentityAIBreaker.open_until,
+                            statement.excluded.open_until,
+                        ),
+                        "reason": failure.kind,
+                        "updated_at": now,
+                    },
+                )
+            )
+    except SQLAlchemyError:
+        logger.warning("identity_ai_breaker_write_failed", exc_info=True)
 
 
 def is_retry_due(candidate: ProductIdentityCandidate, now: datetime) -> bool:
