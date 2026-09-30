@@ -1,5 +1,17 @@
 # Decision Log
 
+## DEC-142 — Trava de "só modelo estável" removida: a aprovação do usuário pelo Telegram basta para trocar o modelo de IA
+
+Decisão do usuário em 2026-09-30, na TASK-134 do César Core (atualização de
+modelos): a regra antiga `DEC-050` (nenhum `latest`/preview, só o nível já
+aprovado) deixa de barrar a troca de modelo. O Core detecta e testa o modelo novo, o
+GG avisa no Telegram (o GG faz a ponte com o Telegram, o Core expõe rotas
+administrativas de listar/aprovar/recusar/desfazer) e, se o usuário aprovar, o modelo
+entra — estável ou preview. O aviso mostra se é estável ou preview e o resultado do
+teste, como informação; o desfazer é a segurança. Modo automático fica para depois.
+Registro completo: `docs/task-134-ai-quota-errors-and-model-updates.md` no repositório
+do César Core.
+
 ## DEC-141 — TASK-133: catálogo como fonte principal de identidade; busca de identidade no César Core; falha de IA sempre registrada
 
 Decisões do usuário em 2026-09-28/29: (1) o sistema usa o catálogo de
