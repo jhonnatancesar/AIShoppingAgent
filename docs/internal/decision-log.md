@@ -13,8 +13,8 @@ novo der muito problema depois da troca (taxa de problema alta na janela ou falh
 seguidas), o Core volta sozinho ao modelo anterior, avisa no Telegram e não o propõe
 de novo sem pedido do usuário; o desfazer manual também existe. Modo automático de
 troca fica para depois.
-Registro completo: `docs/task-134-ai-quota-errors-and-model-updates.md` no repositório
-do César Core.
+Registro completo: `docs/task-135-model-updates-telegram-approval.md` no repositório do
+César Core (TASK-135; os erros e a pausa até o dia virar estão na TASK-134 do Core).
 
 ## DEC-141 — TASK-133: catálogo como fonte principal de identidade; busca de identidade no César Core; falha de IA sempre registrada
 
