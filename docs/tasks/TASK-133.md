@@ -23,28 +23,71 @@ caminho normal e vira exceção, reduzindo o gasto de cota.
 - O catálogo só aprende sozinho quando a IA devolve part number; a pré-lista é
   pequena (celulares, Redmi/Poco, Moto G, Intel Core Ultra, Radeon RX, Arc).
 
-## Escopo proposto (a ordenar depois do levantamento de PROD)
+## Decisões do usuário (2026-09-28/29)
 
-1. **Aprender também por nome** (decidido pelo usuário): toda identidade
-   aprovada, com ou sem part number, grava marca + família + modelo (+ variante e
-   atributos obrigatórios) como entrada `learned`, com a guarda de palavras de
-   edição (Pro/Max/Plus…) e sem nunca sobrescrever entrada recusada.
-2. **Ampliar a cobertura** da pré-lista pelas famílias que mais repetem e mais
-   gastam IA (notebooks, monitores, SSD, RAM, placas-mãe, fontes, GPUs, CPUs…),
-   priorizadas pelas consultas de PROD; revisão do usuário antes de aplicar.
-3. **Unificar com as grafias de marca** (`product_identity_aliases`): uma única
-   fonte de verdade para "como se escreve isso", sem quebrar as 47 grafias ativas.
-4. **Deduplicação a partir do catálogo:** modo do script de reprocessamento que
-   varre produtos existentes e funde os que o catálogo mostra serem a mesma
-   identidade, sem IA. Só com backup, dry-run e autorização do usuário.
-5. **Qualidade e revisão:** relatório de conflitos de part number, nomes que se
-   chocam e entradas suspeitas; revisão por `scripts/review_identity_catalog.py`.
-   Um erro no catálogo se repete em todo título parecido, então recusa e
-   reativação continuam sendo o freio.
-6. **Medição:** contadores de quantos títulos o catálogo resolveu contra quantos
-   foram à IA (por categoria), para provar a queda de gasto.
-7. **Ordem de resolução mantida e explícita:** extrator determinístico →
-   catálogo → cache por título → reuso por palavras → IA (só se nada resolver).
+- Regra: o sistema usa o catálogo; se ele não tiver, tenta a busca; só então IA.
+- **Busca de identidade fica no César Core.** O GG apenas solicita a busca e
+  envia o pedido ao Core; a lista de sites, a leitura e o consenso vivem no
+  Core. Sites: os **sites oficiais das próprias marcas** (a lista por categoria
+  é mantida no Core, aprovada pelo usuário). Regra do projeto: o GG nunca fala
+  direto com site nem provedor.
+- Nenhum texto externo é entregue a IA nesse caminho: o Core extrai só campos
+  fechados (categoria, marca, família, modelo, variante, part number,
+  atributos) e devolve estruturado. Aceita só com consenso (2+ fontes da lista,
+  ou 1 fonte estruturada + catálogo); sem consenso, devolve `ambiguous`.
+- Nenhum título passa pela IA sem deixar um candidato: falha de IA vira
+  candidato `ai_failed` (com motivo, tentativas e `next_retry_at`).
+
+## Escopo proposto (ordem de execução)
+
+1. **Registrar falhas de IA:** status `ai_failed` no candidato, tipo do erro,
+   contagem, `next_retry_at` com espera crescente e teto de tentativas; o
+   extrator devolve o motivo em vez de `None`; `_prepare_resolution` respeita o
+   prazo (nada de chamada de IA a cada coleta); passado o teto, o título segue
+   para leitura de página (`awaiting_page`) e por fim `unrecognized`. Disjuntor
+   global para erro de cota/provedor. Migration (status e colunas).
+2. **Aprender também por nome:** toda identidade aprovada (com ou sem part
+   number) grava marca + família + modelo (+ variante e atributos obrigatórios)
+   como entrada `learned`, com a guarda de palavras de edição e sem sobrescrever
+   entrada recusada.
+3. **Busca de identidade via Core (lado GG):** novo passo entre o catálogo e a
+   IA. O GG envia título (e part number, se houver); o Core responde
+   `resolved | ambiguous | not_found | unavailable` com campos estruturados e
+   as fontes. O GG **revalida** o resultado com o próprio grounding
+   determinístico contra o título antes de aceitar (nunca confia às cegas) e
+   grava candidato/catálogo. `unavailable` ou erro do Core não derruba a coleta.
+4. **Leitor de página em cadeia** (Core Fetch e, se falhar, worker) para o que a
+   busca não resolver; teste real por loja antes de confiar.
+5. **Ampliar a cobertura** da pré-lista (placas-mãe primeiro; depois RAM; depois
+   categorias soltas: soundbar, cadeira gamer, antena, capa) com entradas só de
+   categoria para vínculo parcial sem IA; revisão do usuário antes de aplicar.
+6. **Unificar com as grafias de marca** (`product_identity_aliases`), sem quebrar
+   as 47 grafias ativas.
+7. **Deduplicação a partir do catálogo:** modo do script de reprocessamento que
+   funde os que o catálogo mostra serem a mesma identidade, sem IA. Só com
+   backup, dry-run e autorização.
+8. **Qualidade e revisão:** conflitos de part number, nomes que se chocam,
+   entradas suspeitas; `scripts/review_identity_catalog.py`.
+9. **Medição** por categoria, por tipo de erro e por etapa que resolveu (título,
+   catálogo, busca, página, IA).
+
+Ordem final de resolução: extrator determinístico → catálogo → cache por título →
+reuso por palavras → **busca no Core** → página (Core, depois worker) → IA.
+
+## Dependência no César Core (repositório `cesar-core`, fora deste)
+
+Capacidade nova "identidade de produto por busca": lista de domínios oficiais
+por categoria/marca, extração determinística de campos fechados, consenso entre
+fontes, sem entregar conteúdo a IA, tempo e volume limitados por pedido. O
+contrato exato (campos e códigos de status) é definido junto com o usuário antes
+de qualquer código; o GG só implementa o cliente e a revalidação.
+
+## Levantamento de PROD (2026-09-29, consultas somente leitura)
+
+~270 títulos foram à IA: 174 aprovados, ~90 parciais, 7 em revisão. Placas-mãe
+98 (86 aprovadas, só 6 com part number); RAM 118 (63 aprovadas, 53 parciais, 18
+com part number); categorias soltas ~33 (todas parciais); celulares 17; CPU 3.
+Conclusão: aprender por nome e cobrir placas-mãe e RAM rende mais.
 
 ## Levantamento de partida (consultas somente leitura em PROD)
 
