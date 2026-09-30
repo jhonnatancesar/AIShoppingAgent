@@ -1,5 +1,19 @@
 # Decision Log
 
+## DEC-141 — TASK-133: catálogo como fonte principal de identidade; busca de identidade no César Core; falha de IA sempre registrada
+
+Decisões do usuário em 2026-09-28/29: (1) o sistema usa o catálogo de
+nomenclaturas primeiro e só usa IA se o catálogo não tiver; (2) entre o catálogo
+e a IA entra uma busca de identidade que **vive no César Core** (o GG só
+solicita e envia o pedido; a lista de sites — TechPowerUp, PassMark, Adrenaline,
+Hardware Barato e os sites oficiais das marcas — a extração de campos fechados
+sem IA e o consenso entre fontes ficam no Core); o GG revalida o resultado com o
+próprio grounding antes de aceitar; (3) nenhum título passa pela IA sem deixar
+candidato: falha de IA vira candidato `ai_failed` (motivo, tentativas,
+`next_retry_at`, teto), em vez de ser esquecida e repetida a cada coleta;
+(4) o catálogo também aprende por nome. Levantamento de PROD: ~270 títulos foram
+à IA, o maior gasto em placas-mãe e RAM. Ver `docs/tasks/TASK-133.md`.
+
 ## DEC-140 — TASK-132: troca de produto em anúncio (histórico separado, 2 coletas) e catálogo de nomenclaturas antes da IA
 
 Decisões do usuário em 2026-09-28: (1) quando o anúncio muda de produto, o
