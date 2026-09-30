@@ -42,6 +42,7 @@ from app.products.identity import (
     resolve_product_variant,
 )
 from app.products.identity_ai import (
+    AIExtractionFailure,
     AIExtractionResult,
     AIIdentityExtraction,
     AIPartialExtraction,
@@ -53,6 +54,12 @@ from app.products.identity_ai import (
     normalized_title_hash,
     tokens_present,
     values_match_ignoring_punctuation,
+)
+from app.products.identity_ai_failure import (
+    AI_BREAKER,
+    clear_ai_failed,
+    is_retry_due,
+    record_ai_failure,
 )
 from app.products.identity_alias_learning import (
     find_same_part_number_candidate,
@@ -511,6 +518,14 @@ async def _prepare_resolution(
 
     title_hash = normalized_title_hash(raw_title)
     existing = await _find_candidate(session, title_hash)
+    if existing is not None and existing.status == "ai_failed":
+        # TASK-133: a IA já falhou para este título -- antes do prazo
+        # (`next_retry_at`) NÃO chama de novo; depois dele segue o caminho
+        # normal (reuso por palavras, IA), e a linha só some quando uma decisão
+        # de verdade a substitui.
+        if not is_retry_due(existing, now or utc_now()):
+            return _PreparedResolution(done=True, resolved=None)
+        existing = None
     if existing is not None:
         if existing.status != "approved":
             # TASK-128: cache também para o que não fechou identidade
@@ -552,6 +567,7 @@ async def _prepare_resolution(
         )
         try:
             async with session.begin_nested():
+                await clear_ai_failed(session, title_hash)
                 session.add(alias)
                 await session.flush()
         except IntegrityError:
@@ -902,12 +918,43 @@ async def _record_uncertain_extraction(
     return link
 
 
+async def _register_ai_failure(
+    session: AsyncSession,
+    *,
+    raw_title: str,
+    title_hash: str,
+    failure: AIExtractionFailure,
+    now: datetime | None,
+    source_product_id: UUID | None,
+) -> None:
+    """TASK-133: falha de IA -> candidato `ai_failed` + disjuntor. `circuit_open`
+    (título pulado porque o disjuntor está aberto) não gasta tentativa e espera
+    até o disjuntor fechar."""
+    real_now = utc_now()
+    AI_BREAKER.trip(failure, real_now)
+    skipped = failure.kind == "circuit_open"
+    await record_ai_failure(
+        session,
+        raw_title=raw_title,
+        title_hash=title_hash,
+        failure=failure,
+        now=now,
+        source_product_id=source_product_id,
+        count_attempt=not skipped,
+        retry_at=AI_BREAKER.open_until(real_now) if skipped else None,
+    )
+    logger.info(
+        "product_identity_ai_failure_recorded",
+        extra={"kind": failure.kind, "skipped": skipped},
+    )
+
+
 async def _resolve_from_extraction(
     session: AsyncSession,
     *,
     raw_title: str,
     prepared: _PreparedResolution,
-    extraction: AIExtractionResult,
+    extraction: AIExtractionResult | AIExtractionFailure,
     ai_manager: AIProviderManager,
     arbiter_ai_manager: AIProviderManager | None,
     now: datetime | None = None,
@@ -919,9 +966,21 @@ async def _resolve_from_extraction(
     """Único ponto que transforma o resultado da IA (item único ou uma
     posição de lote) em resolução -- exata, parcial ou "aguardando
     página". `None` só quando nem o cache foi possível (corrida sem
-    vencedor) ou quando o título aguarda a leitura da página (ou, já com
-    a página lida, ficou terminal `unrecognized`)."""
+    vencedor), quando o título aguarda a leitura da página (ou, já com
+    a página lida, ficou terminal `unrecognized`) ou quando a IA FALHOU
+    (TASK-133: a falha vira candidato `ai_failed`, nunca é esquecida)."""
     assert prepared.title_hash is not None  # sempre setado quando done=False
+    if isinstance(extraction, AIExtractionFailure):
+        await _register_ai_failure(
+            session,
+            raw_title=raw_title,
+            title_hash=prepared.title_hash,
+            failure=extraction,
+            now=now,
+            source_product_id=source_product_id,
+        )
+        return None
+    await clear_ai_failed(session, prepared.title_hash)
     if isinstance(extraction, AIIdentityExtraction):
         return await _finish_resolution_with_extraction(
             session,
@@ -1034,13 +1093,16 @@ async def resolve_or_learn_product_variant(
     # aliases) é lido ANTES do rollback -- a IA nunca escreve livre.
     vocabulary = await load_identity_vocabulary(session)
     await session.rollback()
-    extraction = await extract_product_identity_via_ai(
-        ai_manager, raw_title=raw_title, profile=profile, vocabulary=vocabulary
-    )
-    if extraction is None:
-        # Falha de rede/provedor/contrato -- passageira, nunca vai para o
-        # cache (a próxima coleta tenta de novo).
-        return None
+    if AI_BREAKER.open_until(utc_now()) is not None:
+        # TASK-133: a IA acabou de falhar por infraestrutura (cota, provedor,
+        # tempo) -- não gasta chamada; o título ganha candidato `ai_failed`.
+        extraction: AIExtractionResult | AIExtractionFailure = AIExtractionFailure(
+            "circuit_open"
+        )
+    else:
+        extraction = await extract_product_identity_via_ai(
+            ai_manager, raw_title=raw_title, profile=profile, vocabulary=vocabulary
+        )
     return await _resolve_from_extraction(
         session,
         raw_title=raw_title,
@@ -1487,24 +1549,27 @@ async def reprocess_unresolved_products(
         if start and batch_pause_seconds:
             await sleep(batch_pause_seconds)
         titles = [raw_title for _, raw_title, _ in chunk]
-        extractions = await extract_product_identities_via_ai_batch(
-            ai_manager, raw_titles=titles, profile=profile, vocabulary=vocabulary
-        )
-        if all(extraction is None for extraction in extractions):
-            logger.warning(
-                "product_identity_ai_batch_retry",
-                extra={"batch_size": len(chunk)},
-            )
-            await sleep(batch_pause_seconds)
+        if AI_BREAKER.open_until(utc_now()) is not None:
+            extractions = [AIExtractionFailure("circuit_open")] * len(chunk)
+        else:
             extractions = await extract_product_identities_via_ai_batch(
                 ai_manager, raw_titles=titles, profile=profile, vocabulary=vocabulary
             )
+            if all(isinstance(item, AIExtractionFailure) for item in extractions):
+                logger.warning(
+                    "product_identity_ai_batch_retry",
+                    extra={"batch_size": len(chunk)},
+                )
+                await sleep(batch_pause_seconds)
+                extractions = await extract_product_identities_via_ai_batch(
+                    ai_manager,
+                    raw_titles=titles,
+                    profile=profile,
+                    vocabulary=vocabulary,
+                )
         for (product_id, raw_title, prepared), extraction in zip(
             chunk, extractions, strict=True
         ):
-            if extraction is None:
-                # Falha passageira do lote/item -- nunca vai para o cache.
-                continue
             resolved = await _resolve_from_extraction(
                 session,
                 raw_title=raw_title,

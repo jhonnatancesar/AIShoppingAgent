@@ -71,13 +71,23 @@ class ProductIdentityCandidate(Base):
     laço de chamadas de IA). Quando a página resolve, a linha
     `awaiting_page` é SUBSTITUÍDA pela decisão nova (approved/
     pending_review/partial), com `page_context` guardando os dados da
-    página usados no grounding."""
+    página usados no grounding.
+
+    TASK-133 (etapa 1): `"ai_failed"` -- a chamada de IA falhou (cota,
+    provedor fora, tempo esgotado, resposta fora do contrato). Nenhum título
+    passa pela IA sem deixar um candidato: a linha guarda o motivo
+    (`ai_error_kind`), as tentativas (`ai_attempts`) e o prazo da próxima
+    (`next_retry_at`) -- antes desse prazo a IA NÃO é chamada de novo pelo
+    mesmo título. Só falha de conteúdo (`invalid_response`/`request_rejected`)
+    conta para o teto; falha de infraestrutura nunca. É sempre SUBSTITUÍDA pela
+    decisão quando a IA responde (ou vira `awaiting_page`/`unrecognized` no
+    teto)."""
 
     __tablename__ = "product_identity_candidates"
     __table_args__ = (
         CheckConstraint(
             "status IN ('approved', 'pending_review', 'rejected', 'partial', "
-            "'awaiting_page', 'unrecognized')",
+            "'awaiting_page', 'unrecognized', 'ai_failed')",
             name="ck_product_identity_candidates_status_values",
         ),
         CheckConstraint(
@@ -101,8 +111,17 @@ class ProductIdentityCandidate(Base):
             name="ck_product_identity_candidates_unrecognized_shape",
         ),
         CheckConstraint(
+            "status <> 'ai_failed' OR (category IS NULL AND identity_key IS NULL "
+            "AND next_retry_at IS NOT NULL AND ai_error_kind IS NOT NULL)",
+            name="ck_product_identity_candidates_ai_failed_shape",
+        ),
+        CheckConstraint(
             "page_attempts >= 0",
             name="ck_product_identity_candidates_page_attempts_non_negative",
+        ),
+        CheckConstraint(
+            "ai_attempts >= 0",
+            name="ck_product_identity_candidates_ai_attempts_non_negative",
         ),
         CheckConstraint(
             "btrim(raw_title) <> ''",
@@ -134,6 +153,11 @@ class ProductIdentityCandidate(Base):
             "page_attempts",
             "created_at",
             postgresql_where=text("status = 'awaiting_page'"),
+        ),
+        Index(
+            "ix_product_identity_candidates_ai_failed",
+            "next_retry_at",
+            postgresql_where=text("status = 'ai_failed'"),
         ),
     )
 
@@ -210,3 +234,12 @@ class ProductIdentityCandidate(Base):
     )
     """Última tentativa de leitura da página -- também serve de "reserva"
     curta para que dois ciclos não abram a mesma página ao mesmo tempo."""
+    ai_attempts: Mapped[int] = mapped_column(
+        SmallInteger, nullable=False, default=0, server_default="0"
+    )
+    ai_error_kind: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    next_retry_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    """TASK-133: só preenchidos em `ai_failed` (motivo, tentativas de IA já
+    feitas e quando a próxima é permitida)."""

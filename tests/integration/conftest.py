@@ -174,3 +174,14 @@ def integration_database(
                     sql.Identifier(database_name)
                 )
             )
+
+
+@pytest.fixture(autouse=True)
+def _reset_identity_ai_breaker():
+    """TASK-133: o disjuntor de IA de identidade é estado de processo; nenhum
+    teste pode herdar o disjuntor aberto de outro."""
+    from app.products.identity_ai_failure import AI_BREAKER
+
+    AI_BREAKER.reset()
+    yield
+    AI_BREAKER.reset()

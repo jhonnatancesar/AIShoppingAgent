@@ -32,7 +32,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import or_, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.ai_provider import AIProviderManager
@@ -40,7 +40,13 @@ from app.collection.contracts import ProductPageRead, ProductPageReadStatus
 from app.database.time import utc_now
 from app.offers.models import Offer
 from app.products.identity import normalize_for_grounding
-from app.products.identity_ai import PartialProductLink, extract_product_identity_via_ai
+from app.products.identity_ai import (
+    INFRA_FAILURE_KINDS,
+    AIExtractionFailure,
+    PartialProductLink,
+    extract_product_identity_via_ai,
+)
+from app.products.identity_ai_failure import AI_BREAKER
 from app.products.identity_candidates import ProductIdentityCandidate
 from app.products.identity_learning import (
     _find_same_model_candidates,
@@ -201,6 +207,29 @@ async def _retry_later_or_give_up(
     return _RETRY
 
 
+async def _refund_page_attempt(
+    session_factory: async_sessionmaker[AsyncSession], claim: _PageClaim
+) -> str:
+    """TASK-133: a IA está fora por infraestrutura (cota, provedor, tempo) --
+    isso não é culpa do título, então a tentativa reservada é devolvida e o
+    título nunca chega ao estado terminal `unrecognized` por causa de uma
+    queda de IA. Volta depois do intervalo normal de releitura."""
+    async with session_factory() as session, session.begin():
+        await session.execute(
+            update(ProductIdentityCandidate)
+            .where(
+                ProductIdentityCandidate.id == claim.candidate_id,
+                ProductIdentityCandidate.status == "awaiting_page",
+            )
+            .values(
+                page_attempts=func.greatest(
+                    ProductIdentityCandidate.page_attempts - 1, 0
+                )
+            )
+        )
+    return _RETRY
+
+
 async def _resolve_with_page(
     session_factory: async_sessionmaker[AsyncSession],
     claim: _PageClaim,
@@ -212,6 +241,9 @@ async def _resolve_with_page(
     now: datetime,
     max_attempts: int,
 ) -> str:
+    if AI_BREAKER.open_until(utc_now()) is not None:
+        # TASK-133: IA acabou de falhar por infraestrutura -- nem abre a página.
+        return await _refund_page_attempt(session_factory, claim)
     if claim.store_code is None or claim.url is None:
         # Product de origem sumiu (fundido) ou nunca teve Offer ativa --
         # não há página para abrir agora.
@@ -234,8 +266,12 @@ async def _resolve_with_page(
         page_context=page.context,
         vocabulary=vocabulary,
     )
-    if extraction is None:
-        # IA fora do ar/resposta fora do contrato -- passageiro.
+    if isinstance(extraction, AIExtractionFailure):
+        if extraction.kind in INFRA_FAILURE_KINDS:
+            # Cota/provedor/tempo: não conta tentativa e aciona o disjuntor.
+            AI_BREAKER.trip(extraction, utc_now())
+            return await _refund_page_attempt(session_factory, claim)
+        # Resposta fora do contrato: conta para o teto de leituras.
         return await _retry_later_or_give_up(
             session_factory, claim, max_attempts=max_attempts
         )

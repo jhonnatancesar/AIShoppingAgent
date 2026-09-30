@@ -10,6 +10,7 @@ from app.ai_provider import AIResponse
 from app.products.identity import build_resolved_variant_from_fields
 from app.products.identity_ai import (
     BATCH_EXTRACT_IDENTITY_PURPOSE,
+    AIExtractionFailure,
     AIIdentityExtraction,
     AIPartialExtraction,
     AIUnrecognizedTitle,
@@ -388,7 +389,7 @@ async def test_extract_product_identity_none_on_malformed_json() -> None:
     result = await extract_product_identity_via_ai(
         manager, raw_title="Monitor Gamer LG UltraGear 27GP850", profile=UserRole.ADMIN
     )
-    assert result is None
+    assert result == AIExtractionFailure("invalid_response")
 
 
 @pytest.mark.anyio
@@ -397,7 +398,7 @@ async def test_extract_product_identity_none_on_unexpected_shape() -> None:
     result = await extract_product_identity_via_ai(
         manager, raw_title="Monitor Gamer LG UltraGear 27GP850", profile=UserRole.ADMIN
     )
-    assert result is None
+    assert result == AIExtractionFailure("invalid_response")
 
 
 @pytest.mark.anyio
@@ -445,7 +446,7 @@ async def test_extract_product_identity_none_when_provider_fails() -> None:
         raw_title="Monitor Gamer LG UltraGear 27GP850",
         profile=UserRole.ADMIN,
     )
-    assert result is None
+    assert result == AIExtractionFailure("provider_error")
 
 
 # ---------------------------------------------------------------------------
@@ -501,7 +502,9 @@ async def test_batch_matches_items_by_id_never_by_position() -> None:
         requested_at=NOW,
     )
 
-    assert [None if r is None else r.model for r in results] == [
+    assert [
+        None if isinstance(r, AIExtractionFailure) else r.model for r in results
+    ] == [
         "27GP850",
         None,
         "32GS95UE",
@@ -536,8 +539,8 @@ async def test_batch_rejects_items_with_wrong_types_or_blank_required_fields() -
         profile=UserRole.ADMIN,
     )
 
-    # Tipo errado = fora do contrato = falha passageira (`None`).
-    assert results[:6] == [None] * 6
+    # Tipo errado = fora do contrato = falha (`invalid_response`).
+    assert results[:6] == [AIExtractionFailure("invalid_response")] * 6
     # TASK-128: campo obrigatório em branco = a IA não fechou identidade
     # exata -- vira parcial (categoria + o que veio) ou "não entendi".
     assert results[6] == AIPartialExtraction(
@@ -559,7 +562,7 @@ async def test_batch_all_none_when_response_is_not_a_json_array(content) -> None
         _StaticAIManager(content), raw_titles=["a", "b"], profile=UserRole.ADMIN
     )
 
-    assert results == [None, None]
+    assert results == [AIExtractionFailure("invalid_response")] * 2
 
 
 @pytest.mark.anyio
@@ -568,7 +571,7 @@ async def test_batch_all_none_when_provider_fails() -> None:
         _FailingAIManager(), raw_titles=["a", "b", "c"], profile=UserRole.ADMIN
     )
 
-    assert results == [None, None, None]
+    assert results == [AIExtractionFailure("provider_error")] * 3
 
 
 @pytest.mark.anyio

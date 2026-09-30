@@ -164,16 +164,21 @@ def test_unrecognized_title_is_cached_as_awaiting_page(integration_database) -> 
     assert candidate.identity_key is None
 
 
-def test_transient_ai_failure_is_never_cached(integration_database) -> None:
-    """`None` da extração = falha de rede/provedor -- nunca vira cache,
-    a próxima coleta tenta de novo."""
+def test_transient_ai_failure_is_recorded_and_not_retried_before_the_deadline(
+    integration_database,
+) -> None:
+    """TASK-133: falha de rede/provedor deixa um candidato `ai_failed` (motivo,
+    tentativas, `next_retry_at`) e a próxima coleta NÃO chama a IA de novo antes
+    do prazo -- antes era esquecida e repetida a cada coleta."""
     manager = _ByTitleAIManager({})
 
     assert _resolve(integration_database, manager, _CHAIR) is None
     assert _resolve(integration_database, manager, _CHAIR) is None
 
-    assert manager.calls == 2
-    assert _candidates(integration_database) == []
+    assert manager.calls == 1
+    [candidate] = _candidates(integration_database)
+    assert (candidate.status, candidate.ai_attempts) == ("ai_failed", 1)
+    assert candidate.identity_key is None and candidate.category is None
 
 
 def test_grounding_failure_goes_to_review_but_product_still_gets_partial_link(

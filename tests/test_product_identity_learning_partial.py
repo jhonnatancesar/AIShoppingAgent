@@ -12,6 +12,7 @@ from uuid import uuid4
 
 from app.products import identity_learning
 from app.products.identity_ai import (
+    AIExtractionFailure,
     AIIdentityExtraction,
     AIPartialExtraction,
     AIUnrecognizedTitle,
@@ -413,7 +414,7 @@ def test_transient_ai_failure_is_never_cached(monkeypatch) -> None:
         "_prepare_resolution",
         AsyncMock(return_value=_prepared()),
     )
-    extract = AsyncMock(return_value=None)
+    extract = AsyncMock(return_value=AIExtractionFailure("provider_error"))
     monkeypatch.setattr(identity_learning, "extract_product_identity_via_ai", extract)
     vocabulary = IdentityVocabulary(generic_categories=("cadeira-gamer",))
     monkeypatch.setattr(
@@ -421,7 +422,7 @@ def test_transient_ai_failure_is_never_cached(monkeypatch) -> None:
         "load_identity_vocabulary",
         AsyncMock(return_value=vocabulary),
     )
-    resolve = AsyncMock()
+    resolve = AsyncMock(return_value=None)
     monkeypatch.setattr(identity_learning, "_resolve_from_extraction", resolve)
     session = _session()
 
@@ -433,7 +434,11 @@ def test_transient_ai_failure_is_never_cached(monkeypatch) -> None:
 
     assert result is None
     session.rollback.assert_awaited_once()
-    resolve.assert_not_awaited()
+    # TASK-133: a falha segue para `_resolve_from_extraction`, que a registra
+    # como candidato `ai_failed` (nunca é esquecida nem cacheada como decisão).
+    assert resolve.await_args.kwargs["extraction"] == AIExtractionFailure(
+        "provider_error"
+    )
     # TASK-129: a IA recebe o vocabulário lido do banco antes do rollback.
     assert extract.await_args.kwargs["vocabulary"] is vocabulary
 
@@ -547,7 +552,8 @@ def test_batch_backfill_pauses_between_batches_and_retries_a_failed_batch(
     ok = AIPartialExtraction(
         category="cpu", brand=None, family=None, ai_provider="s", ai_model="m"
     )
-    batch = AsyncMock(side_effect=[[None, None], [ok, ok], [ok]])
+    down = AIExtractionFailure("provider_error")
+    batch = AsyncMock(side_effect=[[down, down], [ok, ok], [ok]])
     monkeypatch.setattr(
         identity_learning, "extract_product_identities_via_ai_batch", batch
     )

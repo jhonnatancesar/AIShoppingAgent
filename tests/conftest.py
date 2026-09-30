@@ -39,3 +39,14 @@ def _dedicated_test_edge():
     asyncio.run(supervisor.ensure_started())
     yield
     asyncio.run(supervisor.close_via_cdp())
+
+
+@pytest.fixture(autouse=True)
+def _reset_identity_ai_breaker():
+    """TASK-133: o disjuntor de IA de identidade é estado de processo; nenhum
+    teste pode herdar o disjuntor aberto de outro."""
+    from app.products.identity_ai_failure import AI_BREAKER
+
+    AI_BREAKER.reset()
+    yield
+    AI_BREAKER.reset()

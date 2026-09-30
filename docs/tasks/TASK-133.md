@@ -1,6 +1,6 @@
 # TASK-133 — Catálogo de nomenclaturas como fonte principal de identidade (IA só como último recurso)
 
-Status: **Registrada (2026-09-28), planejada, NÃO iniciada.** Pedido do usuário
+Status: **Em andamento (2026-09-29): etapa 1 implementada e commitada local; demais etapas não iniciadas.** Pedido do usuário
 em conversa, na sequência da TASK-132 (Parte B, catálogo). Aguarda o resultado
 das consultas de gasto de IA em PROD para ordenar as categorias.
 
@@ -22,6 +22,23 @@ caminho normal e vira exceção, reduzindo o gasto de cota.
   canônico via `apply_learned_identity`.
 - O catálogo só aprende sozinho quando a IA devolve part number; a pré-lista é
   pequena (celulares, Redmi/Poco, Moto G, Intel Core Ultra, Radeon RX, Arc).
+
+## Progresso
+
+**Etapa 1 — registro das falhas de IA: implementada (2026-09-29), commit local.**
+Migration `20260929_0001` (status `ai_failed`; colunas `ai_attempts`,
+`ai_error_kind`, `next_retry_at`). O extrator deixou de devolver `None` e passou
+a devolver `AIExtractionFailure(kind)` (`quota`, `provider_unavailable`,
+`timeout`, `provider_error`, `invalid_response`, `request_rejected`).
+`app/products/identity_ai_failure.py`: `record_ai_failure`, espera crescente
+(infraestrutura 15 min até 6 h; conteúdo 15 min, 1 h, 6 h, 24 h), teto de 5
+tentativas só para falha de conteúdo (então `awaiting_page` se há produto de
+origem, senão `unrecognized`), disjuntor por processo (5 min ou até o reset da
+cota, no máximo 1 h). `_prepare_resolution` respeita `next_retry_at`; a decisão
+real substitui a linha `ai_failed`. A varredura de página devolve a tentativa
+quando a IA está fora, para queda de IA nunca virar `unrecognized`. Caminho em
+lote (backfill) também registra e respeita o disjuntor. Testes unitários e de
+integração novos; integração completa e unitária passando.
 
 ## Decisões do usuário (2026-09-28/29)
 

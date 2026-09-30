@@ -32,7 +32,16 @@ from datetime import UTC, datetime
 from hashlib import sha256
 from uuid import uuid4
 
-from app.ai_provider import AIMessage, AIMessageRole, AIProviderManager, AIRequest
+from app.ai_provider import (
+    AIMessage,
+    AIMessageRole,
+    AIProviderError,
+    AIProviderManager,
+    AIProviderQuotaExceeded,
+    AIProviderUnavailable,
+    AIRequest,
+    AIRequestError,
+)
 from app.products.identity import (
     ResolvedProductVariant,
     _slug,
@@ -245,6 +254,47 @@ class PartialProductLink:
     category: str
     brand: str | None
     family: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class AIExtractionFailure:
+    """TASK-133 (etapa 1): a chamada de IA NÃO produziu uma resposta
+    utilizável. Antes era `None` e ninguém registrava nada -- o GG
+    esquecia e pagava a mesma chamada de novo a cada coleta. Agora o
+    motivo viaja até `identity_learning`, que grava um candidato
+    `ai_failed` com tentativas e `next_retry_at`.
+
+    `kind`: `quota` | `provider_unavailable` | `timeout` | `provider_error`
+    (infraestrutura: não é culpa do título) ou `invalid_response` |
+    `request_rejected` (o título/resposta é o problema: esses contam para
+    o teto de tentativas). `quota_reset_at`: quando o provedor informou."""
+
+    kind: str
+    quota_reset_at: datetime | None = None
+
+
+INFRA_FAILURE_KINDS = frozenset(
+    {"quota", "provider_unavailable", "timeout", "provider_error", "circuit_open"}
+)
+"""Falhas de infraestrutura: nunca contam para o teto de tentativas do título
+(cota esgotada por um dia não pode transformar título bom em "não entendido")."""
+
+
+def classify_ai_failure(exc: BaseException) -> AIExtractionFailure:
+    """Traduz a exceção da fronteira de IA em motivo de falha (sem vazar
+    mensagem/credencial: só o tipo e o `code` estável do provedor)."""
+    if isinstance(exc, AIProviderQuotaExceeded):
+        return AIExtractionFailure("quota", exc.quota_reset_at)
+    if isinstance(exc, AIProviderUnavailable):
+        return AIExtractionFailure("provider_unavailable")
+    if isinstance(exc, TimeoutError):
+        return AIExtractionFailure("timeout")
+    if isinstance(exc, AIProviderError):
+        kind = "timeout" if "timeout" in exc.code else "provider_error"
+        return AIExtractionFailure(kind, exc.quota_reset_at)
+    if isinstance(exc, AIRequestError):
+        return AIExtractionFailure("request_rejected")
+    return AIExtractionFailure("provider_error")
 
 
 AIExtractionResult = AIIdentityExtraction | AIPartialExtraction | AIUnrecognizedTitle
@@ -604,7 +654,7 @@ async def extract_product_identity_via_ai(
     requested_at: datetime | None = None,
     page_context: str | None = None,
     vocabulary: IdentityVocabulary | None = None,
-) -> AIExtractionResult | None:
+) -> AIExtractionResult | AIExtractionFailure:
     """Chama a IA (via `AIProviderManager` -> César Core) para
     estruturar um título bruto -- `None` em qualquer falha de rede/
     provedor ou resposta fora do contrato esperado (TASK-128: resposta
@@ -645,7 +695,15 @@ async def extract_product_identity_via_ai(
         requested_at=moment,
     )
     try:
-        response = await manager.generate(request)
+        try:
+            response = await manager.generate(request)
+        except Exception as exc:
+            logger.warning(
+                "product_identity_ai_extraction_failed",
+                extra={"stage": "generate", "error": type(exc).__name__},
+                exc_info=False,
+            )
+            return classify_ai_failure(exc)
         payload = json.loads(_strip_markdown_code_fence(response.content))
         expected_keys = {
             "category",
@@ -714,8 +772,12 @@ async def extract_product_identity_via_ai(
             ai_model=response.model,
         )
     except Exception:
-        logger.warning("product_identity_ai_extraction_failed", exc_info=False)
-        return None
+        logger.warning(
+            "product_identity_ai_extraction_failed",
+            extra={"stage": "parse"},
+            exc_info=False,
+        )
+        return AIExtractionFailure("invalid_response")
 
 
 async def extract_product_identities_via_ai_batch(
@@ -725,7 +787,7 @@ async def extract_product_identities_via_ai_batch(
     profile: UserRole,
     requested_at: datetime | None = None,
     vocabulary: IdentityVocabulary | None = None,
-) -> list[AIExtractionResult | None]:
+) -> list[AIExtractionResult | AIExtractionFailure]:
     """Mesmo contrato de `extract_product_identity_via_ai`, mas manda um
     LOTE de títulos numa única chamada de IA (`request.purpose=
     BATCH_EXTRACT_IDENTITY_PURPOSE`) -- criada para TASK-123 (achado
@@ -756,7 +818,10 @@ async def extract_product_identities_via_ai_batch(
     usada no resto deste módulo) para dar pista real do que o modelo
     devolveu, sem também gerar exceção não tratada nem vazar payload
     grande no log."""
-    results: list[AIExtractionResult | None] = [None] * len(raw_titles)
+    invalid = AIExtractionFailure("invalid_response")
+    results: list[AIExtractionResult | AIExtractionFailure] = [invalid] * len(
+        raw_titles
+    )
     if not raw_titles:
         return results
     moment = requested_at or datetime.now(UTC)
@@ -814,7 +879,8 @@ async def extract_product_identities_via_ai_batch(
             },
             exc_info=False,
         )
-        return results
+        failure = classify_ai_failure(exc)
+        return [failure] * len(raw_titles)
 
     try:
         payload = json.loads(_strip_markdown_code_fence(response.content))
