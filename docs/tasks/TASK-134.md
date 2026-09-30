@@ -1,8 +1,7 @@
 # TASK-134 — GG entende os erros de IA do Core e pausa até o dia virar
 
 Status: **Registrada (2026-09-30), planejada, NÃO iniciada.** Depende da TASK-134 do
-César Core (`docs/task-134-ai-errors-and-daily-pause.md` no repositório
-`C:\cesar-core`). Só começa depois que a TASK-133 (GG) estiver fechada e o Core tiver os
+César Core (opção A: o Core seleciona a IA e conta a cota do dia; `docs/task-134-ai-errors-and-daily-pause.md` no repositório `C:\cesar-core`). Só começa depois que a TASK-133 (GG) estiver fechada e o Core tiver os
 novos códigos prontos e validados.
 
 ## Objetivo
@@ -33,7 +32,7 @@ Core e agir de forma diferente para cada um.
 
 ## Fora de escopo
 
-O contador diário por provedor (opção A do Core) e qualquer mudança no Core.
+Qualquer mudança no Core (o contador diário por passo e a seleção da IA são do Core).
 
 ## Perguntas em aberto
 

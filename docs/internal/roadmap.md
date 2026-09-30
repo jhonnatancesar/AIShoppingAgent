@@ -1,6 +1,6 @@
 # Roadmap
 
-**Atualização 2026-09-30:** TASK-133 (GG) em andamento (etapa 1 e disjuntor compartilhado prontos, local). Registradas, NÃO iniciadas: TASK-134 (GG entende os erros de IA do Core e pausa até o dia virar) e TASK-135 (ponte do GG com o Telegram para aprovar troca de modelo de IA), ambas dependentes das TASKs de mesmo número no César Core (`C:\cesar-core`, opção B; nada de código no Core antes de fechar o GG). Ver `docs/tasks/TASK-134.md` e `docs/tasks/TASK-135.md`.
+**Atualização 2026-09-30:** TASK-133 (GG) em andamento (etapa 1 e disjuntor compartilhado prontos, local). Registradas, NÃO iniciadas: TASK-134 (GG entende os erros de IA do Core e pausa até o dia virar) e TASK-135 (ponte do GG com o Telegram para aprovar troca de modelo de IA), ambas dependentes das TASKs de mesmo número no César Core (`C:\cesar-core`, opção A: o Core seleciona a IA e conta a cota do dia; nada de código no Core antes de fechar o GG). Ver `docs/tasks/TASK-134.md` e `docs/tasks/TASK-135.md`.
 
 **Atualização 2026-09-28 (noite, 2):** TASK-133 registrada, NÃO iniciada —
 catálogo de nomenclaturas como fonte principal de identidade e de deduplicação
