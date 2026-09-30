@@ -8,7 +8,11 @@ aprovado) deixa de barrar a troca de modelo. O Core detecta e testa o modelo nov
 GG avisa no Telegram (o GG faz a ponte com o Telegram, o Core expõe rotas
 administrativas de listar/aprovar/recusar/desfazer) e, se o usuário aprovar, o modelo
 entra — estável ou preview. O aviso mostra se é estável ou preview e o resultado do
-teste, como informação; o desfazer é a segurança. Modo automático fica para depois.
+teste, como informação. **Segurança obrigatória: reversão automática** — se o modelo
+novo der muito problema depois da troca (taxa de problema alta na janela ou falhas
+seguidas), o Core volta sozinho ao modelo anterior, avisa no Telegram e não o propõe
+de novo sem pedido do usuário; o desfazer manual também existe. Modo automático de
+troca fica para depois.
 Registro completo: `docs/task-134-ai-quota-errors-and-model-updates.md` no repositório
 do César Core.
 
