@@ -44,13 +44,19 @@ exige abrir as lojas (não feito).
 
 ## Decisões do usuário (2026-10-01)
 
-1. **Critério de "recomendado" (base):** a **popularidade do anúncio**, usando **todos**
-   os sinais disponíveis **em conjunto**: **quantidade de vendas**, **quantidade de
-   avaliações** e **nota**, mais os **filtros da própria loja na pesquisa** (mais
-   avaliados, mais procurados, mais relevantes etc.) para trazer os melhores primeiro.
-   Todos valem sempre; os métodos diferentes existem porque nem todo site informa todos
-   os sinais (ex.: nem toda loja mostra vendas), então cada loja usa os que tiver.
-   Lista curada de modelos recomendados fica para depois.
+1. **Critério de "recomendado" (popularidade), corrigido em 2026-10-01:** a base é
+   **sempre a nota (estrelas) junto com a quantidade de avaliações**, em qualquer loja.
+   **Quando o site informar a quantidade de vendas, ela entra por cima**, deixando a
+   escolha mais assertiva. Também aproveitar os **filtros da própria loja na pesquisa**
+   (mais avaliados, mais procurados, mais relevantes etc.) para trazer os melhores
+   primeiro. Lista curada de modelos recomendados fica para depois.
+
+   *Fórmula proposta (a confirmar antes de codar):* nota e avaliações se combinam de
+   forma que **nota alta com poucas avaliações não vença nota boa com muitas** (ex.: 5,0
+   com 2 avaliações abaixo de 4,7 com 3.000), usando uma média ajustada pelo número de
+   avaliações (média bayesiana, com um mínimo de avaliações e a média do conjunto como
+   referência). Havendo vendas, entram como segundo sinal, comparadas dentro do mesmo
+   conjunto de candidatos. Sem avaliações nenhuma, o item fica atrás dos que têm.
 2. **Tamanho:** a pesquisa pode considerar **até 10** candidatos, mas **para a IA vão
    poucos: 2, ou até 1, conforme as avaliações** (10 para a IA é demais). Direção do
    usuário: "pegar somente os 2 mais baratos mesmo e mandar para a IA".
@@ -156,8 +162,8 @@ Preço e histórico desses itens continuam sendo gravados normalmente.
 
 1. Como mostrar no GG web um item registrado que não passou pela IA (não conta como
    "combina com a missão" até ser classificado?).
-2. Peso entre vendas, nota e número de avaliações ao combiná-los (e como tratar a loja
-   que não informa algum deles).
+2. Confirmar a fórmula de popularidade proposta (média ajustada pelas avaliações; vendas
+   por cima quando houver) e o mínimo de avaliações de referência.
 3. Agrupamento de RAM por característica: quais características e quais marcas formam
    um grupo.
 
