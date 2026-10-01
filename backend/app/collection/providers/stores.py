@@ -179,6 +179,35 @@ de assumir novo), aqui não há nenhuma tentativa de detecção -- a
 condição é sempre `NEW`, nunca inferida por ausência de sinal."""
 
 
+_PICHAU_RATING_TEXT = re.compile(r"(\d[.,]\d)\s*\((\d[\d.]*)\s*avalia", re.I)
+_KABUM_RATING_TEXT = re.compile(r"(\d[.,]\d)\s*/\s*5\s*\((\d[\d.]*)\s*avalia", re.I)
+
+
+async def _visible_rating(page, pattern: re.Pattern[str]) -> tuple[str, str] | None:
+    """TASK-136: nota e quantidade de avaliações que a página do produto MOSTRA
+    (Pichau: `5.0 (13 avaliações)` ao lado do título; Kabum: `4.9/5 (19 avaliações)`),
+    conferido ao vivo em 2026-10-01. Esses dados aparecem depois do carregamento inicial,
+    então espera até aparecerem (ou 6 s) antes de ler; ler logo depois do `goto` perdia a
+    avaliação. Produto sem avaliação (`0.0 (0 avaliações)`) devolve `None`."""
+    try:
+        await page.wait_for_function(
+            "(source) => new RegExp(source, 'i').test(document.body.innerText)",
+            arg=pattern.pattern,
+            timeout=6_000,
+        )
+    except Exception:
+        return None
+    text = await page.evaluate("() => document.body.innerText")
+    match = pattern.search(text or "")
+    if match is None:
+        return None
+    average = match.group(1)
+    count = re.sub(r"\D", "", match.group(2))
+    if not count or int(count) == 0:
+        return None
+    return (average, count)
+
+
 class PichauProvider(PlaywrightStoreProvider):
     """TASK-109: Edge/CDP é o único transporte -- sem `cdp_transport`
     configurado, falha explícita, nunca Chromium gerenciado (fechamento
@@ -194,6 +223,15 @@ class PichauProvider(PlaywrightStoreProvider):
     # útil; os cards reais já existem em ~9-12s. "commit" + espera explícita
     # pelo seletor/estado vazio reflete o readiness real da página.
     navigation_wait_until = "commit"
+    rating_detail_enabled = True
+    # TASK-136: o card da busca da Pichau não mostra nota; a página do produto mostra
+    # `5.0 (13 avaliações)` ao lado do título e traz `aggregateRating` no JSON (conferido ao
+    # vivo em 2026-10-01). Lê o valor visível esperando ele aparecer e cai no JSON.
+
+    async def resolve_offer_rating(self, page) -> tuple[str, str] | None:
+        return await _visible_rating(
+            page, _PICHAU_RATING_TEXT
+        ) or await super().resolve_offer_rating(page)
 
     def __init__(
         self,
@@ -588,6 +626,14 @@ class KabumProvider(PlaywrightStoreProvider):
     continuam exatamente os mesmos."""
 
     source_code, result_selector = "kabum", 'main a[href*="/produto/"]'
+    rating_detail_enabled = True
+    # TASK-136: o card da Kabum só mostra a nota ("Avaliação 4.8 de 5.0"), sem a quantidade;
+    # a página do produto mostra "4.9/5 (19 avaliações)" e traz `aggregateRating` no JSON.
+
+    async def resolve_offer_rating(self, page) -> tuple[str, str] | None:
+        return await _visible_rating(
+            page, _KABUM_RATING_TEXT
+        ) or await super().resolve_offer_rating(page)
 
     # TASK-075: facet_filters={"kabum_product":["true"]} em base64 --
     # restringe a busca a produtos vendidos e entregues pela própria Kabum,

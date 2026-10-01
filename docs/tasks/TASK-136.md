@@ -22,9 +22,21 @@ vivo (uma pesquisa por loja, Edge dedicado de teste):**
 - **Terabyte:** a nota e as avaliações **existiam no card e não eram lidas**
   ("★ ★ ★ ★ ★ 4.9 (84)"); agora são (fallback pelo texto do card quando os seletores não
   trazem nada).
-- **Pichau:** o card não mostra nota nem vendas. **Magalu:** nota e avaliações já eram
-  lidas, sem vendas. **Kabum:** a pesquisa de teste voltou sem ofertas (falha
-  observada, não investigada nesta TASK).
+- **Pichau:** o card da busca não mostra nota, mas a **página do produto** mostra
+  `5.0 (13 avaliações)` ao lado do título e traz `aggregateRating` no JSON; produto sem
+  avaliação mostra `0.0 (0 avaliações)`. **Kabum:** o card só mostra a nota
+  ("Avaliação 4.8 de 5.0"), sem a quantidade; a página do produto mostra
+  `4.9/5 (19 avaliações)`. Os dois agora leem o valor visível da página do produto,
+  **esperando ele aparecer** (ler logo depois do carregamento perdia a avaliação), com o
+  JSON da página como reserva. **Magalu:** nota e avaliações já eram lidas, sem vendas.
+- **Kabum, "sem ofertas" na primeira pesquisa de teste:** não foi bloqueio (a página
+  abriu normal, 60 produtos com preço); uma segunda rodada devolveu as ofertas. Falha
+  intermitente, causa não confirmada.
+- **Limite importante:** a coleta abre a página de detalhe **só dos 3 produtos mais
+  baratos de cada loja** (`marketplace_party_max_candidates = 3`). Para Pichau, Kabum e
+  Mercado Livre, que só mostram nota/avaliações/vendas no detalhe, os demais produtos
+  ficam sem esses sinais. O funil precisa de todos os candidatos (até 8 por loja):
+  decisão de desenho em aberto (ver perguntas).
 - Nenhuma venda foi inventada em nenhuma loja (kit, "Vendido por", "Mais vendidos").
 
 ## Problema
@@ -185,6 +197,12 @@ Preço e histórico desses itens continuam sendo gravados normalmente.
 
 ## Perguntas em aberto
 
+0. **Detalhe para todos os candidatos?** Hoje só 3 por loja abrem a página do produto. Para
+   ranquear por popularidade antes da IA, Pichau, Kabum e Mercado Livre precisam abrir o
+   detalhe de todos os candidatos (até 8 por loja, ~24 aberturas por ciclo) — mais tempo
+   e mais exposição a bloqueio. Recomendação: abrir o detalhe de todos os candidatos só
+   onde o card não traz o sinal (Pichau, Kabum, Mercado Livre); Amazon, Terabyte e Magalu
+   já trazem nota e avaliações no card.
 1. Como mostrar no GG web um item registrado que não passou pela IA (não conta como
    "combina com a missão" até ser classificado?).
 2. Regra exata de desempate do ranking de cada oferta antes da IA (estrelas, avaliações e
