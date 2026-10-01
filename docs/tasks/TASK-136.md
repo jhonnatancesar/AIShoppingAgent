@@ -7,14 +7,40 @@ antes de codar se algo divergir).
 
 ## Problema
 
-Hoje cada loja devolve até 20 anúncios por pesquisa (`max_offers`, na ordem em que a
-própria loja mostra; não foi conferido se algum provedor pede ordenação), então uma
-pesquisa pode trazer até ~120 anúncios com 6 lojas. Todos são registrados e a IA decide
-depois quais combinam com a missão e dá nome/identidade a eles. O custo de IA cresce com
-o número de anúncios que entram, não com o número que o usuário precisa ver (os 5 mais
-baratos). Em placas-mãe e principalmente RAM ("infinita" por código de peça) a lista
-do GG web enche de itens. A cada nova pesquisa entram anúncios novos e os antigos
-continuam guardados.
+O gasto de IA e a lista cheia de itens de placa-mãe e RAM vêm de **o que passa pelo
+filtro antes da IA e de como ele escolhe**, não de a pesquisa trazer tudo.
+
+## Como funciona hoje (conferido no código em 2026-10-01)
+
+*Correção do que estava escrito antes neste documento:* a primeira versão dizia que uma
+pesquisa traz até ~120 anúncios e todos são registrados. **Isso está errado.** Já existe
+um funil (TASK-075 e TASK-094, `_select_final_candidates` em
+`app/collection/orchestration.py`):
+
+1. Cada loja devolve até 20 cards (`max_offers`, na ordem da própria loja).
+2. **Antes de qualquer gravação ou IA** há um filtro determinístico: só passa quem
+   contém o modelo pedido (quando a missão tem `model`) e não parece kit/PC completo.
+3. Depois, `_limit_intermediate_candidates` fica com **8 por loja**, ordenados por:
+   condição (novo primeiro), vendedor (a própria loja primeiro), disponibilidade e
+   **preço**. **Não há nenhum sinal de popularidade**; é "os mais baratos" dentro dos
+   grupos, o que traz os baratos e desconhecidos que você viu.
+4. Esses até 8 por loja (até ~48 por pesquisa com 6 lojas) são gravados e seguem para a
+   IA quando ainda não têm classificação ou identidade.
+
+**Quando a IA é chamada por anúncio que sobrou:** com a identidade já reconhecida
+(regras ou catálogo) e missão de produto específico ou de família, a relevância é
+decidida **sem IA** (`_deterministic_product_relevance`); sem identidade, até 3
+chamadas por anúncio (relevância, nome de exibição, identidade). Missão genérica pede
+relevância por IA sempre que o anúncio ainda não foi classificado.
+
+**Sinais de popularidade que a coleta já tem:** nota e número de avaliações lidos do
+card nas 6 lojas (`raw_rating_average`, `raw_review_count`; em Pichau, Terabyte e Kabum
+por seletores genéricos que podem vir vazios; Amazon, Mercado Livre e Magalu mais
+explícitos). **Quantidade de vendas não é lida em nenhuma loja** (Amazon e Mercado Livre
+mostram "comprados no mês" e "vendidos" no texto do card, que hoje só vai como
+evidência). **Nenhuma loja usa ordenação na pesquisa** (todas usam a ordem padrão do
+site); os parâmetros de ordenação de cada loja precisam ser conferidos ao vivo, o que
+exige abrir as lojas (não feito).
 
 ## Decisões do usuário (2026-10-01)
 
@@ -34,15 +60,16 @@ continuam guardados.
    cadastrado"). Se achar um modelo novo mais barato, o ponteiro da missão passa para
    ele; senão continua acompanhando o item anterior (regra de hoje, mantida).
 
-## Funil proposto
+## Funil proposto (a evoluir o funil que já existe)
 
-1. **Triagem determinística sem IA:** o título precisa conter o que a missão pede (ex.:
+1. **Triagem determinística sem IA** (já existe em parte: modelo e kit): o título precisa conter o que a missão pede (ex.:
    `B550M`), sem kit/combo/usado/acessório, com preço e disponibilidade válidos.
 2. **Agrupar por produto só para decidir** (sem criar identidade nova no banco, para não
    duplicar produtos): placas iguais de lojas diferentes viram um grupo, fica o menor
    preço. Para **RAM**, agrupar por **característica** (tipo DDR4/DDR5, capacidade,
    velocidade, marca) e não por código de peça.
-3. **Ranquear pela popularidade** (vendas; senão avaliações e nota) e considerar até 10.
+3. **Ranquear pela popularidade** (todos os sinais que a loja informar) e considerar até 10, no
+   lugar de ordenar só por condição, vendedor, disponibilidade e preço como hoje.
 4. **Enviar à IA só os 2 mais baratos desse conjunto** (1 quando as avaliações apontarem
    claramente um só). Os "2 mais baratos" saem do conjunto de até 10 escolhido pela
    popularidade, e não dos 2 mais baratos de toda a pesquisa (**confirmado pelo
@@ -64,6 +91,9 @@ continuam guardados.
 
 ## Perguntas em aberto
 
+0. **Por loja ou por missão?** Hoje o corte é por loja (8 por loja). Os "2 para a IA" valem
+   por loja (até 12 por pesquisa) ou no total da missão entre as lojas (só 2)? O corte global
+   exige juntar as lojas antes da IA, o que a coleta atual (uma loja por vez) não faz.
 1. Como mostrar no GG web um item registrado que não passou pela IA (não conta como
    "combina com a missão" até ser classificado?).
 2. Peso entre vendas, nota e número de avaliações ao combiná-los (e como tratar a loja
