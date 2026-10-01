@@ -262,6 +262,9 @@ async def apply_listing_change(
         rating_average=offer.rating_average,
         review_count=offer.review_count,
         rating_observed_at=offer.rating_observed_at,
+        sales_count=offer.sales_count,
+        sales_scope=offer.sales_scope,
+        sales_observed_at=offer.sales_observed_at,
         created_at=offer.created_at,
         last_seen_at=offer.last_seen_at,
     )

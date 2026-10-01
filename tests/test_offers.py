@@ -88,6 +88,9 @@ def test_offer_table_matches_data_contract() -> None:
         table.c.rating_average,
         table.c.review_count,
         table.c.rating_observed_at,
+        table.c.sales_count,
+        table.c.sales_scope,
+        table.c.sales_observed_at,
         table.c.created_at,
         table.c.updated_at,
         table.c.last_seen_at,
@@ -104,6 +107,9 @@ def test_offer_table_matches_data_contract() -> None:
     assert table.c.rating_average.nullable is True
     assert table.c.review_count.nullable is True
     assert table.c.rating_observed_at.nullable is True
+    assert table.c.sales_count.nullable is True
+    assert table.c.sales_scope.nullable is True
+    assert table.c.sales_observed_at.nullable is True
     # Rodada de frescor (2026-09-11): supersessão imediata da Offer
     # antiga sem vendedor quando um vendedor real é identificado pela
     # primeira vez para o mesmo anúncio -- nunca fundida/reatribuída.
@@ -186,6 +192,9 @@ def test_offer_table_rejects_blank_identifiers_and_url() -> None:
         "ck_offers_rating_average_range",
         "ck_offers_rating_snapshot_complete",
         "ck_offers_review_count_non_negative",
+        "ck_offers_sales_count_non_negative",
+        "ck_offers_sales_scope_values",
+        "ck_offers_sales_snapshot_complete",
         "ck_offers_url_not_blank",
         "ck_offers_superseded_by_not_self",
         "ck_offers_superseded_pair_complete",

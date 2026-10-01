@@ -723,6 +723,7 @@ class MercadoLivreProvider(PlaywrightStoreProvider):
     source_code = "mercadolivre"
     result_selector = "li.ui-search-layout__item:has(a.poly-component__title)"
     rating_detail_enabled = True
+    sales_detail_enabled = True
 
     def __init__(
         self,
@@ -731,6 +732,22 @@ class MercadoLivreProvider(PlaywrightStoreProvider):
         **kwargs,
     ) -> None:
         super().__init__(*args, cdp_transport=cdp_transport, **kwargs)
+
+    async def resolve_offer_sales_text(self, page) -> str | None:
+        """TASK-136: as vendas ("Novo  |  +10 mil vendidos") ficam no subtítulo logo
+        ACIMA do título da página do produto (`.ui-pdp-header__subtitle`, conferido
+        ao vivo em 2026-10-01). Lê só esse elemento: outros "vendidos" da página
+        ("Mais vendidos" no menu, selo "MAIS VENDIDO", produtos relacionados) nunca
+        entram."""
+        subtitle = page.locator(".ui-pdp-header__subtitle .ui-pdp-subtitle").first
+        try:
+            # O subtítulo é montado depois do carregamento inicial da página
+            # (a nota vem do JSON da página e já existe antes).
+            await subtitle.wait_for(state="attached", timeout=5_000)
+        except Exception:
+            return None
+        text = await subtitle.text_content()
+        return (text or "").strip() or None
 
     def build_url(self, query: str) -> str:
         slug = re.sub(r"\s+", "-", query.strip())

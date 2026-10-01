@@ -46,6 +46,7 @@ async def validate(
     *,
     show_evidence: bool = False,
     edge_cdp_url: str | None = None,
+    max_offers: int = 3,
 ) -> None:
     provider_kwargs = {}
     if source == "magalu":
@@ -79,7 +80,7 @@ async def validate(
         )
     provider = PROVIDERS[source](
         BrowserSettings(headless=not headed, navigation_timeout_ms=60_000),
-        max_offers=3,
+        max_offers=max_offers,
         **provider_kwargs,
     )
     request = CollectionRequest(
@@ -100,6 +101,10 @@ async def validate(
             f"total={offer.total_amount} {offer.currency} "
             f"availability={offer.availability.value}"
         )
+        print(
+            f"  nota={offer.rating_average} avaliacoes={offer.review_count} "
+            f"vendas={offer.sales}"
+        )
         if show_evidence:
             card_text = str(offer.raw_offer.evidence.get("card_text", ""))
             print("  evidence=" + " ".join(card_text.split())[:1000])
@@ -113,6 +118,7 @@ def main() -> None:
     mode.add_argument("--headed", action="store_true")
     mode.add_argument("--headless", action="store_true")
     parser.add_argument("--show-evidence", action="store_true")
+    parser.add_argument("--max-offers", type=int, default=3)
     parser.add_argument(
         "--edge-cdp-url",
         help="Endpoint CDP HTTP loopback de um Edge normal já iniciado "
@@ -129,6 +135,7 @@ def main() -> None:
             headed,
             show_evidence=args.show_evidence,
             edge_cdp_url=args.edge_cdp_url,
+            max_offers=args.max_offers,
         )
     )
 

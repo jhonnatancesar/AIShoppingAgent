@@ -63,6 +63,21 @@ class Offer(Base):
             postgresql_where="superseded_by_id IS NOT NULL",
         ),
         CheckConstraint(
+            "sales_count IS NULL OR sales_count >= 0",
+            name="ck_offers_sales_count_non_negative",
+        ),
+        CheckConstraint(
+            "sales_scope IS NULL OR sales_scope IN ('last_month', 'total')",
+            name="ck_offers_sales_scope_values",
+        ),
+        CheckConstraint(
+            "(sales_count IS NULL AND sales_scope IS NULL AND "
+            "sales_observed_at IS NULL) OR "
+            "(sales_count IS NOT NULL AND sales_scope IS NOT NULL AND "
+            "sales_observed_at IS NOT NULL)",
+            name="ck_offers_sales_snapshot_complete",
+        ),
+        CheckConstraint(
             "superseded_by_id IS NULL OR superseded_by_id <> id",
             name="ck_offers_superseded_by_not_self",
         ),
@@ -134,6 +149,15 @@ class Offer(Base):
     rating_observed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    sales_count: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    sales_scope: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    sales_observed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    """TASK-136: quantidade de vendas que a LOJA publica no card (Amazon, mensal:
+    `last_month`; Mercado Livre, acumulada: `total`), sinal de popularidade lido
+    antes da IA. Só existe quando a loja informa; ausência nunca apaga o último
+    valor. O par/trio é todo preenchido ou todo nulo, como a nota."""
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

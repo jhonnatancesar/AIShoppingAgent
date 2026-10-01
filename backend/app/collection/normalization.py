@@ -48,6 +48,51 @@ class NormalizedInstallmentOption:
     payment_method: str | None = None
 
 
+SALES_SCOPE_LAST_MONTH = "last_month"
+SALES_SCOPE_TOTAL = "total"
+
+_SALES_PATTERN = re.compile(
+    r"(?<![\w.,])(?:mais\s+de\s+|\+\s*)?(\d+(?:[.,]\d+)?)\s*(mil|k)?\s*\+?\s+"
+    r"(?:(?:pessoas?\s+)?comprad[oa]s?|compras?|vendid[oa]s?)\b(?P<tail>[^.\n]{0,24})",
+    re.I,
+)
+
+
+def parse_sales_snapshot(card_text: str | None) -> tuple[int, str] | None:
+    """TASK-136: quantidade de vendas que a LOJA mostra no card (Amazon: "Mais de 1 mil
+    comprados no mês passado"; Mercado Livre: "+500 vendidos"). Devolve
+    `(quantidade, escopo)` com escopo `last_month` (Amazon, mensal) ou `total`.
+    O GG só LÊ o número que a loja publica; texto sem número claro, como "Vendido
+    por Loja X", nunca vira venda. Quantidade abreviada ("1 mil", "2,5 mil") é
+    expandida; "+" e "mais de" mantêm o piso informado."""
+    if not card_text:
+        return None
+    text = card_text.replace("\xa0", " ")
+    match = _SALES_PATTERN.search(text)
+    if match is None:
+        return None
+    raw_number = match.group(1)
+    thousands = bool(match.group(2))
+    try:
+        if thousands:
+            value = int(Decimal(raw_number.replace(",", ".")) * 1000)
+        else:
+            # "1.500" / "1,500" sem sufixo: separador de milhar
+            digits = re.sub(r"[.,]", "", raw_number)
+            value = int(digits)
+    except InvalidOperation, ValueError:
+        return None
+    if value <= 0:
+        return None
+    tail = match.group("tail") or ""
+    scope = (
+        SALES_SCOPE_LAST_MONTH
+        if re.search(r"m[eê]s", tail, re.I)
+        else SALES_SCOPE_TOTAL
+    )
+    return (value, scope)
+
+
 @dataclass(frozen=True, slots=True)
 class NormalizedCollectedOffer:
     """Oferta pronta para persistência posterior, sem perder sua evidência bruta."""
@@ -93,6 +138,15 @@ class NormalizedCollectedOffer:
             self.raw_offer.raw_rating_average,
             self.raw_offer.raw_review_count,
         )[1]
+
+    @property
+    def sales(self) -> tuple[int, str] | None:
+        """TASK-136: vendas publicadas pela loja no card, ou `None`. Lido do texto
+        do card guardado como evidência; nunca inventado."""
+        evidence = self.raw_offer.evidence
+        return parse_sales_snapshot(evidence.get("card_text")) or parse_sales_snapshot(
+            evidence.get("detail_sales_text")
+        )
 
     @property
     def installment_options(self) -> tuple[NormalizedInstallmentOption, ...]:

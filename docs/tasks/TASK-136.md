@@ -1,9 +1,31 @@
 # TASK-136 — Funil antes da IA: só os melhores candidatos de cada pesquisa chegam à IA
 
-Status: **Registrada (2026-10-01), planejada, NÃO iniciada.** Pedido do usuário em
+Status: **Em andamento (2026-10-01): passo 1 implementado; demais passos não iniciados.** Pedido do usuário em
 conversa. Nenhum código escrito. Decisões abaixo são do usuário; os pontos marcados
 "a confirmar" ficam para o início da implementação (regra do projeto: parar e relatar
 antes de codar se algo divergir).
+
+## Progresso
+
+**Passo 1 — sinais de popularidade lidos antes da IA: implementado (2026-10-01), commit
+local, validado nas lojas reais.** Migration `20261001_0001` (colunas `sales_count`,
+`sales_scope`, `sales_observed_at` na `Offer`). `parse_sales_snapshot`
+(`app/collection/normalization.py`) lê só o número que a loja publica. **Conferido ao
+vivo (uma pesquisa por loja, Edge dedicado de teste):**
+- **Amazon:** "Mais de 300 compras no mês passado" → 300 por mês (escopo `last_month`);
+  nota e avaliações já eram lidas.
+- **Mercado Livre:** as vendas **não estão no card da busca** (14 cards conferidos), e sim
+  na **página do produto, logo acima do título** ("Novo | +10 mil vendidos",
+  `.ui-pdp-header__subtitle .ui-pdp-subtitle`, montado depois do carregamento). Lido no
+  enriquecimento de detalhe que já abre a página (`sales_detail_enabled`), escopo
+  `total`; a nota vem do JSON da página (4,8 com 224 avaliações).
+- **Terabyte:** a nota e as avaliações **existiam no card e não eram lidas**
+  ("★ ★ ★ ★ ★ 4.9 (84)"); agora são (fallback pelo texto do card quando os seletores não
+  trazem nada).
+- **Pichau:** o card não mostra nota nem vendas. **Magalu:** nota e avaliações já eram
+  lidas, sem vendas. **Kabum:** a pesquisa de teste voltou sem ofertas (falha
+  observada, não investigada nesta TASK).
+- Nenhuma venda foi inventada em nenhuma loja (kit, "Vendido por", "Mais vendidos").
 
 ## Problema
 

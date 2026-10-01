@@ -3362,12 +3362,18 @@ async def _resolve_global_product(
 
 
 def _apply_rating_snapshot(offer: Offer, item: Any) -> None:
-    """Atualiza só um par explícito; ausência nunca apaga o último snapshot."""
-    if item.rating_average is None or item.review_count is None:
-        return
-    offer.rating_average = item.rating_average
-    offer.review_count = item.review_count
-    offer.rating_observed_at = item.raw_offer.collected_at
+    """Atualiza só um par explícito; ausência nunca apaga o último snapshot.
+
+    TASK-136: o mesmo vale para as vendas publicadas pela loja no card
+    (`item.sales`), outro sinal de popularidade lido antes da IA."""
+    if item.rating_average is not None and item.review_count is not None:
+        offer.rating_average = item.rating_average
+        offer.review_count = item.review_count
+        offer.rating_observed_at = item.raw_offer.collected_at
+    sales = getattr(item, "sales", None)
+    if sales is not None:
+        offer.sales_count, offer.sales_scope = sales
+        offer.sales_observed_at = item.raw_offer.collected_at
 
 
 async def _find_offer(

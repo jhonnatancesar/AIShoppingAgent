@@ -53,6 +53,12 @@ from app.observability.metrics import observe_resilience_event
 
 Clock = Callable[[], datetime]
 _HAS_DIGIT = re.compile(r"\d")
+_STAR_RATING_TEXT = re.compile(
+    r"(?:★\s*){1,5}([0-5](?:[.,]\d{1,2})?)\s*\((\d{1,3}(?:[.\s]\d{3})*|\d+)\)"
+)
+"""TASK-136: nota e quantidade de avaliações que a loja desenha no texto do card, no
+formato `★ ★ ★ ★ ★ 4.9 (84)` (Terabyte, onde os seletores `itemprop` não existem). Só
+vale com as estrelas na frente e os dois números; nunca inventa um dos dois."""
 _BLOCKED_STATUSES = frozenset({401, 403, 429})
 # TASK-109: default de fábrica do pacing entre navegações sequenciais de
 # detalhe -- só usado quando o chamador não passa
@@ -66,6 +72,10 @@ class PlaywrightStoreProvider:
     source_code: str
     result_selector: str
     rating_detail_enabled: bool = False
+    sales_detail_enabled: bool = False
+    """TASK-136: a loja mostra as vendas só na página do produto (Mercado Livre:
+    "Novo | +500 vendidos" logo acima do título), não no card da busca. Lido no
+    mesmo enriquecimento de detalhe, sem abrir a página outra vez."""
 
     # Estratégia de espera do `page.goto`. A maioria das fontes usa
     # "domcontentloaded" (padrão). Providers cujo readiness real independe
@@ -194,6 +204,11 @@ class PlaywrightStoreProvider:
         repetir entre vendedores distintos) durante o mesmo enriquecimento.
         Providers sem identificador estável disponível na página (ex.:
         Amazon quando o vendedor é a própria plataforma) mantêm o padrão."""
+        return None
+
+    async def resolve_offer_sales_text(self, page: Page) -> str | None:
+        """Texto da página que traz a quantidade de vendas, ou `None`. Cada loja que
+        mostra vendas só no detalhe sobrescreve (ver `sales_detail_enabled`)."""
         return None
 
     async def resolve_offer_rating(self, page: Page) -> tuple[str, str] | None:
@@ -495,6 +510,7 @@ class PlaywrightStoreProvider:
             or seller_external_id_enabled
             or installments_enabled
             or self.rating_detail_enabled
+            or self.sales_detail_enabled
         ):
             return offers
         limits = []
@@ -512,6 +528,8 @@ class PlaywrightStoreProvider:
             limits.append(self._installment_option_max_candidates)
         if self.rating_detail_enabled:
             limits.append(max(self._marketplace_party_max_candidates, 1))
+        if self.sales_detail_enabled:
+            limits.append(max(self._marketplace_party_max_candidates, 1))
         candidates = self._rank_offers(offers)[: max(limits)]
         resolved: dict[
             str,
@@ -526,6 +544,7 @@ class PlaywrightStoreProvider:
                 str | None,
             ],
         ] = {}
+        sales_texts: dict[str, str] = {}
         async with self._open_detail_page() as page:
             for position, offer in enumerate(candidates):
                 await self._pace_before_next_detail_request(position)
@@ -601,6 +620,13 @@ class PlaywrightStoreProvider:
                     rating = await self.resolve_offer_rating(page)
                 except Exception:
                     rating = None
+                if self.sales_detail_enabled:
+                    try:
+                        sales_text = await self.resolve_offer_sales_text(page)
+                    except Exception:
+                        sales_text = None
+                    if sales_text:
+                        sales_texts[offer.url] = sales_text
                 resolved[offer.url] = (
                     seller_kind,
                     fulfillment_kind,
@@ -625,7 +651,7 @@ class PlaywrightStoreProvider:
                 seller_name,
                 seller_external_id,
             ) = resolved[offer.url]
-            return replace(
+            updated = replace(
                 offer,
                 seller_kind=(
                     offer.seller_kind
@@ -655,6 +681,15 @@ class PlaywrightStoreProvider:
                     rating[1] if rating is not None else offer.raw_review_count
                 ),
             )
+            if offer.url in sales_texts:
+                updated = replace(
+                    updated,
+                    evidence={
+                        **offer.evidence,
+                        "detail_sales_text": sales_texts[offer.url][:400],
+                    },
+                )
+            return updated
 
         return tuple(enriched(offer) for offer in offers)
 
@@ -843,6 +878,7 @@ class PlaywrightStoreProvider:
                 # desta execução (mesmo princípio da Kabum: ausência de
                 # oferta normal na busca não é candidato).
                 continue
+            rating_from_row = _rating_from_row(row)
             offers.append(
                 RawCollectedOffer(
                     source_code=self.source_code,
@@ -858,8 +894,8 @@ class PlaywrightStoreProvider:
                     raw_availability=_optional(row.get("availability")),
                     raw_fulfillment=_optional(row.get("fulfillment")),
                     raw_condition=_optional(row.get("condition")),
-                    raw_rating_average=_optional(row.get("rating_average")),
-                    raw_review_count=_optional(row.get("review_count")),
+                    raw_rating_average=rating_from_row[0],
+                    raw_review_count=rating_from_row[1],
                     seller_kind=_party_kind(row.get("seller_kind")),
                     image_url=normalize_http_url(row.get("image")),
                     evidence={"card_text": str(row.get("evidence") or "")[:1000]},
@@ -867,6 +903,19 @@ class PlaywrightStoreProvider:
                 )
             )
         return tuple(offers)
+
+
+def _rating_from_row(row: dict[str, Any]) -> tuple[str | None, str | None]:
+    """Nota e avaliações do card: os seletores da loja primeiro; se nenhum dos dois
+    veio, tenta o texto do card (estrelas + nota + contagem entre parênteses)."""
+    average = _optional(row.get("rating_average"))
+    count = _optional(row.get("review_count"))
+    if average is not None or count is not None:
+        return (average, count)
+    match = _STAR_RATING_TEXT.search(str(row.get("evidence") or ""))
+    if match is None:
+        return (None, None)
+    return (match.group(1), re.sub(r"[.\s]", "", match.group(2)))
 
 
 def _optional(value: object) -> str | None:
