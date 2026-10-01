@@ -1,5 +1,7 @@
 # Roadmap
 
+**Atualização 2026-10-01:** TASK-136 registrada, NÃO iniciada — funil antes da IA: de cada pesquisa só 2 (ou 1) candidatos, escolhidos por popularidade (vendas; senão avaliações e nota) e preço, chegam à IA; o restante fica registrado com preço mas fora da IA. Ver `docs/tasks/TASK-136.md`.
+
 **Atualização 2026-09-30:** TASK-133 (GG) em andamento (etapa 1 e disjuntor compartilhado prontos, local). Registradas, NÃO iniciadas: TASK-134 (GG entende os erros de IA do Core e pausa até o dia virar) e TASK-135 (ponte do GG com o Telegram para aprovar troca de modelo de IA), ambas dependentes das TASKs de mesmo número no César Core (`C:\cesar-core`, opção A: o Core seleciona a IA e conta a cota do dia; nada de código no Core antes de fechar o GG). Ver `docs/tasks/TASK-134.md` e `docs/tasks/TASK-135.md`.
 
 **Atualização 2026-09-28 (noite, 2):** TASK-133 registrada, NÃO iniciada —
