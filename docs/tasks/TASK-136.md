@@ -67,21 +67,39 @@ exige abrir as lojas (não feito).
    diferença entre esses 2 e os outros (até 8 por loja) pode ser mínima, e o usuário pode
    preferir outro por ser mais bonito, pela cor etc., então os outros não somem.
 
-## Como fazer o corte total (decisão de desenho em aberto)
+## Como fazer o corte total — DECIDIDO: opção A, barreira por ciclo (usuário, 2026-10-01)
 
-Hoje a coleta trata **uma loja por vez** (Fase A, B e C por loja), então o corte entre
-lojas não existe. Opções:
+Hoje a coleta é por **`(item de monitoramento, loja)`**, cada uma na sua agenda
+(`MonitoringItemStore.next_run_at`, backoff, intervalo mínimo por loja), e o resultado
+de cada coleta é distribuído às missões por fan-out (`shared_collection.py`). Não existe
+a noção de "ciclo de todas as lojas". Opções que foram avaliadas:
 
-- **A) Barreira por ciclo da missão:** esperar o resultado de todas as lojas, escolher os
-  2 e só então chamar a IA. É o mais exato, mas é a maior mudança na orquestração.
-- **B) Comparar com o que já está no banco (recomendada):** cada loja, ao terminar,
-  pergunta "esta oferta entra nos 2 melhores da missão, considerando o que já temos
-  guardado das outras lojas?" e só então chama a IA. Não exige esperar as outras lojas.
-  Custo: no primeiro ciclo de uma missão nova pode gastar IA com uma oferta que depois
-  será superada por outra loja (no máximo 2 por loja, uma vez); a partir do segundo ciclo
-  o conjunto já está estável.
-- **C) Corte por loja** (2 por loja, até 12 por pesquisa): mais simples, mas não é o que o
-  usuário pediu.
+- **A) Barreira por ciclo (ESCOLHIDA):** esperar o resultado de todas as lojas escolhidas
+  pelo usuário, escolher os 2 e só então chamar a IA.
+- B) Comparar com o que já está no banco: **descartada pelo usuário**, porque o banco
+  pode estar desatualizado pelo tempo parado e, para um item que ainda não existe no
+  banco, a pesquisa de todas as lojas escolhidas precisa rodar e coletar primeiro.
+- C) Corte por loja (2 por loja): fora do que o usuário pediu.
+
+**Consequências da opção A no desenho (a detalhar antes de codar):**
+
+1. **Conceito de ciclo** por item de monitoramento: um ciclo abre quando a primeira loja
+   daquele item coleta e fecha quando **todas as lojas habilitadas** reportaram, **ou**
+   quando passa um tempo limite. Loja bloqueada (backoff, CAPTCHA) ou que falhou **não
+   segura o ciclo**: sai do cálculo daquele ciclo. Tempo limite proposto: 30 minutos
+   (*a confirmar*).
+2. **Fase A por loja continua gravando** as ofertas e os preços (Offer e PriceObservation),
+   **sem IA**. Só a **escolha** e a **IA** passam a acontecer no fechamento do ciclo.
+3. **Fechamento do ciclo:** junta as ofertas de todas as lojas, ranqueia por popularidade,
+   fica com o conjunto de até 10 e escolhe as **2 mais baratas**. A IA (relevância, nome,
+   identidade) roda **só nessas 2** e só se ainda não tiverem classificação. A Fase C
+   (alertas, ponteiro da missão) roda com o resultado.
+4. **Ciclos seguintes:** recalcula as 2 escolhidas; a IA só é chamada quando o par muda
+   e o novo item ainda não está classificado.
+5. **Durabilidade:** o estado do ciclo precisa sobreviver a crash e a mais de um processo
+   de worker (mesmo cuidado do fan-out durável da TASK-112: claim atômico e retomada).
+6. **Missão com várias lojas e itens compartilhados entre missões:** a escolha é por
+   item de monitoramento (compartilhado), e o fan-out por missão segue como hoje.
 
 ## Funil proposto (a evoluir o funil que já existe)
 
@@ -116,8 +134,8 @@ lojas não existe. Opções:
 
 ## Perguntas em aberto
 
-0. **Qual opção para o corte total** (A, B ou C acima). *Respondido em parte:* o usuário
-   quer 2 no total das lojas; falta escolher A ou B (recomendação: B).
+0. Tempo limite do ciclo (proposta: 30 minutos) e o que fazer quando uma loja sempre
+   falha (sai do ciclo; ficar sem ela é aceitável?).
 1. Como mostrar no GG web um item registrado que não passou pela IA (não conta como
    "combina com a missão" até ser classificado?).
 2. Peso entre vendas, nota e número de avaliações ao combiná-los (e como tratar a loja
