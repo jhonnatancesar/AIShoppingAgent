@@ -60,6 +60,29 @@ exige abrir as lojas (não feito).
    cadastrado"). Se achar um modelo novo mais barato, o ponteiro da missão passa para
    ele; senão continua acompanhando o item anterior (regra de hoje, mantida).
 
+4. **Só 2 para a IA em TODAS as lojas somadas, não 2 por loja (usuário, 2026-10-01):**
+   a intenção é deixar a IA bem restrita. No **GG web** os demais itens continuam
+   listados como já pesquisados, mas na **mesma aba** aparece uma **parte de destaque**
+   com **somente esses 2 itens**, os mais baratos do conjunto escolhido. Motivo: a
+   diferença entre esses 2 e os outros (até 8 por loja) pode ser mínima, e o usuário pode
+   preferir outro por ser mais bonito, pela cor etc., então os outros não somem.
+
+## Como fazer o corte total (decisão de desenho em aberto)
+
+Hoje a coleta trata **uma loja por vez** (Fase A, B e C por loja), então o corte entre
+lojas não existe. Opções:
+
+- **A) Barreira por ciclo da missão:** esperar o resultado de todas as lojas, escolher os
+  2 e só então chamar a IA. É o mais exato, mas é a maior mudança na orquestração.
+- **B) Comparar com o que já está no banco (recomendada):** cada loja, ao terminar,
+  pergunta "esta oferta entra nos 2 melhores da missão, considerando o que já temos
+  guardado das outras lojas?" e só então chama a IA. Não exige esperar as outras lojas.
+  Custo: no primeiro ciclo de uma missão nova pode gastar IA com uma oferta que depois
+  será superada por outra loja (no máximo 2 por loja, uma vez); a partir do segundo ciclo
+  o conjunto já está estável.
+- **C) Corte por loja** (2 por loja, até 12 por pesquisa): mais simples, mas não é o que o
+  usuário pediu.
+
 ## Funil proposto (a evoluir o funil que já existe)
 
 1. **Triagem determinística sem IA** (já existe em parte: modelo e kit): o título precisa conter o que a missão pede (ex.:
@@ -74,7 +97,9 @@ exige abrir as lojas (não feito).
    claramente um só). Os "2 mais baratos" saem do conjunto de até 10 escolhido pela
    popularidade, e não dos 2 mais baratos de toda a pesquisa (**confirmado pelo
    usuário em 2026-10-01**).
-5. **Mostrar os 5 menores preços** como hoje.
+5. **Mostrar os 5 menores preços** como hoje, e acrescentar o **destaque** na mesma aba
+   com só os 2 itens escolhidos (mais baratos do conjunto popular); os demais continuam
+   na lista.
 
 ## Pontos para investigar antes de codar
 
@@ -91,9 +116,8 @@ exige abrir as lojas (não feito).
 
 ## Perguntas em aberto
 
-0. **Por loja ou por missão?** Hoje o corte é por loja (8 por loja). Os "2 para a IA" valem
-   por loja (até 12 por pesquisa) ou no total da missão entre as lojas (só 2)? O corte global
-   exige juntar as lojas antes da IA, o que a coleta atual (uma loja por vez) não faz.
+0. **Qual opção para o corte total** (A, B ou C acima). *Respondido em parte:* o usuário
+   quer 2 no total das lojas; falta escolher A ou B (recomendação: B).
 1. Como mostrar no GG web um item registrado que não passou pela IA (não conta como
    "combina com a missão" até ser classificado?).
 2. Peso entre vendas, nota e número de avaliações ao combiná-los (e como tratar a loja
