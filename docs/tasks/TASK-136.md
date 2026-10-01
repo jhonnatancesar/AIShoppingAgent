@@ -103,6 +103,24 @@ a noção de "ciclo de todas as lojas". Opções que foram avaliadas:
 6. **Missão com várias lojas e itens compartilhados entre missões:** a escolha é por
    item de monitoramento (compartilhado), e o fan-out por missão segue como hoje.
 
+## Tela da missão no GG web — DECIDIDO: três blocos na mesma aba (usuário, 2026-10-01)
+
+Hoje a tela da missão ("Ofertas relevantes", `frontend/src/pages/missions/
+MissionDetailPage.tsx`, alimentada por `list_current_offer_links_for_mission` em
+`backend/app/offers/query.py`) lista só as ofertas da coleta mais recente de cada loja
+que já foram classificadas como "combina" ou "talvez combina", ordenadas por loja e data
+de visualização. Como só 2 itens passarão pela IA, o resto sumiria da lista. Decisão
+(opção 1): na **mesma aba**, três blocos:
+
+1. **Destaque:** só os 2 itens escolhidos pelo funil (os mais baratos do conjunto
+   popular).
+2. **Ofertas relevantes:** como hoje (classificadas).
+3. **Outros resultados:** as ofertas gravadas que não passaram pela IA, **sem
+   classificação**, ordenadas por preço (menor primeiro), para o usuário poder preferir
+   um deles por ser mais bonito, pela cor etc.
+
+Preço e histórico desses itens continuam sendo gravados normalmente.
+
 ## Funil proposto (a evoluir o funil que já existe)
 
 1. **Triagem determinística sem IA** (já existe em parte: modelo e kit): o título precisa conter o que a missão pede (ex.:
