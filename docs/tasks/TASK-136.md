@@ -86,6 +86,16 @@ evidência). **Nenhuma loja usa ordenação na pesquisa** (todas usam a ordem pa
 site); os parâmetros de ordenação de cada loja precisam ser conferidos ao vivo, o que
 exige abrir as lojas (não feito).
 
+**Passo 2 — ranking e escolha dos candidatos: implementado (2026-10-01), commit local,
+ainda NÃO ligado na coleta.** `app/collection/funnel.py` (`select_for_ai`,
+`popularity_points`), lógica pura e testada. Pontos de popularidade = **nota x quantidade
+de avaliações** (3 avaliações 5★ = 15 nunca ganham de 160 avaliações 4,9 = 784); vendas só
+desempatam e colocam quem tem venda acima de quem não tem sinal nenhum. O pool são as 10
+mais populares e, dentre elas, as **2 mais baratas** vão para a IA (nova antes de usada;
+indisponíveis nunca competem). Regra de pontos toda em uma função, fácil de mudar. *Ainda
+não feito:* "1 em vez de 2 quando as avaliações apontarem claramente um só" (decisão de
+critério a definir).
+
 ## Decisões do usuário (2026-10-01)
 
 1. **Critério de "recomendado" (popularidade), simplificado em 2026-10-01:**
