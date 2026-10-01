@@ -31,6 +31,9 @@ from typing import Any
 
 POOL_SIZE = 10
 AI_COUNT = 2
+DOMINANCE_FACTOR = 3
+"""Das 2 mais baratas do pool, se uma tem pelo menos 3x os pontos da outra (ou a outra não
+tem avaliação nenhuma), só ela vai para a IA: as avaliações apontam claramente um só."""
 
 _CONDITION_RANK = {"new": 0, "refurbished": 1, "unknown": 2, "used": 3}
 
@@ -107,4 +110,11 @@ def select_for_ai(
             _identity(item),
         ),
     )
-    return FunnelSelection(pool=pool, chosen=tuple(cheapest[:ai_count]))
+    chosen = tuple(cheapest[:ai_count])
+    if len(chosen) == 2:
+        better, other = sorted(chosen, key=popularity_points, reverse=True)
+        if popularity_points(better) > 0 and popularity_points(better) >= (
+            DOMINANCE_FACTOR * popularity_points(other)
+        ):
+            chosen = (better,)
+    return FunnelSelection(pool=pool, chosen=chosen)

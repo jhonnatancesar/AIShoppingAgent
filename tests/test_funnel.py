@@ -133,3 +133,25 @@ def test_invalid_sizes_are_rejected() -> None:
 
 def test_availability_enum_is_the_one_the_funnel_reads() -> None:
     assert _item("x", "100").availability is Availability.AVAILABLE
+
+
+def test_only_one_goes_to_the_ai_when_the_reviews_clearly_point_to_one() -> None:
+    famous = _item("famous", "800", rating="4.9", reviews=900)
+    unknown = _item("unknown", "700")  # mais barata, sem avaliação nenhuma
+    selection = select_for_ai([famous, unknown])
+    assert _names(selection.pool) == ["famous", "unknown"]
+    assert _names(selection.chosen) == ["famous"]
+
+
+def test_three_times_the_points_is_the_threshold() -> None:
+    base = _item("base", "700", rating="4.0", reviews=100)  # 400 pontos
+    triple = _item("triple", "800", rating="4.0", reviews=300)  # 1.200 pontos (3x)
+    almost = _item("almost", "800", rating="4.0", reviews=299)  # 1.196 pontos (< 3x)
+    assert _names(select_for_ai([base, triple]).chosen) == ["triple"]
+    assert _names(select_for_ai([base, almost]).chosen) == ["base", "almost"]
+
+
+def test_two_without_any_signal_both_go() -> None:
+    a = _item("a", "700")
+    b = _item("b", "800")
+    assert _names(select_for_ai([a, b]).chosen) == ["a", "b"]

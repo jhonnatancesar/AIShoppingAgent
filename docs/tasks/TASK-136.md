@@ -92,9 +92,9 @@ ainda NÃO ligado na coleta.** `app/collection/funnel.py` (`select_for_ai`,
 de avaliações** (3 avaliações 5★ = 15 nunca ganham de 160 avaliações 4,9 = 784); vendas só
 desempatam e colocam quem tem venda acima de quem não tem sinal nenhum. O pool são as 10
 mais populares e, dentre elas, as **2 mais baratas** vão para a IA (nova antes de usada;
-indisponíveis nunca competem). Regra de pontos toda em uma função, fácil de mudar. *Ainda
-não feito:* "1 em vez de 2 quando as avaliações apontarem claramente um só" (decisão de
-critério a definir).
+indisponíveis nunca competem). Regra de pontos toda em uma função, fácil de mudar. **Só 1 em vez de 2** quando as avaliações apontam claramente um só: das 2 mais baratas,
+se uma tem pelo menos 3x os pontos da outra (ou a outra não tem avaliação nenhuma), só ela
+vai para a IA (`DOMINANCE_FACTOR = 3`, simples e fácil de mudar).
 
 ## Decisões do usuário (2026-10-01)
 
