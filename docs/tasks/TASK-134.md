@@ -24,9 +24,9 @@ Core e agir de forma diferente para cada um.
    histórico e referências externas já salvas. **Antes de codar, conferir quais partes
    da coleta hoje dependem de IA** (relevância da oferta, nome de exibição, referência
    de mercado, cupom, identidade) e o que acontece com cada uma quando a IA está fora.
-4. **As três correções do disjuntor** já aprovadas: gravar o aviso numa transação
-   própria e curta, ler dentro de um savepoint (erro de leitura nunca trava a coleta) e
-   no máximo 2 chamadas de identidade ao mesmo tempo por processo.
+4. ~~As três correções do disjuntor~~ — **já feitas na TASK-133 (2026-10-01):** aviso
+   em transação própria, leitura em savepoint e no máximo 2 chamadas de identidade ao
+   mesmo tempo por processo.
 5. **Relatório** por tipo de erro e por etapa que resolveu (título, catálogo, busca,
    página, IA).
 

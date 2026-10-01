@@ -46,7 +46,12 @@ from app.products.identity_ai import (
     PartialProductLink,
     extract_product_identity_via_ai,
 )
-from app.products.identity_ai_failure import breaker_open_until, breaker_trip
+from app.products.identity_ai_failure import (
+    AI_BREAKER,
+    ai_gate,
+    breaker_open_until,
+    breaker_trip,
+)
 from app.products.identity_candidates import ProductIdentityCandidate
 from app.products.identity_learning import (
     _find_same_model_candidates,
@@ -261,13 +266,19 @@ async def _resolve_with_page(
         )
     async with session_factory() as vocabulary_session:
         vocabulary = await load_identity_vocabulary(vocabulary_session)
-    extraction = await extract_product_identity_via_ai(
-        ai_manager,
-        raw_title=claim.raw_title,
-        profile=profile,
-        page_context=page.context,
-        vocabulary=vocabulary,
-    )
+    async with ai_gate():
+        if AI_BREAKER.open_until(utc_now()) is not None:
+            extraction = AIExtractionFailure("circuit_open")
+        else:
+            extraction = await extract_product_identity_via_ai(
+                ai_manager,
+                raw_title=claim.raw_title,
+                profile=profile,
+                page_context=page.context,
+                vocabulary=vocabulary,
+            )
+            if isinstance(extraction, AIExtractionFailure):
+                AI_BREAKER.trip(extraction, utc_now())
     if isinstance(extraction, AIExtractionFailure):
         if extraction.kind in INFRA_FAILURE_KINDS:
             # Cota/provedor/tempo: não conta tentativa e aciona o disjuntor.

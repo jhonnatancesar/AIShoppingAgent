@@ -56,6 +56,8 @@ from app.products.identity_ai import (
     values_match_ignoring_punctuation,
 )
 from app.products.identity_ai_failure import (
+    AI_BREAKER,
+    ai_gate,
     breaker_open_until,
     breaker_trip,
     clear_ai_failed,
@@ -919,6 +921,20 @@ async def _record_uncertain_extraction(
     return link
 
 
+async def _call_ai_gated(call, *, check_breaker=True, trip=True):
+    """Chamada de IA de identidade com o portão do processo (no máximo 2 ao
+    mesmo tempo, TASK-133): quem esperou confere o disjuntor local logo antes
+    de chamar, e a primeira falha de infraestrutura já o abre em memória, dentro
+    do portão, para os que estão esperando."""
+    async with ai_gate():
+        if check_breaker and AI_BREAKER.open_until(utc_now()) is not None:
+            return AIExtractionFailure("circuit_open")
+        result = await call()
+        if trip and isinstance(result, AIExtractionFailure):
+            AI_BREAKER.trip(result, utc_now())
+        return result
+
+
 async def _register_ai_failure(
     session: AsyncSession,
     *,
@@ -1102,8 +1118,10 @@ async def resolve_or_learn_product_variant(
             "circuit_open"
         )
     else:
-        extraction = await extract_product_identity_via_ai(
-            ai_manager, raw_title=raw_title, profile=profile, vocabulary=vocabulary
+        extraction = await _call_ai_gated(
+            lambda: extract_product_identity_via_ai(
+                ai_manager, raw_title=raw_title, profile=profile, vocabulary=vocabulary
+            )
         )
     return await _resolve_from_extraction(
         session,
@@ -1557,20 +1575,36 @@ async def reprocess_unresolved_products(
         if breaker_open:
             extractions = [AIExtractionFailure("circuit_open")] * len(chunk)
         else:
-            extractions = await extract_product_identities_via_ai_batch(
-                ai_manager, raw_titles=titles, profile=profile, vocabulary=vocabulary
+            # Lote: o portão limita a concorrência e confere o disjuntor, mas
+            # NÃO abre o disjuntor aqui -- a nova tentativa depois da pausa
+            # (TASK-129) continua valendo; quem registra a falha e abre o
+            # disjuntor é `_resolve_from_extraction`.
+            extractions = await _call_ai_gated(
+                lambda: extract_product_identities_via_ai_batch(
+                    ai_manager,
+                    raw_titles=titles,
+                    profile=profile,
+                    vocabulary=vocabulary,
+                ),
+                trip=False,
             )
+            if isinstance(extractions, AIExtractionFailure):
+                extractions = [extractions] * len(titles)
             if all(isinstance(item, AIExtractionFailure) for item in extractions):
                 logger.warning(
                     "product_identity_ai_batch_retry",
                     extra={"batch_size": len(chunk)},
                 )
                 await sleep(batch_pause_seconds)
-                extractions = await extract_product_identities_via_ai_batch(
-                    ai_manager,
-                    raw_titles=titles,
-                    profile=profile,
-                    vocabulary=vocabulary,
+                extractions = await _call_ai_gated(
+                    lambda: extract_product_identities_via_ai_batch(
+                        ai_manager,
+                        raw_titles=titles,
+                        profile=profile,
+                        vocabulary=vocabulary,
+                    ),
+                    check_breaker=False,
+                    trip=False,
                 )
         for (product_id, raw_title, prepared), extraction in zip(
             chunk, extractions, strict=True

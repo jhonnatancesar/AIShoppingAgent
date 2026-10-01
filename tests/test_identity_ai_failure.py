@@ -287,3 +287,79 @@ def test_trip_survives_a_write_error_keeping_the_local_breaker() -> None:
     asyncio.run(breaker_trip(session, AIExtractionFailure("timeout"), NOW))
     assert AI_BREAKER.open_until(NOW) is not None
     AI_BREAKER.reset()
+
+
+# --- portão de concorrência (no máximo 2 chamadas por processo) ---------------
+
+from app.products import identity_learning as learning_module  # noqa: E402
+from app.products.identity_ai_failure import AI_GATE_LIMIT, ai_gate  # noqa: E402
+
+
+def test_gate_is_one_semaphore_per_loop_and_limits_to_two() -> None:
+    async def inside_loop():
+        first, second = ai_gate(), ai_gate()
+        assert first is second
+
+        running = 0
+        peak = 0
+
+        async def work():
+            nonlocal running, peak
+            async with ai_gate():
+                running += 1
+                peak = max(peak, running)
+                await asyncio.sleep(0.01)
+                running -= 1
+
+        await asyncio.gather(*(work() for _ in range(8)))
+        return first, peak
+
+    gate_a, peak = asyncio.run(inside_loop())
+    gate_b, _ = asyncio.run(inside_loop())
+    assert peak == AI_GATE_LIMIT == 2
+    assert gate_a is not gate_b, "um semáforo por loop de eventos"
+
+
+def test_waiters_see_the_breaker_opened_by_the_first_failures_and_never_call() -> None:
+    AI_BREAKER.reset()
+    calls = 0
+
+    async def failing_call():
+        nonlocal calls
+        calls += 1
+        await asyncio.sleep(0.05)
+        return AIExtractionFailure("provider_error")
+
+    async def run():
+        return await asyncio.gather(
+            *(learning_module._call_ai_gated(failing_call) for _ in range(6))
+        )
+
+    results = asyncio.run(run())
+    AI_BREAKER.reset()
+    assert calls == 2, "só as duas primeiras gastam chamada quando a IA cai"
+    assert [r.kind for r in results].count("circuit_open") == 4
+
+
+def test_gated_call_without_breaker_check_or_trip_keeps_batch_retry_semantics() -> None:
+    AI_BREAKER.reset()
+    AI_BREAKER.trip(AIExtractionFailure("quota"), datetime.now(UTC))
+
+    async def ok():
+        return "resposta"
+
+    async def down():
+        return AIExtractionFailure("provider_error")
+
+    async def run():
+        retry = await learning_module._call_ai_gated(
+            ok, check_breaker=False, trip=False
+        )
+        AI_BREAKER.reset()
+        failed = await learning_module._call_ai_gated(down, trip=False)
+        return retry, failed, AI_BREAKER.open_until(datetime.now(UTC))
+
+    retry, failed, still_open = asyncio.run(run())
+    assert retry == "resposta", "a nova tentativa do lote ignora o disjuntor"
+    assert failed == AIExtractionFailure("provider_error")
+    assert still_open is None, "chamada de lote não abre o disjuntor sozinha"

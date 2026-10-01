@@ -334,3 +334,73 @@ def test_page_sweep_honors_the_shared_breaker_without_opening_the_page(
     )
     assert opened == [] and ai.calls == 0
     assert _candidate(integration_database, title).page_attempts == 0
+
+
+def test_breaker_write_survives_a_rollback_of_the_caller(integration_database) -> None:
+    from app.products.identity_ai import AIExtractionFailure
+    from app.products.identity_ai_failure import breaker_trip
+
+    async def run():
+        async with integration_database.async_sessions() as session:
+            await breaker_trip(session, AIExtractionFailure("quota"), datetime.now(UTC))
+            await session.rollback()  # o chamador desiste: o aviso já está gravado
+
+    asyncio.run(run())
+    with integration_database.sessions() as session:
+        reason = session.scalar(text("SELECT reason FROM identity_ai_breaker"))
+    assert reason == "quota"
+
+
+def test_breaker_read_error_never_aborts_the_callers_transaction(
+    integration_database,
+) -> None:
+    from app.products.identity_ai_failure import breaker_open_until
+
+    with integration_database.sessions.begin() as session:
+        session.execute(text("DROP TABLE identity_ai_breaker"))
+    _close_breaker_memory = AI_BREAKER.reset
+    _close_breaker_memory()
+
+    async def run():
+        async with integration_database.async_sessions() as session:
+            until = await breaker_open_until(session, datetime.now(UTC))
+            # a transação do chamador continua utilizável depois do erro de leitura
+            alive = await session.scalar(text("SELECT 1"))
+            return until, alive
+
+    until, alive = asyncio.run(run())
+    assert until is None and alive == 1
+
+
+def test_parallel_titles_spend_at_most_two_ai_calls_when_the_ai_is_down(
+    integration_database,
+) -> None:
+    class _SlowDown:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def generate(self, request):
+            self.calls += 1
+            await asyncio.sleep(0.3)
+            raise AIProviderQuotaExceeded()
+
+    ai = _SlowDown()
+    titles = [f"Memória sem marca conhecida modelo {n} 8GB DDR5" for n in range(8)]
+
+    async def one(title):
+        async with integration_database.async_sessions() as session:
+            await resolve_or_learn_product_variant(
+                session, raw_title=title, ai_manager=ai, profile=UserRole.ADMIN
+            )
+            await session.commit()
+
+    async def run():
+        await asyncio.gather(*(one(title) for title in titles))
+
+    asyncio.run(run())
+    assert 1 <= ai.calls <= 2, "o portão deixa gastar no máximo 2 chamadas"
+    with integration_database.sessions() as session:
+        total = session.scalar(
+            select(func.count()).select_from(ProductIdentityCandidate)
+        )
+    assert total == len(titles), "todo título ganhou candidato, mesmo os pulados"

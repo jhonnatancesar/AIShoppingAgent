@@ -41,6 +41,16 @@ quando a IA está fora, para queda de IA nunca virar `unrecognized`. Caminho em
 lote (backfill) também registra e respeita o disjuntor. Testes unitários e de
 integração novos; integração completa e unitária passando.
 
+**Três correções do disjuntor: implementadas (2026-10-01), commit local.** (1) o aviso
+é gravado numa transação própria e curta, com commit imediato, e sobrevive a
+rollback do chamador e ao `--dry-run`; (2) a leitura roda num savepoint, então erro de
+leitura (tabela ausente, banco instável) nunca aborta a transação do chamador; (3) no
+máximo 2 chamadas de IA de identidade ao mesmo tempo por processo (um portão por loop
+de eventos), e quem espera confere o disjuntor local logo antes de chamar — com a IA
+fora do ar só as 2 primeiras gastam chamada. No caminho em lote (backfill) o portão só
+limita a concorrência e a nova tentativa depois da pausa (TASK-129) continua valendo.
+Integração 418 e unitária 2860 (90%) passando.
+
 ## Decisões do usuário (2026-09-28/29)
 
 - Regra: o sistema usa o catálogo; se ele não tiver, tenta a busca; só então IA.

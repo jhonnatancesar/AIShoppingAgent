@@ -22,19 +22,29 @@ não deixava rastro. Regra nova: nenhum título passa pela IA sem uma linha em
   transação é descartada); `breaker_open_until`/`breaker_trip` são a fonte de
   verdade. Os títulos pulados também ganham candidato (`circuit_open`, sem gastar
   tentativa).
+- Três proteções do disjuntor (TASK-133, correções aprovadas em 2026-09-30):
+  1. o aviso é GRAVADO numa transação própria e curta, com commit imediato --
+     sobrevive a rollback do chamador e ao `--dry-run` do backfill;
+  2. a LEITURA roda dentro de um savepoint -- erro de leitura (tabela ausente,
+     banco instável) nunca aborta a transação do chamador;
+  3. `ai_gate`: no máximo 2 chamadas de identidade ao mesmo tempo por processo;
+     quem espera confere o disjuntor local logo antes de chamar, então só as 2
+     primeiras gastam a tentativa quando a IA cai.
 - `clear_ai_failed`: a decisão real (a IA respondeu) substitui a linha `ai_failed`.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import weakref
 from datetime import datetime, timedelta
 from uuid import UUID, uuid4
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.database.time import utc_now
 from app.products.identity_ai import INFRA_FAILURE_KINDS, AIExtractionFailure
@@ -63,6 +73,25 @@ BREAKER_KINDS = frozenset(
 )
 BREAKER_DEFAULT = timedelta(minutes=5)
 BREAKER_MAX = timedelta(hours=1)
+
+AI_GATE_LIMIT = 2
+"""Chamadas de IA de identidade simultâneas por processo (e por loop de eventos)."""
+
+_GATES: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Semaphore] = (
+    weakref.WeakKeyDictionary()
+)
+
+
+def ai_gate() -> asyncio.Semaphore:
+    """Semáforo do loop atual (um por loop: um `asyncio.Semaphore` global
+    quebraria ao ser usado em loops diferentes, como nos `asyncio.run` dos
+    testes e dos scripts)."""
+    loop = asyncio.get_running_loop()
+    gate = _GATES.get(loop)
+    if gate is None:
+        gate = asyncio.Semaphore(AI_GATE_LIMIT)
+        _GATES[loop] = gate
+    return gate
 
 
 def retry_delay(kind: str, attempts: int) -> timedelta:
@@ -121,7 +150,10 @@ async def breaker_open_until(session: AsyncSession, now: datetime) -> datetime |
     if local is not None:
         return local
     try:
-        stored = await session.scalar(select(IdentityAIBreaker.open_until))
+        # Savepoint: se a leitura falhar (tabela ausente, banco instável), só ele é
+        # desfeito -- a transação do chamador segue intacta.
+        async with session.begin_nested():
+            stored = await session.scalar(select(IdentityAIBreaker.open_until))
     except SQLAlchemyError:
         logger.warning("identity_ai_breaker_read_failed", exc_info=True)
         return None
@@ -135,28 +167,37 @@ async def breaker_trip(
     session: AsyncSession, failure: AIExtractionFailure, now: datetime
 ) -> None:
     """Abre o disjuntor (local e compartilhado). Nunca derruba o chamador: se a
-    gravação falhar, só o cache local vale. O commit é de quem chama."""
+    gravação falhar, só o cache local vale.
+
+    A gravação compartilhada roda numa TRANSAÇÃO PRÓPRIA, com commit imediato:
+    não depende do chamador terminar bem (rollback, `--dry-run`). Só quando a
+    sessão não tem um engine assíncrono (sessão simulada em teste) cai no
+    savepoint da própria sessão."""
     until = AI_BREAKER.trip(failure, now)
     if until is None:
         return
+    statement = insert(IdentityAIBreaker).values(
+        id=1, open_until=until, reason=failure.kind, updated_at=now
+    )
+    upsert = statement.on_conflict_do_update(
+        index_elements=[IdentityAIBreaker.id],
+        set_={
+            "open_until": func.greatest(
+                IdentityAIBreaker.open_until, statement.excluded.open_until
+            ),
+            "reason": failure.kind,
+            "updated_at": now,
+        },
+    )
     try:
-        async with session.begin_nested():
-            statement = insert(IdentityAIBreaker).values(
-                id=1, open_until=until, reason=failure.kind, updated_at=now
-            )
-            await session.execute(
-                statement.on_conflict_do_update(
-                    index_elements=[IdentityAIBreaker.id],
-                    set_={
-                        "open_until": func.greatest(
-                            IdentityAIBreaker.open_until,
-                            statement.excluded.open_until,
-                        ),
-                        "reason": failure.kind,
-                        "updated_at": now,
-                    },
-                )
-            )
+        bind = getattr(session, "bind", None)
+        if isinstance(bind, AsyncEngine):
+            maker = async_sessionmaker(bind, expire_on_commit=False)
+            async with maker() as own, own.begin():
+                await own.execute(upsert)
+        else:
+            async with session.begin_nested():
+                await session.execute(upsert)
     except SQLAlchemyError:
         logger.warning("identity_ai_breaker_write_failed", exc_info=True)
 
