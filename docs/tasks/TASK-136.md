@@ -51,12 +51,32 @@ exige abrir as lojas (não feito).
    (mais avaliados, mais procurados, mais relevantes etc.) para trazer os melhores
    primeiro. Lista curada de modelos recomendados fica para depois.
 
-   *Fórmula proposta (a confirmar antes de codar):* nota e avaliações se combinam de
-   forma que **nota alta com poucas avaliações não vença nota boa com muitas** (ex.: 5,0
-   com 2 avaliações abaixo de 4,7 com 3.000), usando uma média ajustada pelo número de
-   avaliações (média bayesiana, com um mínimo de avaliações e a média do conjunto como
-   referência). Havendo vendas, entram como segundo sinal, comparadas dentro do mesmo
-   conjunto de candidatos. Sem avaliações nenhuma, o item fica atrás dos que têm.
+   **Popularidade é do PRODUTO, juntando todas as lojas (decisão do usuário,
+   2026-10-01).** Para o mesmo produto, o GG lê as avaliações de **todas as lojas** e as
+   **mostra juntas no card** (nota e quantidade de avaliações de cada loja, e vendas
+   quando houver), mesmo que a oferta mais barata seja de outra loja. A classificação usa
+   uma **média entre as lojas**: nota combinada = média das notas ponderada pela
+   quantidade de avaliações de cada loja; quantidade combinada = soma das avaliações;
+   vendas = soma. Exemplo do usuário: 3 avaliações 5★ na Kabum e 160 avaliações 4,9 na
+   Amazon dão uma nota combinada de cerca de 4,90 com 163 avaliações (as 3 da Kabum quase
+   não mexem), e não "5,0 da Kabum" ganhando.
+
+   *Ajuste proposto (a confirmar antes de codar):* além da média ponderada, um **mínimo de
+   avaliações de referência** para que um produto com pouquíssimas avaliações no total não
+   vença um bem avaliado por muita gente; sem avaliação nenhuma em loja nenhuma, o produto
+   fica atrás dos que têm. Vendas, quando houver, entram como segundo sinal, comparadas
+   dentro do mesmo conjunto de candidatos.
+
+   *Ponto de desenho:* o ranking acontece **antes** da IA, mas juntar as lojas por produto
+   normalmente precisa da identidade, que é justamente o que a IA ajuda a descobrir. Por
+   isso o agrupamento antes da IA usa uma **chave determinística aproximada** (placas-mãe:
+   marca + código do modelo; RAM: tipo, capacidade, velocidade e marca) que **só serve para
+   somar as avaliações**, nunca cria identidade no banco. Um agrupamento errado afeta no
+   máximo o ranking daquela rodada.
+
+   *Onde aparece:* a comparação do produto entre lojas já existe no GG web
+   (`UserOfferComparison`, `app/offers/query.py`); ela passa a trazer também a nota e a
+   quantidade de avaliações (e vendas) de cada loja, e o card mostra a nota combinada.
 2. **Tamanho:** a pesquisa pode considerar **até 10** candidatos, mas **para a IA vão
    poucos: 2, ou até 1, conforme as avaliações** (10 para a IA é demais). Direção do
    usuário: "pegar somente os 2 mais baratos mesmo e mandar para a IA".
@@ -162,8 +182,8 @@ Preço e histórico desses itens continuam sendo gravados normalmente.
 
 1. Como mostrar no GG web um item registrado que não passou pela IA (não conta como
    "combina com a missão" até ser classificado?).
-2. Confirmar a fórmula de popularidade proposta (média ajustada pelas avaliações; vendas
-   por cima quando houver) e o mínimo de avaliações de referência.
+2. Confirmar o ajuste da popularidade (mínimo de avaliações de referência) e a chave
+   de agrupamento aproximada por categoria (placa-mãe, RAM).
 3. Agrupamento de RAM por característica: quais características e quais marcas formam
    um grupo.
 
