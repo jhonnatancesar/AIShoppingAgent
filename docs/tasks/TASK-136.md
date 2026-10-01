@@ -86,11 +86,10 @@ a noção de "ciclo de todas as lojas". Opções que foram avaliadas:
 1. **Conceito de ciclo** por item de monitoramento: um ciclo abre quando a primeira loja
    daquele item coleta e fecha quando **todas as lojas habilitadas rodaram pelo menos
    uma vez**, **sem tempo limite** (decisão do usuário, 2026-10-01: as lojas não levam
-   30 minutos por ciclo, então esperar todas é aceitável). *Ponto em aberto:* uma loja
-   bloqueada (backoff, CAPTCHA) pode demorar horas para rodar de novo e **seguraria a
-   seleção da missão inteira**. Proposta: "rodou" inclui **tentou e falhou** (falha
-   registrada); loja em backoff **sem tentativa possível** sai daquele ciclo, para a
-   missão não ficar sem seleção por causa de uma loja só (*a confirmar*).
+   30 minutos por ciclo). **Loja bloqueada ou com erro conta como rodada, com erro**:
+   o ciclo fecha com ela falhando, então não existe risco de a missão ficar parada por
+   uma loja só (decisão do usuário). Loja em espera de bloqueio que nem chega a tentar
+   é tratada como erro naquele ciclo.
 2. **Fase A por loja continua gravando** as ofertas e os preços (Offer e PriceObservation),
    **sem IA**. Só a **escolha** e a **IA** passam a acontecer no fechamento do ciclo.
 3. **Fechamento do ciclo:** junta as ofertas de todas as lojas, ranqueia por popularidade,
@@ -137,8 +136,6 @@ a noção de "ciclo de todas as lojas". Opções que foram avaliadas:
 
 ## Perguntas em aberto
 
-0. Loja bloqueada ou que sempre falha: sai do ciclo (recomendado) ou o ciclo espera por
-   ela? Sem tempo limite, esperar pode deixar a missão sem seleção por tempo indefinido.
 1. Como mostrar no GG web um item registrado que não passou pela IA (não conta como
    "combina com a missão" até ser classificado?).
 2. Peso entre vendas, nota e número de avaliações ao combiná-los (e como tratar a loja
