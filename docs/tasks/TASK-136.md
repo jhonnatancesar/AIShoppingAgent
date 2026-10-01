@@ -32,11 +32,21 @@ vivo (uma pesquisa por loja, Edge dedicado de teste):**
 - **Kabum, "sem ofertas" na primeira pesquisa de teste:** não foi bloqueio (a página
   abriu normal, 60 produtos com preço); uma segunda rodada devolveu as ofertas. Falha
   intermitente, causa não confirmada.
-- **Limite importante:** a coleta abre a página de detalhe **só dos 3 produtos mais
-  baratos de cada loja** (`marketplace_party_max_candidates = 3`). Para Pichau, Kabum e
-  Mercado Livre, que só mostram nota/avaliações/vendas no detalhe, os demais produtos
-  ficam sem esses sinais. O funil precisa de todos os candidatos (até 8 por loja):
-  decisão de desenho em aberto (ver perguntas).
+- **Detalhe de TODOS os candidatos (aprovado pelo usuário, 2026-10-01):** a coleta abria a
+  página de detalhe só dos 3 produtos mais baratos de cada loja
+  (`marketplace_party_max_candidates = 3`), então nas lojas que só mostram popularidade no
+  detalhe (Pichau, Kabum, Mercado Livre) os demais ficavam sem nota. Agora essas três lojas
+  abrem o detalhe de **todos** os candidatos (`popularity_detail_for_all_candidates`),
+  com **orçamento de tempo de 120 s** para as páginas extras (a coleta de cada loja tem teto
+  de 300 s e a Pichau pode levar 20 a 40 s por página); passou do orçamento, para e fica com
+  o que leu. Amazon, Terabyte e Magalu já trazem os sinais no card e não mudam.
+  **Validado ao vivo:** Pichau 7 produtos em 24 s (4 com nota: 5,0/13, 5,0/1, 4,9/39...);
+  Kabum 8 produtos em 69 s, **7 com nota e avaliações** (4,8/726, 4,8/1065, 4,8/168...).
+- **Mercado Livre, validação parcial:** os 3 detalhes do ML foram lidos ao vivo (vendas e
+  avaliações), mas, depois de muitas visitas seguidas ao longo do dia, o ML passou a
+  redirecionar o Edge de teste para **verificação de conta** ("acesse sua conta") e a busca
+  deixou de abrir. Parei de visitar o ML (sem login nem credenciais). A leitura dos 8
+  candidatos do ML ficou coberta só por teste automatizado.
 - Nenhuma venda foi inventada em nenhuma loja (kit, "Vendido por", "Mais vendidos").
 
 ## Problema
@@ -197,12 +207,6 @@ Preço e histórico desses itens continuam sendo gravados normalmente.
 
 ## Perguntas em aberto
 
-0. **Detalhe para todos os candidatos?** Hoje só 3 por loja abrem a página do produto. Para
-   ranquear por popularidade antes da IA, Pichau, Kabum e Mercado Livre precisam abrir o
-   detalhe de todos os candidatos (até 8 por loja, ~24 aberturas por ciclo) — mais tempo
-   e mais exposição a bloqueio. Recomendação: abrir o detalhe de todos os candidatos só
-   onde o card não traz o sinal (Pichau, Kabum, Mercado Livre); Amazon, Terabyte e Magalu
-   já trazem nota e avaliações no card.
 1. Como mostrar no GG web um item registrado que não passou pela IA (não conta como
    "combina com a missão" até ser classificado?).
 2. Regra exata de desempate do ranking de cada oferta antes da IA (estrelas, avaliações e

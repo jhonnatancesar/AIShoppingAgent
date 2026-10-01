@@ -5,6 +5,7 @@ import contextlib
 import json
 import random
 import re
+import time
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import replace
@@ -73,6 +74,15 @@ class PlaywrightStoreProvider:
     result_selector: str
     rating_detail_enabled: bool = False
     sales_detail_enabled: bool = False
+    popularity_detail_for_all_candidates: bool = False
+    """TASK-136: lojas que só mostram nota/avaliações/vendas na PÁGINA do produto
+    (Pichau, Kabum, Mercado Livre) abrem o detalhe de TODOS os candidatos, não só dos 3
+    mais baratos, para o funil ranquear por popularidade antes da IA. As páginas além
+    das 3 primeiras respeitam `popularity_detail_budget_seconds`."""
+    popularity_detail_budget_seconds: float = 120.0
+    """Tempo máximo gasto com as páginas EXTRAS de popularidade; passou, a rotina para e
+    fica com o que já leu. Protege o teto de 300 s da coleta da loja (a Pichau pode levar
+    20 a 40 s por página)."""
     """TASK-136: a loja mostra as vendas só na página do produto (Mercado Livre:
     "Novo | +500 vendidos" logo acima do título), não no card da busca. Lido no
     mesmo enriquecimento de detalhe, sem abrir a página outra vez."""
@@ -530,7 +540,13 @@ class PlaywrightStoreProvider:
             limits.append(max(self._marketplace_party_max_candidates, 1))
         if self.sales_detail_enabled:
             limits.append(max(self._marketplace_party_max_candidates, 1))
+        base_cap = max(limits)
+        if self.popularity_detail_for_all_candidates and (
+            self.rating_detail_enabled or self.sales_detail_enabled
+        ):
+            limits.append(len(offers))
         candidates = self._rank_offers(offers)[: max(limits)]
+        extras_started_at: float | None = None
         resolved: dict[
             str,
             tuple[
@@ -547,6 +563,15 @@ class PlaywrightStoreProvider:
         sales_texts: dict[str, str] = {}
         async with self._open_detail_page() as page:
             for position, offer in enumerate(candidates):
+                if position >= base_cap:
+                    # Páginas EXTRAS (só popularidade): com orçamento de tempo.
+                    if extras_started_at is None:
+                        extras_started_at = time.monotonic()
+                    elif (
+                        time.monotonic() - extras_started_at
+                        > self.popularity_detail_budget_seconds
+                    ):
+                        break
                 await self._pace_before_next_detail_request(position)
                 try:
                     response = await page.goto(offer.url, wait_until="domcontentloaded")

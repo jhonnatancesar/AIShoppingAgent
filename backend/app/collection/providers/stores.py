@@ -224,6 +224,7 @@ class PichauProvider(PlaywrightStoreProvider):
     # pelo seletor/estado vazio reflete o readiness real da página.
     navigation_wait_until = "commit"
     rating_detail_enabled = True
+    popularity_detail_for_all_candidates = True
     # TASK-136: o card da busca da Pichau não mostra nota; a página do produto mostra
     # `5.0 (13 avaliações)` ao lado do título e traz `aggregateRating` no JSON (conferido ao
     # vivo em 2026-10-01). Lê o valor visível esperando ele aparecer e cai no JSON.
@@ -627,6 +628,7 @@ class KabumProvider(PlaywrightStoreProvider):
 
     source_code, result_selector = "kabum", 'main a[href*="/produto/"]'
     rating_detail_enabled = True
+    popularity_detail_for_all_candidates = True
     # TASK-136: o card da Kabum só mostra a nota ("Avaliação 4.8 de 5.0"), sem a quantidade;
     # a página do produto mostra "4.9/5 (19 avaliações)" e traz `aggregateRating` no JSON.
 
@@ -770,6 +772,7 @@ class MercadoLivreProvider(PlaywrightStoreProvider):
     result_selector = "li.ui-search-layout__item:has(a.poly-component__title)"
     rating_detail_enabled = True
     sales_detail_enabled = True
+    popularity_detail_for_all_candidates = True
 
     def __init__(
         self,
