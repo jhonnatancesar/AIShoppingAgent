@@ -50,6 +50,8 @@ from app.products.identity import (
     resolve_monitoring_identity_for_family,
     resolve_monitoring_identity_for_resolved_product,
 )
+from app.products.identity_catalog import load_catalog, load_catalog_sync
+from app.products.identity_catalog_request import monitoring_identity_from_catalog
 from app.products.models import Product
 
 _MONITORING_ITEM_KEY_CONSTRAINT = "uq_monitoring_items_monitoring_key"
@@ -61,7 +63,7 @@ def _constraint_name(error: IntegrityError) -> str | None:
 
 
 def _canonical_identity_payload(identity: MonitoringIdentity) -> dict:
-    return {
+    payload = {
         "scope": identity.scope.value,
         "category": identity.category,
         "brand": identity.brand,
@@ -70,6 +72,10 @@ def _canonical_identity_payload(identity: MonitoringIdentity) -> dict:
         "variant": identity.variant,
         "attributes": dict(identity.attributes),
     }
+    if identity.collection_search is not None:
+        search_query, search_model = identity.collection_search
+        payload["collection"] = {"search_query": search_query, "model": search_model}
+    return payload
 
 
 def _criteria_identity_text(criteria: MissionCriteria) -> str:
@@ -78,6 +84,16 @@ def _criteria_identity_text(criteria: MissionCriteria) -> str:
         if criteria.model
         else criteria.search_query
     )
+
+
+def _request_texts(criteria: MissionCriteria) -> list[str]:
+    """TASK-137: os textos do pedido que o catálogo tenta, cada um sozinho (a junção
+    `search_query + model` repete o nome e quebraria a regra de nome completo)."""
+    texts = [criteria.search_query]
+    if criteria.model:
+        texts.append(criteria.model)
+        texts.append(_criteria_identity_text(criteria))
+    return texts
 
 
 def _sorted_store_ids(store_ids: Sequence[UUID]) -> list[UUID]:
@@ -539,7 +555,13 @@ def _effective_identity(
         return selected
     if criteria.variant_selection_mode is VariantSelectionMode.ALL:
         return resolve_monitoring_identity_for_family(_criteria_identity_text(criteria))
-    return resolve_monitoring_identity(_criteria_identity_text(criteria))
+    identity = resolve_monitoring_identity(_criteria_identity_text(criteria))
+    if identity is not None:
+        return identity
+    # TASK-137: as regras de texto não reconheceram -- tenta o catálogo.
+    return monitoring_identity_from_catalog(
+        load_catalog_sync(session), _request_texts(criteria)
+    )
 
 
 async def _effective_identity_async(
@@ -552,7 +574,13 @@ async def _effective_identity_async(
         return selected
     if criteria.variant_selection_mode is VariantSelectionMode.ALL:
         return resolve_monitoring_identity_for_family(_criteria_identity_text(criteria))
-    return resolve_monitoring_identity(_criteria_identity_text(criteria))
+    identity = resolve_monitoring_identity(_criteria_identity_text(criteria))
+    if identity is not None:
+        return identity
+    # TASK-137: as regras de texto não reconheceram -- tenta o catálogo.
+    return monitoring_identity_from_catalog(
+        await load_catalog(session), _request_texts(criteria)
+    )
 
 
 # ---------------------------------------------------------------------------

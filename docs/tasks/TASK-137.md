@@ -28,6 +28,27 @@ monitoramento (não entram no funil) por falta de regra de texto.
   revisão/região no nome da fonte, ex.: "V3 (REV. 1.5)", "WIFI7", ou placa ausente da fonte). Testes:
   `tests/test_identity_catalog_import.py` (14) e `tests/integration/test_identity_catalog_import.py` (5).
 
+**Passo A (pedido do usuário -> item compartilhado pelo catálogo): implementado (2026-10-03), commit local.**
+
+- Na criação/edição/retomada da missão, se as regras fixas de texto não reconhecem o pedido, o sistema
+  procura UM produto no catálogo (`identity_catalog_request.monitoring_identity_from_catalog`, mesmo casamento
+  estrito dos anúncios). Achou -> identidade `SPECIFIC` -> a missão usa a coleta compartilhada e o funil.
+  Não achou, ambíguo ou nome mais longo -> nada muda (caminho antigo).
+- Tenta cada texto do pedido sozinho (`search_query`, `model`, junção), porque a junção repete o nome.
+- A busca nas lojas sai do NOME do catálogo (`collection` no `canonical_identity`): placa-mãe = marca +
+  menor nome + filtro de título pelo nome; RAM = marca + família + capacidade/tipo/velocidade, sem filtro.
+  Itens das regras de texto continuam como antes.
+- Registro de categorias: `memory_type` adicionado à placa-mãe (DDR separado também na chave de
+  monitoramento). Atributos do catálogo (`capacity-gb`) mapeados para os do registro (`capacity_gb`).
+- A relevância continua como hoje (missão sem `requested_identity_key`: a IA decide nas escolhidas pelo
+  funil); não exige que o anúncio esteja no catálogo, então não perde oferta por lacuna da fonte.
+- Custo medido: carga do catálogo (7.808 entradas) ~360 ms + ~115 ms por pedido; só na criação/edição de
+  missão. Sem cache por enquanto.
+- Limites: missão de FAMÍLIA ("B650M" sem modelo) e categoria genérica ("cadeira gamer") ainda não entram;
+  celular (capacidade obrigatória) fica fora deste passo; RAM por kit exato é rara e sem filtro de título.
+- Testes: `tests/test_identity_catalog_request.py` (6) e 3 de integração com missão real
+  (`tests/integration/test_identity_catalog_import.py`).
+
 ## Preenchimento automático (a fazer, pedido do usuário 2026-10-03: "preencher a lista sozinha, de forma topíssima")
 
 Quando o pedido ou o anúncio não existe no banco, o sistema completa a lista sozinho, sem entrar lixo:

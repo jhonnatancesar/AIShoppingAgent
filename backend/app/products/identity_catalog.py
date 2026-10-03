@@ -31,6 +31,7 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 
 from app.products.identity import (
     ResolvedProductVariant,
@@ -108,6 +109,31 @@ async def load_catalog(session: AsyncSession) -> tuple[CatalogEntrySnapshot, ...
             )
         )
     ).all()
+    return _snapshots(entries, codes)
+
+
+def load_catalog_sync(session: Session) -> tuple[CatalogEntrySnapshot, ...]:
+    """Mesma leitura de `load_catalog`, para o caminho síncrono da criação de missão."""
+    entries = session.scalars(
+        select(ProductIdentityCatalogEntry).where(
+            ProductIdentityCatalogEntry.status == "active"
+        )
+    ).all()
+    if not entries:
+        return ()
+    codes = session.execute(
+        select(
+            ProductIdentityCatalogCode.entry_id,
+            ProductIdentityCatalogCode.kind,
+            ProductIdentityCatalogCode.value_normalized,
+        ).where(
+            ProductIdentityCatalogCode.entry_id.in_([entry.id for entry in entries])
+        )
+    ).all()
+    return _snapshots(entries, codes)
+
+
+def _snapshots(entries, codes) -> tuple[CatalogEntrySnapshot, ...]:
     part_numbers: dict[object, list[str]] = {}
     names: dict[object, list[str]] = {}
     for entry_id, kind, value in codes:
@@ -199,6 +225,15 @@ def _name_run_is_complete(raw_tokens: list[str], name_tokens: list[str]) -> bool
 def match_catalog(
     catalog: tuple[CatalogEntrySnapshot, ...], raw_title: str
 ) -> ResolvedProductVariant | None:
+    found = match_catalog_entry(catalog, raw_title)
+    return found[1] if found is not None else None
+
+
+def match_catalog_entry(
+    catalog: tuple[CatalogEntrySnapshot, ...], raw_title: str
+) -> tuple[CatalogEntrySnapshot, ResolvedProductVariant] | None:
+    """Igual a `match_catalog`, devolvendo também a entrada que casou (TASK-137: o
+    pedido do usuário usa o nome da entrada para montar a busca nas lojas)."""
     title_normalized = normalize_for_grounding(raw_title)
     by_part_number = [
         entry
@@ -208,7 +243,12 @@ def match_catalog(
     if by_part_number:
         if len(by_part_number) != 1:
             return None  # o mesmo código em duas entradas: ambíguo, não decide
-        return _resolve_entry(by_part_number[0], raw_title)
+        resolved_by_code = _resolve_entry(by_part_number[0], raw_title)
+        return (
+            (by_part_number[0], resolved_by_code)
+            if resolved_by_code is not None
+            else None
+        )
 
     raw_title_tokens = title_normalized.split()
     title_tokens = {_strip_token_edges(token) for token in raw_title_tokens}
@@ -245,7 +285,8 @@ def match_catalog(
                 tied = True
     if best is None or tied:
         return None
-    return _resolve_entry(best, raw_title)
+    resolved_by_name = _resolve_entry(best, raw_title)
+    return (best, resolved_by_name) if resolved_by_name is not None else None
 
 
 async def lookup_catalog_identity(

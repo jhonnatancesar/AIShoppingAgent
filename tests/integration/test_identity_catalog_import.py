@@ -190,3 +190,69 @@ def test_a_longer_model_name_never_resolves_to_the_shorter_imported_board(
     )
     assert resolved is None or resolved.model != "b650m-pro-ddr5"
     assert ai.calls >= 1
+
+
+# --- Passo A: pedido do usuario -> item compartilhado ----------------------
+
+
+def _mission_item(integration_database, **criteria):
+    from app.missions.models import MissionMonitoringItem, MonitoringItem
+    from app.missions.service import create_mission_from_criteria_async
+    from app.users.models import User
+
+    with integration_database.sessions.begin() as session:
+        user = User(display_name="TASK-137 pedido", role=UserRole.USER)
+        session.add(user)
+        session.flush()
+        user_id = user.id
+
+    async def _create():
+        async with integration_database.async_sessions.begin() as session:
+            mission, _ = await create_mission_from_criteria_async(
+                session,
+                user_id=user_id,
+                target_amount=None,
+                target_currency=None,
+                source_codes=("kabum",),
+                requested_at=datetime(2026, 10, 3, 12, 0, tzinfo=UTC),
+                actor_type="test",
+                **criteria,
+            )
+            return mission
+
+    mission = asyncio.run(_create())
+    with integration_database.sessions() as session:
+        link = session.get(MissionMonitoringItem, mission.id)
+        if link is None:
+            return None
+        return session.get(MonitoringItem, link.monitoring_item_id)
+
+
+def test_board_request_found_in_the_catalog_gets_a_shared_item(
+    integration_database,
+) -> None:
+    from app.products.identity import canonical_collection_criteria
+
+    _import(integration_database, _entries())
+    item = _mission_item(integration_database, search_query="MSI B650M PRO")
+    assert item is not None
+    assert item.canonical_identity["category"] == "motherboard"
+    criteria = canonical_collection_criteria(item.canonical_identity)
+    assert criteria.search_query == "msi b650m pro"
+    assert criteria.model == "B650M PRO"
+
+
+def test_two_wordings_of_the_same_board_share_one_item(integration_database) -> None:
+    _import(integration_database, _entries())
+    first = _mission_item(integration_database, search_query="MSI B650M PRO")
+    second = _mission_item(
+        integration_database, search_query="placa mae msi", model="B650M PRO"
+    )
+    assert first is not None and second is not None
+    assert first.id == second.id
+
+
+def test_request_not_in_the_catalog_keeps_the_old_path(integration_database) -> None:
+    _import(integration_database, _entries())
+    assert _mission_item(integration_database, search_query="MSI B650M PRO-A") is None
+    assert _mission_item(integration_database, search_query="cadeira gamer") is None

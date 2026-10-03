@@ -552,6 +552,7 @@ _CATEGORY_REGISTRY: tuple[CategoryDefinition, ...] = (
             AttributeDefinition("socket", blocking=True),
             AttributeDefinition("chipset"),
             AttributeDefinition("form_factor"),
+            AttributeDefinition("memory_type"),
         ),
     ),
     CategoryDefinition(
@@ -891,6 +892,11 @@ class MonitoringIdentity:
     `None`/ausência (mesma regra de `attributes`)."""
     attributes: tuple[tuple[str, str], ...]
     monitoring_key: str
+    collection_search: tuple[str, str | None] | None = None
+    """TASK-137: `(search_query, model)` que a coleta usa quando a identidade veio do
+    catálogo (placa-mãe, RAM...): o texto de busca sai do NOME do catálogo, não dos
+    campos de identidade. Fora da `monitoring_key`; `None` nas identidades vindas das
+    regras de texto."""
 
 
 def _canonical_attribute(
@@ -1202,6 +1208,13 @@ def canonical_collection_criteria(
     palavra "ANY" literal. Valores restritos entram sempre, na mesma
     ordem determinística de `_build_monitoring_identity` (brand, family,
     model, variant, atributos na ordem declarada da categoria)."""
+    collection = canonical_identity.get("collection")
+    if collection:
+        collection_model = collection.get("model")
+        return CollectionCriteria(
+            search_query=str(collection["search_query"]),
+            model=str(collection_model) if collection_model else None,
+        )
     brand = str(canonical_identity["brand"])
     family = str(canonical_identity["family"])
     model = str(canonical_identity["model"])
