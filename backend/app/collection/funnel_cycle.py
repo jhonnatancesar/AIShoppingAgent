@@ -20,6 +20,7 @@ retomada/varredura as processa (a escolha é recalculada do banco, sem memória)
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -37,6 +38,7 @@ from app.collection.models import (
 )
 from app.missions.models import MonitoringItem, MonitoringItemStore
 from app.offers.models import Offer
+from app.products.models import Product
 from app.stores.models import Store
 
 
@@ -158,6 +160,7 @@ async def cycle_chosen_offer_ids(
     monitoring_item_id: UUID,
     run_id: UUID,
     store_ids: frozenset[UUID] | None = None,
+    is_irrelevant: Callable[[Product, UUID], bool] | None = None,
 ) -> frozenset[UUID] | None:
     """Ofertas do ciclo que o funil manda para a IA (pool de 10 mais populares,
     as 2 mais baratas; 1 se as avaliações apontam claramente uma só).
@@ -179,7 +182,9 @@ async def cycle_chosen_offer_ids(
         ):
             return None
         query = (
-            select(Offer, PriceObservation, Store.code, CollectionRun.finished_at)
+            select(
+                Offer, PriceObservation, Store.code, CollectionRun.finished_at, Product
+            )
             .select_from(SharedCollectionOffer)
             .join(
                 CollectionRun,
@@ -191,6 +196,7 @@ async def cycle_chosen_offer_ids(
                 PriceObservation.id == SharedCollectionOffer.observation_id,
             )
             .join(Store, Store.id == Offer.store_id)
+            .join(Product, Product.id == Offer.product_id)
             .where(
                 CollectionRun.monitoring_item_id == monitoring_item_id,
                 CollectionRun.status == CollectionRunStatus.SUCCEEDED,
@@ -203,9 +209,17 @@ async def cycle_chosen_offer_ids(
         if store_ids is not None:
             query = query.where(Offer.store_id.in_(store_ids))
         rows: dict[UUID, _FunnelRow] = {}
-        for offer, observation, store_code, _run_finished_at in await session.execute(
-            query
-        ):
+        for (
+            offer,
+            observation,
+            store_code,
+            _run_finished_at,
+            product,
+        ) in await session.execute(query):
+            # Já descartada para esta missão (regra fixa ou classificação antiga):
+            # não ocupa vaga do funil.
+            if is_irrelevant is not None and is_irrelevant(product, offer.id):
+                continue
             sales = (
                 (int(offer.sales_count), offer.sales_scope)
                 if offer.sales_count is not None and offer.sales_scope is not None

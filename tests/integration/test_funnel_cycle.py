@@ -335,7 +335,8 @@ def test_mission_groups_highlight_relevant_and_others(integration_database) -> N
     # Destaque = as escolhidas pelo funil (todas classificadas "combina" aqui).
     assert 1 <= len(result.highlights) <= 2
     highlight_ids = {link.offer.id for link in result.highlights}
-    assert highlight_ids == {link.offer.id for link in result.relevant}
+    # O Destaque não se repete em "relevantes".
+    assert not highlight_ids & {link.offer.id for link in result.relevant}
     # Os outros 6 anúncios continuam gravados, sem classificação, do mais barato
     # para o mais caro, e nunca repetem o que já está em cima.
     assert len(result.others) == 8 - len(result.highlights)

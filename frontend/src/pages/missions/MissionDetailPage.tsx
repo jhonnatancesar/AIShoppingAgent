@@ -290,12 +290,16 @@ export function MissionDetailView({ mission, onReload }: { mission: MissionDetai
         </div>
       ) : null}
 
-      <h2 className="mb-3 text-lg font-semibold tracking-tight">Ofertas relevantes</h2>
-      {mission.offers.length === 0 ? (
-        <EmptyState title="Nenhuma oferta relevante ainda" description="Assim que o GG Oferta encontrar uma oferta compatível, ela aparece aqui." />
-      ) : (
-        <OfferGrid offers={mission.offers} />
-      )}
+      {mission.offers.length > 0 || highlightOffers.length === 0 ? (
+        <>
+          <h2 className="mb-3 text-lg font-semibold tracking-tight">Ofertas relevantes</h2>
+          {mission.offers.length === 0 ? (
+            <EmptyState title="Nenhuma oferta relevante ainda" description="Assim que o GG Oferta encontrar uma oferta compatível, ela aparece aqui." />
+          ) : (
+            <OfferGrid offers={mission.offers} />
+          )}
+        </>
+      ) : null}
 
       {otherOffers.length > 0 ? (
         <div className="mt-8">

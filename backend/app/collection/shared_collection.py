@@ -197,6 +197,7 @@ from app.collection.orchestration import (
     _select_final_candidates,
 )
 from app.collection.persistence import finish_collection_run, start_collection_run
+from app.collection.relevance import OfferRelevance
 from app.collection.shared_claim import (
     _apply_shared_backoff,
     _claim_shared_collection,
@@ -777,6 +778,36 @@ async def _mission_store_ids(
         )
 
 
+async def _mission_irrelevance_filter(
+    session_factory: async_sessionmaker[AsyncSession], mission_id: UUID
+):
+    """TASK-136: ofertas que a missão já sabe que não servem (regra fixa de identidade
+    ou classificação antiga `no_match`) não ocupam vaga do funil."""
+    async with session_factory() as session:
+        criteria = await session.scalar(
+            select(MissionCriteria).where(MissionCriteria.mission_id == mission_id)
+        )
+        rejected = frozenset(
+            await session.scalars(
+                select(MissionOfferRelevance.offer_id).where(
+                    MissionOfferRelevance.mission_id == mission_id,
+                    MissionOfferRelevance.classification == OfferRelevance.NO_MATCH,
+                )
+            )
+        )
+
+    def is_irrelevant(product: Product, offer_id: UUID) -> bool:
+        if offer_id in rejected:
+            return True
+        return (
+            criteria is not None
+            and _deterministic_product_relevance(criteria, product)
+            is OfferRelevance.NO_MATCH
+        )
+
+    return is_irrelevant
+
+
 async def _replace_mission_highlights(
     session_factory: async_sessionmaker[AsyncSession],
     *,
@@ -1137,9 +1168,6 @@ async def _process_pending_fan_out(
             query = query.limit(limit)
         candidate_mission_ids = tuple(await session.scalars(query))
 
-    # TASK-136: escolha do funil por conjunto de lojas da missão (cache: missões
-    # com as mesmas lojas dividem a mesma escolha).
-    chosen_by_stores: dict[frozenset[UUID], frozenset[UUID] | None] = {}
     attempted_task_count = 0
     done: list[UUID] = []
     skipped: list[UUID] = []
@@ -1204,14 +1232,14 @@ async def _process_pending_fan_out(
         )
         try:
             mission_store_ids = await _mission_store_ids(session_factory, mission_id)
-            if mission_store_ids not in chosen_by_stores:
-                chosen_by_stores[mission_store_ids] = await cycle_chosen_offer_ids(
-                    session_factory,
-                    monitoring_item_id=monitoring_item_id,
-                    run_id=run_id,
-                    store_ids=mission_store_ids,
-                )
-            chosen_offer_ids = chosen_by_stores[mission_store_ids]
+            irrelevant = await _mission_irrelevance_filter(session_factory, mission_id)
+            chosen_offer_ids = await cycle_chosen_offer_ids(
+                session_factory,
+                monitoring_item_id=monitoring_item_id,
+                run_id=run_id,
+                store_ids=mission_store_ids,
+                is_irrelevant=irrelevant,
+            )
             phase_a = await _build_mission_phase_a_outcome(
                 session_factory,
                 run_id=mission_run_id,

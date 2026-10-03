@@ -647,14 +647,22 @@ async def list_mission_offer_groups(
                 ),
             )
             .outerjoin(PriceObservation, PriceObservation.id == latest_observation_id)
-            .where(Offer.store_id.in_(source_store_ids))
+            .where(
+                Offer.store_id.in_(source_store_ids),
+                ~exists().where(
+                    MissionOfferRelevance.mission_id == mission_id,
+                    MissionOfferRelevance.offer_id == Offer.id,
+                    MissionOfferRelevance.classification == OfferRelevance.NO_MATCH,
+                ),
+            )
             .order_by(PriceObservation.total_amount.asc().nulls_last(), Offer.id)
         )
     ).all()
     highlights = _links(highlight_rows)
-    taken = {link.offer.id for link in highlights} | {
-        link.offer.id for link in relevant
-    }
+    highlight_ids = {link.offer.id for link in highlights}
+    # O que já está no Destaque não se repete em "Ofertas relevantes".
+    relevant = tuple(link for link in relevant if link.offer.id not in highlight_ids)
+    taken = highlight_ids | {link.offer.id for link in relevant}
 
     item_id = await session.scalar(
         select(MissionMonitoringItem.monitoring_item_id).where(
