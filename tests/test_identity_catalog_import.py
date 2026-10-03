@@ -8,7 +8,6 @@ from app.products.identity_catalog_import import (
     map_buildcores_motherboard,
     map_buildcores_ram,
     merge_same_identity,
-    merge_shared_part_numbers,
 )
 
 
@@ -186,21 +185,27 @@ def test_ram_without_usable_part_number_is_skipped() -> None:
     assert report.skipped["sem_part_number_utilizavel"] == 1
 
 
-def test_same_brand_sharing_a_part_number_is_one_product() -> None:
-    a = map_buildcores_motherboard(
-        _board("a", "MSI MAG B650 TOMAHAWK WIFI", part_numbers=["7D75-001R"]),
+def test_a_part_number_shared_by_two_products_never_merges_them() -> None:
+    """A fonte lista o part number de um modelo na lista de outro (12400 no 12400F):
+    juntar os registros misturaria produtos diferentes. O código dividido sai dos DOIS
+    e cada produto fica com o que é só dele."""
+    plain = map_buildcores_motherboard(
+        _board("a", "MSI B650M PRO AM5 DDR5 Micro ATX", part_numbers=["7D75-001R"]),
         MappingReport(),
     )
-    b = map_buildcores_motherboard(
-        _board("b", "MSI B650 TOMAHAWK WIFI AM5 DDR5 ATX", part_numbers=["7D75-001R"]),
+    variant = map_buildcores_motherboard(
+        _board(
+            "b",
+            "MSI B650M PRO A AM5 DDR5 Micro ATX",
+            part_numbers=["7D75-001R", "7D75-002R"],
+        ),
         MappingReport(),
     )
-    merged = merge_shared_part_numbers(merge_same_identity([a, b]))
-    assert len(merged) == 1
-    assert merged[0].part_numbers == ("7D75001R",)
-    # Os nomes do outro registro NÃO entram: podem ser de outra placa.
-    assert all("AM5" not in name for name in merged[0].names)
-    assert merged[0].names == a.names
+    kept = drop_ambiguous_codes(merge_same_identity([plain, variant]), MappingReport())
+    by_model = {entry.model: entry for entry in kept}
+    assert set(by_model) == {"b650m-pro-ddr5", "b650m-pro-a-ddr5"}
+    assert by_model["b650m-pro-ddr5"].part_numbers == ()
+    assert by_model["b650m-pro-a-ddr5"].part_numbers == ("7D75002R",)
 
 
 def test_other_brand_sharing_a_part_number_is_dropped_from_both() -> None:
@@ -278,3 +283,56 @@ def test_part_number_match_is_exact_for_open_sources() -> None:
     catalog = (_snapshot("b650m-pro", ["B650M PRO"], part_numbers=["7D75001R"]),)
     resolved = match_catalog(catalog, "Placa Mae MSI 7D75-001R extra palavra qualquer")
     assert resolved is not None and resolved.model == "b650m-pro"
+
+
+def _cpu_snapshot(model, names):
+    built = build_resolved_variant_from_fields(
+        category="cpu",
+        brand="intel",
+        family="core",
+        model=model,
+        variant="base",
+        attributes={},
+    )
+    return CatalogEntrySnapshot(
+        category="cpu",
+        brand="intel",
+        family="core",
+        model=model,
+        variant="base",
+        attributes={},
+        required_attributes=(),
+        family_key=catalog_family_key(
+            category="cpu", brand="intel", family="core", model=model
+        ),
+        identity_key=built.identity_key,
+        part_numbers=(),
+        names=tuple(names),
+        source="buildcores",
+    )
+
+
+def test_spec_terms_after_the_model_are_accepted_but_variant_suffixes_are_not() -> None:
+    plain = _cpu_snapshot("core-i5-12400", ["CORE I5 12400"])
+    with_f = _cpu_snapshot("core-i5-12400f", ["CORE I5 12400F"])
+    catalog = (plain, with_f)
+    ok = match_catalog(
+        catalog, "Processador Intel Core i5-12400 2.5GHz LGA 1700 Cache 18MB"
+    )
+    assert ok is not None and ok.model == "core-i5-12400"
+    variant = match_catalog(catalog, "Processador Intel Core i5-12400F 2.5GHz LGA 1700")
+    assert variant is not None and variant.model == "core-i5-12400f"
+    # Sufixo de variante (K, KF, Pro, Plus, XT, WiFi) continua barrando o nome curto.
+    assert match_catalog((plain,), "Processador Intel Core i5 12400 Plus") is None
+    assert match_catalog((plain,), "Intel Core i5 12400 K") is None
+    # Memória de vídeo e "sem fio" são especificação, não variante.
+    gpu = _cpu_snapshot("arc-a310-elf-4gb", ["ARC A310 ELF 4GB"])
+    assert (
+        match_catalog((gpu,), "Placa de Video Sparkle Arc A310 ELF 4GB GDDR6")
+        is not None
+    )
+    mouse = _cpu_snapshot("g304", ["G304 LIGHTSPEED"])
+    assert (
+        match_catalog((mouse,), "Mouse Logitech G304 Lightspeed Sem Fio Preto")
+        is not None
+    )

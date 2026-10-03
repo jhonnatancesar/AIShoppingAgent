@@ -385,58 +385,6 @@ def merge_same_identity(entries: list[OpenCatalogEntry]) -> list[OpenCatalogEntr
     return list(merged.values())
 
 
-def merge_shared_part_numbers(
-    entries: list[OpenCatalogEntry],
-) -> list[OpenCatalogEntry]:
-    """Registros da MESMA marca que dividem um part number são o mesmo produto escrito
-    de jeitos diferentes: viram uma entrada (a de nome mais curto), com os códigos
-    juntos."""
-    parent: dict[tuple[str, ...], tuple[str, ...]] = {
-        e.identity: e.identity for e in entries
-    }
-
-    def find(node: tuple[str, ...]) -> tuple[str, ...]:
-        while parent[node] != node:
-            parent[node] = parent[parent[node]]
-            node = parent[node]
-        return node
-
-    first_by_code: dict[tuple[str, str, str], tuple[str, ...]] = {}
-    for entry in entries:
-        for code in entry.part_numbers:
-            key = (entry.category, entry.brand, code)
-            if key in first_by_code:
-                parent[find(entry.identity)] = find(first_by_code[key])
-            else:
-                first_by_code[key] = entry.identity
-    groups: dict[tuple[str, ...], list[OpenCatalogEntry]] = defaultdict(list)
-    for entry in entries:
-        groups[find(entry.identity)].append(entry)
-    merged: list[OpenCatalogEntry] = []
-    for members in groups.values():
-        lead = min(members, key=lambda e: (len(e.model), e.model, e.source_ref))
-        merged.append(
-            OpenCatalogEntry(
-                category=lead.category,
-                brand=lead.brand,
-                family=lead.family,
-                model=lead.model,
-                attributes=lead.attributes,
-                part_numbers=tuple(
-                    dict.fromkeys(c for m in members for c in m.part_numbers)
-                ),
-                # Só os nomes do registro principal: o nome dos outros pode ser de
-                # outra placa ("TOMAHAWK" e "TOMAHAWK MAX" dividindo um código).
-                names=lead.names,
-                source=lead.source,
-                source_ref=lead.source_ref,
-                variant=lead.variant,
-                required_attributes=lead.required_attributes,
-            )
-        )
-    return merged
-
-
 @dataclass(slots=True)
 class ImportStats:
     entries_new: int = 0

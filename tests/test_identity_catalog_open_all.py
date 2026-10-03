@@ -4,7 +4,6 @@ from app.products.identity_catalog_import import (
     MappingReport,
     drop_ambiguous_codes,
     merge_same_identity,
-    merge_shared_part_numbers,
 )
 from app.products.identity_catalog_open_all import FOLDER_SPECS, map_buildcores_record
 
@@ -251,9 +250,7 @@ def test_color_variants_of_one_model_become_one_entry_with_every_part_number() -
             series="G304",
         ),
     )
-    kept = drop_ambiguous_codes(
-        merge_shared_part_numbers(merge_same_identity([black, white])), MappingReport()
-    )
+    kept = drop_ambiguous_codes(merge_same_identity([black, white]), MappingReport())
     # A cor não faz parte da identidade (as lojas raramente a escrevem no título):
     # uma entrada, com os part numbers das duas cores e o nome sem cor.
     assert len(kept) == 1

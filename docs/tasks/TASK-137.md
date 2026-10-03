@@ -97,6 +97,31 @@ são a exceção. Vale como regra geral, não por item.
 - Testes: `tests/test_identity_spec_request.py` (28) e 4 de integração (família compartilhada, memória sem
   catálogo, família nunca é dúvida de IA, coleta filtrada).
 
+**Banco COMPLETO importado (2026-10-03), commit local.** Pedido do usuário: "pegar o banco todo" (PC, notebook,
+celular, periféricos), e tratar TODOS os itens, não só o que foi citado.
+
+- BuildCores OpenDB inteiro (275 MB, 44 mil registros, 30 pastas): `identity_catalog_open_all.FOLDER_SPECS`
+  (CPU, GPU, SSD/HD, fonte, monitor, gabinete, cooler, ventoinha, notebook, desktop, teclado, mouse, mousepad, fone,
+  microfone, caixa de som, webcam, cadeira, mesa, placas de rede/som/captura, pasta térmica, iluminação, acessório,
+  suporte, VR) + placa-mãe e RAM (mapeadores próprios). Atributos usam os nomes do registro de categorias
+  (`capacity_gb`, `interface`, `wattage`, `certification`, `size`, `resolution`, `refresh_rate`, `panel`, `board_brand`,
+  `vram`, `socket`...); GPU guarda `gpu_vendor` (NVIDIA/AMD/Intel) e `chipset`.
+- Wikidata (CC0), exportado uma vez por SPARQL: 1.779 celulares (982 aproveitados) e 102 smartwatches (48). Celular
+  com `storage_gb` obrigatório (identidade nasce do título). Sem fabricante ou sem modelo identificável ficam de fora.
+- Resultado da carga no banco de teste: 41.967 entradas e 85.048 códigos, sem conflito no banco.
+- Correção de precisão: a fonte lista o part number do 12400 dentro do 12400F; juntar por código compartilhado misturava
+  produtos. **Removida a junção por part number**: código dividido por dois produtos sai dos DOIS, cada um fica com o seu.
+- Fronteira do nome (`match_catalog`) aceita, depois do modelo, termos de especificação (GHz, MHz, GB, TB, W, polegadas,
+  GDDR, SSD, "sem"...) e números; continua barrando variantes (PRO, PLUS, XT, WIFI, MAX, K, RGB...).
+- Cor não faz parte da identidade (versões preta/branca do mesmo modelo = uma entrada com os part numbers das duas).
+- Medição (16 títulos reais): CPU (Core Ultra 265K, Ryzen 7800X3D/5600G, i5-12400F), GPU Intel Arc, SSD, HD, monitor e
+  celulares casam corretos; 0 casamentos errados.
+- Limites conhecidos: fonte EVGA SuperNOVA (série repetida em várias versões = nome ambíguo, sai); placa de vídeo de
+  parceiro cujo nome começa pelo modelo do parceiro pode casar com a referência da AMD/NVIDIA (mesmo chip); POCO X7 Pro
+  e notebooks fora do BuildCores/Wikidata (116 notebooks) dependem do preenchimento automático; cadeiras/periféricos com
+  nome de anúncio comprido são descartados quando não há série/variante.
+- Testes: `tests/test_identity_catalog_open_all.py` (13) e casos novos em `test_identity_catalog_import.py`.
+
 ## Preenchimento automático (a fazer, pedido do usuário 2026-10-03: "preencher a lista sozinha, de forma topíssima")
 
 Quando o pedido ou o anúncio não existe no banco, o sistema completa a lista sozinho, sem entrar lixo:

@@ -39,7 +39,6 @@ from app.products.identity_catalog_import import (
     map_buildcores_motherboard,
     map_buildcores_ram,
     merge_same_identity,
-    merge_shared_part_numbers,
 )
 from app.products.identity_catalog_open_all import (
     FOLDER_SPECS,
@@ -113,7 +112,6 @@ async def _run(
     everything.extend(phones)
     reports.update(phone_reports)
     everything = merge_same_identity(everything)
-    everything = merge_shared_part_numbers(everything)
     global_report = MappingReport()
     global_report.mapped = len(everything)
     everything = drop_ambiguous_codes(everything, global_report)

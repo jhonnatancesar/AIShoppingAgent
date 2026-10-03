@@ -207,6 +207,15 @@ _NAME_TRAILING_OK = re.compile(
     r"DOURADO|AMARELO|LARANJA|BLACK|WHITE|BLUE|GREEN|RED|PINK|GRAY|GREY|SILVER|GOLD|VIOLET)$"
 )
 
+_SPEC_NOISE = re.compile(
+    r"^(?:\d+(?:[.,]\d+)?(?:GHZ|MHZ|HZ|GB|TB|MB|W|WATTS?|MM|CM|POL|POLEGADAS?|CORES?|NUCLEOS|"
+    r"THREADS|FPS|KG|AH|MAH)?|GDDR\d+X?|HBM\d?E?|PCIE|PCI|LGA|TRAY|CACHE|PROCESSADOR|PLACA|"
+    r"VIDEO|MEMORIA|FONTE|MONITOR|MOUSE|TECLADO|HEADSET|FONE|SSD|HD|NVME|SATA|DRIVE|SEM)$"
+)
+"""Termos de especificação que as lojas escrevem logo depois do modelo (clock, tamanho,
+capacidade, memória de vídeo, tipo de produto). NÃO inclui palavras de variante
+(PRO, PLUS, XT, WIFI, MAX, RGB...), que continuam rejeitando o casamento."""
+
 
 def _name_run_is_complete(raw_tokens: list[str], name_tokens: list[str]) -> bool:
     """TASK-137: nome de fonte aberta só casa como corrida CONTÍGUA e COMPLETA no
@@ -223,7 +232,11 @@ def _name_run_is_complete(raw_tokens: list[str], name_tokens: list[str]) -> bool
         if last_raw != stripped[start + size - 1] and last_raw[-1:] in ",;)":
             return True
         following = stripped[start + size] if start + size < len(stripped) else None
-        if following is None or _NAME_TRAILING_OK.match(following):
+        if (
+            following is None
+            or _NAME_TRAILING_OK.match(following)
+            or _SPEC_NOISE.match(following)
+        ):
             return True
     return False
 

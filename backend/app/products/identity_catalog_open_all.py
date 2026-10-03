@@ -144,13 +144,16 @@ class FolderSpec:
     category: str | Callable[[Mapping[str, Any]], str | None]
     attributes: Callable[[Mapping[str, Any]], dict[str, str]] = _none
     cut_words: frozenset[str] = frozenset()
+    use_series_name: bool = True
+    """A `series` da fonte vira nome extra (nas peças em que ela é o modelo: fonte, monitor,
+    mouse...). CPU e GPU não: lá a série é a linha do chip e casaria com todos."""
     """Palavra a partir da qual o nome é descrição, não modelo (gabinete: "... Air 540
     ATX Mid Tower White with Tempered Glass" -> "... Air 540")."""
 
 
 FOLDER_SPECS: dict[str, FolderSpec] = {
-    "CPU": FolderSpec("cpu", _cpu),
-    "GPU": FolderSpec("gpu", _gpu),
+    "CPU": FolderSpec("cpu", _cpu, use_series_name=False),
+    "GPU": FolderSpec("gpu", _gpu, use_series_name=False),
     "Storage": FolderSpec(_storage_category, _storage),
     "PSU": FolderSpec("psu", _psu),
     "Monitor": FolderSpec("monitor", _monitor),
@@ -280,12 +283,18 @@ def map_buildcores_record(
     if not model:
         report.skip("nome_vazio")
         return None
+    series_name = (
+        normalize_for_grounding(meta.get("series") or "")
+        if spec.use_series_name
+        else ""
+    )
     names = tuple(
         dict.fromkeys(
             candidate
             for candidate in (
                 normalize_for_grounding(cleaned),
                 normalize_for_grounding(trimmed),
+                series_name,
             )
             if _usable_name(candidate)
         )
