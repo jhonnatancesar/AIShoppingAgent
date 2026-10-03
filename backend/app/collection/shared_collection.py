@@ -142,7 +142,7 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import and_, exists, func, or_, select, update
+from sqlalchemy import and_, delete, exists, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -158,6 +158,7 @@ from app.collection.funnel_cycle import (
 from app.collection.models import (
     CollectionRun,
     CollectionRunStatus,
+    MissionOfferHighlight,
     MissionOfferRelevance,
     OfferInstallmentOption,
     PriceObservation,
@@ -763,6 +764,42 @@ async def _build_mission_phase_a_outcome(
         )
 
 
+async def _mission_store_ids(
+    session_factory: async_sessionmaker[AsyncSession], mission_id: UUID
+) -> frozenset[UUID]:
+    async with session_factory() as session:
+        return frozenset(
+            await session.scalars(
+                select(MissionSource.store_id).where(
+                    MissionSource.mission_id == mission_id
+                )
+            )
+        )
+
+
+async def _replace_mission_highlights(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    mission_id: UUID,
+    offer_ids: frozenset[UUID],
+    chosen_at: datetime,
+) -> None:
+    """TASK-136: o Destaque da missão é só o conjunto do último ciclo fechado.
+    Idempotente: várias coletas do mesmo ciclo gravam o mesmo conjunto."""
+    async with session_factory() as session, session.begin():
+        await session.execute(
+            delete(MissionOfferHighlight).where(
+                MissionOfferHighlight.mission_id == mission_id
+            )
+        )
+        for offer_id in sorted(offer_ids):
+            session.add(
+                MissionOfferHighlight(
+                    mission_id=mission_id, offer_id=offer_id, chosen_at=chosen_at
+                )
+            )
+
+
 async def _mission_still_eligible_for_fan_out(
     session_factory: async_sessionmaker[AsyncSession],
     *,
@@ -1100,14 +1137,9 @@ async def _process_pending_fan_out(
             query = query.limit(limit)
         candidate_mission_ids = tuple(await session.scalars(query))
 
-    # TASK-136: escolha do funil para o ciclo desta coleta (uma vez só).
-    chosen_offer_ids = (
-        await cycle_chosen_offer_ids(
-            session_factory, monitoring_item_id=monitoring_item_id, run_id=run_id
-        )
-        if candidate_mission_ids
-        else None
-    )
+    # TASK-136: escolha do funil por conjunto de lojas da missão (cache: missões
+    # com as mesmas lojas dividem a mesma escolha).
+    chosen_by_stores: dict[frozenset[UUID], frozenset[UUID] | None] = {}
     attempted_task_count = 0
     done: list[UUID] = []
     skipped: list[UUID] = []
@@ -1171,6 +1203,15 @@ async def _process_pending_fan_out(
             None,
         )
         try:
+            mission_store_ids = await _mission_store_ids(session_factory, mission_id)
+            if mission_store_ids not in chosen_by_stores:
+                chosen_by_stores[mission_store_ids] = await cycle_chosen_offer_ids(
+                    session_factory,
+                    monitoring_item_id=monitoring_item_id,
+                    run_id=run_id,
+                    store_ids=mission_store_ids,
+                )
+            chosen_offer_ids = chosen_by_stores[mission_store_ids]
             phase_a = await _build_mission_phase_a_outcome(
                 session_factory,
                 run_id=mission_run_id,
@@ -1202,6 +1243,13 @@ async def _process_pending_fan_out(
                 session_factory, phase_a, ai_outcomes, settings=settings
             )
             if ok:
+                if chosen_offer_ids is not None:
+                    await _replace_mission_highlights(
+                        session_factory,
+                        mission_id=mission_id,
+                        offer_ids=chosen_offer_ids,
+                        chosen_at=finished_at,
+                    )
                 await _complete_fan_out_task(
                     session_factory,
                     run_id=run_id,

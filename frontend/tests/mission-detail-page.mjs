@@ -62,6 +62,21 @@ try {
   assert.match(activeHtml, /Preço ainda não coletado/)
   assert.doesNotMatch(activeHtml, />Editar critério</)
 
+  // TASK-136: sem destaque nem outros resultados, os dois blocos nem aparecem.
+  assert.doesNotMatch(activeHtml, />Destaque</)
+  assert.doesNotMatch(activeHtml, />Outros resultados</)
+  const groupedHtml = render({
+    ...activeMission,
+    highlight_offers: [{ id: 'offer-hl', title: 'Placa destaque', store_code: 'kabum', store_name: 'KaBuM!', last_seen_at: '2026-09-02T12:00:00Z', condition: 'new', amount: '3999.90', currency: 'BRL', rating_average: '4.90', review_count: 800 }],
+    other_offers: [{ id: 'offer-other', title: 'Placa sem analise', store_code: 'pichau', store_name: 'Pichau', last_seen_at: '2026-09-02T12:00:00Z', condition: 'new', amount: '4100.00', currency: 'BRL' }],
+  })
+  assert.match(groupedHtml, />Destaque</)
+  assert.match(groupedHtml, />Outros resultados</)
+  assert.match(groupedHtml, /Placa destaque/)
+  assert.match(groupedHtml, /Placa sem analise/)
+  assert.match(groupedHtml, /Continuam sendo acompanhados/)
+  assert.match(groupedHtml, /R\$\s*3\.999,90/)
+
   const pausedMission = {
     ...activeMission,
     status: 'paused',

@@ -296,3 +296,54 @@ def test_sweep_closes_cycle_left_open_by_a_crash(integration_database) -> None:
     assert len(resumed_kabum.fanned_out_mission_ids) == 1
     assert set(_task_statuses(integration_database)) == {SharedFanOutStatus.DONE}
     assert 1 <= len([p for p in ai.purposes if p == "classify_offer_relevance"]) <= 2
+
+
+def test_mission_groups_highlight_relevant_and_others(integration_database) -> None:
+    from app.offers.query import list_mission_offer_groups
+
+    mission, item_id, stores = _setup(integration_database)
+    ai = _CountingAI()
+    _collect(
+        integration_database,
+        _TwoStoreProvider("amazon", _AMAZON),
+        item_id,
+        stores["amazon"],
+        ai,
+        NOW,
+    )
+    _collect(
+        integration_database,
+        _TwoStoreProvider("kabum", _KABUM),
+        item_id,
+        stores["kabum"],
+        ai,
+        NOW + timedelta(seconds=5),
+    )
+
+    async def groups(user_id):
+        async with integration_database.async_sessions() as session:
+            return await list_mission_offer_groups(
+                session, mission_id=mission.id, user_id=user_id
+            )
+
+    with integration_database.sessions() as session:
+        from app.missions.models import Mission
+
+        owner_id = session.get(Mission, mission.id).user_id
+    result = asyncio.run(groups(owner_id))
+
+    # Destaque = as escolhidas pelo funil (todas classificadas "combina" aqui).
+    assert 1 <= len(result.highlights) <= 2
+    highlight_ids = {link.offer.id for link in result.highlights}
+    assert highlight_ids == {link.offer.id for link in result.relevant}
+    # Os outros 6 anúncios continuam gravados, sem classificação, do mais barato
+    # para o mais caro, e nunca repetem o que já está em cima.
+    assert len(result.others) == 8 - len(result.highlights)
+    assert not highlight_ids & {link.offer.id for link in result.others}
+    amounts = [link.amount for link in result.others]
+    assert amounts == sorted(amounts)
+    # Outro usuário não vê nada.
+    from uuid import uuid4
+
+    empty = asyncio.run(groups(uuid4()))
+    assert (empty.highlights, empty.relevant, empty.others) == ((), (), ())

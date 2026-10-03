@@ -27,7 +27,7 @@ from app.missions.service import (
     MissionVersionConflictError,
 )
 from app.offers.models import Offer
-from app.offers.query import MissionOfferLink
+from app.offers.query import MissionOfferGroups, MissionOfferLink
 from app.products.models import Product
 from app.stores.models import Store
 from app.users.models import User, UserRole
@@ -395,10 +395,16 @@ def test_get_mission_exposes_links_to_relevant_offers(
         AsyncMock(return_value=detail),
     )
     monkeypatch.setattr(
-        "app.webapp.missions_router.list_current_offer_links_for_mission",
+        "app.webapp.missions_router.list_mission_offer_groups",
         AsyncMock(
-            return_value=(
-                MissionOfferLink(offer, product, store, condition=OfferCondition.USED),
+            return_value=MissionOfferGroups(
+                (),
+                (
+                    MissionOfferLink(
+                        offer, product, store, condition=OfferCondition.USED
+                    ),
+                ),
+                (),
             )
         ),
     )
@@ -417,6 +423,12 @@ def test_get_mission_exposes_links_to_relevant_offers(
             "store_name": "Pichau",
             "last_seen_at": offer.last_seen_at.isoformat(),
             "condition": "used",
+            "amount": None,
+            "currency": None,
+            "rating_average": None,
+            "review_count": None,
+            "sales_count": None,
+            "sales_scope": None,
         }
     ]
 
@@ -446,9 +458,11 @@ def test_get_mission_offer_link_condition_is_none_without_observation(
         AsyncMock(return_value=detail),
     )
     monkeypatch.setattr(
-        "app.webapp.missions_router.list_current_offer_links_for_mission",
+        "app.webapp.missions_router.list_mission_offer_groups",
         AsyncMock(
-            return_value=(MissionOfferLink(offer, product, store, condition=None),)
+            return_value=MissionOfferGroups(
+                (), (MissionOfferLink(offer, product, store, condition=None),), ()
+            )
         ),
     )
 

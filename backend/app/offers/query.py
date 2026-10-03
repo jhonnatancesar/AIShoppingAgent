@@ -23,6 +23,7 @@ from app.collection.contracts import OfferCondition
 from app.collection.models import (
     CollectionRun,
     CollectionRunStatus,
+    MissionOfferHighlight,
     MissionOfferRelevance,
     OfferInstallmentOption,
     PriceObservation,
@@ -36,7 +37,9 @@ from app.coupons.service import get_active_coupons_by_store
 from app.missions.models import (
     Mission,
     MissionCriteria,
+    MissionMonitoringItem,
     MissionProductSelection,
+    MissionSource,
     VariantSelectionMode,
 )
 from app.offers.models import Offer
@@ -71,6 +74,10 @@ class MissionOfferLink:
     `OfferCondition.UNKNOWN` (observação existe, condição indeterminada).
     Subtask 3 (auditoria GG Oferta): antes, a tela de missão nem carregava
     esse dado."""
+    amount: Decimal | None = None
+    currency: str | None = None
+    """TASK-136: preço total da observação mais recente (ordena "Outros
+    resultados" e aparece no card); `None` sem observação."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -519,7 +526,14 @@ async def list_current_offer_links_for_mission(
     )
     rows = (
         await session.execute(
-            select(Offer, Product, Store, PriceObservation.condition)
+            select(
+                Offer,
+                Product,
+                Store,
+                PriceObservation.condition,
+                PriceObservation.total_amount,
+                PriceObservation.currency,
+            )
             .join(Product, Product.id == Offer.product_id)
             .join(Store, Store.id == Offer.store_id)
             .join(
@@ -541,13 +555,160 @@ async def list_current_offer_links_for_mission(
         )
     ).all()
     latest_seen_by_store: dict[UUID, datetime] = {}
-    for offer, _product, store, _condition in rows:
+    for offer, _product, store, _condition, _amount, _currency in rows:
         latest_seen_by_store.setdefault(store.id, offer.last_seen_at)
     return tuple(
-        MissionOfferLink(offer=offer, product=product, store=store, condition=condition)
-        for offer, product, store, condition in rows
+        MissionOfferLink(
+            offer=offer,
+            product=product,
+            store=store,
+            condition=condition,
+            amount=amount,
+            currency=currency,
+        )
+        for offer, product, store, condition, amount, currency in rows
         if offer.last_seen_at == latest_seen_by_store[store.id]
     )
+
+
+@dataclass(frozen=True, slots=True)
+class MissionOfferGroups:
+    """TASK-136: os três blocos da tela da missão."""
+
+    highlights: tuple[MissionOfferLink, ...]
+    relevant: tuple[MissionOfferLink, ...]
+    others: tuple[MissionOfferLink, ...]
+
+
+_OTHER_OFFERS_LIMIT = 20
+
+
+async def list_mission_offer_groups(
+    session: AsyncSession, *, mission_id: UUID, user_id: UUID
+) -> MissionOfferGroups:
+    """Destaque (escolhidas pelo funil no último ciclo), ofertas relevantes
+    (classificadas, como sempre) e outros resultados (gravados na coleta mais
+    recente de cada loja, sem classificação da IA, do menor preço para o maior).
+    Todos continuam sendo coletados e acompanhados; "outros" só não passaram
+    pela IA."""
+    relevant = await list_current_offer_links_for_mission(
+        session, mission_id=mission_id, user_id=user_id
+    )
+    owned = await session.scalar(
+        select(Mission.id).where(Mission.id == mission_id, Mission.user_id == user_id)
+    )
+    if owned is None:
+        return MissionOfferGroups((), (), ())
+    source_store_ids = tuple(
+        await session.scalars(
+            select(MissionSource.store_id).where(MissionSource.mission_id == mission_id)
+        )
+    )
+    latest_observation_id = (
+        select(PriceObservation.id)
+        .where(PriceObservation.offer_id == Offer.id)
+        .order_by(PriceObservation.observed_at.desc(), PriceObservation.id.desc())
+        .limit(1)
+        .correlate(Offer)
+        .scalar_subquery()
+    )
+    columns = (
+        Offer,
+        Product,
+        Store,
+        PriceObservation.condition,
+        PriceObservation.total_amount,
+        PriceObservation.currency,
+    )
+
+    def _links(rows) -> tuple[MissionOfferLink, ...]:
+        return tuple(
+            MissionOfferLink(
+                offer=offer,
+                product=product,
+                store=store,
+                condition=condition,
+                amount=amount,
+                currency=currency,
+            )
+            for offer, product, store, condition, amount, currency in rows
+        )
+
+    highlight_rows = (
+        await session.execute(
+            select(*columns)
+            .join(Product, Product.id == Offer.product_id)
+            .join(Store, Store.id == Offer.store_id)
+            .join(
+                MissionOfferHighlight,
+                and_(
+                    MissionOfferHighlight.offer_id == Offer.id,
+                    MissionOfferHighlight.mission_id == mission_id,
+                ),
+            )
+            .outerjoin(PriceObservation, PriceObservation.id == latest_observation_id)
+            .where(Offer.store_id.in_(source_store_ids))
+            .order_by(PriceObservation.total_amount.asc().nulls_last(), Offer.id)
+        )
+    ).all()
+    highlights = _links(highlight_rows)
+    taken = {link.offer.id for link in highlights} | {
+        link.offer.id for link in relevant
+    }
+
+    item_id = await session.scalar(
+        select(MissionMonitoringItem.monitoring_item_id).where(
+            MissionMonitoringItem.mission_id == mission_id
+        )
+    )
+    others: tuple[MissionOfferLink, ...] = ()
+    if item_id is not None and source_store_ids:
+        run_rows = (
+            await session.execute(
+                select(CollectionRun.store_id, CollectionRun.id)
+                .where(
+                    CollectionRun.monitoring_item_id == item_id,
+                    CollectionRun.status == CollectionRunStatus.SUCCEEDED,
+                    CollectionRun.store_id.in_(source_store_ids),
+                )
+                .order_by(CollectionRun.finished_at.desc(), CollectionRun.id)
+            )
+        ).all()
+        latest_run_by_store: dict[UUID, UUID] = {}
+        for store_id, run_id in run_rows:
+            latest_run_by_store.setdefault(store_id, run_id)
+        if latest_run_by_store:
+            other_query = (
+                select(*columns)
+                .select_from(SharedCollectionOffer)
+                .join(Offer, Offer.id == SharedCollectionOffer.offer_id)
+                .join(Product, Product.id == Offer.product_id)
+                .join(Store, Store.id == Offer.store_id)
+                .join(
+                    PriceObservation,
+                    PriceObservation.id == SharedCollectionOffer.observation_id,
+                )
+                .outerjoin(
+                    MissionOfferRelevance,
+                    and_(
+                        MissionOfferRelevance.offer_id == Offer.id,
+                        MissionOfferRelevance.mission_id == mission_id,
+                    ),
+                )
+                .where(
+                    SharedCollectionOffer.collection_run_id.in_(
+                        list(latest_run_by_store.values())
+                    ),
+                    MissionOfferRelevance.offer_id.is_(None),
+                )
+                .order_by(PriceObservation.total_amount.asc(), Offer.id)
+                .limit(_OTHER_OFFERS_LIMIT + len(taken))
+            )
+            other_rows = (await session.execute(other_query)).all()
+            others = tuple(
+                link for link in _links(other_rows) if link.offer.id not in taken
+            )[:_OTHER_OFFERS_LIMIT]
+    return MissionOfferGroups(highlights=highlights, relevant=relevant, others=others)
 
 
 @dataclass(frozen=True, slots=True)

@@ -157,6 +157,7 @@ async def cycle_chosen_offer_ids(
     *,
     monitoring_item_id: UUID,
     run_id: UUID,
+    store_ids: frozenset[UUID] | None = None,
 ) -> frozenset[UUID] | None:
     """Ofertas do ciclo que o funil manda para a IA (pool de 10 mais populares,
     as 2 mais baratas; 1 se as avaliações apontam claramente uma só).
@@ -199,6 +200,8 @@ async def cycle_chosen_offer_ids(
         )
         if previous is not None:
             query = query.where(CollectionRun.finished_at > previous)
+        if store_ids is not None:
+            query = query.where(Offer.store_id.in_(store_ids))
         rows: dict[UUID, _FunnelRow] = {}
         for offer, observation, store_code, _run_finished_at in await session.execute(
             query

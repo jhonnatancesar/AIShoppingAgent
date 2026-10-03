@@ -163,6 +163,7 @@ def test_metadata_contains_only_implemented_tables() -> None:
         "mission_transitions",
         "mission_sources",
         "mission_schedules",
+        "mission_offer_highlights",
         "mission_offer_relevance",
         "mission_product_selections",
         "collection_runs",

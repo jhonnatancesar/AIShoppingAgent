@@ -42,9 +42,25 @@ function toOfferCardData(offer: MissionOfferLink): OfferCardData {
     title: offer.title,
     imageUrl: null,
     store: { name: offer.store_name },
-    price: null,
+    price: offer.amount && offer.currency
+      ? { amount: offer.amount, totalAmount: offer.amount, currency: offer.currency }
+      : null,
     condition: offer.condition,
+    rating:
+      offer.rating_average && offer.review_count
+        ? { average: offer.rating_average, reviewCount: offer.review_count }
+        : null,
   }
+}
+
+function OfferGrid({ offers }: { offers: MissionOfferLink[] }) {
+  return (
+    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+      {offers.map((offer) => (
+        <OfferCard key={offer.id} offer={toOfferCardData(offer)} action={{ label: 'Ver detalhes', to: `/app/offers/${offer.id}` }} />
+      ))}
+    </div>
+  )
 }
 
 export function MissionDetailPage() {
@@ -107,6 +123,8 @@ export function MissionDetailView({ mission, onReload }: { mission: MissionDetai
   const [error, setError] = useState<string | null>(null)
   const [quotaError, setQuotaError] = useState<QuotaErrorDetails | null>(null)
   const [actionPending, setActionPending] = useState(false)
+  const highlightOffers = mission.highlight_offers ?? []
+  const otherOffers = mission.other_offers ?? []
 
   async function runAction(
     action: (id: string, version: number) => Promise<unknown>,
@@ -262,16 +280,32 @@ export function MissionDetailView({ mission, onReload }: { mission: MissionDetai
         </CardContent>
       </Card>
 
+      {highlightOffers.length > 0 ? (
+        <div className="mb-8">
+          <h2 className="mb-1 text-lg font-semibold tracking-tight">Destaque</h2>
+          <p className="mb-3 text-sm text-muted-foreground">
+            As opções mais baratas entre as mais bem avaliadas nas lojas.
+          </p>
+          <OfferGrid offers={highlightOffers} />
+        </div>
+      ) : null}
+
       <h2 className="mb-3 text-lg font-semibold tracking-tight">Ofertas relevantes</h2>
       {mission.offers.length === 0 ? (
         <EmptyState title="Nenhuma oferta relevante ainda" description="Assim que o GG Oferta encontrar uma oferta compatível, ela aparece aqui." />
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          {mission.offers.map((offer) => (
-            <OfferCard key={offer.id} offer={toOfferCardData(offer)} action={{ label: 'Ver detalhes', to: `/app/offers/${offer.id}` }} />
-          ))}
-        </div>
+        <OfferGrid offers={mission.offers} />
       )}
+
+      {otherOffers.length > 0 ? (
+        <div className="mt-8">
+          <h2 className="mb-1 text-lg font-semibold tracking-tight">Outros resultados</h2>
+          <p className="mb-3 text-sm text-muted-foreground">
+            Anúncios encontrados nas lojas, do menor preço para o maior. Continuam sendo acompanhados (preço e histórico); só ainda não foram analisados pela IA.
+          </p>
+          <OfferGrid offers={otherOffers} />
+        </div>
+      ) : null}
 
       <div className="mt-8">
         <Button variant="outline" asChild><Link to="/app/missions"><ArrowLeft />Voltar para missões</Link></Button>

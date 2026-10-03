@@ -106,9 +106,9 @@ def test_mission_links_keep_only_latest_offer_per_store():
     execute_result = MagicMock()
     # Mesma ordem do SQL real: loja, `last_seen_at` desc.
     execute_result.all.return_value = [
-        (newest_a, product, store_a, "new"),
-        (older_a, product, store_a, "used"),
-        (only_b, product, store_b, None),
+        (newest_a, product, store_a, "new", None, None),
+        (older_a, product, store_a, "used", None, None),
+        (only_b, product, store_b, None, None, None),
     ]
     session = MagicMock()
     session.scalar = AsyncMock(return_value=None)

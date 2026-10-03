@@ -498,6 +498,31 @@ class SharedCollectionOffer(Base):
     )
 
 
+class MissionOfferHighlight(Base):
+    """TASK-136: ofertas que o funil escolheu para a IA no último ciclo fechado da
+    missão (o "Destaque" da tela). Regravada a cada ciclo: só vale o conjunto mais
+    recente, nunca histórico."""
+
+    __tablename__ = "mission_offer_highlights"
+
+    mission_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("missions.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    offer_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("offers.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    chosen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+        server_default=func.now(),
+    )
+
+
 class SharedFanOutStatus(StrEnum):
     """Máquina de estados de `SharedFanOutTask` (TASK-112, fase 3A,
     correção de consistência -- rodada de classificação de erro).

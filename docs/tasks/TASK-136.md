@@ -1,6 +1,6 @@
 # TASK-136 — Funil antes da IA: só os melhores candidatos de cada pesquisa chegam à IA
 
-Status: **Em andamento (2026-10-01): passos 1, 2 e 3 implementados; passo 5 (tela) não iniciado.** Pedido do usuário em
+Status: **Em andamento (2026-10-01): passos 1, 2, 3 e 5 implementados (falta validar a tela ao vivo e fechar a TASK).** Pedido do usuário em
 conversa. Nenhum código escrito. Decisões abaixo são do usuário; os pontos marcados
 "a confirmar" ficam para o início da implementação (regra do projeto: parar e relatar
 antes de codar se algo divergir).
@@ -112,6 +112,20 @@ local.** Decisão do usuário (opção A): alertas também esperam o fechamento 
 - Limite conhecido: a escolha é por item, antes da relevância determinística de cada missão; uma
   escolhida que a missão descarta por regra fixa gasta a vaga sem chamar IA.
 - Testes: `tests/integration/test_funnel_cycle.py` (barreira, loja com erro, queda no meio).
+
+**Passo 5 — tela da missão com três blocos: implementado (2026-10-03), commit local.** Decisão do
+usuário: tabela própria para o destaque; item sem análise da IA continua sendo acompanhado.
+
+- Tabela `mission_offer_highlights` (migração `20261003_0001`): regravada a cada ciclo fechado com as
+  ofertas que o funil escolheu para aquela missão.
+- A escolha do funil passou a ser **por missão** (só considera as lojas da própria missão), corrigindo
+  o limite anotado no passo 3 (item compartilhado com missões de lojas diferentes).
+- API `GET /missions/{id}`: `highlight_offers` (Destaque), `offers` (relevantes, como antes) e
+  `other_offers` (até 20 anúncios da coleta mais recente de cada loja sem classificação, do menor preço
+  ao maior). Cada oferta traz preço, nota, avaliações e vendas.
+- Tela: seções Destaque, Ofertas relevantes e Outros resultados na mesma aba; "Outros resultados" diz que
+  os anúncios continuam acompanhados (preço e histórico), só não passaram pela IA. Sem selo por card.
+- Alertas continuam só para oferta classificada como "combina".
 
 ## Decisões do usuário (2026-10-01)
 

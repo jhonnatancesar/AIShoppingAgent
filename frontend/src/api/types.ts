@@ -192,6 +192,12 @@ export interface MissionOfferLink {
   store_name: string
   last_seen_at: string
   condition: OfferCondition | null
+  amount?: string | null
+  currency?: string | null
+  rating_average?: string | null
+  review_count?: number | null
+  sales_count?: number | null
+  sales_scope?: 'last_month' | 'total' | null
 }
 
 export interface MissionDetail extends MissionSummary {
@@ -200,6 +206,8 @@ export interface MissionDetail extends MissionSummary {
   schedule: MissionSchedule | null
   transitions: MissionTransitionOut[]
   offers: MissionOfferLink[]
+  highlight_offers?: MissionOfferLink[]
+  other_offers?: MissionOfferLink[]
   available_variants: ProductVariantOption[]
 }
 

@@ -74,7 +74,11 @@ from app.missions.service import (
     set_mission_product_selection_async,
     transition_mission_async,
 )
-from app.offers.query import MissionOfferLink, list_current_offer_links_for_mission
+from app.offers.query import (
+    MissionOfferGroups,
+    MissionOfferLink,
+    list_mission_offer_groups,
+)
 from app.quotas import QuotaExceededError
 from app.users.models import User, UserRole
 from app.webapp.dependency import require_web_session
@@ -180,6 +184,12 @@ class MissionOfferLinkOut(BaseModel):
     condition: OfferCondition | None
     """`None` só quando a oferta ainda não tem nenhuma observação de preço
     -- nunca inventado. Ver `app.offers.query.MissionOfferLink.condition`."""
+    amount: Decimal | None = None
+    currency: str | None = None
+    rating_average: Decimal | None = None
+    review_count: int | None = None
+    sales_count: int | None = None
+    sales_scope: str | None = None
 
 
 class MissionDetailResponse(BaseModel):
@@ -195,6 +205,11 @@ class MissionDetailResponse(BaseModel):
     schedule: MissionScheduleOut | None
     transitions: list[MissionTransitionOut]
     offers: list[MissionOfferLinkOut]
+    highlight_offers: list[MissionOfferLinkOut] = Field(default_factory=list)
+    """TASK-136: as ofertas que o funil escolheu no último ciclo."""
+    other_offers: list[MissionOfferLinkOut] = Field(default_factory=list)
+    """TASK-136: ofertas gravadas e acompanhadas (preço e histórico) que não
+    passaram pela IA, do menor preço para o maior."""
     available_variants: list[ProductVariantOut]
 
 
@@ -391,8 +406,25 @@ def _as_list_item(mission: Mission, extras: MissionListExtras) -> MissionListIte
     )
 
 
+def _offer_link_out(item: MissionOfferLink) -> MissionOfferLinkOut:
+    return MissionOfferLinkOut(
+        id=item.offer.id,
+        title=item.product.display_name or item.product.name,
+        store_code=item.store.code,
+        store_name=item.store.name,
+        last_seen_at=item.offer.last_seen_at.isoformat(),
+        condition=item.condition,
+        amount=item.amount,
+        currency=item.currency,
+        rating_average=item.offer.rating_average,
+        review_count=item.offer.review_count,
+        sales_count=item.offer.sales_count,
+        sales_scope=item.offer.sales_scope,
+    )
+
+
 def _as_detail(
-    detail: MissionDetail, offer_links: tuple[MissionOfferLink, ...]
+    detail: MissionDetail, groups: MissionOfferGroups
 ) -> MissionDetailResponse:
     mission = detail.mission
     return MissionDetailResponse(
@@ -447,17 +479,9 @@ def _as_detail(
             )
             for transition in detail.transitions
         ],
-        offers=[
-            MissionOfferLinkOut(
-                id=item.offer.id,
-                title=item.product.display_name or item.product.name,
-                store_code=item.store.code,
-                store_name=item.store.name,
-                last_seen_at=item.offer.last_seen_at.isoformat(),
-                condition=item.condition,
-            )
-            for item in offer_links
-        ],
+        offers=[_offer_link_out(item) for item in groups.relevant],
+        highlight_offers=[_offer_link_out(item) for item in groups.highlights],
+        other_offers=[_offer_link_out(item) for item in groups.others],
         available_variants=[
             ProductVariantOut(
                 product_id=product.id,
@@ -747,10 +771,10 @@ async def get_mission(
             permission=Permission.MISSION_READ,
             mission_id=mission_id,
         )
-    offer_links = await list_current_offer_links_for_mission(
+    groups = await list_mission_offer_groups(
         session, mission_id=mission_id, user_id=user.id
     )
-    return _as_detail(detail, offer_links)
+    return _as_detail(detail, groups)
 
 
 @router.patch(
