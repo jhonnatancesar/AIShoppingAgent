@@ -1,8 +1,45 @@
 # TASK-137 — Banco de modelos de produto (lista aberta copiada) para entender o pedido do usuário
 
-Status: **Registrada (2026-10-03), NÃO iniciada.** Pedido do usuário em conversa, depois de a TASK-136
+Status: **Em andamento (2026-10-03): importador de placa-mãe e RAM do BuildCores pronto (local); falta busca por pedido, dúvida com IA, preenchimento automático, ligação na missão, Wikidata e rodapé.** Pedido do usuário em conversa, depois de a TASK-136
 mostrar que missões de placa-mãe, RAM e celulares fora de iPhone/Galaxy S não ganham item de
 monitoramento (não entram no funil) por falta de regra de texto.
+
+## Progresso
+
+**Etapas 1 e 2 (placa-mãe e RAM do BuildCores): implementadas (2026-10-03), commit local.**
+
+- Em vez de tabelas novas, reaproveita o catálogo da TASK-132/133 (`product_identity_catalog_entries` e
+  `_codes`): migration `20261004_0001` só amplia `source` (`buildcores`, `wikidata`) e guarda `source_ref`
+  (id do registro na fonte, para atribuição e atualização). Resolve a pergunta 3 (não duplicar identidade).
+- Importador `app/products/identity_catalog_import.py` + `backend/scripts/import_open_catalog.py`
+  (`--dry-run`/`--apply`, idempotente, sem rede e sem IA). Cópia da base (git sparse clone das pastas
+  `Motherboard` e `RAM`, 56 MB), nunca chamada de API.
+- Resultado na carga de 2026-10-03: placas 3.701 lidas, 3.601 aproveitadas, 3.514 entradas; RAM 4.876 lidas,
+  4.452 aproveitadas, 4.293 entradas; 13.525 códigos. Descartes explicados por motivo (sem fabricante, nome
+  de anúncio comprido, RAM sem part number etc.).
+- Qualidade: DDR1 a DDR5 sempre distinguidos (RAM: atributo `type`; placa: `memory_type` + DDR no nome);
+  código ou nome usado por marcas diferentes sai dos dois lados; registros da mesma marca que dividem part
+  number viram um só, com o nome do registro principal apenas; apelidos de nome da fonte NÃO são usados
+  (a fonte mistura a placa com e sem "MAX"); "código" que é nome colado é rejeitado.
+- **Casamento estrito por nome** para fontes abertas (`match_catalog`): corrida contígua e completa; depois
+  do nome só pode vir fim do título, pontuação ou termo neutro (soquete, DDR, formato). "B650M PRO" nunca
+  casa com "B650M PRO-A" ou "B650M PRO WIFI". Sem certeza, não casa e cai na IA.
+- Medição com 23 títulos reais de loja: **0 casamentos errados**, 16 corretos, 7 sem casar (marca de
+  revisão/região no nome da fonte, ex.: "V3 (REV. 1.5)", "WIFI7", ou placa ausente da fonte). Testes:
+  `tests/test_identity_catalog_import.py` (14) e `tests/integration/test_identity_catalog_import.py` (5).
+
+## Preenchimento automático (a fazer, pedido do usuário 2026-10-03: "preencher a lista sozinha, de forma topíssima")
+
+Quando o pedido ou o anúncio não existe no banco, o sistema completa a lista sozinho, sem entrar lixo:
+
+1. Fontes em ordem: banco (já copiado) -> busca de identidade pelo Core (TASK-133 etapa 3) -> extração por
+   IA com grounding (já existe).
+2. Resultado novo nasce como candidato; só vira entrada `learned` quando passa em TODOS os portões:
+   grounding no título; part number do fabricante OU o mesmo nome visto em 2+ lojas diferentes; sem
+   conflito com nome/código de outra entrada; guarda de palavra de edição (`identity_edition`); nunca
+   sobre entrada recusada; marca/família/modelo coerentes com o vocabulário da categoria.
+3. Candidato que não passa fica em revisão (`scripts/review_identity_catalog.py`), nunca entra direto.
+4. Medição: quantos preencheu sozinho, quantos foram para revisão, quantos viraram erro depois.
 
 ## Problema
 

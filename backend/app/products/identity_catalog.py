@@ -83,6 +83,7 @@ class CatalogEntrySnapshot:
     identity_key: str | None
     part_numbers: tuple[str, ...]
     names: tuple[str, ...]
+    source: str = "learned"
 
 
 async def load_catalog(session: AsyncSession) -> tuple[CatalogEntrySnapshot, ...]:
@@ -126,6 +127,7 @@ async def load_catalog(session: AsyncSession) -> tuple[CatalogEntrySnapshot, ...
             identity_key=entry.identity_key,
             part_numbers=tuple(part_numbers.get(entry.id, ())),
             names=tuple(names.get(entry.id, ())),
+            source=entry.source,
         )
         for entry in entries
     )
@@ -166,6 +168,34 @@ def _resolve_entry(
     return built
 
 
+_OPEN_SOURCES = frozenset({"buildcores", "wikidata"})
+_NAME_TRAILING_OK = re.compile(
+    r"^(?:AM[1-5]\+?|LGA\d{3,4}|DDR[1-5]|SOCKET|CHIPSET|ATX|MATX|MICRO|MINI|ITX|EATX|"
+    r"AMD|INTEL|PLACA|MAE|MOTHERBOARD|MAINBOARD|SUPORTA|SUPORTE|SUPPORTS|"
+    r"COMPATIVEL|BOX|OEM)$"
+)
+
+
+def _name_run_is_complete(raw_tokens: list[str], name_tokens: list[str]) -> bool:
+    """TASK-137: nome de fonte aberta só casa como corrida CONTÍGUA e COMPLETA no
+    título: logo depois dela só pode vir o fim do título, uma pontuação de lista ou
+    um termo neutro (soquete, DDR, formato, marca do chip). Qualquer outra palavra
+    ("A", "WIFI", "PLUS") pode ser outra placa: "B650M PRO" nunca casa com
+    "B650M PRO-A". Sem certeza, não casa (cai na IA, como antes)."""
+    stripped = [_strip_token_edges(token) for token in raw_tokens]
+    size = len(name_tokens)
+    for start in range(len(stripped) - size + 1):
+        if stripped[start : start + size] != name_tokens:
+            continue
+        last_raw = raw_tokens[start + size - 1]
+        if last_raw != stripped[start + size - 1] and last_raw[-1:] in ",;)":
+            return True
+        following = stripped[start + size] if start + size < len(stripped) else None
+        if following is None or _NAME_TRAILING_OK.match(following):
+            return True
+    return False
+
+
 def match_catalog(
     catalog: tuple[CatalogEntrySnapshot, ...], raw_title: str
 ) -> ResolvedProductVariant | None:
@@ -180,7 +210,8 @@ def match_catalog(
             return None  # o mesmo código em duas entradas: ambíguo, não decide
         return _resolve_entry(by_part_number[0], raw_title)
 
-    title_tokens = {_strip_token_edges(token) for token in title_normalized.split()}
+    raw_title_tokens = title_normalized.split()
+    title_tokens = {_strip_token_edges(token) for token in raw_title_tokens}
     best: CatalogEntrySnapshot | None = None
     best_size = (0, 0)
     tied = False
@@ -192,6 +223,10 @@ def match_catalog(
             name_tokens = [_strip_token_edges(token) for token in name.split()]
             if not name_tokens or not all(
                 token in title_tokens for token in name_tokens
+            ):
+                continue
+            if entry.source in _OPEN_SOURCES and not _name_run_is_complete(
+                raw_title_tokens, name_tokens
             ):
                 continue
             view = SimpleNamespace(

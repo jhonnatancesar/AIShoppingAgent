@@ -42,7 +42,7 @@ class ProductIdentityCatalogEntry(Base):
             name="ck_product_identity_catalog_entries_status_values",
         ),
         CheckConstraint(
-            "source IN ('seed', 'learned', 'manual')",
+            "source IN ('seed', 'learned', 'manual', 'buildcores', 'wikidata')",
             name="ck_product_identity_catalog_entries_source_values",
         ),
         CheckConstraint(
@@ -59,6 +59,7 @@ class ProductIdentityCatalogEntry(Base):
             name="uq_product_identity_catalog_entries_identity",
         ),
         Index("ix_product_identity_catalog_entries_status", "status"),
+        Index("ix_product_identity_catalog_entries_source_ref", "source", "source_ref"),
     )
 
     id: Mapped[UUID] = mapped_column(
@@ -85,6 +86,9 @@ class ProductIdentityCatalogEntry(Base):
     source: Mapped[str] = mapped_column(
         String(16), nullable=False, default="learned", server_default="learned"
     )
+    source_ref: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    """TASK-137: id do registro na fonte aberta (`opendb_id` do BuildCores, Q-id do
+    Wikidata); `NULL` nas entradas `seed`/`learned`/`manual`."""
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
