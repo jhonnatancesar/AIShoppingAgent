@@ -1,6 +1,6 @@
 # TASK-137 — Banco de modelos de produto (lista aberta copiada) para entender o pedido do usuário
 
-Status: **Em andamento (2026-10-03): importador de placa-mãe e RAM do BuildCores pronto (local); pedido->item (passo A) e dúvida com IA (passo C) prontos (local); falta preenchimento automático, família/categoria genérica, Wikidata/iPhone e rodapé.** Pedido do usuário em conversa, depois de a TASK-136
+Status: **Em andamento (2026-10-03): importador de placa-mãe e RAM do BuildCores pronto (local); pedido->item (passo A) e dúvida com IA (passo C) prontos (local); banco completo importado (BuildCores inteiro + Wikidata celulares); falta etapa 2 (opções e pergunta de compatibilidade), CPU/GPU de todas as marcas no pedido solto, preenchimento automático, rodapé e validação ao vivo.** Pedido do usuário em conversa, depois de a TASK-136
 mostrar que missões de placa-mãe, RAM e celulares fora de iPhone/Galaxy S não ganham item de
 monitoramento (não entram no funil) por falta de regra de texto.
 
@@ -121,6 +121,34 @@ celular, periféricos), e tratar TODOS os itens, não só o que foi citado.
   e notebooks fora do BuildCores/Wikidata (116 notebooks) dependem do preenchimento automático; cadeiras/periféricos com
   nome de anúncio comprido são descartados quando não há série/variante.
 - Testes: `tests/test_identity_catalog_open_all.py` (13) e casos novos em `test_identity_catalog_import.py`.
+
+## Etapa 2 — devolver OPÇÕES quando o pedido é amplo (a fazer; decisões do usuário, 2026-10-03)
+
+Regra do usuário: vale para TODAS as categorias e marcas, nunca só para o que foi citado na conversa. O primeiro
+exemplo de cada tipo é só ilustração.
+
+**1. Quando devolver opções (Telegram e Web):** pedido que o sistema entende mas que é amplo demais para pesquisar bem:
+"ryzen 7" (linha sem modelo), "processador amd", "placa de vídeo", "celular". Em vez de criar uma missão no escuro, a
+resposta é "preciso de mais informação" com opções reais do banco (Telegram: botões; Web: cartões de escolha).
+Modelo completo (ex.: "core ultra 7 265k", "rx 7600") NÃO pede opções: é entendido direto, de qualquer marca.
+
+**2. De onde vêm as opções:** sempre do banco de modelos (nunca inventadas), ordenadas por popularidade/disponibilidade.
+
+**3. Pergunta de COMPATIBILIDADE (peças que dependem de outra):** quando o pedido é de uma peça que depende de outra
+(CPU depende da placa-mãe pelo soquete; RAM depende da placa pelo DDR; placa-mãe depende da CPU; GPU/fonte/gabinete
+por encaixe e potência), o sistema pergunta, nunca assume:
+- Se o usuário TEM missão da peça-base (ex.: placa-mãe B650, soquete AM5): pergunta "este processador é para a placa
+  da missão X (AM5)?". Se **sim**, sugere só os compatíveis (AM5). Se **não**, pergunta "para qual placa é?".
+- Se NÃO tem missão da peça-base: pergunta "para qual placa-mãe (ou soquete) é?" e segue com a resposta.
+- **Não basta casar com o que ele pesquisa no site:** ele pode estar comprando para algo que não está pesquisando
+  (placa que já tem, que ganhou ou que comprou em outro lugar). O contexto das missões só serve para FAZER a pergunta
+  certa e sugerir a resposta mais provável, nunca para decidir sozinho.
+- A resposta ("sim", "não, é para a placa tal", soquete ou chipset) vira especificação do pedido (ex.: CPU com
+  `socket:am5`) e entra como termo obrigatório do título, como nas outras especificações.
+
+**4. Ordem de execução (trabalhos pequenos):** (a) tabela geral de linhas e modelos por categoria (CPU e GPU de todas as
+marcas: NVIDIA, AMD, Intel, inclusive Core Ultra e Threadripper) a partir do banco; (b) resultado "precisa de mais
+informação" no núcleo; (c) Telegram; (d) Web; (e) pergunta de compatibilidade e sugestão por contexto.
 
 ## Preenchimento automático (a fazer, pedido do usuário 2026-10-03: "preencher a lista sozinha, de forma topíssima")
 
