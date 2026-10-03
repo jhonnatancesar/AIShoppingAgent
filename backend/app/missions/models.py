@@ -317,6 +317,17 @@ class MonitoringItem(Base):
     monitoring_key: Mapped[str] = mapped_column(String(160), nullable=False)
     identity_version: Mapped[int] = mapped_column(Integer, nullable=False)
     canonical_identity: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    funnel_closed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    """TASK-136: fim do último ciclo de coleta fechado (todas as lojas
+    habilitadas rodaram, com sucesso ou erro). Coletas com `finished_at` até
+    este instante pertencem a ciclos já fechados e o fan-out delas pode rodar."""
+    funnel_previous_closed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    """TASK-136: fechamento do ciclo anterior = início (exclusivo) do ciclo
+    em `funnel_closed_at`. `NULL` = primeiro ciclo do item."""
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

@@ -1,6 +1,6 @@
 # TASK-136 — Funil antes da IA: só os melhores candidatos de cada pesquisa chegam à IA
 
-Status: **Em andamento (2026-10-01): passo 1 implementado; demais passos não iniciados.** Pedido do usuário em
+Status: **Em andamento (2026-10-01): passos 1, 2 e 3 implementados; passo 5 (tela) não iniciado.** Pedido do usuário em
 conversa. Nenhum código escrito. Decisões abaixo são do usuário; os pontos marcados
 "a confirmar" ficam para o início da implementação (regra do projeto: parar e relatar
 antes de codar se algo divergir).
@@ -95,6 +95,23 @@ mais populares e, dentre elas, as **2 mais baratas** vão para a IA (nova antes 
 indisponíveis nunca competem). Regra de pontos toda em uma função, fácil de mudar. **Só 1 em vez de 2** quando as avaliações apontam claramente um só: das 2 mais baratas,
 se uma tem pelo menos 3x os pontos da outra (ou a outra não tem avaliação nenhuma), só ela
 vai para a IA (`DOMINANCE_FACTOR = 3`, simples e fácil de mudar).
+
+**Passo 3 — barreira por ciclo + funil na coleta compartilhada: implementado (2026-10-03), commit
+local.** Decisão do usuário (opção A): alertas também esperam o fechamento do ciclo.
+
+- Cada loja só grava (Offer, preço, tarefas de fan-out). O fan-out e a IA só rodam quando o ciclo
+  do item fecha: todas as lojas habilitadas rodaram desde o último fechamento, com sucesso, erro ou
+  em espera de bloqueio (conta como erro). Sem tempo limite.
+- Estado durável em `monitoring_items.funnel_closed_at` / `funnel_previous_closed_at` (migração
+  `20261002_0001`; itens existentes recebem `now()` nos dois, então tarefas pendentes de antes da
+  v1.5 seguem sem funil). Fechamento sob `FOR UPDATE` do item; se o processo cair, a retomada/varredura
+  fecha e processa (`app/collection/funnel_cycle.py`).
+- No fechamento o funil roda sobre as ofertas de todas as lojas do ciclo (lidas do banco) e a IA
+  (relevância e nome) só roda nas escolhidas (1 ou 2). As demais ficam registradas com preço.
+- Caminho legado de missão única (missão sem item de monitoramento) não foi alterado.
+- Limite conhecido: a escolha é por item, antes da relevância determinística de cada missão; uma
+  escolhida que a missão descarta por regra fixa gasta a vaga sem chamar IA.
+- Testes: `tests/integration/test_funnel_cycle.py` (barreira, loja com erro, queda no meio).
 
 ## Decisões do usuário (2026-10-01)
 

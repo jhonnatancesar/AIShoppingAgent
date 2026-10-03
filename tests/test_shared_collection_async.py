@@ -65,6 +65,20 @@ from sqlalchemy.exc import IntegrityError
 NOW = datetime(2026, 8, 12, 12, 0, tzinfo=UTC)
 
 
+@pytest.fixture(autouse=True)
+def _no_funnel_cycle(monkeypatch):
+    """TASK-136: estes testes usam sessão simulada; o ciclo/funil tem testes
+    próprios (`tests/test_funnel_cycle.py`, integração)."""
+    monkeypatch.setattr(
+        "app.collection.shared_collection.cycle_chosen_offer_ids",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        "app.collection.shared_collection.cycle_allows_fan_out",
+        AsyncMock(return_value=True),
+    )
+
+
 def _async_cm(value=None):
     """Objeto usável como `async with x():` -- no-op, devolve `value`."""
     cm = MagicMock()
@@ -2164,10 +2178,13 @@ def test_execute_claimed_shared_collection_success_path(monkeypatch) -> None:
     )
     mission_id = uuid4()
     process_mock = AsyncMock(
-        return_value=_batch_outcome(done=(mission_id,), attempted_task_count=1)
+        return_value=SharedCollectionResult(
+            claimed=True, fanned_out_mission_ids=(mission_id,), attempted_task_count=1
+        )
     )
     monkeypatch.setattr(
-        "app.collection.shared_collection._process_pending_fan_out", process_mock
+        "app.collection.shared_collection._fan_out_item_when_cycle_closed",
+        process_mock,
     )
     session_factory = _session_factory(_mock_async_session())
     claim = _shared_claim()

@@ -696,8 +696,31 @@ def test_mission_without_that_store_does_not_receive_fan_out(
         )
     )
 
-    assert result.fanned_out_mission_ids == (mission_a.id,)
-    assert _relevance_rows(integration_database.sessions, mission_c.id) == []
+    # TASK-136: o item tem duas lojas (Amazon da A, KaBuM da C); o fan-out
+    # espera o ciclo fechar, então a Amazon sozinha ainda não classifica nada.
+    assert result.fanned_out_mission_ids == ()
+    assert _relevance_rows(integration_database.sessions, mission_a.id) == []
+
+    kabum_provider = _CountingGpuProvider()
+    kabum_provider.source_code = "kabum"
+    with integration_database.sessions() as session:
+        from app.stores.models import Store
+
+        kabum_id = session.scalar(select(Store.id).where(Store.code == "kabum"))
+    _run(
+        collect_monitoring_item_store(
+            integration_database.async_sessions,
+            _adapter(kabum_provider),
+            ai_manager,
+            monitoring_item_id=item_id,
+            store_id=kabum_id,
+            now=NOW + timedelta(seconds=5),
+        )
+    )
+
+    # Cada missão recebe só a oferta da própria loja.
+    assert len(_relevance_rows(integration_database.sessions, mission_a.id)) == 1
+    assert len(_relevance_rows(integration_database.sessions, mission_c.id)) == 1
 
 
 # ---------------------------------------------------------------------------

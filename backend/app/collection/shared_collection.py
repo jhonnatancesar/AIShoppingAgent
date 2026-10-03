@@ -151,6 +151,10 @@ from app.ai_provider import AIProviderManager
 from app.collection.adapter import CollectionAdapter
 from app.collection.cadence import CadenceConfig
 from app.collection.contracts import CollectionRequest
+from app.collection.funnel_cycle import (
+    cycle_allows_fan_out,
+    cycle_chosen_offer_ids,
+)
 from app.collection.models import (
     CollectionRun,
     CollectionRunStatus,
@@ -208,6 +212,7 @@ from app.missions.models import (
     MissionMonitoringItem,
     MissionSource,
     MissionStatus,
+    MonitoringItemStore,
 )
 from app.offers.models import Offer
 from app.products.models import Product
@@ -637,6 +642,7 @@ async def _build_mission_phase_a_outcome(
     store_id: UUID,
     shared_results: tuple[_SharedOfferResult, ...],
     completed_at: datetime,
+    chosen_offer_ids: frozenset[UUID] | None = None,
 ) -> _PhaseAOutcome | None:
     async with session_factory() as session, session.begin():
         run = await session.scalar(
@@ -706,6 +712,9 @@ async def _build_mission_phase_a_outcome(
                 # nunca resolvida tentando de novo.
                 raise SharedFanOutTerminalError("offer references a missing product")
             forced_relevance = _deterministic_product_relevance(criteria, product)
+            # TASK-136: o funil do ciclo escolhe quem vai para a IA. `None` =
+            # sem funil (coleta anterior ao primeiro ciclo): todas, como antes.
+            goes_to_ai = chosen_offer_ids is None or shared.offer_id in chosen_offer_ids
 
             pending.append(
                 _PendingOffer(
@@ -718,9 +727,11 @@ async def _build_mission_phase_a_outcome(
                     observed_at=shared.observed_at,
                     raw_title=shared.raw_title,
                     needs_relevance=(
-                        existing_relevance is None and forced_relevance is None
+                        existing_relevance is None
+                        and forced_relevance is None
+                        and goes_to_ai
                     ),
-                    needs_display_name=product.display_name is None,
+                    needs_display_name=product.display_name is None and goes_to_ai,
                     observation_created=shared.observation_created,
                     alert_comparison=alert_comparison,
                     forced_relevance=forced_relevance,
@@ -1089,6 +1100,14 @@ async def _process_pending_fan_out(
             query = query.limit(limit)
         candidate_mission_ids = tuple(await session.scalars(query))
 
+    # TASK-136: escolha do funil para o ciclo desta coleta (uma vez só).
+    chosen_offer_ids = (
+        await cycle_chosen_offer_ids(
+            session_factory, monitoring_item_id=monitoring_item_id, run_id=run_id
+        )
+        if candidate_mission_ids
+        else None
+    )
     attempted_task_count = 0
     done: list[UUID] = []
     skipped: list[UUID] = []
@@ -1159,6 +1178,7 @@ async def _process_pending_fan_out(
                 store_id=store_id,
                 shared_results=shared_results,
                 completed_at=finished_at,
+                chosen_offer_ids=chosen_offer_ids,
             )
             if phase_a is None:
                 # Corrida com `recover_stale_runs`/outro worker sobre esta
@@ -1338,6 +1358,15 @@ async def resume_shared_collection_fan_out(
     for run_id, store_code in runs:
         if remaining is not None and remaining <= 0:
             break
+        # TASK-136: barreira -- o fan-out (e a IA) só roda quando o ciclo
+        # desta coleta fechou (todas as lojas do item rodaram).
+        if not await cycle_allows_fan_out(
+            session_factory,
+            monitoring_item_id=monitoring_item_id,
+            run_id=run_id,
+            now=effective_now,
+        ):
+            continue
         shared_results = await _reconstruct_shared_results(
             session_factory, run_id=run_id
         )
@@ -1617,8 +1646,27 @@ async def _execute_claimed_shared_collection(
                 "failure_code": _failure_code(error),
             },
         )
-        return SharedCollectionResult(
-            claimed=True, provider_called=True, succeeded=False
+        # TASK-136: loja com erro também conta como rodada -- pode ser a
+        # última que faltava para fechar o ciclo das demais.
+        try:
+            fan_out = await _fan_out_item_when_cycle_closed(
+                session_factory,
+                ai_manager,
+                monitoring_item_id=monitoring_item_id,
+                now=effective_now,
+                ai_profile=ai_profile,
+                firecrawl=firecrawl,
+                settings=settings,
+            )
+        except Exception:
+            logger.warning(
+                "shared_collection_cycle_fan_out_after_failure_failed",
+                extra={"source_code": _safe_source(claim.store_code)},
+                exc_info=True,
+            )
+            fan_out = SharedCollectionResult(claimed=True)
+        return replace(
+            fan_out, claimed=True, provider_called=True, succeeded=False, offers_count=0
         )
 
     normalized = effective_normalizer.normalize_result(result)
@@ -1674,30 +1722,76 @@ async def _execute_claimed_shared_collection(
     # nada no fan-out abaixo pode mais reverter esse resultado. Mesma
     # função de processamento que `resume_shared_collection_fan_out` usa
     # -- nunca dois jeitos diferentes de fazer fan-out.
-    outcome = await _process_pending_fan_out(
+    # TASK-136: a loja só grava; o fan-out (e a IA) esperam o ciclo do item
+    # fechar. Se esta foi a última loja, processa as coletas de todas.
+    fan_out = await _fan_out_item_when_cycle_closed(
         session_factory,
-        claim.store_code,
         ai_manager,
-        ai_profile,
-        run_id=claim.run_id,
         monitoring_item_id=monitoring_item_id,
-        store_id=store_id,
-        shared_results=shared_results,
-        finished_at=finished_at,
+        now=finished_at,
+        ai_profile=ai_profile,
         firecrawl=firecrawl,
         settings=settings,
     )
-
-    return SharedCollectionResult(
+    return replace(
+        fan_out,
         claimed=True,
         provider_called=True,
         succeeded=True,
         offers_count=len(shared_results),
-        fanned_out_mission_ids=outcome.done,
-        fan_out_skipped_mission_ids=outcome.skipped,
-        fan_out_attention_required_mission_ids=outcome.attention_required,
-        fan_out_failed_mission_ids=outcome.terminally_failed,
-        attempted_task_count=outcome.attempted_task_count,
+    )
+
+
+async def _fan_out_item_when_cycle_closed(
+    session_factory: async_sessionmaker[AsyncSession],
+    ai_manager: AIProviderManager,
+    *,
+    monitoring_item_id: UUID,
+    now: datetime,
+    ai_profile: UserRole,
+    firecrawl: CesarCoreFetchProvider | None,
+    settings: Settings | None,
+) -> SharedCollectionResult:
+    """TASK-136: processa o fan-out pendente de TODAS as lojas do item, mas
+    cada coleta só passa pela barreira (`cycle_allows_fan_out`, dentro de
+    `resume_shared_collection_fan_out`) quando o ciclo dela fechou."""
+    async with session_factory() as session:
+        store_ids = tuple(
+            await session.scalars(
+                select(MonitoringItemStore.store_id)
+                .where(MonitoringItemStore.monitoring_item_id == monitoring_item_id)
+                .order_by(MonitoringItemStore.store_id)
+            )
+        )
+    results = [
+        await resume_shared_collection_fan_out(
+            session_factory,
+            ai_manager,
+            monitoring_item_id=monitoring_item_id,
+            store_id=store_id,
+            now=now,
+            ai_profile=ai_profile,
+            recover_stale=False,
+            firecrawl=firecrawl,
+            settings=settings,
+        )
+        for store_id in store_ids
+    ]
+    return SharedCollectionResult(
+        claimed=True,
+        fanned_out_mission_ids=tuple(
+            i for r in results for i in r.fanned_out_mission_ids
+        ),
+        fan_out_skipped_mission_ids=tuple(
+            i for r in results for i in r.fan_out_skipped_mission_ids
+        ),
+        fan_out_attention_required_mission_ids=tuple(
+            i for r in results for i in r.fan_out_attention_required_mission_ids
+        ),
+        fan_out_failed_mission_ids=tuple(
+            i for r in results for i in r.fan_out_failed_mission_ids
+        ),
+        attempted_task_count=sum(r.attempted_task_count for r in results),
     )
 
 
