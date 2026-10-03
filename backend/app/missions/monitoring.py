@@ -52,6 +52,10 @@ from app.products.identity import (
 )
 from app.products.identity_catalog import load_catalog, load_catalog_sync
 from app.products.identity_catalog_request import monitoring_identity_from_catalog
+from app.products.identity_catalog_resolution import (
+    lookup_or_register,
+    lookup_or_register_sync,
+)
 from app.products.models import Product
 
 _MONITORING_ITEM_KEY_CONSTRAINT = "uq_monitoring_items_monitoring_key"
@@ -94,6 +98,11 @@ def _request_texts(criteria: MissionCriteria) -> list[str]:
         texts.append(criteria.model)
         texts.append(_criteria_identity_text(criteria))
     return texts
+
+
+def _understood(criteria: MissionCriteria) -> dict:
+    """O que a IA já entendeu do pedido (vai para a pergunta de desempate)."""
+    return {"search_query": criteria.search_query, "model": criteria.model}
 
 
 def _sorted_store_ids(store_ids: Sequence[UUID]) -> list[UUID]:
@@ -558,9 +567,19 @@ def _effective_identity(
     identity = resolve_monitoring_identity(_criteria_identity_text(criteria))
     if identity is not None:
         return identity
-    # TASK-137: as regras de texto não reconheceram -- tenta o catálogo.
-    return monitoring_identity_from_catalog(
-        load_catalog_sync(session), _request_texts(criteria)
+    # TASK-137: as regras de texto não reconheceram -- tenta o catálogo; em dúvida,
+    # registra para o worker perguntar à IA (fora desta transação).
+    catalog = load_catalog_sync(session)
+    texts = _request_texts(criteria)
+    identity = monitoring_identity_from_catalog(catalog, texts)
+    if identity is not None:
+        return identity
+    return lookup_or_register_sync(
+        session,
+        catalog,
+        primary_text=_criteria_identity_text(criteria),
+        request_texts=texts,
+        understood=_understood(criteria),
     )
 
 
@@ -577,9 +596,19 @@ async def _effective_identity_async(
     identity = resolve_monitoring_identity(_criteria_identity_text(criteria))
     if identity is not None:
         return identity
-    # TASK-137: as regras de texto não reconheceram -- tenta o catálogo.
-    return monitoring_identity_from_catalog(
-        await load_catalog(session), _request_texts(criteria)
+    # TASK-137: as regras de texto não reconheceram -- tenta o catálogo; em dúvida,
+    # registra para o worker perguntar à IA (fora desta transação).
+    catalog = await load_catalog(session)
+    texts = _request_texts(criteria)
+    identity = monitoring_identity_from_catalog(catalog, texts)
+    if identity is not None:
+        return identity
+    return await lookup_or_register(
+        session,
+        catalog,
+        primary_text=_criteria_identity_text(criteria),
+        request_texts=texts,
+        understood=_understood(criteria),
     )
 
 

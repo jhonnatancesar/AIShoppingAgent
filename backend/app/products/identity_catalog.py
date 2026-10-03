@@ -26,6 +26,7 @@ import logging
 import re
 from dataclasses import dataclass
 from types import SimpleNamespace
+from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
@@ -85,6 +86,7 @@ class CatalogEntrySnapshot:
     part_numbers: tuple[str, ...]
     names: tuple[str, ...]
     source: str = "learned"
+    entry_id: UUID | None = None
 
 
 async def load_catalog(session: AsyncSession) -> tuple[CatalogEntrySnapshot, ...]:
@@ -154,6 +156,7 @@ def _snapshots(entries, codes) -> tuple[CatalogEntrySnapshot, ...]:
             part_numbers=tuple(part_numbers.get(entry.id, ())),
             names=tuple(names.get(entry.id, ())),
             source=entry.source,
+            entry_id=entry.id,
         )
         for entry in entries
     )

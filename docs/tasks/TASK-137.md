@@ -1,6 +1,6 @@
 # TASK-137 — Banco de modelos de produto (lista aberta copiada) para entender o pedido do usuário
 
-Status: **Em andamento (2026-10-03): importador de placa-mãe e RAM do BuildCores pronto (local); falta busca por pedido, dúvida com IA, preenchimento automático, ligação na missão, Wikidata e rodapé.** Pedido do usuário em conversa, depois de a TASK-136
+Status: **Em andamento (2026-10-03): importador de placa-mãe e RAM do BuildCores pronto (local); pedido->item (passo A) e dúvida com IA (passo C) prontos (local); falta preenchimento automático, família/categoria genérica, Wikidata/iPhone e rodapé.** Pedido do usuário em conversa, depois de a TASK-136
 mostrar que missões de placa-mãe, RAM e celulares fora de iPhone/Galaxy S não ganham item de
 monitoramento (não entram no funil) por falta de regra de texto.
 
@@ -48,6 +48,26 @@ monitoramento (não entram no funil) por falta de regra de texto.
   celular (capacidade obrigatória) fica fora deste passo; RAM por kit exato é rara e sem filtro de título.
 - Testes: `tests/test_identity_catalog_request.py` (6) e 3 de integração com missão real
   (`tests/integration/test_identity_catalog_import.py`).
+
+**Passo C (dúvida resolvida pela IA entre candidatos do banco): implementado (2026-10-03), commit local.**
+
+- A IA NÃO roda na criação da missão (transação aberta). Na criação, se o catálogo não acha um produto
+  único mas há candidatos parecidos (até 5: mesmo código de modelo, mesma marca quando citada, Jaccard
+  >= 0,5), o pedido é registrado em `catalog_request_resolutions` (`pending`, migration `20261005_0001`) e
+  a missão nasce no caminho antigo.
+- No worker (`CollectionOrchestrator.run_batch`, após a varredura de títulos, até 3 por ciclo, mesma flag
+  `product_identity_learning_enabled`), `resolve_pending_requests` manda à IA o pedido + o que ela entendeu
+  (`search_query`/`model`) + os candidatos; resposta fechada `{"choice": "A".."E"|null}`; prompt manda
+  tratar PRO-A/WIFI/MAX/PLUS/DDR diferente como produto diferente e responder null na dúvida.
+- Conferência determinística da escolha (`choice_is_coherent`): código de modelo e marca do pedido têm de
+  estar no candidato; incoerente vira `none`.
+- `resolved` -> missões sem item com o mesmo pedido são religadas (passam à coleta compartilhada/funil);
+  pedido decidido nunca gasta IA de novo (criação consulta a decisão e liga na hora). `none` não repete.
+- Falhas reaproveitam a TASK-133: `classify_ai_failure`, espera crescente (`retry_delay`), disjuntor
+  compartilhado (`breaker_trip`/`breaker_open_until`), `ai_gate`; falha de conteúdo 5x vira `none`.
+- Marca do pedido fora dos candidatos nunca vira dúvida (lista fechada `KNOWN_BRANDS` + marcas do catálogo).
+- Testes: `tests/test_identity_catalog_resolution.py` (8) e 4 de integração (fluxo completo com missão real,
+  "nenhum", falha de IA com pausa, marca incoerente).
 
 ## Preenchimento automático (a fazer, pedido do usuário 2026-10-03: "preencher a lista sozinha, de forma topíssima")
 

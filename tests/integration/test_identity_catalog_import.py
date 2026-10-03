@@ -256,3 +256,134 @@ def test_request_not_in_the_catalog_keeps_the_old_path(integration_database) -> 
     _import(integration_database, _entries())
     assert _mission_item(integration_database, search_query="MSI B650M PRO-A") is None
     assert _mission_item(integration_database, search_query="cadeira gamer") is None
+
+
+# --- Passo C: dúvida resolvida pela IA entre candidatos do banco ------------
+
+
+class _Chooser:
+    def __init__(self, content=None, error=None) -> None:
+        self.content, self.error, self.calls = content, error, 0
+
+    async def generate(self, request):
+        self.calls += 1
+        if self.error is not None:
+            raise self.error
+        return AIResponse(
+            request_id=request.request_id,
+            provider="stub",
+            model="stub-choose",
+            content=self.content,
+            finished_at=datetime.now(UTC),
+        )
+
+
+def _doubt_catalog(integration_database) -> None:
+    report = MappingReport()
+    _import(
+        integration_database,
+        [
+            map_buildcores_motherboard(
+                _board("c1", "MSI B650M GAMING PLUS AM5 DDR5 Micro ATX", ["7E01-001R"]),
+                report,
+            ),
+            map_buildcores_motherboard(
+                _board(
+                    "c2", "MSI B650M GAMING PLUS WIFI AM5 DDR5 Micro ATX", ["7E01-002R"]
+                ),
+                report,
+            ),
+        ],
+    )
+
+
+def _resolve_requests(integration_database, manager):
+    from app.products.identity_catalog_resolution_worker import resolve_pending_requests
+
+    async def _run():
+        return await resolve_pending_requests(
+            integration_database.async_sessions,
+            manager,
+            UserRole.ADMIN,
+            now=datetime(2026, 10, 3, 13, 0, tzinfo=UTC),
+        )
+
+    return asyncio.run(_run())
+
+
+def _rows(integration_database):
+    from app.products.identity_catalog_models import CatalogRequestResolution
+
+    with integration_database.sessions() as session:
+        return list(session.scalars(select(CatalogRequestResolution)))
+
+
+def test_doubtful_request_is_registered_then_ai_picks_among_database_candidates(
+    integration_database,
+) -> None:
+    _doubt_catalog(integration_database)
+    # Dúvida: "MSI B650M GAMING" não é nenhum nome exato, mas parece dois produtos.
+    assert _mission_item(integration_database, search_query="MSI B650M GAMING") is None
+    rows = _rows(integration_database)
+    assert [(r.status, len(r.candidates)) for r in rows] == [("pending", 2)]
+
+    chooser = _Chooser(json.dumps({"choice": "A"}))
+    summary = _resolve_requests(integration_database, chooser)
+    assert (summary.examined, summary.resolved, summary.relinked_missions) == (1, 1, 1)
+    assert chooser.calls == 1
+    row = _rows(integration_database)[0]
+    assert row.status == "resolved" and row.chosen_entry_id is not None
+    assert row.ai_provider == "stub"
+
+    # A mesma pergunta nunca gasta IA de novo: o pedido já decidido liga na hora.
+    again = _mission_item(integration_database, search_query="MSI B650M GAMING")
+    assert again is not None
+    assert (
+        again.canonical_identity["collection"]["search_query"]
+        == "msi b650m gaming plus"
+    )
+    assert _resolve_requests(integration_database, chooser).examined == 0
+    assert chooser.calls == 1
+
+
+def test_ai_saying_none_leaves_the_mission_as_it_was_and_is_not_asked_again(
+    integration_database,
+) -> None:
+    _doubt_catalog(integration_database)
+    assert _mission_item(integration_database, search_query="MSI B650M GAMING") is None
+    chooser = _Chooser(json.dumps({"choice": None}))
+    summary = _resolve_requests(integration_database, chooser)
+    assert (summary.resolved, summary.none) == (0, 1)
+    assert _rows(integration_database)[0].status == "none"
+    assert _mission_item(integration_database, search_query="MSI B650M GAMING") is None
+    _resolve_requests(integration_database, chooser)
+    assert chooser.calls == 1
+
+
+def test_ai_failure_is_recorded_with_a_retry_time_and_pauses_the_ai(
+    integration_database,
+) -> None:
+    from app.ai_provider import AIProviderQuotaExceeded
+
+    _doubt_catalog(integration_database)
+    _mission_item(integration_database, search_query="MSI B650M GAMING")
+    chooser = _Chooser(error=AIProviderQuotaExceeded())
+    summary = _resolve_requests(integration_database, chooser)
+    assert summary.failed == 1
+    row = _rows(integration_database)[0]
+    assert row.status == "ai_failed"
+    assert row.ai_error_kind == "quota"
+    assert row.attempts == 1 and row.next_retry_at is not None
+    # Com a IA em pausa (disjuntor compartilhado), o ciclo seguinte nem chama.
+    second = _resolve_requests(integration_database, chooser)
+    assert second.breaker_open is True
+    assert chooser.calls == 1
+
+
+def test_incoherent_ai_choice_is_rejected_by_the_deterministic_check(
+    integration_database,
+) -> None:
+    _doubt_catalog(integration_database)
+    _mission_item(integration_database, search_query="ASUS B650M GAMING")
+    # O pedido cita ASUS, mas os candidatos são MSI: nem vira candidato.
+    assert _rows(integration_database) == []

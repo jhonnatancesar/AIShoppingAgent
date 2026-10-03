@@ -1336,6 +1336,39 @@ class CollectionOrchestrator:
                 },
             )
 
+    async def _resolve_catalog_requests(self, now: datetime) -> None:
+        settings = self._settings
+        if settings is None or not settings.product_identity_learning_enabled:
+            return
+        from app.products.identity_catalog_resolution_worker import (
+            resolve_pending_requests,
+        )
+
+        try:
+            summary = await resolve_pending_requests(
+                self._session_factory,
+                self._ai_manager,
+                self._ai_profile,
+                now=now,
+                limit=3,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning("catalog_request_resolution_cycle_failed", exc_info=True)
+            return
+        if summary.examined:
+            logger.info(
+                "catalog_request_resolution",
+                extra={
+                    "examined": summary.examined,
+                    "resolved": summary.resolved,
+                    "none": summary.none,
+                    "failed": summary.failed,
+                    "relinked_missions": summary.relinked_missions,
+                },
+            )
+
     async def _sweep_listing_titles(self) -> None:
         settings = self._settings
         if (
@@ -1400,6 +1433,11 @@ class CollectionOrchestrator:
         # TASK-132 (Parte A): títulos novos de anúncios já cadastrados que
         # nenhuma regra local reconhece -- IA só quando o título muda.
         await self._sweep_listing_titles()
+
+        # TASK-137 (passo C): pedidos de missão em dúvida entre produtos do
+        # catálogo -- a IA desempata entre candidatos do banco, fora de
+        # transação, no máximo alguns por ciclo.
+        await self._resolve_catalog_requests(effective_now)
 
         # Fase A: transação curta, só dados locais -- nenhum Playwright,
         # HTTP ou IA acontece dentro deste bloco. `claim_due_work`
