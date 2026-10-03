@@ -2136,7 +2136,7 @@ def test_sweep_shared_collection_fan_out_runs_one_target_per_allocation(
 def _shared_claim(**overrides) -> _SharedClaim:
     defaults = dict(
         run_id=uuid4(),
-        criteria=SimpleNamespace(search_query="GPU", model=None),
+        criteria=SimpleNamespace(search_query="GPU", model=None, required_terms=()),
         store_code="pichau",
         monitoring_item_id=uuid4(),
         store_id=uuid4(),
