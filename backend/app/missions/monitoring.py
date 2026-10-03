@@ -56,6 +56,7 @@ from app.products.identity_catalog_resolution import (
     lookup_or_register,
     lookup_or_register_sync,
 )
+from app.products.identity_spec_request import monitoring_identity_from_spec
 from app.products.models import Product
 
 _MONITORING_ITEM_KEY_CONSTRAINT = "uq_monitoring_items_monitoring_key"
@@ -78,7 +79,11 @@ def _canonical_identity_payload(identity: MonitoringIdentity) -> dict:
     }
     if identity.collection_search is not None:
         search_query, search_model = identity.collection_search
-        payload["collection"] = {"search_query": search_query, "model": search_model}
+        payload["collection"] = {
+            "search_query": search_query,
+            "model": search_model,
+            "required_terms": list(identity.collection_terms),
+        }
     return payload
 
 
@@ -574,6 +579,10 @@ def _effective_identity(
     identity = monitoring_identity_from_catalog(catalog, texts)
     if identity is not None:
         return identity
+    # Pedido por especificação ("quero uma b550"): item de família.
+    identity = monitoring_identity_from_spec(catalog, texts)
+    if identity is not None:
+        return identity
     return lookup_or_register_sync(
         session,
         catalog,
@@ -601,6 +610,10 @@ async def _effective_identity_async(
     catalog = await load_catalog(session)
     texts = _request_texts(criteria)
     identity = monitoring_identity_from_catalog(catalog, texts)
+    if identity is not None:
+        return identity
+    # Pedido por especificação ("quero uma b550"): item de família.
+    identity = monitoring_identity_from_spec(catalog, texts)
     if identity is not None:
         return identity
     return await lookup_or_register(

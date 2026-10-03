@@ -893,6 +893,9 @@ class MonitoringIdentity:
     attributes: tuple[tuple[str, str], ...]
     monitoring_key: str
     collection_search: tuple[str, str | None] | None = None
+    collection_terms: tuple[str, ...] = ()
+    """TASK-137: termos obrigatórios do título (`tipo:valor`, ver
+    `app.collection.spec_terms`) para pedidos por especificação; vazio nos demais."""
     """TASK-137: `(search_query, model)` que a coleta usa quando a identidade veio do
     catálogo (placa-mãe, RAM...): o texto de busca sai do NOME do catálogo, não dos
     campos de identidade. Fora da `monitoring_key`; `None` nas identidades vindas das
@@ -1181,6 +1184,7 @@ class CollectionCriteria:
 
     search_query: str
     model: str | None
+    required_terms: tuple[str, ...] = ()
 
 
 def _humanize_slug(value: str) -> str:
@@ -1214,6 +1218,9 @@ def canonical_collection_criteria(
         return CollectionCriteria(
             search_query=str(collection["search_query"]),
             model=str(collection_model) if collection_model else None,
+            required_terms=tuple(
+                str(t) for t in collection.get("required_terms") or ()
+            ),
         )
     brand = str(canonical_identity["brand"])
     family = str(canonical_identity["family"])

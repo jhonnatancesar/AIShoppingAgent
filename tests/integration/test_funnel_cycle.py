@@ -348,3 +348,77 @@ def test_mission_groups_highlight_relevant_and_others(integration_database) -> N
 
     empty = asyncio.run(groups(uuid4()))
     assert (empty.highlights, empty.relevant, empty.others) == ((), (), ())
+
+
+def test_specification_request_collects_only_titles_that_meet_every_term(
+    integration_database,
+) -> None:
+    from app.missions.models import MissionMonitoringItem
+    from app.offers.models import Offer
+    from sqlalchemy import func
+
+    with integration_database.sessions.begin() as session:
+        user = User(display_name="TASK-137 especificacao", role=UserRole.USER)
+        session.add(user)
+        session.flush()
+        user_id = user.id
+
+    async def create():
+        async with integration_database.async_sessions.begin() as session:
+            return await create_mission_from_criteria_async(
+                session,
+                user_id=user_id,
+                search_query="quero uma memoria ddr5 de 8 Gb",
+                target_amount=None,
+                target_currency=None,
+                source_codes=("amazon",),
+                requested_at=NOW,
+                actor_type="test",
+            )
+
+    mission, _ = asyncio.run(create())
+    with integration_database.sessions() as session:
+        item_id = session.get(MissionMonitoringItem, mission.id).monitoring_item_id
+        amazon_id = session.scalar(select(Store.id).where(Store.code == "amazon"))
+
+    titles = (
+        ("m1", "Memoria Kingston 8GB DDR5 4800", "250.00"),
+        ("m2", "Memoria Corsair 16GB (2x8GB) DDR5 5200", "420.00"),
+        ("m3", "Memoria Kingston 8GB DDR4 3200", "180.00"),
+        ("m4", "Memoria Fury Beast 8 GB DDR5 5200MHz", "300.00"),
+        ("m5", "Notebook 8GB DDR5 512GB SSD", "3000.00"),
+    )
+
+    class Provider:
+        source_code = "amazon"
+
+        async def collect(self, request):
+            assert request.search_query == "memoria ram ddr5 8gb"
+            completed = request.requested_at + timedelta(seconds=1)
+            return CollectionResult(
+                "amazon",
+                request.requested_at,
+                completed,
+                tuple(
+                    RawCollectedOffer(
+                        source_code="amazon",
+                        url=f"https://example.invalid/{eid}",
+                        title=title,
+                        collected_at=completed,
+                        external_id=eid,
+                        raw_price=price,
+                        raw_currency="BRL",
+                        raw_availability="Em estoque",
+                    )
+                    for eid, title, price in titles
+                ),
+            )
+
+    result = _collect(
+        integration_database, Provider(), item_id, amazon_id, _CountingAI(), NOW
+    )
+    assert result.succeeded is True
+    with integration_database.sessions() as session:
+        kept = sorted(session.scalars(select(Offer.external_id)))
+        assert session.scalar(select(func.count()).select_from(Offer)) == 2
+    assert kept == ["m1", "m4"]

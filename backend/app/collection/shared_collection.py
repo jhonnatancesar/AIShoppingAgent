@@ -1751,6 +1751,7 @@ async def _execute_claimed_shared_collection(
         model=claim.criteria.model,
         source_code=claim.store_code,
         offers=normalized.offers,
+        required_terms=claim.criteria.required_terms,
     )
     selected_raw = tuple(item.raw_offer for item in selected)
     try:

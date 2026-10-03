@@ -387,3 +387,43 @@ def test_incoherent_ai_choice_is_rejected_by_the_deterministic_check(
     _mission_item(integration_database, search_query="ASUS B650M GAMING")
     # O pedido cita ASUS, mas os candidatos são MSI: nem vira candidato.
     assert _rows(integration_database) == []
+
+
+# --- Pedido por especificação ("quero uma b650", "memória ddr5 de 8gb") -----
+
+
+def test_loose_board_request_becomes_one_shared_family_item(
+    integration_database,
+) -> None:
+    from app.products.identity import canonical_collection_criteria
+
+    _import(integration_database, _entries())  # catálogo conhece o chipset b650
+    first = _mission_item(integration_database, search_query="quero uma placa mae b650")
+    second = _mission_item(integration_database, search_query="Placa-mãe", model="B650")
+    assert first is not None and second is not None
+    assert first.id == second.id
+    assert first.canonical_identity["scope"] == "family"
+    criteria = canonical_collection_criteria(first.canonical_identity)
+    assert criteria.search_query == "placa mae b650"
+    assert criteria.required_terms == ("chipset:b650",)
+
+
+def test_loose_memory_request_needs_no_catalog_at_all(integration_database) -> None:
+    from app.products.identity import canonical_collection_criteria
+
+    item = _mission_item(
+        integration_database, search_query="quero uma memoria ddr5 de 8 Gb"
+    )
+    assert item is not None
+    assert item.canonical_identity["category"] == "ram"
+    criteria = canonical_collection_criteria(item.canonical_identity)
+    assert criteria.search_query == "memoria ram ddr5 8gb"
+    assert criteria.required_terms == ("type:ddr5", "capacity_gb:8")
+    other = _mission_item(integration_database, search_query="memoria ddr4 8gb")
+    assert other is not None and other.id != item.id
+
+
+def test_family_request_is_never_a_doubt_for_the_ai(integration_database) -> None:
+    _import(integration_database, _entries())
+    _mission_item(integration_database, search_query="quero uma b650")
+    assert _rows(integration_database) == []

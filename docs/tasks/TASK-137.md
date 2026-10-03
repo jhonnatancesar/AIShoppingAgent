@@ -75,6 +75,28 @@ um chipset conhecido do catálogo (`attributes.chipset`) não gera candidato; (2
 (genérico demais). Esses pedidos seguem o caminho antigo até o **passo de família** (próximo): item
 `FAMILY` "placa-mãe + chipset", coleta "placa mae b650" com filtro de título e funil escolhendo 1 ou 2.
 
+**Camada de ESPECIFICAÇÃO (caminho principal): implementada (2026-10-03), commit local.** Decisão do usuário:
+o pedido real é solto ("quero uma b550", "quero uma memória ddr5 de 8gb", "quero um s25"); produto exato e dúvida
+são a exceção. Vale como regra geral, não por item.
+
+- A IA do pedido (`IntentInterpreter`, já existente: `search_query`/`model`) continua sendo a única IA na entrada;
+  sem chamada nova. O código lê só as ESPECIFICAÇÕES do texto (`identity_spec_request.parse_spec_request`) com o
+  vocabulário do catálogo (chipsets e soquetes de placa-mãe) e padrões fechados (DDR, GB, MHz, marca, formato).
+- Só vira especificação se TODA palavra for entendida (enchimento, marca, categoria, especificação) e houver uma
+  especificação que defina o produto; sobrou palavra ("gaming") -> catálogo/dúvida. Categorias misturadas não decidem.
+- Item `FAMILY` (categoria + especificações; o resto "qualquer"): "quero uma b550" e "Placa-mãe B550" dividem o item.
+  `b650m` = chipset B650 + formato mATX. Ordem na missão: regras fixas -> produto exato do catálogo (passo A) ->
+  especificação -> dúvida com IA (passo C).
+- Coleta: busca natural ("placa mae b550", "memoria ram ddr5 8gb") + **termos obrigatórios no título**
+  (`app.collection.spec_terms`, em `_select_final_candidates`): B550M conta como B550, mas B650E não é B650 nem
+  B5500; "16GB (2x8GB)" não é memória de 8 GB (capacidade TOTAL); DDR5 nunca casa LPDDR5/DDR4; soquete, marca, MHz,
+  formato. Teste ponta a ponta: de 5 títulos, só 2 foram gravados.
+- Memória não depende do catálogo (padrões fechados); placa-mãe usa o chipset/soquete que o catálogo conhece.
+- Fora deste passo: celular de outras marcas (depende do Wikidata/seed), GPU AMD ("rx 7600", extensão da regra de
+  GPU) e categoria genérica sem especificação ("cadeira gamer").
+- Testes: `tests/test_identity_spec_request.py` (28) e 4 de integração (família compartilhada, memória sem
+  catálogo, família nunca é dúvida de IA, coleta filtrada).
+
 ## Preenchimento automático (a fazer, pedido do usuário 2026-10-03: "preencher a lista sozinha, de forma topíssima")
 
 Quando o pedido ou o anúncio não existe no banco, o sistema completa a lista sozinho, sem entrar lixo:

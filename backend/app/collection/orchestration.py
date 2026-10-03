@@ -98,6 +98,7 @@ from app.collection.shared_claim import (
     _claim_shared_collection_in_session,
     _SharedClaim,
 )
+from app.collection.spec_terms import title_satisfies_all
 from app.core.config import Settings
 from app.coupons.models import OfferCouponPriceDay
 from app.coupons.pricing import AppliedCoupon, best_applicable_coupon
@@ -1858,7 +1859,12 @@ def _filter_deterministic_candidates(
 
 
 def _select_final_candidates(
-    *, search_query: str, model: str | None, source_code: str, offers: tuple
+    *,
+    search_query: str,
+    model: str | None,
+    source_code: str,
+    offers: tuple,
+    required_terms: tuple[str, ...] = (),
 ) -> tuple:
     """Seleciona um pool intermediário comum antes da IA e do detalhe.
 
@@ -1870,6 +1876,7 @@ def _select_final_candidates(
         for item in offers
         if (model is None or _title_matches_model(model, item.raw_offer.title))
         and not _title_looks_like_bundle(search_query, item.raw_offer.title)
+        and title_satisfies_all(required_terms, item.raw_offer.title)
     )
     return _limit_intermediate_candidates(
         survivors, limit=_PRELIST_INTERMEDIATE_CANDIDATE_LIMIT
