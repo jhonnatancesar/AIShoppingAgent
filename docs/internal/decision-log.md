@@ -1,5 +1,14 @@
 # Decision Log
 
+## DEC-143 — TASK-137: banco de modelos copiado de listas abertas para entender o pedido do usuário
+
+- **Decisão (usuário, 2026-10-03):** em vez de parser por regex por categoria (descartado na TASK-123), copiar
+  listas abertas de modelos para o nosso banco; o GG procura o parecido e vincula; na dúvida a IA escolhe só
+  entre candidatos do banco. Copiar a base, não depender das APIs das fontes.
+- **Fontes:** BuildCores OpenDB (ODC-By 1.0, uso comercial com atribuição) e CSV do Google Play (termos a
+  verificar). GSMArena fora: termos permitem só uso pessoal e não comercial.
+- **Classificação:** Registrar agora, implementar depois. Ver `docs/tasks/TASK-137.md`.
+
 ## DEC-142 — Trava de "só modelo estável" removida: a aprovação do usuário pelo Telegram basta para trocar o modelo de IA
 
 Decisão do usuário em 2026-09-30, na TASK-134 do César Core (atualização de

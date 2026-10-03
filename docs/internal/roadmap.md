@@ -1,5 +1,7 @@
 # Roadmap
 
+**Atualização 2026-10-03:** TASK-136 passos 3 (barreira por ciclo + funil) e 5 (tela com Destaque, Ofertas relevantes e Outros resultados) implementados (local). TASK-137 registrada, NÃO iniciada — banco de modelos copiado de listas abertas (BuildCores OpenDB, CSV do Google Play) para missões de placa-mãe, RAM e celulares entrarem no funil. Ver `docs/tasks/TASK-137.md`.
+
 **Atualização 2026-10-01:** TASK-136 registrada, NÃO iniciada — funil antes da IA: de cada pesquisa só 2 (ou 1) candidatos, escolhidos por popularidade (vendas; senão avaliações e nota) e preço, chegam à IA; o restante fica registrado com preço mas fora da IA. Ver `docs/tasks/TASK-136.md`.
 
 **Atualização 2026-09-30:** TASK-133 (GG) em andamento (etapa 1 e disjuntor compartilhado prontos, local). Registradas, NÃO iniciadas: TASK-134 (GG entende os erros de IA do Core e pausa até o dia virar) e TASK-135 (ponte do GG com o Telegram para aprovar troca de modelo de IA), ambas dependentes das TASKs de mesmo número no César Core (`C:\cesar-core`, opção A: o Core seleciona a IA e conta a cota do dia; nada de código no Core antes de fechar o GG). Ver `docs/tasks/TASK-134.md` e `docs/tasks/TASK-135.md`.
