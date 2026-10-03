@@ -92,6 +92,7 @@ class OpenCatalogEntry:
     source: str
     source_ref: str
     variant: str = "base"
+    required_attributes: tuple[str, ...] = ()
 
     @property
     def identity(self) -> tuple[str, str, str, str, str]:
@@ -146,6 +147,15 @@ def _clean_board_name(name: str, manufacturer: str) -> str:
     return " ".join([*tokens, *kept_memory])
 
 
+_HYPHENATED_NUMERIC = re.compile(r"^\d{2,4}-\d{4,}$")
+
+
+def _is_hyphenated_numeric_code(value: str) -> bool:
+    """Part number só de números com hífen (Logitech `910-005281`): específico o bastante
+    (8+ dígitos em dois grupos), ao contrário de "6000" ou "8GB"."""
+    return bool(_HYPHENATED_NUMERIC.match(value)) and len(compact_code(value)) >= 8
+
+
 def _split_codes(
     part_numbers: Iterable[str], *, reject_name_words: bool = False
 ) -> tuple[tuple[str, ...], tuple[str, ...]]:
@@ -167,7 +177,7 @@ def _split_codes(
         compact = compact_code(value)
         if reject_name_words and _PRODUCT_NAME_WORDS.search(compact):
             continue
-        if is_usable_part_number(compact):
+        if is_usable_part_number(compact) or _is_hyphenated_numeric_code(value):
             codes.append(compact)
     return tuple(dict.fromkeys(codes)), tuple(dict.fromkeys(names))
 
@@ -342,6 +352,7 @@ def drop_ambiguous_codes(
                 source=entry.source,
                 source_ref=entry.source_ref,
                 variant=entry.variant,
+                required_attributes=entry.required_attributes,
             )
         )
     return kept
@@ -369,6 +380,7 @@ def merge_same_identity(entries: list[OpenCatalogEntry]) -> list[OpenCatalogEntr
             source=current.source,
             source_ref=current.source_ref,
             variant=current.variant,
+            required_attributes=current.required_attributes,
         )
     return list(merged.values())
 
@@ -419,6 +431,7 @@ def merge_shared_part_numbers(
                 source=lead.source,
                 source_ref=lead.source_ref,
                 variant=lead.variant,
+                required_attributes=lead.required_attributes,
             )
         )
     return merged
@@ -453,6 +466,9 @@ async def import_open_entries(
         if built is None:
             stats.entries_invalid += 1
             continue
+        # Celular: a capacidade decide o produto -> sem `identity_key` na entrada;
+        # a identidade nasce do título (`resolve_catalog_family`).
+        identity_key = None if item.required_attributes else built.identity_key
         inserted = await session.scalar(
             insert(ProductIdentityCatalogEntry)
             .values(
@@ -462,14 +478,14 @@ async def import_open_entries(
                 model=item.model,
                 variant=item.variant,
                 attributes=dict(item.attributes),
-                required_attributes=[],
+                required_attributes=list(item.required_attributes),
                 family_key=catalog_family_key(
                     category=item.category,
                     brand=item.brand,
                     family=item.family,
                     model=item.model,
                 ),
-                identity_key=built.identity_key,
+                identity_key=identity_key,
                 status="active",
                 source=item.source,
                 source_ref=item.source_ref,
