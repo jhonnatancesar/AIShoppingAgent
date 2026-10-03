@@ -77,12 +77,25 @@ def test_no_candidates_without_a_model_code_or_without_similarity() -> None:
     assert find_candidates(CATALOG, ["MSI X999Z ULTRA SUPER"]) == []
 
 
-def test_at_most_five_candidates() -> None:
+def test_a_request_matching_more_than_five_products_is_a_family_not_a_doubt() -> None:
     many = tuple(
         _entry(f"b650m-pro-{n}", [f"B650M PRO {n}"])
         for n in ("a", "b", "c", "d", "e", "f", "g")
     )
-    assert len(find_candidates(many, ["MSI B650M PRO"])) == 5
+    assert find_candidates(many, ["MSI B650M PRO"]) == []
+    # Até cinco parecidos ainda é dúvida.
+    assert len(find_candidates(many[:5], ["MSI B650M PRO"])) == 5
+
+
+def test_a_request_with_only_a_known_chipset_is_a_family_not_a_doubt() -> None:
+    boards = (
+        _entry("b650-pro", ["B650 PRO"]),
+        _entry("b650-eagle", ["B650 EAGLE"]),
+    )  # chipset b650 nos atributos
+    assert find_candidates(boards, ["placa mae B650"]) == []
+    assert find_candidates(boards, ["MSI B650"]) == []
+    # Chipset + nome continua dúvida.
+    assert find_candidates(boards, ["MSI B650 PRO"]) != []
 
 
 def test_coherence_requires_the_model_code_and_the_brand_of_the_request() -> None:

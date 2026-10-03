@@ -69,6 +69,12 @@ monitoramento (não entram no funil) por falta de regra de texto.
 - Testes: `tests/test_identity_catalog_resolution.py` (8) e 4 de integração (fluxo completo com missão real,
   "nenhum", falha de IA com pausa, marca incoerente).
 
+**Correção do passo C (2026-10-03): pedido de FAMÍLIA nunca vira dúvida.** "placa mãe B650" tem 131 placas no
+banco (7 marcas): escolher uma à toa prenderia a missão numa placa que ninguém pediu. Agora: (1) pedido que é só
+um chipset conhecido do catálogo (`attributes.chipset`) não gera candidato; (2) mais de 5 parecidos também não
+(genérico demais). Esses pedidos seguem o caminho antigo até o **passo de família** (próximo): item
+`FAMILY` "placa-mãe + chipset", coleta "placa mae b650" com filtro de título e funil escolhendo 1 ou 2.
+
 ## Preenchimento automático (a fazer, pedido do usuário 2026-10-03: "preencher a lista sozinha, de forma topíssima")
 
 Quando o pedido ou o anúncio não existe no banco, o sistema completa a lista sozinho, sem entrar lixo:

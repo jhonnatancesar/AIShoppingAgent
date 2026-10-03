@@ -195,7 +195,8 @@ def find_candidates(
     Exige o código de modelo do pedido (palavra com número, ex.: B650M) dentro do
     nome do candidato, a mesma marca quando o pedido cita uma, e parecença de
     palavras (Jaccard) de pelo menos 0,5. Devolve até `limit`, do mais para o menos
-    parecido. Sem código de modelo no pedido ("cadeira gamer"), não há candidato."""
+    parecido; se houver MAIS que `limit`, o pedido é genérico demais (família) e não
+    devolve nenhum. Sem código de modelo no pedido ("cadeira gamer"), também nenhum."""
     request = {
         token
         for text in request_texts
@@ -208,6 +209,13 @@ def find_candidates(
     brand_tokens = {entry.brand.upper() for entry in catalog} | KNOWN_BRANDS
     request_brands = request & brand_tokens
     comparable = request - brand_tokens
+    known_chipsets = {
+        str(entry.attributes.get("chipset", "")).upper() for entry in catalog
+    } - {""}
+    if len(comparable) == 1 and comparable <= known_chipsets:
+        # Só o chipset ("B650", "X870E"): é uma FAMÍLIA com dezenas de placas,
+        # não um produto em dúvida (o passo de família trata esse pedido).
+        return []
     found: list[Candidate] = []
     for entry in catalog:
         if entry.required_attributes or not entry.names:
@@ -225,8 +233,13 @@ def find_candidates(
                 best = Candidate(entry, name, score)
         if best is not None:
             found.append(best)
+    if len(found) > limit:
+        # Mais parecidos do que cabem numa escolha: o pedido é uma FAMÍLIA (ex.: só o
+        # chipset, "B650" com 131 placas), não um produto em dúvida. Escolher uma
+        # delas à toa prenderia a missão numa placa que ninguém pediu.
+        return []
     found.sort(key=lambda c: (-c.score, len(c.name), c.entry.model))
-    return found[:limit]
+    return found
 
 
 def choice_is_coherent(
